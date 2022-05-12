@@ -1,5 +1,6 @@
 import numpy as np
-from numpy import load, cos, sin, log, sqrt
+from numpy import load, cos, sin, log, sqrt, matmul
+import utils
 from particles import Photons
 from hepunits import*
 
@@ -7,8 +8,6 @@ from hepunits import*
 class Source:
     """
     Класс источника частиц
-
-    [position = (x, y, z)] = cm
 
     [activity] = Bq
 
@@ -21,9 +20,8 @@ class Source:
     [halfLife] = sec
     """
 
-    def __init__(self, position, activity, distribution, voxelSize=0.4, radiationType='Gamma', energy=140.*10**3, halfLife=6*60*60, rotationAngles=None, rotationCenter=None):
-        self.position = np.asarray(position)
-        self.initialActivity = np.asarray(activity)
+    def __init__(self, distribution, activity=None, voxelSize=4*mm, radiationType='Gamma', energy=140.5*keV, halfLife=6*hour):
+        self.initialActivity = np.sum(self.distribution) if activity is None else np.asarray(activity)
         self.distribution = np.asarray(distribution)
         self.distribution /= np.sum(self.distribution)
         self.voxelSize = voxelSize
@@ -32,28 +30,41 @@ class Source:
         self.energy = energy
         self.halfLife = halfLife
         self.timer = 0.
-        self._rotated = False
         self._generateEmissionTable()
-        self.rotate(rotationAngles, rotationCenter)
+        self.transformationMatrix = np.array([
+            [1., 0., 0., 0.],
+            [0., 1., 0., 0.],
+            [0., 0., 1., 0.],
+            [0., 0., 0., 1.]
+        ])
         self.rng = np.random.default_rng()
 
-    def rotate(self, rotationAngles, rotationCenter=None):
-        if rotationAngles is not None:
-            self._rotated = True
+    def translate(self, x=0., y=0., z=0., inLocal=False):
+        """ Переместить объём """
+        translation = np.asarray([x, y, z])
+        translationMatrix = utils.computeTranslationMatrix(translation)
+        if inLocal:
+            self.transformationMatrix = self.transformationMatrix@translationMatrix
         else:
-            rotationAngles = [0., 0., 0.]
-        self.rotationAngles = np.asarray(rotationAngles)
-        if rotationCenter is None:
-            rotationCenter = np.asarray(self.size/2)
-        self.rotationCenter = rotationCenter
-        alpha, beta, gamma = -self.rotationAngles
-        R = np.asarray([
-            [cos(alpha)*cos(beta),  cos(alpha)*sin(beta)*sin(gamma) - sin(alpha)*cos(gamma),    cos(alpha)*sin(beta)*cos(gamma) + sin(alpha)*sin(gamma) ],
-            [sin(alpha)*cos(beta),  sin(alpha)*sin(beta)*sin(gamma) + cos(alpha)*cos(gamma),    sin(alpha)*sin(beta)*cos(gamma) - cos(alpha)*sin(gamma) ],
-            [-sin(beta),            cos(beta)*sin(gamma),                                       cos(beta)*cos(gamma)                                    ]
-        ])
-        self.R = R.T
-        self._generateEmissionTable()
+            self.transformationMatrix = translationMatrix@self.transformationMatrix
+
+    def rotate(self, alpha=0., beta=0., gamma=0., rotationCenter=[0., 0., 0.], inLocal=False):
+        """ Повернуть объём вокруг координатных осей """
+        rotationAngles = np.asarray([alpha, beta, gamma])
+        rotationCenter = np.asarray(rotationCenter)
+        rotationMatrix = utils.computeTranslationMatrix(rotationCenter)
+        rotationMatrix = rotationMatrix@utils.computeRotationMatrix(rotationAngles)
+        rotationMatrix = rotationMatrix@utils.computeTranslationMatrix(-rotationCenter)
+        if inLocal:
+            self.transformationMatrix = self.transformationMatrix@rotationMatrix
+        else:
+            self.transformationMatrix = rotationMatrix@self.transformationMatrix
+
+    def convertToGlobalPosition(self, position):
+        globalPosition = np.ones((position.shape[0], 4), dtype=float)
+        globalPosition[:, :3] = position
+        matmul(globalPosition, self.transformationMatrix.T, out=globalPosition)
+        return globalPosition[:, :3]
 
     def _generateEmissionTable(self):
         xs, ys, zs = np.meshgrid(
@@ -62,10 +73,10 @@ class Source:
             np.linspace(0, self.size[2], self.distribution.shape[2], endpoint=False),
             indexing = 'ij'
         )
-        position = np.stack((xs, ys, zs), axis=3).reshape(-1, 3)
+        position = np.stack((xs, ys, zs), axis=3).reshape(-1, 3) - self.size/2
         probability = self.distribution.ravel()
         indices = probability.nonzero()[0]
-        self.emission_table = [position[indices], probability[indices]]
+        self.emissionTable = [position[indices], probability[indices]]
 
     @property
     def activity(self):
@@ -75,23 +86,19 @@ class Source:
     def nucleiNumber(self):
         return self.activity*self.halfLife/log(2)
 
-    def set_state(self, timer, rng_state=None):
+    def setState(self, timer, rngState=None):
         if timer is not None:
             self.timer = timer
-        if rng_state is None:
+        if rngState is None:
             return
-        self.rng.bit_generator.state['state'] = rng_state
+        self.rng.bit_generator.state['state'] = rngState
 
     def generatePosition(self, n):
-        position = self.emission_table[0]
-        probability = self.emission_table[1]
+        position = self.emissionTable[0]
+        probability = self.emissionTable[1]
         position = self.rng.choice(position, n, p=probability)
         position += self.rng.uniform(0., self.voxelSize, position.shape)
-        if self._rotated:
-            position -= self.rotationCenter
-            np.matmul(position, self.R, out=position)
-            position += self.rotationCenter
-        position += self.position
+        position = self.convertToGlobalPosition(position)
         return position
 
     def generateEmissionTime(self, n):
@@ -158,11 +165,11 @@ class Тс99m_MIBI(Source):
     [voxelSize] = cm
     """
 
-    def __init__(self, position, activity, distribution, voxelSize, rotationAngles=None, rotationCenter=None):
+    def __init__(self, distribution, activity=None, voxelSize=4*mm):
         radiationType = 'Gamma'
         energy = 140.5*keV
         halfLife = 6.*hour
-        super().__init__(position, activity, distribution, voxelSize, radiationType, energy, halfLife, rotationAngles, rotationCenter)
+        super().__init__(distribution, activity, voxelSize, radiationType, energy, halfLife)
 
 
 class SourcePhantom(Тс99m_MIBI):
@@ -173,14 +180,14 @@ class SourcePhantom(Тс99m_MIBI):
 
     [activity] = Bq
 
-    [phantom_name] = string
+    [phantomName] = string
 
     [voxelSize] = cm
     """
 
-    def __init__(self, position, activity, phantom_name, voxelSize, rotationAngles=None, rotationCenter=None):
-        distribution = load(f'Phantoms/{phantom_name}.npy')
-        super().__init__(position, activity, distribution, voxelSize, rotationAngles=rotationAngles, rotationCenter=rotationCenter)
+    def __init__(self, phantomName, activity=None, voxelSize=4*mm):
+        distribution = load(f'Phantoms/{phantomName}.npy')
+        super().__init__(distribution, activity, voxelSize)
 
 
 class efg3(SourcePhantom):
@@ -192,10 +199,10 @@ class efg3(SourcePhantom):
     [activity] = Bq
     """
 
-    def __init__(self, position, activity, rotationAngles=None, rotationCenter=None):
-        phantom_name = 'efg3'
+    def __init__(self, activity):
+        phantomName = 'efg3'
         voxelSize = 4.*mm
-        super().__init__(position, activity, phantom_name, voxelSize, rotationAngles, rotationCenter)
+        super().__init__(phantomName, activity, voxelSize)
         
 
 class efg3cut(SourcePhantom):
@@ -207,10 +214,10 @@ class efg3cut(SourcePhantom):
     [activity] = Bq
     """
 
-    def __init__(self, position, activity, rotationAngles=None, rotationCenter=None):
-        phantom_name = 'efg3cut'
+    def __init__(self, activity):
+        phantomName = 'efg3cut'
         voxelSize = 4.*mm
-        super().__init__(position, activity, phantom_name, voxelSize, rotationAngles, rotationCenter)
+        super().__init__(phantomName, activity, voxelSize)
 
 
 class efg3cutDefect(SourcePhantom):
@@ -223,7 +230,7 @@ class efg3cutDefect(SourcePhantom):
     """
 
     def __init__(self, position, activity, rotationAngles=None, rotationCenter=None):
-        phantom_name = 'efg3cutDefect'
+        phantomName = 'efg3cutDefect'
         voxelSize = 4.*mm
-        super().__init__(position, activity, phantom_name, voxelSize, rotationAngles, rotationCenter)
+        super().__init__(position, activity, phantomName, voxelSize, rotationAngles, rotationCenter)
 

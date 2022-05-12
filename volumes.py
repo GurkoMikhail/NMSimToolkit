@@ -109,7 +109,13 @@ class VolumeWithChilds(ElementaryVolume):
     def addChild(self, child):
         """ Добавить дочерний объём """
         assert isinstance(child, TransformableVolume), 'Только трансформируемый объём может быть дочерним'
-        self.childs.append(child)
+        if child.parent is None:
+            self.childs.append(child)
+        elif child in self.childs:
+            print('Добавляемый объём уже является дочерним данному объёму')
+        else:
+            print('Внимение! Добавляемый объём уже является дочерним. Новый родитель установлен')
+            child.parent.childs.remove(child)
         child.parent = self
 
 
@@ -128,6 +134,7 @@ class TransformableVolume(ElementaryVolume):
 
     def dublicate(self):
         result = super().dublicate()
+        result.parent = None
         if self.parent is not None:
             result.setParent(self.parent)
         return result

@@ -1,47 +1,51 @@
-from volumeVisualization import VolumeTester, VolumeVisualization, VolumeDensityVisualization
+from volumeVisualization import VolumeTester, VolumeVisualization
 from volumes import VolumeWithChilds, TransformableVolume
 from parametricCollimators import ParametricParallelCollimator
+from voxelVolumes import WoodcockVoxelVolume
 from gammaCameras import GammaCamera
 from geometries import Box
-from sources import efg3, PointSource
+from sources import efg3
 from particlesFlows import ParticleFlow
 from materials import MaterialsDataBase
-from simulationDataManager import SimulationDataManager
-from visualization import Visualization
+from simulationManagers import SimulationDataManager
 import numpy as np
 from hepunits import*
 
-angles = np.linspace(-pi/4, 3*pi/4, 32)/degree
 
-from voxelVolumes import WoodcockVoxelVolume
-
-
-if __name__ == '__main__':
+def modeling(args):
+    angle, deltaAngle = args
     materialsDataBase = MaterialsDataBase()
 
     simulationVolume = VolumeWithChilds(
-        geometry=Box(100*cm, 100*cm, 100*cm),
+        geometry=Box(120*cm, 120*cm, 80*cm),
         material=materialsDataBase['Air, Dry (near sea level)'],
         name='SimulationVolume'
     )
     
     detector = TransformableVolume(
-        geometry=Box(51.2*cm, 40*cm, 1*cm),
+        geometry=Box(54.*cm, 40*cm, 0.95*cm),
         material=materialsDataBase['Sodium Iodide'],
         name='Detector'
     )
 
     collimator = ParametricParallelCollimator(
-        size=(51.2*cm, 40*cm, 2*cm),
-        holeDiameter=1.1*mm,
-        septa=0.16*mm,
+        size=(detector.size[0], detector.size[2], 3.5*cm),
+        holeDiameter=1.5*mm,
+        septa=0.2*mm,
         material=materialsDataBase['Pb'],
         name='Collimator'
     )
 
-    spectHead = GammaCamera(collimator, detector, name='GammaCamera')
+    spectHead = GammaCamera(
+        collimator=collimator,
+        detector=detector,
+        shieldingThickness=2*cm,
+        glassBackendThickness=7.6*cm,
+        name='GammaCamera'
+    )
     spectHead.rotate(gamma=pi/2)
     spectHead.translate(y=51.2/2*cm + spectHead.size[2])
+    spectHead.rotate(alpha=angle)
 
     materialIDDistribution = np.load('Phantoms/ae3.npy')
     materialDistribution = np.ndarray(materialIDDistribution.shape, dtype=object)
@@ -51,48 +55,63 @@ if __name__ == '__main__':
 
     phantom = WoodcockVoxelVolume(
         voxelSize=4*mm,
-        materialDistribution=materialDistribution
+        materialDistribution=materialDistribution,
+        name='Phantom'
     )
     phantom.rotate(gamma=pi/2)
     phantom.setParent(simulationVolume)
 
+    tableSize = [35*cm, simulationVolume.size[2], 2*cm]
+    table = TransformableVolume(
+        geometry=Box(*tableSize),
+        material=materialsDataBase['Polyvinyl Chloride'],
+        name='Table'
+    )
+    table.transformationMatrix = phantom.transformationMatrix.copy()
+    phantomThickness = (128 - phantom.materialDistribution.nonzero()[2].max())*phantom.voxelSize[2] - phantom.voxelSize[2]/2
+    table.translate(z=(phantomThickness + table.size[2]/2), inLocal=True)
+    simulationVolume.addChild(table)
+
     simulationVolume.addChild(spectHead)
+    
     spectHead2 = spectHead.dublicate()
-
-    spectHead.rotate(alpha=-pi/4)
-    spectHead2.rotate(alpha=pi/4)
-
+    spectHead2.rotate(alpha=deltaAngle)
 
     volumeTester = VolumeTester(simulationVolume)
     distribution, edges = volumeTester.getDistribution('density')
 
-    # volumeVisualization = VolumeVisualization(distribution)
-    # volumeVisualization.show()
-    # volumeVisualization.exec()
+    distribution[distribution == distribution.min()] = np.nan
 
-
-    # source = PointSource(
-    #     (0*cm, 0*cm, 0*cm),
-    #     300*MBq,
-    #     140.5*keV
-    # )
+    volumeVisualization = VolumeVisualization(distribution)
+    volumeVisualization.show()
+    volumeVisualization.exec()
 
     source = efg3(
-        (-25.6*cm, -25.6*cm, -25.6*cm),
-        300*MBq,
-        rotationAngles=(0, 0, pi/2)
+        300*MBq
     )
+    source.rotate(gamma=pi/2)
 
-    particleFlow = ParticleFlow(source, simulationVolume, particlesNumber=10**5, stopTime=0.1*s)
+    particleFlow = ParticleFlow(source, simulationVolume, particlesNumber=10**8, stopTime=15*s)
     particleFlow.start()
 
-    simulationDataManager = SimulationDataManager('test.hdf', [spectHead.detector, spectHead2.detector])
+    simulationDataManager = SimulationDataManager(
+        fileName=f'{round(angle/degree, 1)} deg.hdf',
+        sensitiveVolumes=[spectHead.detector, spectHead2.detector]
+    )
     
-    for data in iter(particleFlow.queue.get, None):
+    for data in iter(particleFlow.queue.get, 'Finish'):
         simulationDataManager.addInteractionData(data)
-
-    # visualization = Visualization(particleFlow.queue, [spectHead.detector, spectHead2.detector])
-    # visualization.start()
-
+    simulationDataManager.saveInteractionData()
     particleFlow.join()
+
+
+if __name__ == '__main__':
+    from multiprocessing import Pool
+
+    angles = np.linspace(-pi/4, 3*pi/4, 32)[:16]
+    deltaAngle = np.full_like(angles, 16*pi/(32 - 1))
+    pool = Pool(16)
+    pool.map(modeling, zip(angles, deltaAngle))
+
+
 

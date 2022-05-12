@@ -1,15 +1,13 @@
-import cProfile
 from hepunits import*
 import numpy as np
 from numpy import cos
-import multiprocessing as mp
 from propagationManagers import PropagationWithInteraction
 import threading as mt
 import queue
 from time import time
 
-Queue = mp.Queue
-Thread = mp.Process
+Queue = queue.Queue
+Thread = mt.Thread
 
 
 class ParticleFlow(Thread):
@@ -28,7 +26,7 @@ class ParticleFlow(Thread):
         self.minEnergy = 1.*keV
         self.daemon = True
 
-    def offTheSolidAngle(self, direction):
+    def offSolidAngle(self, direction):
         vector, angle = self.solidAngle
         cosAlpha = vector[0]*direction[:, 0]
         cosAlpha += vector[1]*direction[:, 1]
@@ -39,7 +37,7 @@ class ParticleFlow(Thread):
         result = particles.energy <= self.minEnergy
         result += self.simulationVolume.checkOutside(particles.position)
         if self.solidAngle is not None:
-            result += self.offTheSolidAngle(particles.direction)
+            result += self.offSolidAngle(particles.direction)
         return result
 
     def sendData(self, data):
@@ -54,11 +52,7 @@ class ParticleFlow(Thread):
         else:
             self.particles = self.particles[~invalidParticles]
         self.step += 1
-        # self.sendData(self.particles)
         self.sendData(interactionData)
-
-    def _run(self):
-        cProfile.runctx('self._run()', globals(), locals(), 'stats.txt')
 
     def run(self):
         """ Реализация работы потока частиц """

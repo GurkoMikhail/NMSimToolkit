@@ -30,7 +30,7 @@ def uniqueWithIndices(array):
 
 
 def make3DRGBA(array3D, lut=None, levels=None):
-    levels = [array3D.min(), array3D.max()] if levels is None else levels
+    levels = [np.nanmin(array3D), np.nanmax(array3D)] if levels is None else levels
     arrayOfRGBA = np.ndarray((*(array3D.shape), 4), dtype=np.ubyte)
     for i, array2D in enumerate(array3D):
         arrayOfRGBA[i] = makeARGB(array2D, lut=lut, levels=levels, useRGBA=True)[0]

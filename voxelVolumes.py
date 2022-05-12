@@ -13,11 +13,12 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
     [voxelSize] = cm
     """
 
-    def __init__(self, voxelSize, materialDistribution):
+    def __init__(self, voxelSize, materialDistribution, name=None):
         size = np.asarray(materialDistribution.shape)*voxelSize
         super().__init__(
             geometry=Box(*size),
-            material=None
+            material=None,
+            name=name
             )
         self.materialDistribution = materialDistribution
         self._voxelSizeRatio = voxelSize/self.size
