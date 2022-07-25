@@ -38,7 +38,7 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
         density = self.material_distribution.density
         relative_crosssection = Zeff*density
         argmax = np.argmax(relative_crosssection)
-        return self.material_distribution[argmax]
+        return self.material_distribution.ravel()[argmax]
 
     @material.setter
     def material(self, value):
