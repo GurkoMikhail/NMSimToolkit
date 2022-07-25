@@ -10,42 +10,42 @@ class ParticleProperties(ABC):
     @property
     def type(self):
         """ Тип частиц """
-        return self['type']
+        return self['type'].copy()
 
     @property
     def position(self):
         """ Положение частиц """
-        return self['position']
+        return self['position'].copy()
 
     @property
     def direction(self):
         """ Направление частиц """
-        return self['direction']
+        return self['direction'].copy()
 
     @property
     def energy(self):
         """ Энергия частиц """
-        return self['energy']
+        return self['energy'].copy()
 
     @property
     def emission_time(self):
         """ Время эмиссии частиц """
-        return self['emission_time']
+        return self['emission_time'].copy()
 
     @property
     def emission_position(self):
         """ Положение эмиссии частиц """
-        return self['emission_position']
+        return self['emission_position'].copy()
 
     @property
     def distance_traveled(self):
         """ Пройденное расстояние частицами """
-        return self['distance_traveled']
+        return self['distance_traveled'].copy()
     
     @property
     def ID(self):
         """ Идентификатор частицы """
-        return self['ID']
+        return self['ID'].copy()
 
 
 class Particle(np.void, ParticleProperties):

@@ -8,27 +8,27 @@ class MaterialProperties(ABC):
     @property
     def name(self):
         """ Название материала """
-        return self['name']
+        return self['name'].copy()
 
     @property
     def type(self):
         """ Тип материала """
-        return self['type']
+        return self['type'].copy()
 
     @property
     def density(self):
         """ Плотность материала """
-        return self['density']
+        return self['density'].copy()
 
     @property
     def composition(self):
         """ Состав материала" """
-        return self['composition']
+        return self['composition'].copy()
 
     @property
     def ZtoA_ratio(self):
         """ Оношение Z к A """
-        return self['ZtoA_ratio']
+        return self['ZtoA_ratio'].copy()
 
     @property
     def Zeff(self):
@@ -41,7 +41,7 @@ class MaterialProperties(ABC):
     @property
     def ID(self):
         """ Идентификатор материала """
-        return self['ID']
+        return self['ID'].copy()
 
 
 class Material(np.void, MaterialProperties):
