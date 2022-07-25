@@ -30,13 +30,13 @@ class GammaCamera(TransformableVolumeWithChild):
             name=name
         )
         detector_box.translate(z=shielding_thickness)
-        detector_box.setParent(self)
+        detector_box.set_parent(self)
         collimator.translate(z=(detector_box_size[2]/2 - collimator.size[2]/2))
-        detector_box.addChild(collimator)
+        detector_box.add_child(collimator)
         detector.translate(z=(detector_box_size[2]/2 - collimator.size[2] - detector.size[2]/2))
-        detector_box.addChild(detector)
+        detector_box.add_child(detector)
         glass_backend.translate(z=(detector_box_size[2]/2 - collimator.size[2] - detector.size[2] - glass_backend.size[2]/2))
-        detector_box.addChild(glass_backend)
+        detector_box.add_child(glass_backend)
 
     @property
     def detector_box(self):
