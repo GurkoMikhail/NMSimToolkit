@@ -1,11 +1,11 @@
 from volumeVisualization import VolumeTester, VolumeVisualization
-from volumes import VolumeWithChilds, TransformableVolume
+from core.geometry.volumes import VolumeWithChilds, TransformableVolume
 from parametricCollimators import ParametricParallelCollimator
 from voxelVolumes import WoodcockVoxelVolume
-from gammaCameras import GammaCamera
-from geometries import Box
-from sources import efg3
-from particlesFlows import ParticleFlow
+from core.geometry.gamma_cameras import GammaCamera
+from core.geometry.geometries import Box
+from core.source.sources import efg3
+from core.transport.simulation_managers import ParticleFlow
 from materials import MaterialsDataBase
 from simulationManagers import SimulationDataManager
 import numpy as np
