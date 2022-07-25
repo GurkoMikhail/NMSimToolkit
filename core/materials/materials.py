@@ -33,9 +33,9 @@ class MaterialProperties(ABC):
     @property
     def Zeff(self):
         """ Эффективной заряд материала """
-        size = self.size
-        Z = np.linspace(np.zeros(size), np.full(size, 93), 93, endpoint=False, dtype=int).T
-        Zeff = np.average(Z, axis=1, weights=self['composition'])
+        shape = self.shape
+        Z = np.linspace(np.zeros(shape), np.full(shape, 93), 93, endpoint=False, dtype=int).T
+        Zeff = np.average(Z, axis=-1, weights=self['composition'])
         return Zeff
 
     @property
