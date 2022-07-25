@@ -46,10 +46,6 @@ class MaterialProperties(ABC):
 
 class Material(np.void, MaterialProperties):
     """ Класс материала """
-    
-    @property
-    def Zeff(self):
-        return super().Zeff[0]
 
 
 class MaterialArray(np.ndarray, MaterialProperties):
