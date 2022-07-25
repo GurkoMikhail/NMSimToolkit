@@ -66,6 +66,7 @@ class MaterialArray(np.ndarray, MaterialProperties):
     def __new__(cls, shape):
         obj = super().__new__(cls, shape, dtype=(Material, dtype_of_material))
         obj['name'] = 'Vacuum'
+        obj['composition'][..., 0] = 1
         return obj
 
     @classmethod
