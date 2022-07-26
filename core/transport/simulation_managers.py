@@ -1,3 +1,4 @@
+from cProfile import runctx
 from signal import SIGINT, signal
 from hepunits import*
 import numpy as np
@@ -53,6 +54,9 @@ class SimulationManager(Thread):
         self.step += 1
         if propagation_data is not None:
             self.send_data(propagation_data)
+
+    def run_profile(self):
+        runctx('self.run()', globals(), locals(), f'Stats/{self.name}.txt')
 
     def run(self):
         """ Реализация работы потока частиц """
