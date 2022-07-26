@@ -62,7 +62,7 @@ class SimulationManager(Thread):
         while self.particles.size > 0:
                 self.next_step()
                 print(f'Source timer: {self.source.timer/s} seconds')
-        self.queue.put('Finish')
+        self.queue.put('stop')
         print(f'{self.name} finished\n'
             + f'\tTime passed: {time() - start} seconds')
 
