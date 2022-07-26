@@ -1,9 +1,9 @@
-from functools import cache
+from collections import namedtuple
 from itertools import count
 import numpy as np
 from h5py import File
-from core.materials.atomic_properties import atomic_number
-from core.materials.materials import MaterialArray
+from core.materials.atomic_properties import element_symbol
+from core.materials.materials import Material, MaterialArray
 from hepunits import*
 
 
@@ -23,7 +23,6 @@ class MaterialDataBase:
         self.base_name = base_name
         self.material_array = self._load_materials()
 
-    @cache
     def __getitem__(self, key):
         if isinstance(key, str):
             index = (self.material_array.name == key).nonzero()[0]
@@ -33,45 +32,29 @@ class MaterialDataBase:
             return self.material_array[index]
 
     def _load_materials(self):
-        self.materialsDict = {}
         materials_file = File(self.path_to_materials_table, 'r')
         base_group = materials_file[self.base_name]
-        material_names = []
-        types = []
-        densities = []
-        compositions = []
-        ZtoA_ratios = []
-        IDs = []
+        materials = []
         for group_name, material_type_group in base_group.items():
             for material_name, material_group in material_type_group.items():
                 type = group_name
                 density = float(np.copy(material_group['Density']))*(g/cm3)
-                composition = np.zeros(93, dtype=float)
+                composition_dict = {}
                 if group_name == 'Elemental media':
                     Z = int(np.copy(material_group['Z']))
-                    composition[Z] = 1.
+                    composition_dict.update({element_symbol[Z]: 1.})
                 else:
                     for element, weight in material_group['Composition'].items():
-                        Z = atomic_number[element]
-                        composition[Z] = float(np.copy(weight))
+                        composition_dict.update({element: float(np.copy(weight))})
                 try:
-                    ZtoAratio = float(np.copy(material_group['Z\\A']))
+                    ZtoA_ratio = float(np.copy(material_group['Z\\A']))
                 except:
                     # print(f'Для {material_name} отсутствует Z\\A')
-                    ZtoAratio = 0.5
+                    ZtoA_ratio = 0.5
                 ID = next(self.counter)
-        
-                material_names.append(material_name)
-                types.append(type)
-                densities.append(density)
-                compositions.append(composition)
-                ZtoA_ratios.append(ZtoAratio)
-                IDs.append(ID)
-        material_names = np.asarray(material_names)
-        types = np.asarray(types)
-        densities = np.asarray(densities)
-        compositions = np.asarray(compositions)
-        ZtoA_ratios = np.asarray(ZtoA_ratios)
-        IDs = np.asarray(IDs)
-        return MaterialArray.create(material_names, types, densities, compositions, ZtoA_ratios, IDs)
+                composition_dict = namedtuple('composition', composition_dict)(**composition_dict)
+                material = Material(material_name, type, density, composition_dict, ZtoA_ratio, ID)
+                materials.append(material)
+        materials = np.asarray(materials, dtype=object)
+        return materials.view(MaterialArray)
 

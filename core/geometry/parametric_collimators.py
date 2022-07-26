@@ -3,7 +3,7 @@ from core.materials.material_database import MaterialDataBase
 from core.geometry.geometries import Box
 from numpy import sqrt, mod, abs, stack
 
-from core.materials.materials import MaterialArray
+from core.materials.materials_old import MaterialArray
 
 
 

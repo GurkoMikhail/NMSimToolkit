@@ -1,54 +1,60 @@
-from abc import ABC
+from collections import namedtuple
+from dataclasses import dataclass
+from functools import cache
+from core.materials.atomic_properties import atomic_number
 import numpy as np
+from hepunits import*
 
 
-class MaterialProperties(ABC):
-    """ Класс свойств материала """
-
-    @property
-    def name(self):
-        """ Название материала """
-        return self['name'].copy()
-
-    @property
-    def type(self):
-        """ Тип материала """
-        return self['type'].copy()
-
-    @property
-    def density(self):
-        """ Плотность материала """
-        return self['density'].copy()
-
-    @property
-    def composition(self):
-        """ Состав материала" """
-        return self['composition'].copy()
-
-    @property
-    def ZtoA_ratio(self):
-        """ Оношение Z к A """
-        return self['ZtoA_ratio'].copy()
-
-    @property
-    def Zeff(self):
-        """ Эффективной заряд материала """
-        shape = self.shape
-        Z = np.linspace(np.zeros(shape), np.full(shape, 93), 93, endpoint=False, dtype=int).T
-        Zeff = np.average(Z, axis=-1, weights=self['composition'])
-        return Zeff
-
-    @property
-    def ID(self):
-        """ Идентификатор материала """
-        return self['ID'].copy()
-
-
-class Material(np.void, MaterialProperties):
+@dataclass(eq=True, frozen=True)
+class Material:
     """ Класс материала """
+    name: str = 'Vacuum'
+    type: str = ''
+    density: float = 0.
+    composition_dict: namedtuple = ()
+    ZtoA_ratio: float = 0.
+    ID: int = 0
+
+    def __lt__(self, other):
+        if isinstance(other, Material):
+            return self.Zeff*self.density < other.Zeff*other.density
+        return False
+
+    def __le__(self, other):
+        if isinstance(other, Material):
+            return self.Zeff*self.density <= other.Zeff*other.density
+        return False
+
+    def __gt__(self, other):
+        if isinstance(other, Material):
+            return self.Zeff*self.density > other.Zeff*other.density
+        return True
+
+    def __ge__(self, other):
+        if isinstance(other, Material):
+            return self.Zeff*self.density >= other.Zeff*other.density
+        return True
+
+    @property
+    @cache
+    def Zeff(self):
+        Zeff = 0
+        for element, weight in self.composition_dict.items():
+            Zeff += atomic_number[element]*weight
+        return Zeff
+    
+    @property
+    @cache
+    def composition(self):
+        composition = np.zeros(shape=93, dtype=float)
+        for element, weight in self.composition_dict._asdict().items():
+            Z = atomic_number[element]
+            composition[Z] = weight
+        return composition
 
 
-class MaterialArray(np.ndarray, MaterialProperties):
+class MaterialArray(np.ndarray):
     """ 
     Класс массива материалов
 
@@ -59,31 +65,21 @@ class MaterialArray(np.ndarray, MaterialProperties):
     [ZtoA_ratio] = mm\n
     """
     
+    attributes = ['name', 'type', 'density', 'composition', 'composition_dict', 'Zeff', 'ZtoA_ratio', 'ID']
+    
     def __new__(cls, shape):
-        obj = super().__new__(cls, shape, dtype=(Material, dtype_of_material))
-        obj['name'] = 'Vacuum'
-        obj['composition'][..., 0] = 1
-        return obj
+        obj = super().__new__(cls, shape, dtype=object)
+        obj[...] = Material()
+        return obj        
 
-    @classmethod
-    def create(cls, name, type, density, composition, ZtoA_ratio, ID):
-        shape = density.size
-        obj = cls(shape)
-        obj['name'] = name
-        obj['type'] = type
-        obj['density'] = density
-        obj['composition'] = composition
-        obj['ZtoA_ratio'] = ZtoA_ratio
-        obj['ID'] = ID
-        return obj
-
-
-dtype_of_material = np.dtype([
-    ('name', '<U50'),
-    ('type', '<U30'),
-    ('density', 'f'),
-    ('composition', '93f'),
-    ('ZtoA_ratio', 'f'),
-    ('ID', 'u8')
-])
+    def __getattr__(self, name):
+        if name in self.attributes:
+            return np.asarray([getattr(item, name) for item in self])
+        raise AttributeError()
+    
+    def __setattr__(self, name, value):
+        if name in self.attributes:
+            raise AttributeError('Unchangeable attribute')
+        else:
+            super().__setattr__(name, value)
 

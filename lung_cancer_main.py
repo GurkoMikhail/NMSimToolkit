@@ -37,6 +37,7 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
 
     material_ID_distribution = np.load('phantoms/material_map.npy')
     material_distribution = MaterialArray(material_ID_distribution.shape)
+    material_distribution[material_ID_distribution == 0] = material_database['Air, Dry (near sea level)']
     material_distribution[material_ID_distribution == 1] = material_database['Lung']
     material_distribution[material_ID_distribution == 2] = material_database['Adipose Tissue (ICRU-44)']
     material_distribution[material_ID_distribution == 3] = material_database['Tissue, Soft (ICRU-44)']
@@ -159,7 +160,7 @@ if __name__ == '__main__':
     time_intervals = np.linspace(time_start, time_stop, steps + 1)
     time_intervals = np.column_stack([time_intervals[:-1], time_intervals[1:]])
     manager = Manager()
-    with Pool(1) as pool:
+    with Pool(4) as pool:
         for angle in angles:
             lock = manager.Lock()
             for time_interval in time_intervals:
