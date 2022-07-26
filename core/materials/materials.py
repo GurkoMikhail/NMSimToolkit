@@ -40,7 +40,7 @@ class Material:
     @cache
     def Zeff(self):
         Zeff = 0
-        for element, weight in self.composition_dict.items():
+        for element, weight in self.composition_dict._asdict().items():
             Zeff += atomic_number[element]*weight
         return Zeff
     
