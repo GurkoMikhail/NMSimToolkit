@@ -51,7 +51,8 @@ class SimulationManager(Thread):
         else:
             self.particles = self.particles[~invalid_particles]
         self.step += 1
-        self.send_data(propagation_data)
+        if propagation_data is not None:
+            self.send_data(propagation_data)
 
     def run(self):
         """ Реализация работы потока частиц """
