@@ -25,11 +25,11 @@ class MaterialDataBase:
 
     def __getitem__(self, key):
         if isinstance(key, str):
-            index = (self.material_array.name == key).nonzero()[0]
-            return self.material_array[index]
+            index = self.material_array.name == key
+            return self.material_array[index][0]
         else:
-            index = (self.material_array.ID == key).nonzero()[0]
-            return self.material_array[index]
+            index = self.material_array.ID == key
+            return self.material_array[index][0]
 
     def _load_materials(self):
         materials_file = File(self.path_to_materials_table, 'r')
