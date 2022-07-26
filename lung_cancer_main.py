@@ -1,6 +1,5 @@
 import os
 from time import sleep
-from core.data.data_manager import SimulationDataManager
 
 os.environ['MKL_NUM_THREADS'] = '1' 
 os.environ['NUMEXPR_NUM_THREADS'] = '1' 
@@ -13,6 +12,7 @@ from core.geometry.geometries import Box
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import TransformableVolume, VolumeWithChilds
 from core.transport.simulation_managers import SimulationManager
+from core.data.data_manager import SimulationDataManager
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.transport.propagation_managers import PropagationWithInteraction
 from core.source.sources import Тс99m_MIBI
@@ -104,9 +104,9 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
     source = Тс99m_MIBI(
         distribution=distribution,
         activity=300*MBq,
-        voxel_size=4*mm,
-        rng=rng
+        voxel_size=4*mm
     )
+    source.rng = rng
     source.set_state(start_time)
 
     propagation_manager = PropagationWithInteraction(
@@ -118,7 +118,7 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
         source=source,
         simulation_volume=simulation_volume,
         propagation_manager=propagation_manager,
-        particles_number=10**3,
+        particles_number=10**5,
         stop_time=stop_time
     )
     simulation_manager.name = f'{round(angle/degree, 1)} deg'
@@ -147,7 +147,7 @@ if __name__ == '__main__':
     from multiprocessing import Pool, Manager
     from signal import SIGINT, signal
 
-    signal(SIGINT, lambda x, y: None)
+    # signal(SIGINT, lambda x, y: None)
 
     views = 120
     gamma_gameras = 4
@@ -164,7 +164,8 @@ if __name__ == '__main__':
         for angle in angles:
             lock = manager.Lock()
             for time_interval in time_intervals:
-                pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, lock))
+                # pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, lock))
+                modeling(angle, gamma_gameras, delta_angle, time_interval, lock)
                 sleep(5)
         pool.close()
         pool.join()
