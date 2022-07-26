@@ -2,7 +2,7 @@ from copy import deepcopy
 from itertools import count
 import numpy as np
 from numpy import matmul, inf
-from core.materials.materials_old import MaterialArray
+from core.materials.materials import MaterialArray
 import core.other.utils as utils
 
 
