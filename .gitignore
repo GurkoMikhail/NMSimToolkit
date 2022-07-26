@@ -129,4 +129,7 @@ dmypy.json
 .pyre/
 
 # Output files
-/Output data
+/output data
+
+# stats files
+/stats
