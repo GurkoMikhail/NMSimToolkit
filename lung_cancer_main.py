@@ -1,5 +1,6 @@
 import os
 from time import sleep
+from cProfile import run
 
 os.environ['MKL_NUM_THREADS'] = '1' 
 os.environ['NUMEXPR_NUM_THREADS'] = '1' 
@@ -165,7 +166,8 @@ if __name__ == '__main__':
             lock = manager.Lock()
             for time_interval in time_intervals:
                 # pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, lock))
-                modeling(angle, gamma_gameras, delta_angle, time_interval, lock)
+                # modeling(angle, gamma_gameras, delta_angle, time_interval, lock)
+                run('modeling(angle, gamma_gameras, delta_angle, time_interval, lock)', 'stats.txt')
                 sleep(5)
         pool.close()
         pool.join()
