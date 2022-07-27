@@ -12,7 +12,7 @@ class Material:
     name: str = 'Vacuum'
     type: str = ''
     density: float = 0.
-    composition_dict: namedtuple = ()
+    composition: namedtuple = namedtuple('composition', [])()
     ZtoA_ratio: float = 0.
     ID: int = 0
 
@@ -40,18 +40,18 @@ class Material:
     @cache
     def Zeff(self):
         Zeff = 0
-        for element, weight in self.composition_dict._asdict().items():
+        for element, weight in self.composition._asdict().items():
             Zeff += atomic_number[element]*weight
         return Zeff
     
     @property
     @cache
-    def composition(self):
-        composition = np.zeros(shape=93, dtype=float)
-        for element, weight in self.composition_dict._asdict().items():
+    def composition_array(self):
+        composition_array = np.zeros(shape=93, dtype=float)
+        for element, weight in self.composition._asdict().items():
             Z = atomic_number[element]
-            composition[Z] = weight
-        return composition
+            composition_array[Z] = weight
+        return composition_array
 
 
 class MaterialArray(np.ndarray):
@@ -65,21 +65,29 @@ class MaterialArray(np.ndarray):
     [ZtoA_ratio] = mm\n
     """
     
-    attributes = ['name', 'type', 'density', 'composition', 'composition_dict', 'Zeff', 'ZtoA_ratio', 'ID']
-    
     def __new__(cls, shape):
-        obj = super().__new__(cls, shape, dtype=object)
-        obj[...] = Material()
-        return obj        
+        obj = super().__new__(cls, shape, dtype=int)
+        obj.material_list = np.array([Material(), ], dtype=object)
+        return obj
 
-    def __getattr__(self, name):
-        if name in self.attributes:
-            return np.asarray([getattr(item, name) for item in self])
-        raise AttributeError()
+    def __array_finalize__(self, obj):
+        if obj is None: return
+        self.material_list = getattr(obj, 'material_list')
+        
+    def __contains__(self, key):
+        return key in self.material_list
+
+    def __getitem__(self, key):
+        indices = np.ndarray.__getitem__(self, key)
+        return self.material_list[indices]
     
-    def __setattr__(self, name, value):
-        if name in self.attributes:
-            raise AttributeError('Unchangeable attribute')
-        else:
-            super().__setattr__(name, value)
+    def __setitem__(self, key, value):
+        if value not in self:
+            self.material_list = np.append(self.material_list, value)
+        index = (self.material_list == value).nonzero()[0][0]
+        self.view(np.ndarray)[key] = index
+
+    @property
+    def indices(self):
+        return np.copy(self)
 
