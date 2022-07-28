@@ -1,7 +1,7 @@
 import numpy as np
 from numpy import inf
-from core.materials.material_database import MaterialDataBase
-from core.physics.processes import processes_list
+import settings.database_setting as database_setting
+import settings.processes_settings as processes_settings
 from core.geometry.woodcoock_volumes import WoodcockVolume
 from hepunits import*
 
@@ -9,10 +9,11 @@ from hepunits import*
 class PropagationWithInteraction:
     """ Класс распространения частиц с взаимодействием """
 
-    def __init__(self, processes_list=processes_list, material_database=None, rng=None):
-        self.material_database = MaterialDataBase() if material_database is None else material_database
+    def __init__(self, processes_list=None, attenuation_database=None, rng=None):
+        processes_list = processes_settings.processes_list if processes_list is None else processes_list
+        self.attenuation_database = database_setting.attenuation_database if attenuation_database is None else attenuation_database
         self.rng = np.random.default_rng() if rng is None else rng
-        self.processes = [process(material_database, rng) for process in processes_list.values()]
+        self.processes = [process(self.attenuation_database, rng) for process in processes_list]
 
     def __call__(self, particles, volume):
         """ Сделать шаг """

@@ -97,12 +97,12 @@ class VolumeWithChilds(ElementaryVolume):
     def get_material_by_position(self, position):
         material = super().get_material_by_position(position)
         if len(self.childs) > 0:
-            inside = material.ID != 0
+            inside = material != 0
             position = position[inside]
             material_inside = material[inside]
             for child in self.childs:
                 child_material = child.get_material_by_position(position)
-                inside_child = child_material.ID != 0
+                inside_child = child_material != 0
                 material_inside[inside_child] = child_material[inside_child]
             material[inside] = material_inside
         return material

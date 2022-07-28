@@ -137,7 +137,7 @@ def initialize(rng=None):
     ])
 
 
-    @vectorize([float64(float64, int64)], nopython=True, cache=True)
+    @vectorize([float64(float64, int64)], nopython=True)
     def theta_generator(energy, Z):
         xx = f_factor*energy*energy
 

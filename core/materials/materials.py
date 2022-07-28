@@ -11,8 +11,8 @@ class Material:
     """ Класс материала """
     name: str = 'Vacuum'
     type: str = ''
-    density: float = 0.
-    composition: namedtuple = namedtuple('composition', [])()
+    density: float = 0.4*(10**(-29))*g/cm3
+    composition: namedtuple = namedtuple('composition', ['H'])(H=1.)
     ZtoA_ratio: float = 0.
     ID: int = 0
 
@@ -40,15 +40,20 @@ class Material:
     @cache
     def Zeff(self):
         Zeff = 0
-        for element, weight in self.composition._asdict().items():
+        for element, weight in self.composition_dict.items():
             Zeff += atomic_number[element]*weight
         return Zeff
     
     @property
     @cache
+    def composition_dict(self):
+        return self.composition._asdict()
+    
+    @property
+    @cache
     def composition_array(self):
         composition_array = np.zeros(shape=93, dtype=float)
-        for element, weight in self.composition._asdict().items():
+        for element, weight in self.composition_dict.items():
             Z = atomic_number[element]
             composition_array[Z] = weight
         return composition_array
@@ -68,6 +73,7 @@ class MaterialArray(np.ndarray):
     def __new__(cls, shape):
         obj = super().__new__(cls, shape, dtype=int)
         obj.material_list = np.array([Material(), ], dtype=object)
+        obj.view(np.ndarray)[:] = 0
         return obj
 
     def __array_finalize__(self, obj):
@@ -77,15 +83,33 @@ class MaterialArray(np.ndarray):
     def __contains__(self, key):
         return key in self.material_list
 
-    def __getitem__(self, key):
-        indices = np.ndarray.__getitem__(self, key)
-        return self.material_list[indices]
-    
     def __setitem__(self, key, value):
+        if isinstance(value, MaterialArray):
+            for material, indices in value.inverse_indices.items():
+                self[indices] = material
+            return
         if value not in self:
             self.material_list = np.append(self.material_list, value)
         index = (self.material_list == value).nonzero()[0]
         self.view(np.ndarray)[key] = index
+
+    def restore(self):
+        indices = np.ndarray.__getitem__(self, slice(None))
+        return self.material_list[indices]
+
+    @property
+    def Zeff(self):
+        Zeff = np.zeros_like(self, dtype=float)
+        for material, indices in self.inverse_indices.items():
+            Zeff[indices] = material.Zeff
+        return Zeff
+
+    @property
+    def density(self):
+        density = np.zeros_like(self, dtype=float)
+        for material, indices in self.inverse_indices.items():
+            density[indices] = material.density
+        return density
 
     @property
     def indices(self):
@@ -97,6 +121,6 @@ class MaterialArray(np.ndarray):
         indices = self.indices
         for index, material in enumerate(self.material_list):
             match = (indices == index).nonzero()[0]
-            inverse_dict.update({material.name: match})
+            inverse_dict.update({material: match})
         return inverse_dict
 

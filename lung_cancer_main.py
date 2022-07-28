@@ -16,6 +16,7 @@ from core.data.data_manager import SimulationDataManager
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.transport.propagation_managers import PropagationWithInteraction
 from core.source.sources import Тс99m_MIBI
+from settings.database_setting import material_database, attenuation_database
 
 import numpy as np
 from hepunits import*
@@ -26,8 +27,6 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
     rng = np.random.default_rng()
 
     start_time, stop_time = time_interval
-
-    material_database = MaterialDataBase()
 
     simulation_volume = VolumeWithChilds(
         geometry=Box(120*cm, 120*cm, 80*cm),
@@ -82,19 +81,6 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
         simulation_volume.add_child(spect_head)
         detector_list.append(detector)
 
-    # volumeTester = VolumeTester(simulation_volume)
-    # distribution, edges = volumeTester.getDistribution('density')
-
-    # distribution[distribution == distribution.min()] = np.nan
-
-    # volumeVisualization = VolumeVisualization(distribution)
-    # volumeVisualization.show()
-    # volumeVisualization.exec()
-
-    # source = LungCancer(
-    #     activity=300*MBq
-    # )
-    
     distribution = np.load(f'phantoms/source_function.npy')
     distribution[distribution==40] = 20
     distribution[distribution==30] = 20
@@ -110,7 +96,7 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
     source.set_state(start_time)
 
     propagation_manager = PropagationWithInteraction(
-        material_database=material_database,
+        attenuation_database=attenuation_database,
         rng=rng
     )
 

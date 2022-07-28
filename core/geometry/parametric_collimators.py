@@ -1,10 +1,7 @@
 from core.geometry.woodcoock_volumes import WoodcockParameticVolume
-from core.materials.material_database import MaterialDataBase
+import settings.database_setting as settings
 from core.geometry.geometries import Box
 from numpy import sqrt, mod, abs, stack
-
-from core.materials.materials_old import MaterialArray
-
 
 
 class ParametricParallelCollimator(WoodcockParameticVolume):
@@ -18,7 +15,7 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
     """
 
     def __init__(self, size, hole_diameter, septa, material=None, name=None):
-        material = MaterialDataBase()['Pb'] if material is None else material
+        material = settings.material_database['Pb'] if material is None else material
         super().__init__(
             geometry=Box(*size),
             material=material,
@@ -26,7 +23,7 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
             )
         self._hole_diameter = hole_diameter
         self._septa = septa
-        self._vacuum = MaterialArray(1)[0]
+        self._vacuum = settings.material_database['Vacuum']
         self._compute_constants()
     
     def _compute_constants(self):

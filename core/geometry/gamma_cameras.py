@@ -1,7 +1,7 @@
 import numpy as np
 from core.geometry.volumes import TransformableVolumeWithChild, TransformableVolume
 from core.geometry.geometries import Box
-from core.materials.material_database import MaterialDataBase
+import settings.database_setting as database_setting
 from hepunits import*
 
 
@@ -11,7 +11,7 @@ class GammaCamera(TransformableVolumeWithChild):
     def __init__(self, collimator, detector, shielding_thickness=2*cm, glass_backend_thickness=5*cm, name=None):
         detector_box_size = np.where(collimator.size > detector.size, collimator.size, detector.size)
         detector_box_size[2] = collimator.size[2] + detector.size[2] + glass_backend_thickness
-        material_database = MaterialDataBase()
+        material_database = database_setting.material_database
         detector_box = TransformableVolumeWithChild(
             geometry=Box(*detector_box_size),
             material=material_database['Air, Dry (near sea level)'],

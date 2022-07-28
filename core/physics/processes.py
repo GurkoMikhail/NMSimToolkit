@@ -1,7 +1,7 @@
 import core.physics.g4compton as g4compton
 import core.physics.g4coherent as g4coherent
 from core.materials.attenuation_functions import AttenuationFunction
-from core.materials.material_database import MaterialDataBase
+import settings.database_setting as settings
 from abc import ABC
 import numpy as np
 from numpy import pi, cos
@@ -11,15 +11,15 @@ from hepunits import*
 class Process(ABC):
     """ Класс процесса """
 
-    def __init__(self, material_database=None, rng=None):
+    def __init__(self, attenuation_database=None, rng=None):
         """ Конструктор процесса """
-        self.material_database = MaterialDataBase() if material_database is None else material_database
+        attenuation_database = settings.attenuation_database if attenuation_database is None else attenuation_database
         self.rng = np.random.default_rng() if rng is None else rng
         self._energy_range = np.array([1*keV, 1*MeV])
-        self._construct_attenuation_function()
+        self._construct_attenuation_function(attenuation_database)
 
-    def _construct_attenuation_function(self):
-        self.attenuation_function = AttenuationFunction.construct(self, self.material_database)
+    def _construct_attenuation_function(self, attenuation_database):
+        self.attenuation_function = AttenuationFunction(self, attenuation_database)
 
     @property
     def name(self):
@@ -36,7 +36,7 @@ class Process(ABC):
 
     def get_LAC(self, particle, material):
         energy = particle.energy
-        LAC = self.attenuation_function.get_linear_coefficient(material, energy)
+        LAC = self.attenuation_function(material, energy)
         return LAC
 
     def generate_free_path(self, particle, material):
@@ -75,14 +75,14 @@ class PhotoelectricEffect(Process):
 class CoherentScattering(Process):
     """ Класс когерентного рассеяния """
     
-    def __init__(self, material_database=None, rng=None):
-        super().__init__(material_database, rng)                
+    def __init__(self, attenuation_database=None, rng=None):
+        Process.__init__(self, attenuation_database, rng)                
         self.theta_generator = g4coherent.initialize(self.rng)
 
     def generate_theta(self, particle, material):
         """ Сгенерировать угол рассеяния - theta """
         energy = particle.energy
-        Z = np.array([round(material.Zeff) for material in material], dtype=int)
+        Z = np.array(material.Zeff, dtype=int)
         theta = self.theta_generator(energy, Z)
         return theta
 
@@ -105,8 +105,8 @@ class CoherentScattering(Process):
 class ComptonScattering(CoherentScattering):
     """ Класс эффекта Комптона """
 
-    def __init__(self, material_database=None, rng=None):
-        Process.__init__(self, material_database, rng)
+    def __init__(self, attenuation_database=None, rng=None):
+        Process.__init__(self, attenuation_database, rng)
         self.theta_generator = g4compton.initialize(self.rng)
 
     def culculate_energy_deposit(self, theta, particle_energy):
@@ -142,12 +142,4 @@ process_data_dtype = np.dtype([
     ('emission_position', '3d'),
     ('distance_traveled', 'd'),
 ])
-
-
-processes_list = {
-    'PhotoelectricEffect': PhotoelectricEffect,
-    'ComptonScattering': ComptonScattering,
-    'CoherentScattering': CoherentScattering,
-#     'PairProduction': PairProduction
-}
 

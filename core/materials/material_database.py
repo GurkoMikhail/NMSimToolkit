@@ -14,6 +14,8 @@ class MaterialDataBase(dict):
 
     def __init__(self, base_name = 'NIST Materials'):
         self._base_name = base_name
+        material = Material()
+        self.update({material.name: material})
         self._load_materials()
         
     @property
@@ -41,7 +43,7 @@ class MaterialDataBase(dict):
                 try:
                     ZtoA_ratio = float(np.copy(material_group['Z\\A']))
                 except:
-                    print(f'Для {material_name} отсутствует Z\\A')
+                    # print(f'Для {material_name} отсутствует Z\\A')
                     ZtoA_ratio = 0.5
                 ID = next(self.counter)
                 composition_dict = namedtuple('composition', composition_dict)(**composition_dict)
