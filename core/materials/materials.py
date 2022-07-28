@@ -84,10 +84,19 @@ class MaterialArray(np.ndarray):
     def __setitem__(self, key, value):
         if value not in self:
             self.material_list = np.append(self.material_list, value)
-        index = (self.material_list == value).nonzero()[0][0]
+        index = (self.material_list == value).nonzero()[0]
         self.view(np.ndarray)[key] = index
 
     @property
     def indices(self):
         return np.copy(self)
+    
+    @property
+    def inverse_indices(self):
+        inverse_dict = {}
+        indices = self.indices
+        for index, material in enumerate(self.material_list):
+            match = (indices == index).nonzero()[0]
+            inverse_dict.update({material.name: match})
+        return inverse_dict
 
