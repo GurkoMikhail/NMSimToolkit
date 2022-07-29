@@ -1,4 +1,5 @@
 from collections import namedtuple
+from copy import copy
 from dataclasses import dataclass
 from functools import cache
 from core.materials.atomic_properties import atomic_number
@@ -78,7 +79,7 @@ class MaterialArray(np.ndarray):
 
     def __array_finalize__(self, obj):
         if obj is None: return
-        self.material_list = getattr(obj, 'material_list')
+        self.material_list = copy(getattr(obj, 'material_list'))
         
     def __contains__(self, key):
         return key in self.material_list
