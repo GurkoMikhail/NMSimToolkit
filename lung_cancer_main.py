@@ -144,7 +144,7 @@ if __name__ == '__main__':
     time_intervals = np.linspace(time_start, time_stop, steps + 1)
     time_intervals = np.column_stack([time_intervals[:-1], time_intervals[1:]])
     manager = Manager()
-    with Pool(4) as pool:
+    with Pool(32) as pool:
         for angle in angles:
             lock = manager.Lock()
             for time_interval in time_intervals:
