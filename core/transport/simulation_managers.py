@@ -25,6 +25,7 @@ class SimulationManager(Thread):
         self.min_energy = 1*keV
         self.queue = Queue(maxsize=1) if queue is None else queue
         self.step = 1
+        self.profile = False
         self.daemon = True
         signal(SIGINT, self.sigint_handler)
 
@@ -55,10 +56,16 @@ class SimulationManager(Thread):
         if propagation_data is not None:
             self.send_data(propagation_data)
 
-    def run_profile(self):
-        runctx('self.run()', globals(), locals(), f'Stats/{self.name}.txt')
-
     def run(self):
+        if self.profile:
+            self.run_profile()
+        else:
+            self._run()
+
+    def run_profile(self):
+        runctx('self._run()', globals(), locals(), f'Stats/{self.name}.txt')
+
+    def _run(self):
         """ Реализация работы потока частиц """
         print(f'\"{self.name}\" started; '
             + f'Source timer: {round(self.source.timer/second, 3)} seconds')
