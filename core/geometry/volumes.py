@@ -79,7 +79,7 @@ class VolumeWithChilds(ElementaryVolume):
     def cast_path(self, position, direction):
         distance, current_volume = super().cast_path(position, direction)
         if len(self.childs) > 0:
-            inside = ~current_volume.matching(None)
+            inside = current_volume != 0
             position = position[inside]
             direction = direction[inside]
             distance_inside = distance[inside]
@@ -87,7 +87,7 @@ class VolumeWithChilds(ElementaryVolume):
             distance_to_child = np.full((len(self.childs), position.shape[0]), inf)
             for i, child in enumerate(self.childs):
                 _distance_to_child, child_volume = child.cast_path(position, direction)
-                inside_child = ~child_volume.matching(None)
+                inside_child = child_volume != 0
                 current_volume_inside[inside_child] = child_volume[inside_child]
                 distance_to_child[i] = _distance_to_child
             distance_to_child = distance_to_child.min(axis=0)

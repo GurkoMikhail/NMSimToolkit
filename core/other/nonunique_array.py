@@ -23,6 +23,7 @@ class NonuniqueArray(np.ndarray):
     def __setitem__(self, key, value):
         if isinstance(value, NonuniqueArray):
             for element, indices in value.inverse_indices.items():
+                indices = np.arange(self.size, dtype=int)[key][indices]
                 self[indices] = element
             return
         if value not in self:
@@ -53,7 +54,8 @@ class NonuniqueArray(np.ndarray):
         indices = np.copy(self)
         for index, element in enumerate(self.element_list):
             match = (indices == index).nonzero()[0]
-            inverse_dict.update({element: match})
+            if match.size > 0:
+                inverse_dict.update({element: match})
         return inverse_dict
 
 
