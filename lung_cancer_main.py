@@ -105,7 +105,7 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
         particles_number=10**6,
         stop_time=stop_time
     )
-    simulation_manager.profile = True
+    # simulation_manager.profile = True
     simulation_manager.name = f'{round(angle/degree, 1)} deg'
     simulation_manager.start()
 
@@ -138,7 +138,7 @@ if __name__ == '__main__':
     gamma_gameras = 4
     steps = 2
     time_start = 0.*second
-    time_stop = 0.1*second
+    time_stop = 1*second
 
     angles = np.linspace(0, 2*pi, views, endpoint=False)[:views//gamma_gameras]
     delta_angle = pi/2
