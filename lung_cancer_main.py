@@ -5,7 +5,6 @@ os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['NUMEXPR_NUM_THREADS'] = '1' 
 os.environ['OMP_NUM_THREADS'] = '1'
 
-from core.materials.material_database import MaterialDataBase
 from core.materials.materials import MaterialArray
 from core.geometry.gamma_cameras import GammaCamera
 from core.geometry.geometries import Box
@@ -23,7 +22,6 @@ from hepunits import*
 
 
 def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
-    
     rng = np.random.default_rng()
 
     start_time, stop_time = time_interval
@@ -48,7 +46,6 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
         name='Phantom'
     )
     phantom.set_parent(simulation_volume)
-
     
     detector_list = []
 
@@ -104,7 +101,7 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
         source=source,
         simulation_volume=simulation_volume,
         propagation_manager=propagation_manager,
-        particles_number=10**5,
+        particles_number=10**6,
         stop_time=stop_time
     )
     simulation_manager.profile = True
@@ -114,8 +111,8 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
     simulation_data_manager = SimulationDataManager(
         filename=f'{simulation_manager.name}.hdf',
         sensitive_volumes=detector_list,
-        # lock=lock,
-        iteraction_buffer_size=int(10**3)
+        lock=lock,
+        iteraction_buffer_size=int(10**4)
     )
     
     while True:
@@ -140,7 +137,7 @@ if __name__ == '__main__':
     gamma_gameras = 4
     steps = 1
     time_start = 0.*second
-    time_stop = 1.*second
+    time_stop = 0.1*second
 
     angles = np.linspace(0, 2*pi, views, endpoint=False)[:views//gamma_gameras]
     delta_angle = pi/2
@@ -151,9 +148,7 @@ if __name__ == '__main__':
         for angle in angles:
             lock = manager.Lock()
             for time_interval in time_intervals:
-                # pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, lock))
-                modeling(angle, gamma_gameras, delta_angle, time_interval, lock)
-                sleep(5)
+                pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, lock))
         pool.close()
         pool.join()
 

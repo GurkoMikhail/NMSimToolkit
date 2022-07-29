@@ -9,9 +9,10 @@ class SimulationDataManager:
     Основной класс менеджера данных получаемых при моделировании
     """
 
-    def __init__(self, filename, sensitive_volumes=[], **kwds):
+    def __init__(self, filename, sensitive_volumes=[], lock=None, **kwds):
         self.filename = Path(filename)
         self.sensitive_volumes = sensitive_volumes
+        self.lock = lock
         self.save_emission_distribution = True
         self.save_dose_distribution = True
         self.distribution_voxel_size = 4.*mm
@@ -83,6 +84,13 @@ class SimulationDataManager:
         self.interaction_data = {volume.name: [] for volume in self.sensitive_volumes}
 
     def save_interaction_data(self):
+        if self.lock is None:
+            self._save_interaction_data()
+        else:
+            with self.lock:
+                self._save_interaction_data()
+
+    def _save_interaction_data(self):
         self.concatenate_interaction_data()
         try:
             file = File(f'output data/{self.filename}', 'a')
