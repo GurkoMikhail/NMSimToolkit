@@ -63,7 +63,7 @@ class SimulationManager(Thread):
             self._run()
 
     def run_profile(self):
-        runctx('self._run()', globals(), locals(), f'Stats/{self.name}.txt')
+        runctx('self._run()', globals(), locals(), f'stats/{self.name}.txt')
 
     def _run(self):
         """ Реализация работы потока частиц """
