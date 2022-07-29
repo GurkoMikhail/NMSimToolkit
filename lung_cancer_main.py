@@ -72,7 +72,7 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
             detector=detector,
             shielding_thickness=2*cm,
             glass_backend_thickness=7.6*cm,
-            name=f'GammaCamera at {round((angle + delta_angle*i)/degree, 1)} deg'
+            name=f'Gamma_camera at {round((angle + delta_angle*i)/degree, 1)} deg'
         )
         spect_head.rotate(gamma=pi/2)
         spect_head.translate(y=233*mm + spect_head.size[2]/2)
@@ -107,6 +107,7 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
         particles_number=10**5,
         stop_time=stop_time
     )
+    simulation_manager.profile = True
     simulation_manager.name = f'{round(angle/degree, 1)} deg'
     simulation_manager.start()
 
