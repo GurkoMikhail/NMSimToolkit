@@ -150,11 +150,11 @@ if __name__ == '__main__':
     seeds = seed_sequence.spawn(len(time_intervals))
     
     manager = Manager()
-    locks = [manager.Lock() for _ in time_intervals]
+    lock = manager.Lock()
     
     with Pool(32) as pool:
         for angle in angles:
-            for time_interval, seed, lock in zip(time_intervals, seeds, locks):
+            for time_interval, seed in zip(time_intervals, seeds):
                 pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, seed, lock))
         pool.close()
         pool.join()
