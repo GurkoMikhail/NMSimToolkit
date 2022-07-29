@@ -136,7 +136,7 @@ if __name__ == '__main__':
 
     views = 120
     gamma_gameras = 4
-    steps = 1
+    steps = 2
     time_start = 0.*second
     time_stop = 0.1*second
 
@@ -152,7 +152,7 @@ if __name__ == '__main__':
     manager = Manager()
     lock = manager.Lock()
     
-    with Pool(32) as pool:
+    with Pool(64) as pool:
         for angle in angles:
             for time_interval, seed in zip(time_intervals, seeds):
                 pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, seed, lock))
