@@ -1,5 +1,5 @@
 from pstats import Stats, SortKey
 
-stats = Stats('stats.txt')
-stats.sort_stats(SortKey.TIME).print_stats()
+stats = Stats('stats/0.0 deg.txt')
+stats.sort_stats(SortKey.TIME).print_callees()
 
