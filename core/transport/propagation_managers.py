@@ -31,7 +31,7 @@ class PropagationWithInteraction:
             interacted_particles = particles[interacted]
             processes_LAC = processes_LAC[:, interacted]
             total_LAC = total_LAC[interacted]
-            woodcock_volume = [i for i, volume in enumerate(current_volume) if isinstance(volume, WoodcockVolume)]
+            woodcock_volume = current_volume.type_matching(WoodcockVolume)
             if len(woodcock_volume) > 0:
                 materials[woodcock_volume] = volume.get_material_by_position(interacted_particles.position[woodcock_volume])
                 processes_LAC[:, woodcock_volume] = self.get_processes_LAC(interacted_particles[woodcock_volume], materials[woodcock_volume])

@@ -1,5 +1,5 @@
 from collections import namedtuple
-from copy import copy
+from core.other.nonunique_array import NonuniqueArray
 from dataclasses import dataclass
 from functools import cache
 from core.materials.atomic_properties import atomic_number
@@ -60,44 +60,20 @@ class Material:
         return composition_array
 
 
-class MaterialArray(np.ndarray):
+class MaterialArray(NonuniqueArray):
     """ 
     Класс массива материалов
-
-    [name] = mm\n
-    [type] = mm\n
-    [density] = MeV\n
-    [composition] = ns\n
-    [ZtoA_ratio] = mm\n
     """
     
     def __new__(cls, shape):
-        obj = super().__new__(cls, shape, dtype=int)
-        obj.material_list = [Material(), ]
-        obj.view(np.ndarray)[:] = 0
+        obj = super().__new__(cls, shape)
+        obj.element_list = [Material(), ]
         return obj
-
-    def __array_finalize__(self, obj):
-        if obj is None: return
-        self.material_list = copy(getattr(obj, 'material_list'))
-        
-    def __contains__(self, key):
-        return key in self.material_list
-
-    def __setitem__(self, key, value):
-        if isinstance(value, MaterialArray):
-            for material, indices in value.inverse_indices.items():
-                self[indices] = material
-            return
-        if value not in self:
-            self.material_list.append(value)
-        index = self.material_list.index(value)
-        self.view(np.ndarray)[key] = index
-
-    def restore(self):
-        indices = np.ndarray.__getitem__(self, slice(None))
-        return np.array(self.material_list, dtype=object)[indices]
-
+    
+    @property
+    def material_list(self):
+        return self.element_list
+    
     @property
     def Zeff(self):
         Zeff = np.zeros_like(self, dtype=float)
@@ -111,17 +87,4 @@ class MaterialArray(np.ndarray):
         for material, indices in self.inverse_indices.items():
             density[indices] = material.density
         return density
-
-    @property
-    def indices(self):
-        return np.copy(self)
-    
-    @property
-    def inverse_indices(self):
-        inverse_dict = {}
-        indices = self.indices
-        for index, material in enumerate(self.material_list):
-            match = (indices == index).nonzero()[0]
-            inverse_dict.update({material: match})
-        return inverse_dict
 

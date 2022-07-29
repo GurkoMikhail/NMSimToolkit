@@ -1,39 +1,61 @@
+from copy import copy
 import numpy as np
-
-
-class NonuniqueArray:
     
-    def __init__(self, shape):
-        self._inverse = np.zeros(shape, dtype='u8')
-        self._unique = np.ndarray(0)
     
-    def __getitem__(self, key):
-        new_inverse = self._inverse[key]
-        new_array = NonuniqueArray(new_inverse.shape)
-        new_array._inverse[...] = new_inverse
-        new_array._unique = self._unique
-        return new_array
+class NonuniqueArray(np.ndarray):
+    """ 
+    Класс массива неуникальных элементов
+    """
     
-    def __setitem__(self, key, value):
-        self._unique.dtype = value.dtype
-        self._unique = np.union1d(self._unique, value).view(value.__class__)
-        self._inverse[key] = (self._unique == value).nonzero()[0]
-    
-    def __len__(self):
-        return len(self._inverse)
-    
-    def __array__(self):
-        return np.asarray(self.restore())
-    
-    def restore(self):
-        return self._unique[self._inverse]
-    
-    @classmethod
-    def create(cls, values):
-        unique, inverse = np.unique(values, return_inverse=True)
-        obj = cls(values.shape)
-        obj._inverse[...] = inverse
-        obj._unique = unique
+    def __new__(cls, shape):
+        obj = super().__new__(cls, shape, dtype=int)
+        obj.element_list = [None, ]
+        obj.view(np.ndarray)[:] = 0
         return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None: return
+        self.element_list = copy(getattr(obj, 'element_list'))
+        
+    def __contains__(self, key):
+        return key in self.element_list
+
+    def __setitem__(self, key, value):
+        if isinstance(value, NonuniqueArray):
+            for element, indices in value.inverse_indices.items():
+                self[indices] = element
+            return
+        if value not in self:
+            self.element_list.append(value)
+        index = self.element_list.index(value)
+        self.view(np.ndarray)[key] = index
+
+    def restore(self):
+        indices = np.ndarray.__getitem__(self, slice(None))
+        return np.array(self.element_list, dtype=object)[indices]
+
+    def type_matching(self, type):
+        match = np.zeros_like(self, dtype=bool)
+        indices = np.copy(self)
+        for index, element in enumerate(self.element_list):
+            if isinstance(element, type):
+                match += indices == index
+        return match
+
+    def matching(self, value):
+        index = self.element_list.index(value)
+        indices = np.copy(self)
+        return indices == index
+    
+    @property
+    def inverse_indices(self):
+        inverse_dict = {}
+        indices = np.copy(self)
+        for index, element in enumerate(self.element_list):
+            match = (indices == index).nonzero()[0]
+            inverse_dict.update({element: match})
+        return inverse_dict
+
+
     
     

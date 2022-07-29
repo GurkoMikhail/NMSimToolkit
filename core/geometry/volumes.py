@@ -3,6 +3,7 @@ from itertools import count
 import numpy as np
 from numpy import matmul, inf
 from core.materials.materials import MaterialArray
+from core.other.nonunique_array import NonuniqueArray
 import core.other.utils as utils
 
 
@@ -78,7 +79,7 @@ class VolumeWithChilds(ElementaryVolume):
     def cast_path(self, position, direction):
         distance, current_volume = super().cast_path(position, direction)
         if len(self.childs) > 0:
-            inside = np.array([i for i, volume in enumerate(current_volume) if volume is not None], dtype=int)
+            inside = ~current_volume.matching(None)
             position = position[inside]
             direction = direction[inside]
             distance_inside = distance[inside]
@@ -86,7 +87,7 @@ class VolumeWithChilds(ElementaryVolume):
             distance_to_child = np.full((len(self.childs), position.shape[0]), inf)
             for i, child in enumerate(self.childs):
                 _distance_to_child, child_volume = child.cast_path(position, direction)
-                inside_child = np.array([i for i, volume in enumerate(child_volume) if volume is not None], dtype=int)
+                inside_child = ~child_volume.matching(None)
                 current_volume_inside[inside_child] = child_volume[inside_child]
                 distance_to_child[i] = _distance_to_child
             distance_to_child = distance_to_child.min(axis=0)
@@ -220,17 +221,16 @@ class TransformableVolumeWithChild(TransformableVolume, VolumeWithChilds):
     """ Базовый класс трансформируемого объёма с детьми """  
 
 
-class VolumeArray(np.ndarray):
+class VolumeArray(NonuniqueArray):
     """ Класс списка объёмов """
-
-    def __new__(subtype, shape):
-        return super().__new__(subtype, shape, object)
 
     @property
     def material(self):
         """ Список материалов """
         material = MaterialArray(self.shape)
-        for i, volume in enumerate(self):
-            material[i] = volume.material
+        for volume, indices in self.inverse_indices.items():
+            if volume is None:
+                continue
+            material[indices] = volume.material
         return material
 
