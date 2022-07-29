@@ -18,11 +18,12 @@ from core.source.sources import Тс99m_MIBI
 from settings.database_setting import material_database, attenuation_database
 
 import numpy as np
+from numpy.random import SeedSequence, default_rng
 from hepunits import*
 
 
-def modeling(angle, gamma_gameras, delta_angle, time_interval, lock):
-    rng = np.random.default_rng()
+def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
+    rng = default_rng(seed)
 
     start_time, stop_time = time_interval
 
@@ -135,7 +136,7 @@ if __name__ == '__main__':
 
     views = 120
     gamma_gameras = 4
-    steps = 1
+    steps = 2
     time_start = 0.*second
     time_stop = 0.1*second
 
@@ -144,11 +145,13 @@ if __name__ == '__main__':
     time_intervals = np.linspace(time_start, time_stop, steps + 1)
     time_intervals = np.column_stack([time_intervals[:-1], time_intervals[1:]])
     manager = Manager()
-    with Pool(32) as pool:
+    with Pool(4) as pool:
         for angle in angles:
             lock = manager.Lock()
-            for time_interval in time_intervals:
-                pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, lock))
+            seed_sequence = SeedSequence()
+            seeds = seed_sequence.spawn(len(time_intervals))
+            for seed, time_interval in zip(seeds, time_intervals):
+                pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, seed, lock))
         pool.close()
         pool.join()
 
