@@ -72,7 +72,7 @@ class MaterialArray(np.ndarray):
     
     def __new__(cls, shape):
         obj = super().__new__(cls, shape, dtype=int)
-        obj.material_list = np.array([Material(), ], dtype=object)
+        obj.material_list = [Material(), ]
         obj.view(np.ndarray)[:] = 0
         return obj
 
@@ -89,13 +89,13 @@ class MaterialArray(np.ndarray):
                 self[indices] = material
             return
         if value not in self:
-            self.material_list = np.append(self.material_list, value)
+            self.material_list.append(value)
         index = (self.material_list == value).nonzero()[0]
         self.view(np.ndarray)[key] = index
 
     def restore(self):
         indices = np.ndarray.__getitem__(self, slice(None))
-        return self.material_list[indices]
+        return np.array(self.material_list, dtype=object)[indices]
 
     @property
     def Zeff(self):
