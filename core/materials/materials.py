@@ -90,7 +90,7 @@ class MaterialArray(np.ndarray):
             return
         if value not in self:
             self.material_list.append(value)
-        index = (self.material_list == value).nonzero()[0]
+        index = self.material_list.index(value)
         self.view(np.ndarray)[key] = index
 
     def restore(self):
