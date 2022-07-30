@@ -1,5 +1,6 @@
 import numpy as np
 from numpy import cos, sin
+from datetime import datetime
 # from pyqtgraph import makeARGB
 
 
@@ -28,6 +29,11 @@ def compute_rotation_matrix(angles):
 def unique_with_indices(array):
     return [(uniqueEl, np.array([i for i, element in enumerate(array) if element is uniqueEl])) for uniqueEl in set(array)]
 
+
+def datetime_from_seconds(seconds):
+    zerodatetime = datetime.fromtimestamp(0)
+    nowdatetime = datetime.fromtimestamp(seconds)
+    return nowdatetime - zerodatetime
 
 # def make3DRGBA(array3D, lut=None, levels=None):
 #     levels = [np.nanmin(array3D), np.nanmax(array3D)] if levels is None else levels

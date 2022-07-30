@@ -1,7 +1,11 @@
+import logging
 from pathlib import Path
 from hepunits import*
 from h5py import File
 import numpy as np
+
+_logger = logging.getLogger(__name__)
+_logger.setLevel(logging.DEBUG)
 
 
 class SimulationDataManager:
@@ -95,7 +99,7 @@ class SimulationDataManager:
         try:
             file = File(f'output data/{self.filename}', 'a')
         except Exception:
-            print(f'Не удалось сохранить {self.filename.name}!')
+            _logger.exception(f'Не удалось сохранить данные в {self.filename}!')
         else:
             if not 'interaction_data' in file:
                 group = file.create_group('interaction_data')
@@ -121,7 +125,7 @@ class SimulationDataManager:
                             axis=0
                             )
                         volume_group[key][-interaction_data[key].shape[0]:] = interaction_data[key]
-            print(f'{self.filename.name} generated {self._buffered_interaction_number} events')
+            _logger.info(f'{self._buffered_interaction_number} events saved to {self.filename}')
             file.close()
         self.clear_interaction_data()
 

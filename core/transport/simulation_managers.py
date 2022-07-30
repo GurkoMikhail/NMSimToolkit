@@ -1,11 +1,16 @@
 from cProfile import runctx
+from datetime import datetime
+import logging
 from signal import SIGINT, signal
 from hepunits import*
 import numpy as np
+from core.other.utils import datetime_from_seconds
 from core.transport.propagation_managers import PropagationWithInteraction
 import threading as mt
 import queue
-from time import time
+
+_logger = logging.getLogger(__name__)
+_logger.setLevel(logging.DEBUG)
 
 Queue = queue.Queue
 Thread = mt.Thread
@@ -37,8 +42,7 @@ class SimulationManager(Thread):
         return result
 
     def sigint_handler(self, signal, frame):
-        print(f'\"{self.name}\" interrupted; '
-            + f'Source timer: {round(self.source.timer/second, 3)} seconds')
+        _logger.error(f'{self.name} interrupted at {round(self.source.timer/second, 3)} seconds')
         self.stop_time = 0
 
     def send_data(self, data):
@@ -54,6 +58,7 @@ class SimulationManager(Thread):
             self.particles = self.particles[~invalid_particles]
         self.step += 1
         if propagation_data is not None:
+            _logger.debug(f'{self.name} generated {propagation_data.size} events')
             self.send_data(propagation_data)
 
     def run(self):
@@ -67,14 +72,14 @@ class SimulationManager(Thread):
 
     def _run(self):
         """ Реализация работы потока частиц """
-        print(f'\"{self.name}\" started; '
-            + f'Source timer: {round(self.source.timer/second, 3)} seconds')
-        start = time()
+        _logger.warning(f'{self.name} started from {datetime_from_seconds(self.source.timer/second)} to {datetime_from_seconds(self.stop_time/second)}')
+        start_timepoint = datetime.now()
         self.particles = self.source.generate_particles(self.particles_number)
         while self.particles.size > 0:
                 self.next_step()
-                # print(f'Source timer: {self.source.timer/s} seconds')
+                _logger.debug(f'Source timer of {self.name} at {datetime_from_seconds(self.source.timer/second)}')
         self.queue.put('stop')
-        print(f'{self.name} finished\n'
-            + f'\tTime passed: {time() - start} seconds')
+        stop_timepoint = datetime.now()
+        _logger.warning(f'{self.name} finished at {datetime_from_seconds(self.source.timer/second)}')
+        _logger.info(f'The simulation of {self.name} took {stop_timepoint - start_timepoint}')
 

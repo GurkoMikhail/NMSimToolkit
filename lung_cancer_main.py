@@ -1,5 +1,4 @@
 import os
-from time import sleep
 
 os.environ['MKL_NUM_THREADS'] = '1' 
 os.environ['NUMEXPR_NUM_THREADS'] = '1' 
@@ -17,9 +16,12 @@ from core.transport.propagation_managers import PropagationWithInteraction
 from core.source.sources import Тс99m_MIBI
 from settings.database_setting import material_database, attenuation_database
 
+import sys
 import numpy as np
+from multiprocessing import Pool, Manager
 from numpy.random import SeedSequence, default_rng
 from hepunits import*
+import logging
 
 
 def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
@@ -116,6 +118,18 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
         iteraction_buffer_size=int(10**4)
     )
     
+    _logger = logging.getLogger()
+    
+    _sys_handler = logging.StreamHandler(sys.stdout)
+    _sys_handler.setLevel(logging.WARNING)
+    _sys_handler.setFormatter(logging.Formatter(fmt='[%(asctime)s] %(message)s'))
+    _logger.addHandler(_sys_handler)
+    
+    _file_handler = logging.FileHandler(f'logs/{simulation_manager.name}.log')
+    _file_handler.setLevel(logging.INFO)
+    _file_handler.setFormatter(logging.Formatter(fmt='[%(asctime)s] %(message)s'))
+    _logger.addHandler(_file_handler)
+    
     while True:
         data = simulation_manager.queue.get()
         if isinstance(data, np.ndarray):
@@ -129,16 +143,11 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
 
 
 if __name__ == '__main__':
-    from multiprocessing import Pool, Manager
-    from signal import SIGINT, signal
-
-    # signal(SIGINT, lambda x, y: None)
-
     views = 120
     gamma_gameras = 4
-    steps = 2
-    time_start = 0.*second
-    time_stop = 1*second
+    steps = 1
+    time_start = 1.*second
+    time_stop = 2*second
 
     angles = np.linspace(0, 2*pi, views, endpoint=False)[:views//gamma_gameras]
     delta_angle = pi/2
