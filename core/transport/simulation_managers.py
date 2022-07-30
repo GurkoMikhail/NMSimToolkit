@@ -42,7 +42,7 @@ class SimulationManager(Thread):
         return result
 
     def sigint_handler(self, signal, frame):
-        _logger.error(f'{self.name} interrupted at {round(self.source.timer/second, 3)} seconds')
+        _logger.error(f'{self.name} interrupted at {datetime_from_seconds(self.source.timer/second)}')
         self.stop_time = 0
 
     def send_data(self, data):
