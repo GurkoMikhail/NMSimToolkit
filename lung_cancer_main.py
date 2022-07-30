@@ -13,8 +13,7 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
     logging.basicConfig(
         filename=f'logs/{round(angle/degree, 1)} deg.log',
         filemode='w',
-        format='[%(asctime)s: %(levelname)s] %(message)s',
-        exc_info=True
+        format='[%(asctime)s: %(levelname)s] %(message)s'
     )
     
     from core.materials.materials import MaterialArray
@@ -155,7 +154,7 @@ if __name__ == '__main__':
     manager = Manager()
     locks = [manager.Lock() for _ in range(angles.size)]
     
-    with Pool(int(steps*angles.size)) as pool:
+    with Pool(2) as pool:
         for angle, lock in zip(angles, locks):
             seeds = seed_sequence.spawn(steps)
             for time_interval, seed in zip(time_intervals, seeds):
