@@ -154,7 +154,7 @@ if __name__ == '__main__':
     manager = Manager()
     locks = [manager.Lock() for _ in range(angles.size)]
     
-    with Pool(2) as pool:
+    with Pool(steps*angles.size) as pool:
         for angle, lock in zip(angles, locks):
             seeds = seed_sequence.spawn(steps)
             for time_interval, seed in zip(time_intervals, seeds):
