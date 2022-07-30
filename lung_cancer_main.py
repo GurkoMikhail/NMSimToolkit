@@ -4,28 +4,32 @@ os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['NUMEXPR_NUM_THREADS'] = '1' 
 os.environ['OMP_NUM_THREADS'] = '1'
 
-from core.materials.materials import MaterialArray
-from core.geometry.gamma_cameras import GammaCamera
-from core.geometry.geometries import Box
-from core.geometry.parametric_collimators import ParametricParallelCollimator
-from core.geometry.volumes import TransformableVolume, VolumeWithChilds
-from core.transport.simulation_managers import SimulationManager
-from core.data.data_manager import SimulationDataManager
-from core.geometry.voxel_volumes import WoodcockVoxelVolume
-from core.transport.propagation_managers import PropagationWithInteraction
-from core.source.sources import Тс99m_MIBI
-from settings.database_setting import material_database, attenuation_database
-
-import sys
 import numpy as np
-from multiprocessing import Pool, Manager
-from numpy.random import SeedSequence, default_rng
 from hepunits import*
-import logging
 
 
 def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
-    rng = default_rng(seed)
+    import logging
+    logging.basicConfig(
+        filename=f'logs/{round(angle/degree, 1)} deg.log',
+        filemode='w',
+        format='[%(asctime)s: %(levelname)s] %(message)s',
+        exc_info=True
+    )
+    
+    from core.materials.materials import MaterialArray
+    from core.geometry.gamma_cameras import GammaCamera
+    from core.geometry.geometries import Box
+    from core.geometry.parametric_collimators import ParametricParallelCollimator
+    from core.geometry.volumes import TransformableVolume, VolumeWithChilds
+    from core.transport.simulation_managers import SimulationManager
+    from core.data.data_manager import SimulationDataManager
+    from core.geometry.voxel_volumes import WoodcockVoxelVolume
+    from core.transport.propagation_managers import PropagationWithInteraction
+    from core.source.sources import Тс99m_MIBI
+    from settings.database_setting import material_database, attenuation_database
+
+    rng = np.random.default_rng(seed)
 
     start_time, stop_time = time_interval
 
@@ -118,18 +122,6 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
         iteraction_buffer_size=int(10**4)
     )
     
-    _logger = logging.getLogger()
-    
-    _sys_handler = logging.StreamHandler(sys.stdout)
-    _sys_handler.setLevel(logging.WARNING)
-    _sys_handler.setFormatter(logging.Formatter(fmt='[%(asctime)s] %(message)s'))
-    _logger.addHandler(_sys_handler)
-    
-    _file_handler = logging.FileHandler(f'logs/{simulation_manager.name}.log')
-    _file_handler.setLevel(logging.INFO)
-    _file_handler.setFormatter(logging.Formatter(fmt='[%(asctime)s] %(message)s'))
-    _logger.addHandler(_file_handler)
-    
     while True:
         data = simulation_manager.queue.get()
         if isinstance(data, np.ndarray):
@@ -143,6 +135,9 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
 
 
 if __name__ == '__main__':
+    from multiprocessing import Pool, Manager
+    from numpy.random import SeedSequence
+    
     views = 120
     gamma_gameras = 4
     steps = 1
