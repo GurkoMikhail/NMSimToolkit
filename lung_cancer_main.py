@@ -136,9 +136,9 @@ if __name__ == '__main__':
 
     views = 120
     gamma_gameras = 4
-    steps = 5
+    steps = 2
     time_start = 0.*second
-    time_stop = 5*second
+    time_stop = 1*second
 
     angles = np.linspace(0, 2*pi, views, endpoint=False)[:views//gamma_gameras]
     delta_angle = pi/2
@@ -147,14 +147,14 @@ if __name__ == '__main__':
     time_intervals = np.column_stack([time_intervals[:-1], time_intervals[1:]])
     
     seed_sequence = SeedSequence()
-    seeds = seed_sequence.spawn(steps)
     
     manager = Manager()
-    locks = [manager.Lock() for i in range(steps)]
+    locks = [manager.Lock() for _ in range(angles.size)]
     
-    with Pool(160) as pool:
-        for angle in angles:
-            for time_interval, seed, lock in zip(time_intervals, seeds, locks):
+    with Pool(int(steps*angles.size)) as pool:
+        for angle, lock in zip(angles, locks):
+            seeds = seed_sequence.spawn(steps)
+            for time_interval, seed in zip(time_intervals, seeds):
                 pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, seed, lock))
         pool.close()
         pool.join()
