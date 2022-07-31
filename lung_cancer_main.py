@@ -13,12 +13,10 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
     from settings.telegram_bot_settings import token, user_id
     from core.other.telegram_bot import TeleBotStream
     logging.basicConfig(
-        # filename=f'logs/{round(angle/degree, 1)} deg.log',
-        # filemode='w',
-        format='[%(asctime)s: %(levelname)s] %(message)s',
+        format='[%(asctime)s: %(levelname)s]\n%(message)s',
         stream=TeleBotStream(token, user_id)
     )
-    logging.disable(logging.DEBUG)
+    logging.disable(logging.INFO)
     
     from core.materials.materials import MaterialArray
     from core.geometry.gamma_cameras import GammaCamera
