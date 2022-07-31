@@ -98,7 +98,7 @@ class SimulationDataManager:
     def _save_interaction_data(self):
         self.concatenate_interaction_data()
         try:
-            file = File(f'output data/{self.filename}', 'a')
+            file = File(self.filename, 'a')
         except Exception:
             _logger.exception(f'Не удалось сохранить данные в {self.filename}!')
         else:
