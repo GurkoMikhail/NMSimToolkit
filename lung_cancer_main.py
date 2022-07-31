@@ -15,6 +15,7 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
         filemode='w',
         format='[%(asctime)s: %(levelname)s] %(message)s'
     )
+    logging.disable(logging.DEBUG)
     
     from core.materials.materials import MaterialArray
     from core.geometry.gamma_cameras import GammaCamera
@@ -139,9 +140,11 @@ if __name__ == '__main__':
     
     views = 120
     gamma_gameras = 4
-    steps = 1
-    time_start = 1.*second
-    time_stop = 2*second
+    steps = 6
+    time_start = 2.*second
+    time_stop = 5*second
+    
+    pool_size = 30
 
     angles = np.linspace(0, 2*pi, views, endpoint=False)[:views//gamma_gameras]
     delta_angle = pi/2
@@ -154,10 +157,10 @@ if __name__ == '__main__':
     manager = Manager()
     locks = [manager.Lock() for _ in range(angles.size)]
     
-    with Pool(steps*angles.size) as pool:
-        for angle, lock in zip(angles, locks):
-            seeds = seed_sequence.spawn(steps)
-            for time_interval, seed in zip(time_intervals, seeds):
+    with Pool(pool_size) as pool:
+        for time_interval in zip(time_intervals):
+            for angle, lock in zip(angles, locks):
+                seed = seed_sequence.spawn(1)[0]
                 pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, seed, lock))
         pool.close()
         pool.join()
