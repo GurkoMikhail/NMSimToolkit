@@ -95,11 +95,12 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
         detector_list.append(detector)
 
     distribution = np.load(f'phantoms/source_function.npy')
-    distribution[distribution==40] = 20
+    distribution[distribution==40] = 10
     distribution[distribution==30] = 20
     distribution[distribution==70] = 40
-    distribution[distribution==89] = 50
     distribution[distribution==80] = 40
+    distribution[distribution==89] = 50
+    distribution[distribution==140] = 200
     source = Тс99m_MIBI(
         distribution=distribution,
         activity=300*MBq,
