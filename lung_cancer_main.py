@@ -10,13 +10,21 @@ from hepunits import*
 
 def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
     import logging
-    from settings.telegram_bot_settings import token, user_id
-    from core.other.telegram_bot import TeleBotStream
+    from core.other.telegram_bot import TeleBotHandler
+    from pathlib import Path
+    
+    log_path = Path(f'logs/lung_cancer/{round(angle/degree, 1)} deg.log')
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('[%(asctime)s: %(levelname)s] %(message)s'))
+    telebot_handler = TeleBotHandler()
+    telebot_handler.setLevel(logging.WARNING)
+    telebot_handler.setFormatter(logging.Formatter('[%(asctime)s: %(levelname)s]\n%(message)s'))
+    
     logging.basicConfig(
-        format='[%(asctime)s: %(levelname)s]\n%(message)s',
-        stream=TeleBotStream(token, user_id)
+        handlers=[file_handler, telebot_handler]
     )
-    logging.disable(logging.INFO)
     
     from core.materials.materials import MaterialArray
     from core.geometry.gamma_cameras import GammaCamera
@@ -112,12 +120,11 @@ def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
         particles_number=10**6,
         stop_time=stop_time
     )
-    # simulation_manager.profile = True
     simulation_manager.name = f'{round(angle/degree, 1)} deg'
     simulation_manager.start()
 
     simulation_data_manager = SimulationDataManager(
-        filename=f'{simulation_manager.name}.hdf',
+        filename=f'lung_cancer/{simulation_manager.name}.hdf',
         sensitive_volumes=detector_list,
         lock=lock,
         iteraction_buffer_size=int(10**4)
@@ -141,8 +148,8 @@ if __name__ == '__main__':
     
     views = 120
     gamma_gameras = 4
-    steps = 6
-    time_start = 2.*second
+    steps = 5
+    time_start = 0.*second
     time_stop = 5*second
     
     pool_size = 30

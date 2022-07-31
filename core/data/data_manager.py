@@ -14,7 +14,8 @@ class SimulationDataManager:
     """
 
     def __init__(self, filename, sensitive_volumes=[], lock=None, **kwds):
-        self.filename = Path(filename)
+        self.filename = Path(f'output data/{filename}')
+        self.filename.parent.mkdir(parents=True, exist_ok=True)
         self.sensitive_volumes = sensitive_volumes
         self.lock = lock
         self.save_emission_distribution = True
