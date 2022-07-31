@@ -10,10 +10,13 @@ from hepunits import*
 
 def modeling(angle, gamma_gameras, delta_angle, time_interval, seed, lock):
     import logging
+    from settings.telegram_bot_settings import token, user_id
+    from core.other.telegram_bot import TeleBotStream
     logging.basicConfig(
-        filename=f'logs/{round(angle/degree, 1)} deg.log',
-        filemode='w',
-        format='[%(asctime)s: %(levelname)s] %(message)s'
+        # filename=f'logs/{round(angle/degree, 1)} deg.log',
+        # filemode='w',
+        format='[%(asctime)s: %(levelname)s] %(message)s',
+        stream=TeleBotStream(token, user_id)
     )
     logging.disable(logging.DEBUG)
     
@@ -158,7 +161,7 @@ if __name__ == '__main__':
     locks = [manager.Lock() for _ in range(angles.size)]
     
     with Pool(pool_size) as pool:
-        for time_interval in zip(time_intervals):
+        for time_interval in time_intervals:
             for angle, lock in zip(angles, locks):
                 seed = seed_sequence.spawn(1)[0]
                 pool.apply_async(modeling, (angle, gamma_gameras, delta_angle, time_interval, seed, lock))
