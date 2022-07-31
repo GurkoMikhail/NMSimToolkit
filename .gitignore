@@ -129,10 +129,10 @@ dmypy.json
 .pyre/
 
 # Output files
-/output data
+/output data/*.hdf
 
 # stat files
-/stats
+/stats/*.txt
 
 # log files
-/logs
+/logs/*.log
