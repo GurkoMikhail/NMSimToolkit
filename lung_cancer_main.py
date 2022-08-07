@@ -150,8 +150,8 @@ if __name__ == '__main__':
     views = 120
     gamma_gameras = 4
     steps = 5
-    time_start = 0.*second
-    time_stop = 5*second
+    time_start = 5.*second
+    time_stop = 15*second
     
     pool_size = 30
 
