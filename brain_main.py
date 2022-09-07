@@ -13,7 +13,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     from core.other.telegram_bot import TeleBotHandler
     from pathlib import Path
     
-    log_path = Path(f'logs/lung_cancer/{round(angle/degree, 1)} deg.log')
+    log_path = Path(f'logs/brain_healthy/{round(angle/degree, 1)} deg.log')
     log_path.parent.mkdir(parents=True, exist_ok=True)
     file_handler = logging.FileHandler(log_path)
     file_handler.setLevel(logging.INFO)
@@ -48,13 +48,10 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
         name='Simulation_volume'
     )
 
-    material_ID_distribution = np.load('phantoms/material_map.npy')
+    material_ID_distribution = np.load('phantoms/hoffman_attenuation.npy')
     material_distribution = MaterialArray(material_ID_distribution.shape)
     material_distribution[material_ID_distribution == 0] = material_database['Air, Dry (near sea level)']
-    material_distribution[material_ID_distribution == 1] = material_database['Lung']
-    material_distribution[material_ID_distribution == 2] = material_database['Adipose Tissue (ICRU-44)']
     material_distribution[material_ID_distribution == 3] = material_database['Tissue, Soft (ICRU-44)']
-    material_distribution[material_ID_distribution == 4] = material_database['Bone, Cortical (ICRU-44)']
 
     phantom = WoodcockVoxelVolume(
         voxel_size=4*mm,
@@ -94,16 +91,10 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
         simulation_volume.add_child(spect_head)
         detector_list.append(detector)
 
-    distribution = np.load(f'phantoms/source_function.npy')
-    distribution[distribution==40] = 10
-    distribution[distribution==30] = 20
-    distribution[distribution==70] = 40
-    distribution[distribution==80] = 40
-    distribution[distribution==89] = 50
-    distribution[distribution==140] = 200
+    distribution = np.load(f'phantoms/hoffman_activity.npy')
     source = Тс99m_MIBI(
         distribution=distribution,
-        activity=300*MBq,
+        activity=200*MBq,
         voxel_size=4*mm
     )
     source.rng = rng
@@ -125,7 +116,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     simulation_manager.start()
 
     simulation_data_manager = SimulationDataManager(
-        filename=f'lung_cancer/{simulation_manager.name}.hdf',
+        filename=f'brain_healthy/{simulation_manager.name}.hdf',
         sensitive_volumes=detector_list,
         lock=lock,
         iteraction_buffer_size=int(10**4)
@@ -150,11 +141,11 @@ if __name__ == '__main__':
     views = 120
     gamma_cameras = 4
     steps = 5
-    radius = 233*mm
-    time_start = 5.*second
-    time_stop = 15*second
+    radius = 200*mm
+    time_start = 0.*second
+    time_stop = 5*second
     
-    pool_size = 30
+    pool_size = 4
 
     angles = np.linspace(0, 2*pi, views, endpoint=False)[:views//gamma_cameras]
     delta_angle = pi/2
