@@ -145,7 +145,7 @@ if __name__ == '__main__':
     time_start = 0.*second
     time_stop = 5*second
     
-    pool_size = 4
+    pool_size = 30
 
     angles = np.linspace(0, 2*pi, views, endpoint=False)[:views//gamma_cameras]
     delta_angle = pi/2
