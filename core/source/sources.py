@@ -27,7 +27,14 @@ class Source:
         self.voxel_size = voxel_size
         self.size = np.asarray(self.distribution.shape)*self.voxel_size
         self.radiation_type = radiation_type
-        self.energy = energy
+        
+        energy = [[energy, 1.0], ] if not isinstance(energy, list) else energy
+        energy = np.array(energy)
+        self.energy = np.zeros(energy.shape[0], dtype=[("energy", "d"), ("probability", "d")])
+        self.energy["energy"] = energy[:, 0]
+        self.energy["probability"] = energy[:, 1]
+        self.energy["probability"] /= np.sum(self.energy["probability"])
+        
         self.half_life = half_life
         self.timer = 0.
         self._generate_emission_table()
@@ -93,6 +100,10 @@ class Source:
             return
         self.rng.bit_generator.state['state'] = rng_state
 
+    def generate_energy(self, n):
+        energy = self.rng.choice(self.energy["energy"], n, p=self.energy["probability"])
+        return energy
+
     def generate_position(self, n):
         position = self.emission_table[0]
         probability = self.emission_table[1]
@@ -120,7 +131,7 @@ class Source:
         return direction
 
     def generate_particles(self, n):
-        energy = np.full(n, self.energy)
+        energy = self.generate_energy(n)
         direction = self.generate_direction(n)
         position = self.generate_position(n)
         emission_time, dt = self.generate_emission_time(n)
@@ -169,6 +180,32 @@ class Тс99m_MIBI(Source):
         radiation_type = 'Gamma'
         energy = 140.5*keV
         half_life = 6.*hour
+        super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
+
+class I123(Source):
+    """
+    Источник I123
+
+    [position = (x, y, z)] = cm
+
+    [activity] = Bq
+
+    [distribution] = float[:,:,:]
+
+    [voxel_size] = cm
+    """
+
+    def __init__(self, distribution, activity=None, voxel_size=4*mm):
+        radiation_type = 'Gamma'
+        energy = [
+            [158.97*keV, 83.0],
+            [528.96*keV, 1.39],
+            [440.02*keV, 0.428],
+            [538.54*keV, 0.382],
+            [505.33*keV, 0.316],
+            [346.35*keV, 0.126],
+        ]
+        half_life = 13.27*hour
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
 
