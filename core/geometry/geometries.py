@@ -43,6 +43,7 @@ class Box(Geometry):
             'distance_method',
             'distance_epsilon'
         ]
+        self.fast_ray_casting = True
 
         for arg in args:
             if arg in kwds:
@@ -67,4 +68,16 @@ class Box(Geometry):
         return distance, inside
 
     def ray_casting(self, position, direction):
-        return numba_ray_casting(position, direction, np.array(self.half_size), self.distance_epsilon)
+        if self.fast_ray_casting:
+            return numba_ray_casting(position, direction, np.array(self.half_size), self.distance_epsilon)
+        else:
+            inside = np.max(np.abs(position) - self.half_size, axis=1) <= 0
+            norm_pos = -position/direction
+            norm_size = np.abs(self.half_size/direction)
+            tmin = np.max(norm_pos - norm_size, axis=1)
+            tmax = np.min(norm_pos + norm_size, axis=1)
+            distance = np.where(tmax > tmin, tmin, np.inf)
+            distance[inside] = tmax[inside]
+            distance[distance < 0] = np.inf
+            distance += self.distance_epsilon
+            return distance, inside
