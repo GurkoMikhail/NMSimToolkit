@@ -16,7 +16,6 @@ class PropagationWithInteraction:
         self.rng = np.random.default_rng() if rng is None else rng
         self.processes = [process(self.attenuation_database, rng) for process in processes_list]
 
-
     def __call__(self, particles, volume):
         """ Сделать шаг """
         distance, current_volume = volume.cast_path(particles.position, particles.direction)

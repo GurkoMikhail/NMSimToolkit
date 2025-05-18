@@ -143,7 +143,9 @@ interaction_data_dtype = np.dtype([
         ('material_density', 'd'),
         ('scattering_angles', '2d'),
         ('emission_time', 'd'),
+        ('emission_energy', 'd'),
         ('emission_position', '3d'),
+        ('emission_direction', '3d'),
         ('distance_traveled', 'd'),
 ])
 

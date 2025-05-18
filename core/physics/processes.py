@@ -55,7 +55,9 @@ class Process(ABC):
         interaction_data.energy_deposit = 0.
         interaction_data.scattering_angles = 0.
         interaction_data.emission_time = particle.emission_time
+        interaction_data.emission_energy = particle.emission_energy
         interaction_data.emission_position = particle.emission_position
+        interaction_data.emission_direction = particle.emission_direction
         interaction_data.distance_traveled = particle.distance_traveled
         return interaction_data
 
@@ -139,7 +141,9 @@ process_data_dtype = np.dtype([
     ('energy_deposit', 'd'),
     ('scattering_angles', '2d'),
     ('emission_time', 'd'),
+    ('emission_energy', 'd'),
     ('emission_position', '3d'),
+    ('emission_direction', '3d'),
     ('distance_traveled', 'd'),
 ])
 

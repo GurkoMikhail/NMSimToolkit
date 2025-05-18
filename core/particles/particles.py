@@ -33,9 +33,19 @@ class ParticleProperties(ABC):
         return self['emission_time'].copy()
 
     @property
+    def emission_energy(self):
+        """ Энергия частицы при эмиссии """
+        return self['emission_energy'].copy()
+
+    @property
     def emission_position(self):
         """ Положение эмиссии частиц """
         return self['emission_position'].copy()
+
+    @property
+    def emission_direction(self):
+        """ Направление эмиссии частиц """
+        return self['emission_direction'].copy()
 
     @property
     def distance_traveled(self):
@@ -62,19 +72,22 @@ class ParticleArray(np.ndarray, ParticleProperties):
     [energy] = MeV\n
     [emission_time] = ns\n
     [emission_position] = mm\n
+    [emission_direction] = mm\n
     [distance_traveled] = mm\n
     """
 
     count = 0
 
-    def __new__(subtype, type, position, direction, energy, emission_time=None, emission_position=None, distance_traveled=None):
+    def __new__(subtype, type, position, direction, energy, emission_time=None, emission_position=None, emission_direction=None, distance_traveled=None):
         obj = super().__new__(subtype, shape=energy.size, dtype=(Particle, dtype_of_particle))
         obj['type'] = type
         obj['position'] = position
         obj['direction'] = direction
         obj['energy'] = energy
         obj['emission_time'] = 0 if emission_time is None else emission_time
+        obj['emission_energy'] = energy
         obj['emission_position'] = position if emission_position is None else emission_position
+        obj['emission_direction'] = direction if emission_direction is None else emission_direction
         obj['distance_traveled'] = 0 if distance_traveled is None else distance_traveled
         obj['ID'] = subtype.__get_ID(obj.size)
         return obj
@@ -119,7 +132,9 @@ dtype_of_particle = np.dtype([
     ('direction', '3d'),
     ('energy', 'd'),
     ('emission_time', 'd'),
+    ('emission_energy', 'd'),
     ('emission_position', '3d'),
+    ('emission_direction', '3d'),
     ('distance_traveled', 'd'),
     ('ID', 'u8')
 ])
