@@ -8,9 +8,9 @@ from hepunits import*
 class GammaCamera(TransformableVolumeWithChild):
 
 
-    def __init__(self, collimator, detector, shielding_thickness=2*cm, glass_backend_thickness=5*cm, name=None):
+    def __init__(self, collimator, detector, gap=1*mm, shielding_thickness=2*cm, glass_backend_thickness=5*cm, name=None):
         detector_box_size = np.where(collimator.size > detector.size, collimator.size, detector.size)
-        detector_box_size[2] = collimator.size[2] + detector.size[2] + glass_backend_thickness
+        detector_box_size[2] = collimator.size[2] + gap + detector.size[2] + glass_backend_thickness
         material_database = database_setting.material_database
         detector_box = TransformableVolumeWithChild(
             geometry=Box(*detector_box_size),
@@ -29,13 +29,13 @@ class GammaCamera(TransformableVolumeWithChild):
             material=material_database['Pb'],
             name=name
         )
-        detector_box.translate(z=shielding_thickness)
+        detector_box.translate(z=shielding_thickness/2)
         detector_box.set_parent(self)
         collimator.translate(z=(detector_box_size[2]/2 - collimator.size[2]/2))
         detector_box.add_child(collimator)
-        detector.translate(z=(detector_box_size[2]/2 - collimator.size[2] - detector.size[2]/2))
+        detector.translate(z=(detector_box_size[2]/2 - collimator.size[2] - detector.size[2]/2 - gap))
         detector_box.add_child(detector)
-        glass_backend.translate(z=(detector_box_size[2]/2 - collimator.size[2] - detector.size[2] - glass_backend.size[2]/2))
+        glass_backend.translate(z=(glass_backend.size[2]/2 - detector_box_size[2]/2))
         detector_box.add_child(glass_backend)
 
     @property
