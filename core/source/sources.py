@@ -142,7 +142,7 @@ class Source:
 
 class PointSource(Source):
     """
-    Источник 99mТс-MIBI
+    Точечный источник
 
     [position = (x, y, z)] = cm
 
@@ -151,17 +151,16 @@ class PointSource(Source):
     [energy] = eV
     """
 
-    def __init__(self, position, activity, energy):
+    def __init__(self, activity, energy, size=1.*mm, half_life=6.*hour, rng=None):
         distribution = [[[1.]]]
-        voxel_size = 1.*mm
-        radiation_type = 'Gamma'
-        half_life = 6.*hour
-        rotation_angles = None
-        rotation_center = None
-        super().__init__(position, activity, distribution, voxel_size, radiation_type, energy, half_life, rotation_angles, rotation_center)
-
-    def generate_position(self, n):
-        return np.full((n, 3), self.position)
+        super().__init__(
+            distribution=distribution,
+            activity=activity,
+            voxel_size=size,
+            energy=energy,
+            half_life=half_life,
+            rng=rng
+        )
 
 class Тс99m_MIBI(Source):
     """
