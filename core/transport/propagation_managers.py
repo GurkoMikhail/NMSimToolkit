@@ -4,7 +4,6 @@ import settings.database_setting as database_setting
 import settings.processes_settings as processes_settings
 from core.geometry.woodcoock_volumes import WoodcockVolume
 from hepunits import*
-from core.numba_backend.fast_index import numba_fast_index, numba_fast_insert
 
 
 class PropagationWithInteraction:
@@ -18,7 +17,7 @@ class PropagationWithInteraction:
 
     def __call__(self, particles, volume):
         """ Сделать шаг """
-        distance, current_volume = volume.cast_path(particles.position, particles.direction)
+        distance, current_volume  = volume.cast_path(particles.position, particles.direction)
         materials = current_volume.material
         processes_LAC = self.get_processes_LAC(particles, materials)
         total_LAC = processes_LAC.sum(axis=0)
@@ -28,8 +27,8 @@ class PropagationWithInteraction:
         particles.move(distance)
         if interacted.size > 0:
             current_volume = current_volume[interacted]
-            materials = materials[interacted]    
-            interacted_particles = numba_fast_index(particles, interacted, np.empty(interacted.size, dtype=particles.dtype)).view(type(particles))
+            materials = materials[interacted]
+            interacted_particles = particles[interacted]
             processes_LAC = processes_LAC[:, interacted]
             total_LAC = total_LAC[interacted]
             woodcock_volume = current_volume.type_matching(WoodcockVolume)
@@ -37,22 +36,19 @@ class PropagationWithInteraction:
                 materials[woodcock_volume] = volume.get_material_by_position(interacted_particles.position[woodcock_volume])
                 processes_LAC[:, woodcock_volume] = self.get_processes_LAC(interacted_particles[woodcock_volume], materials[woodcock_volume])
             interaction_data = []
-
             for process, indices in self.choose_process(processes_LAC, total_LAC):
                 processing_particles = interacted_particles[indices]
                 interaction_data.append(process(processing_particles, materials[indices]))
                 interacted_particles[indices] = processing_particles
-    
-            numba_fast_insert(particles, interacted, interacted_particles)
-
+            particles[interacted] = interacted_particles
             return np.concatenate(interaction_data).view(np.recarray)
-    
+
     def get_processes_LAC(self, particles, materials):
-        results = []
+        LAC = []
         for process in self.processes:
-            results.append(process.get_LAC(particles, materials))
-        return np.stack(results)
-    
+            LAC.append(process.get_LAC(particles, materials))
+        return np.asarray(LAC)
+
     def get_total_LAC(self, particles, materials):
         total_LAC = np.zeros(particles.size, dtype=float)
         for process in self.processes:

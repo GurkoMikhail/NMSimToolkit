@@ -1,10 +1,7 @@
 import numpy as np
-from numba import njit
 from abc import ABC, abstractmethod
 from numpy import inf
 from hepunits import*
-from core.numba_backend.ray_cast import numba_ray_casting
-from core.numba_backend.check_inside import numba_check_inside
 
 
 class Geometry(ABC):
@@ -52,7 +49,7 @@ class Box(Geometry):
         return np.max(np.abs(position) - self.half_size, axis=1) > 0
 
     def check_inside(self, position):
-        return numba_check_inside(position, self.half_size)
+        return np.max(np.abs(position) - self.half_size, axis=1) <= 0
 
     def cast_path(self, position, direction):
         return getattr(self, self.distance_method)(position, direction)
@@ -67,4 +64,14 @@ class Box(Geometry):
         return distance, inside
 
     def ray_casting(self, position, direction):
-        return numba_ray_casting(position, direction, np.array(self.half_size), self.distance_epsilon)
+        inside = self.check_inside(position)
+        norm_pos = -position/direction
+        norm_size = np.abs(self.half_size/direction)
+        tmin = np.max(norm_pos - norm_size, axis=1)
+        tmax = np.min(norm_pos + norm_size, axis=1)
+        distance = np.where(tmax > tmin, tmin, inf)
+        distance[inside] = tmax[inside]
+        distance[distance < 0] = inf
+        distance += self.distance_epsilon
+        return distance, inside
+        
