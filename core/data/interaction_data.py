@@ -3,33 +3,32 @@ from typing import Optional, Any, Union, Tuple, cast, Dict
 from numpy.typing import NDArray
 from core.other.typing_definitions import Float, ID
 
-def get_interaction_dtype(precision: Any = Float) -> np.dtype:
-    """ Генерирует dtype для данных взаимодействия с заданной точностью """
-    p_char = 'd' if precision == np.float64 else 'f'
+def get_interaction_dtype() -> np.dtype:
+    """ Генерирует dtype для данных взаимодействия """
     return np.dtype([
-        ('global_position', f'3{p_char}'),
-        ('global_direction', f'3{p_char}'),
-        ('local_position', f'3{p_char}'),
-        ('local_direction', f'3{p_char}'),
+        ('global_position', (Float, 3)),
+        ('global_direction', (Float, 3)),
+        ('local_position', (Float, 3)),
+        ('local_direction', (Float, 3)),
         ('process_name', 'U30'),
         ('particle_type', 'U30'),
         ('particle_ID', 'u8'),
-        ('energy_deposit', p_char),
-        ('material_density', p_char),
-        ('scattering_angles', f'2{p_char}'),
-        ('emission_time', p_char),
-        ('emission_energy', p_char),
-        ('emission_position', f'3{p_char}'),
-        ('emission_direction', f'3{p_char}'),
-        ('distance_traveled', p_char),
+        ('energy_deposit', Float),
+        ('material_density', Float),
+        ('scattering_angles', (Float, 2)),
+        ('emission_time', Float),
+        ('emission_energy', Float),
+        ('emission_position', (Float, 3)),
+        ('emission_direction', (Float, 3)),
+        ('distance_traveled', Float),
     ])
 
 class InteractionArray(np.recarray):
     """
     Класс массива данных взаимодействий
     """
-    def __new__(cls, shape: Union[int, Tuple[int, ...]], precision: Any = Float) -> 'InteractionArray':
-        dtype = get_interaction_dtype(precision)
+    def __new__(cls, shape: Union[int, Tuple[int, ...]]) -> 'InteractionArray':
+        dtype = get_interaction_dtype()
         # Создаем массив и преобразуем его в recarray и затем в наш класс
         obj = np.ndarray.__new__(cls, shape, dtype=dtype).view(cls)
         return cast('InteractionArray', obj)

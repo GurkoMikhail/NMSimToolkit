@@ -59,9 +59,7 @@ class Process(ABC):
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray: # type: ignore
         """ Применить процесс """
         size = particle.size
-        # Определение точности
-        precision = particle.energy.dtype.type
-        interaction_data = cast(InteractionArray, InteractionArray(size, precision=precision))
+        interaction_data = InteractionArray(size)
         interaction_data.position = particle.position
         interaction_data.direction = particle.direction
         interaction_data.process_name = self.name

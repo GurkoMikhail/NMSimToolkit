@@ -35,10 +35,10 @@ class Source:
     rng: np.random.Generator
     emission_table: List[NDArray[Any]]
 
-    def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = 4*mm, radiation_type: str = 'Gamma', energy: Union[float, List[List[float]]] = 140.5*keV, half_life: Time = 6*hour, rng: Optional[np.random.Generator] = None, precision: Any = Float) -> None:
-        self.distribution = np.asarray(distribution, dtype=precision)
+    def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = 4*mm, radiation_type: str = 'Gamma', energy: Union[float, List[List[float]]] = 140.5*keV, half_life: Time = 6*hour, rng: Optional[np.random.Generator] = None) -> None:
+        self.distribution = np.asarray(distribution, dtype=Float)
         self.distribution /= np.sum(self.distribution)
-        self.initial_activity = np.sum(distribution) if activity is None else np.asarray(activity, dtype=precision)
+        self.initial_activity = np.sum(distribution) if activity is None else np.asarray(activity, dtype=Float)
         self.voxel_size = voxel_size
         self.size = np.asarray(self.distribution.shape)*self.voxel_size
         self.radiation_type = radiation_type
@@ -151,7 +151,7 @@ class Source:
         position = self.generate_position(n)
         emission_time, dt = self.generate_emission_time(n)
         self.timer += dt
-        particles = ParticleArray(np.zeros_like(energy), position, direction, energy, emission_time)
+        particles = ParticleArray(np.zeros_like(energy, dtype=np.uint64), position, direction, energy, emission_time)
         return particles
 
 

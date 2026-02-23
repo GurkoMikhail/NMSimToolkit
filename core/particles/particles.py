@@ -68,23 +68,22 @@ class Particle(np.void, ParticleProperties): # type: ignore
     pass
 
 
-def get_particle_dtype(precision: Any = Float) -> np.dtype:
-    """ Генерирует dtype для частиц с заданной точностью """
-    p_char = 'd' if precision == np.float64 else 'f'
+def get_particle_dtype() -> np.dtype:
+    """ Генерирует dtype для частиц """
     return np.dtype([
         ('type', 'u8'),
-        ('position', f'3{p_char}'),
-        ('direction', f'3{p_char}'),
-        ('energy', p_char),
-        ('emission_time', p_char),
-        ('emission_energy', p_char),
-        ('emission_position', f'3{p_char}'),
-        ('emission_direction', f'3{p_char}'),
-        ('distance_traveled', p_char),
+        ('position', (Float, 3)),
+        ('direction', (Float, 3)),
+        ('energy', Float),
+        ('emission_time', Float),
+        ('emission_energy', Float),
+        ('emission_position', (Float, 3)),
+        ('emission_direction', (Float, 3)),
+        ('distance_traveled', Float),
         ('ID', 'u8')
     ])
 
-dtype_of_particle = get_particle_dtype(Float)
+dtype_of_particle = get_particle_dtype()
 
 class ParticleArray(np.ndarray, ParticleProperties):
     """ 
@@ -106,7 +105,7 @@ class ParticleArray(np.ndarray, ParticleProperties):
     ) -> 'ParticleArray':
 
         # Определение точности на основе конфигурации проекта
-        current_dtype = get_particle_dtype(Float)
+        current_dtype = get_particle_dtype()
 
         obj = super().__new__(cls, shape=energy.size, dtype=(Particle, current_dtype))
         obj = cast('ParticleArray', obj)
