@@ -5,9 +5,6 @@ from typing import Optional, Union, Any, cast
 from numpy.typing import NDArray
 from core.other.typing_definitions import Float, Vector3D, Length, Energy, Time, ID
 
-# Define internal precision for default operations from typing_definitions
-from core.other.typing_definitions import Float as DEFAULT_PRECISION
-
 class ParticleProperties(ABC):
     """ Базовый класс свойств частицы, обеспечивающий доступ к полям структурированного массива """
 
@@ -71,7 +68,7 @@ class Particle(np.void, ParticleProperties): # type: ignore
     pass
 
 
-def get_particle_dtype(precision: Any = DEFAULT_PRECISION) -> np.dtype:
+def get_particle_dtype(precision: Any = Float) -> np.dtype:
     """ Генерирует dtype для частиц с заданной точностью """
     p_char = 'd' if precision == np.float64 else 'f'
     return np.dtype([
@@ -87,7 +84,7 @@ def get_particle_dtype(precision: Any = DEFAULT_PRECISION) -> np.dtype:
         ('ID', 'u8')
     ])
 
-dtype_of_particle = get_particle_dtype(DEFAULT_PRECISION)
+dtype_of_particle = get_particle_dtype(Float)
 
 class ParticleArray(np.ndarray, ParticleProperties):
     """ 
@@ -109,7 +106,7 @@ class ParticleArray(np.ndarray, ParticleProperties):
     ) -> 'ParticleArray':
 
         # Определение точности на основе конфигурации проекта
-        current_dtype = get_particle_dtype(DEFAULT_PRECISION)
+        current_dtype = get_particle_dtype(Float)
 
         obj = super().__new__(cls, shape=energy.size, dtype=(Particle, current_dtype))
         obj = cast('ParticleArray', obj)

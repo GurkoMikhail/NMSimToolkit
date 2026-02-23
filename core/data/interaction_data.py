@@ -3,10 +3,7 @@ from typing import Optional, Any, Union, Tuple, cast, Dict
 from numpy.typing import NDArray
 from core.other.typing_definitions import Float, ID
 
-# Define internal precision for default operations from typing_definitions
-from core.other.typing_definitions import Float as DEFAULT_PRECISION
-
-def get_interaction_dtype(precision: Any = DEFAULT_PRECISION) -> np.dtype:
+def get_interaction_dtype(precision: Any = Float) -> np.dtype:
     """ Генерирует dtype для данных взаимодействия с заданной точностью """
     p_char = 'd' if precision == np.float64 else 'f'
     return np.dtype([
@@ -31,7 +28,7 @@ class InteractionArray(np.recarray):
     """
     Класс массива данных взаимодействий
     """
-    def __new__(cls, shape: Union[int, Tuple[int, ...]], precision: Any = DEFAULT_PRECISION) -> 'InteractionArray':
+    def __new__(cls, shape: Union[int, Tuple[int, ...]], precision: Any = Float) -> 'InteractionArray':
         dtype = get_interaction_dtype(precision)
         # Создаем массив и преобразуем его в recarray и затем в наш класс
         obj = np.ndarray.__new__(cls, shape, dtype=dtype).view(cls)
