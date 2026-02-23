@@ -3,7 +3,7 @@ import numpy as np
 from numpy import cos, sin, abs
 from typing import Optional, Union, Any, cast
 from numpy.typing import NDArray
-from core.other.typing_definitions import Float, Vector3D, Length, Energy, Time
+from core.other.typing_definitions import Float, Vector3D, Length, Energy, Time, ID
 
 # Define internal precision for default operations from typing_definitions
 from core.other.typing_definitions import Float as DEFAULT_PRECISION
@@ -61,7 +61,7 @@ class ParticleProperties(ABC):
         return self['distance_traveled'].copy()
     
     @property
-    def ID(self) -> NDArray[np.uint64]:
+    def ID(self) -> NDArray[ID]:
         """ Идентификатор частицы """
         return self['ID'].copy()
 
@@ -127,7 +127,7 @@ class ParticleArray(np.ndarray, ParticleProperties):
         return obj
 
     @classmethod
-    def __get_ID(cls, n: int) -> NDArray[np.uint64]:
+    def __get_ID(cls, n: int) -> NDArray[ID]:
         ID_vals = np.arange(cls.count, cls.count + n, dtype='uint64')
         cls.count += n
         return ID_vals

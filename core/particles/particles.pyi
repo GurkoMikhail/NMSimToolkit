@@ -23,7 +23,7 @@ class ParticleProperties:
     @property
     def distance_traveled(self) -> NDArray[Float]: ...
     @property
-    def ID(self) -> NDArray[np.uint64]: ...
+    def ID(self) -> NDArray[ID]: ...
 
 class Particle(np.void, ParticleProperties): # type: ignore
     @property
@@ -45,7 +45,7 @@ class Particle(np.void, ParticleProperties): # type: ignore
     @property
     def distance_traveled(self) -> float: ... # type: ignore
     @property
-    def ID(self) -> np.uint64: ... # type: ignore
+    def ID(self) -> ID: ... # type: ignore
 
 class ParticleArray(np.ndarray, ParticleProperties):
     count: int

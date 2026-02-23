@@ -1,7 +1,7 @@
 import numpy as np
 from typing import Optional, Any, Union, Tuple, cast, Dict
 from numpy.typing import NDArray
-from core.other.typing_definitions import Float
+from core.other.typing_definitions import Float, ID
 
 # Define internal precision for default operations from typing_definitions
 from core.other.typing_definitions import Float as DEFAULT_PRECISION

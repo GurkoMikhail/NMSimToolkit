@@ -1,7 +1,7 @@
 import numpy as np
 from typing import Optional, Any, Union, Tuple
 from numpy.typing import NDArray
-from core.other.typing_definitions import Float
+from core.other.typing_definitions import Float, ID
 
 class InteractionArray(np.recarray):
     def __new__(cls, shape: Union[int, Tuple[int, ...]], precision: Any = ...) -> 'InteractionArray': ...
@@ -47,7 +47,7 @@ class InteractionArray(np.recarray):
     def particle_type(self, value: Any) -> None: ...
 
     @property
-    def particle_ID(self) -> NDArray[np.uint64]: ...
+    def particle_ID(self) -> NDArray[ID]: ...
     @particle_ID.setter
     def particle_ID(self, value: Any) -> None: ...
 
