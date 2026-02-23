@@ -35,10 +35,11 @@ def datetime_from_seconds(seconds):
     nowdatetime = datetime.fromtimestamp(seconds)
     return nowdatetime - zerodatetime
 
-# def make3DRGBA(array3D, lut=None, levels=None):
-#     levels = [np.nanmin(array3D), np.nanmax(array3D)] if levels is None else levels
-#     arrayRGBA = np.ndarray((*(array3D.shape), 4), dtype=np.ubyte)
-#     for i, array2D in enumerate(array3D):
-#         arrayRGBA[i] = makeARGB(array2D, lut=lut, levels=levels, useRGBA=True)[0]
-#     return arrayRGBA
+def make3DRGBA(array3D, lut=None, levels=None):
+    from pyqtgraph import makeARGB
+    levels = [np.nanmin(array3D), np.nanmax(array3D)] if levels is None else levels
+    arrayRGBA = np.ndarray((*(array3D.shape), 4), dtype=np.ubyte)
+    for i, array2D in enumerate(array3D):
+        arrayRGBA[i] = makeARGB(array2D, lut=lut, levels=levels, useRGBA=True)[0]
+    return arrayRGBA
 

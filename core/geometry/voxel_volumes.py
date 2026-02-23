@@ -2,9 +2,12 @@ from functools import cache
 from core.geometry.woodcoock_volumes import WoodcockParameticVolume
 from core.geometry.geometries import Box
 import numpy as np
+from typing import Optional, Tuple, Any, Generic
+from core.materials.materials import Material, MaterialArray
+from core.other.typing_definitions import Length, Vector3D, Precision
 
 
-class WoodcockVoxelVolume(WoodcockParameticVolume):
+class WoodcockVoxelVolume(WoodcockParameticVolume[Precision]):
     """
     Класс воксельного Woodcock объёма
     
@@ -13,18 +16,21 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
     [voxel_size] = cm
     """
 
-    def __init__(self, voxel_size, material_distribution, name=None):
+    material_distribution: MaterialArray
+    _voxel_size_ratio: Length
+
+    def __init__(self, voxel_size: Length, material_distribution: MaterialArray, name: Optional[str] = None) -> None:
         size = np.asarray(material_distribution.shape)*voxel_size
         super().__init__(
-            geometry=Box(*size),
-            material=None,
+            geometry=Box(size[0], size[1], size[2]),
+            material=None, # type: ignore
             name=name
             )
         self.material_distribution = material_distribution
         self._voxel_size_ratio = voxel_size/self.size
 
     @property
-    def voxel_size(self):
+    def voxel_size(self) -> Vector3D[Precision]: # type: ignore
         return self.size*self._voxel_size_ratio
 
     @voxel_size.setter
@@ -41,7 +47,7 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
     def material(self, value):
         pass
 
-    def _parametric_function(self, position):
+    def _parametric_function(self, position: Vector3D[Precision]) -> Tuple[np.ndarray, Any]: # type: ignore
         indices = ((position + (self.size/2 - self.voxel_size/2))/self.voxel_size).astype(int)
         material = self.material_distribution[indices[:, 0], indices[:, 1], indices[:, 2]]
         return np.ones_like(material, dtype=bool), material

@@ -1,4 +1,4 @@
-from typing import Iterable
+from typing import Iterable, Dict, Union
 import numpy as np
 from h5py import File
 from hepunits import*
@@ -8,14 +8,16 @@ from core.materials.materials import Material
 
 class AttenuationDataBase(dict):
     """ Класс базы данных коэффициентов ослабления """
-    
-    def __init__(self, base_name = 'NIST XCOM Elements MAC'):
+    _base_name: str
+    _elements_MAC: Dict[str, np.ndarray]
+
+    def __init__(self, base_name: str = 'NIST XCOM Elements MAC') -> None:
         self._base_name = base_name
         self._elements_MAC = {}
         self._load_elements_MAC()
     
     @property
-    def base_name(self):
+    def base_name(self) -> str:
         return self._base_name
     
     @base_name.setter
@@ -35,7 +37,7 @@ class AttenuationDataBase(dict):
                 MAC['Coefficient'][process] = value
             self._elements_MAC.update({element: MAC})
     
-    def add_material(self, material):
+    def add_material(self, material: Union[Material, Iterable[Material]]) -> None:
         if isinstance(material, Material):
             self._add_material(material)
             return
@@ -45,7 +47,7 @@ class AttenuationDataBase(dict):
             return
         raise ValueError('Неверный тип')
     
-    def _add_material(self, material):
+    def _add_material(self, material: Material) -> None:
         assert isinstance(material, Material), ValueError('Неверный тип')
         list_of_energy = []
         list_of_shells = []

@@ -3,28 +3,30 @@ from pathlib import Path
 from hepunits import*
 from h5py import File
 import numpy as np
-from typing import List, Any, Optional, Dict, Tuple
+from typing import List, Any, Optional, Dict, Tuple, Generic
 from numpy.typing import NDArray
+from core.other.typing_definitions import Precision
+from core.geometry.volumes import ElementaryVolume
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.DEBUG)
 
 
-class SimulationDataManager:
+class SimulationDataManager(Generic[Precision]):
     """ 
     Основной класс менеджера данных получаемых при моделировании
     """
     filename: Path
-    sensitive_volumes: List[Any]
+    sensitive_volumes: List[ElementaryVolume[Precision]]
     lock: Optional[Any]
     save_emission_distribution: bool
     save_dose_distribution: bool
     distribution_voxel_size: float
     iteraction_buffer_size: int
     _buffered_interaction_number: int
-    interaction_data: Dict[str, List[Any]]
+    interaction_data: Dict[str, List[np.recarray]]
 
-    def __init__(self, filename: str, sensitive_volumes: List[Any] = [], lock: Optional[Any] = None, **kwds: Any) -> None:
+    def __init__(self, filename: str, sensitive_volumes: List[ElementaryVolume[Precision]] = [], lock: Optional[Any] = None, **kwds: Any) -> None:
         self.filename = Path(f'output data/{filename}')
         self.filename.parent.mkdir(parents=True, exist_ok=True)
         self.sensitive_volumes = sensitive_volumes
@@ -69,7 +71,7 @@ class SimulationDataManager:
             print(f'\tSource timer: {last_time}')
             return last_time, state
 
-    def add_interaction_data(self, interaction_data):
+    def add_interaction_data(self, interaction_data: np.recarray) -> None:
         for volume in self.sensitive_volumes:
             in_volume = volume.check_inside(interaction_data.position)
             interaction_data_in_volume = interaction_data[in_volume]

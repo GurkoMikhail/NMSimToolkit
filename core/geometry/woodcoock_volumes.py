@@ -1,21 +1,24 @@
 from core.geometry.volumes import TransformableVolume
+from typing import Tuple, Any, Generic
+from core.materials.materials import MaterialArray
+from core.other.typing_definitions import Vector3D, Precision
 
 
-class WoodcockVolume(TransformableVolume):
+class WoodcockVolume(TransformableVolume[Precision]):
     """
     Базовый класс Woodcock объёма
     """
 
 
-class WoodcockParameticVolume(WoodcockVolume):
+class WoodcockParameticVolume(WoodcockVolume[Precision]):
     """
     Класс параметричекого Woodcock объёма
     """
 
-    def _parametric_function(self, position):
+    def _parametric_function(self, position: Vector3D[Precision]) -> Tuple[Any, Any]: # type: ignore
         return [], None
 
-    def get_material_by_position(self, position, local=False, as_parent=True):
+    def get_material_by_position(self, position: Vector3D[Precision], local: bool = False, as_parent: bool = True) -> MaterialArray: # type: ignore
         if not local:
             position = self.convert_to_local_position(position, as_parent)
         material = super().get_material_by_position(position, True, as_parent)

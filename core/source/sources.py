@@ -1,11 +1,14 @@
 import numpy as np
 from core.particles.particles import ParticleArray
 from numpy import load, cos, sin, log, sqrt, matmul
+from typing import List, Optional, Any, Union, Tuple, Sequence, Generic
+from numpy.typing import NDArray
 import core.other.utils as utils
 from hepunits import*
+from core.other.typing_definitions import Length, Activity, Energy, Time, Vector3D, Precision
 
 
-class Source:
+class Source(Generic[Precision]):
     """
     Класс источника частиц
 
@@ -20,10 +23,22 @@ class Source:
     [half_life] = sec
     """
 
-    def __init__(self, distribution, activity=None, voxel_size=4*mm, radiation_type='Gamma', energy=140.5*keV, half_life=6*hour, rng=None):
-        self.distribution = np.asarray(distribution)
+    distribution: NDArray[np.float64]
+    initial_activity: NDArray[np.float64]
+    voxel_size: Length
+    size: Vector3D[Precision] # type: ignore
+    radiation_type: str
+    energy: np.ndarray
+    half_life: Time
+    timer: Time
+    transformation_matrix: NDArray[np.float64]
+    rng: np.random.Generator
+    emission_table: List[NDArray[Any]]
+
+    def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = 4*mm, radiation_type: str = 'Gamma', energy: Union[float, List[List[float]]] = 140.5*keV, half_life: Time = 6*hour, rng: Optional[np.random.Generator] = None, precision: Any = np.float64) -> None:
+        self.distribution = np.asarray(distribution, dtype=precision)
         self.distribution /= np.sum(self.distribution)
-        self.initial_activity = np.sum(distribution) if activity is None else np.asarray(activity)
+        self.initial_activity = np.sum(distribution) if activity is None else np.asarray(activity, dtype=precision)
         self.voxel_size = voxel_size
         self.size = np.asarray(self.distribution.shape)*self.voxel_size
         self.radiation_type = radiation_type
@@ -130,7 +145,7 @@ class Source:
         direction = np.column_stack((cos_alpha, cos_beta, cos_gamma))
         return direction
 
-    def generate_particles(self, n):
+    def generate_particles(self, n: int) -> ParticleArray[Precision]: # type: ignore
         energy = self.generate_energy(n)
         direction = self.generate_direction(n)
         position = self.generate_position(n)
@@ -140,7 +155,7 @@ class Source:
         return particles
 
 
-class PointSource(Source):
+class PointSource(Source[Precision]):
     """
     Точечный источник
 
@@ -162,7 +177,7 @@ class PointSource(Source):
             rng=rng
         )
 
-class Тс99m_MIBI(Source):
+class Тс99m_MIBI(Source[Precision]):
     """
     Источник 99mТс-MIBI
 
@@ -181,7 +196,7 @@ class Тс99m_MIBI(Source):
         half_life = 6.*hour
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
-class I123(Source):
+class I123(Source[Precision]):
     """
     Источник I123
 
@@ -208,7 +223,7 @@ class I123(Source):
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
 
-class SourcePhantom(Тс99m_MIBI):
+class SourcePhantom(Тс99m_MIBI[Precision]):
     """
     Источник 99mТс-MIBI
 
@@ -226,7 +241,7 @@ class SourcePhantom(Тс99m_MIBI):
         super().__init__(distribution, activity, voxel_size)
 
 
-class efg3(SourcePhantom):
+class efg3(SourcePhantom[Precision]):
     """
     Источник efg3
 
@@ -241,7 +256,7 @@ class efg3(SourcePhantom):
         super().__init__(phantom_name, activity, voxel_size)
         
 
-class efg3cut(SourcePhantom):
+class efg3cut(SourcePhantom[Precision]):
     """
     Источник efg3cut
 
@@ -256,7 +271,7 @@ class efg3cut(SourcePhantom):
         super().__init__(phantom_name, activity, voxel_size)
 
 
-class efg3cutDefect(SourcePhantom):
+class efg3cutDefect(SourcePhantom[Precision]):
     """
     Источник efg3cutDefect
 
