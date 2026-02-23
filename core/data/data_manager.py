@@ -78,9 +78,7 @@ class SimulationDataManager:
             in_volume = volume.check_inside(interaction_data.position)
             interaction_data_in_volume = cast(InteractionArray, interaction_data[in_volume])
             if interaction_data_in_volume.size > 0:
-                # Определение точности на основе одного из вещественных полей
-                precision = interaction_data.dtype['energy_deposit'].type
-                interaction_data_for_save = InteractionArray(interaction_data_in_volume.shape, precision=precision)
+                interaction_data_for_save = InteractionArray(interaction_data_in_volume.shape)
 
                 interaction_data_for_save.global_position = interaction_data_in_volume.position
                 interaction_data_for_save.global_direction = interaction_data_in_volume.direction
