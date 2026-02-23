@@ -4,13 +4,8 @@ import logging
 from signal import SIGINT, signal
 from hepunits import*
 import numpy as np
-from typing import List, Optional, Any, Union, Tuple, Callable, Generic
-from numpy.typing import NDArray
 from core.other.utils import datetime_from_seconds
 from core.transport.propagation_managers import PropagationWithInteraction
-from core.particles.particles import ParticleArray
-from core.geometry.volumes import ElementaryVolume
-from core.other.typing_definitions import Precision
 import threading as mt
 import queue
 
@@ -21,19 +16,10 @@ Queue = queue.Queue
 Thread = mt.Thread
 
 
-class SimulationManager(Thread, Generic[Precision]):
+class SimulationManager(Thread):
     """ Класс менеджера симуляции """
-    source: Any
-    simulation_volume: ElementaryVolume[Precision]
-    propagation_manager: PropagationWithInteraction[Precision]
-    stop_time: float
-    particles_number: int
-    valid_filters: List[Callable[[ParticleArray[Precision]], NDArray[np.bool_]]] # type: ignore
-    min_energy: float
-    queue: Queue
-    particles: ParticleArray[Precision]
 
-    def __init__(self, source: Any, simulation_volume: ElementaryVolume[Precision], propagation_manager: Optional[PropagationWithInteraction[Precision]] = None, stop_time: float = 1*s, particles_number: Union[int, float] = 10**3, queue: Optional[Queue] = None) -> None:
+    def __init__(self, source, simulation_volume, propagation_manager=None, stop_time=1*s, particles_number=10**3, queue=None):
         super().__init__()
         self.source = source
         self.simulation_volume = simulation_volume
@@ -48,7 +34,7 @@ class SimulationManager(Thread, Generic[Precision]):
         self.daemon = True
         signal(SIGINT, self.sigint_handler)
 
-    def check_valid(self, particles: ParticleArray[Precision]) -> NDArray[np.bool_]: # type: ignore
+    def check_valid(self, particles):
         result = particles.energy > self.min_energy
         result *= self.simulation_volume.check_inside(particles.position)
         for filter in self.valid_filters:

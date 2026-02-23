@@ -1,14 +1,13 @@
 import numpy as np
 from scipy.interpolate import interp1d
 from core.materials.materials import Material, MaterialArray
-from typing import Dict, Any, Union
 from hepunits import*
 
 
 class AttenuationFunction(dict):
     """ Класс функции ослабления"""
         
-    def __init__(self, process: Any, attenuation_database: Any, kind: str = 'linear') -> None:
+    def __init__(self, process, attenuation_database, kind='linear'):
         self.__class__.__name__ = self.__class__.__name__ + 'Of' + process.name
         self.__class__.__qualname__ = self.__class__.__qualname__ + 'Of' + process.name 
         for material, attenuation_data in attenuation_database.items():
@@ -21,7 +20,7 @@ class AttenuationFunction(dict):
             attenuation_function = interp1d(energy, attenuation_coefficient, kind)
             self.update({material: attenuation_function})
     
-    def __call__(self, material: Union[Material, MaterialArray], energy: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+    def __call__(self, material, energy):
         """ Получить линейный коэффициент ослабления """
         mass_coefficient = np.zeros_like(energy)
         if isinstance(material, Material):
