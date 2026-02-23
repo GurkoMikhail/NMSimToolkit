@@ -43,3 +43,38 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
         position = abs(position[~collimated] - self._corner)
         collimated[~collimated] = (position[:, 0] <= self._ad)*(self._a*position[:, 1] + position[:, 0]/4 <= self._ad_2)
         return collimated, self._vacuum
+
+
+class ParametricParallelSquareCollimator(WoodcockParameticVolume):
+    """
+    Parallel square hole collimator (CZT).
+    Параметры:
+      size        = (dx, dy, dz)  [mm]
+      hole_width  = length of a square hole [mm]
+      septa       = septa thickness [mm]
+    """
+
+    def __init__(self, size, hole_width, septa, material=None, name=None):
+        material = settings.material_database["Pb"] if material is None else material
+        super().__init__(
+            geometry=Box(*size),
+            material=material,
+            name=name
+        )
+        self._hole_width = float(hole_width)
+        self._septa = float(septa)
+
+        self._vacuum = settings.material_database["Vacuum"]
+        self._compute_constants()
+
+    def _compute_constants(self):
+        self._period = self._hole_width + self._septa
+        self._half_period = 0.5 * self._period
+        self._half_hole = 0.5 * self._hole_width
+
+    def _parametric_function(self, position):
+        xy = position[:, :2]
+        u = mod(xy, self._period) - self._half_period
+
+        in_hole = (abs(u[:, 0]) <= self._half_hole) & (abs(u[:, 1]) <= self._half_hole)
+        return in_hole, self._vacuum
