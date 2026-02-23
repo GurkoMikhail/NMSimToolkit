@@ -2,45 +2,37 @@ import numpy as np
 from abc import ABC, abstractmethod
 from numpy import inf
 from hepunits import*
-from typing import Union, Sequence, Tuple, Annotated, Any
-from numpy.typing import NDArray
 
-# Type aliases for better readability in scientific context
-Length = float
-Vector3D = NDArray[np.float64] # Typically (3,) or (N, 3)
 
 class Geometry(ABC):
-    size: Vector3D
     
-    def __init__(self, size: Union[Sequence[Length], Vector3D]) -> None:
-        self.size = np.array(size, dtype=np.float64)
+    def __init__(self, size):
+        self.size = np.array(size)
 
     @property
-    def half_size(self) -> Vector3D:
+    def half_size(self):
         return self.size/2
 
     @property
-    def quarter_size(self) -> Vector3D:
+    def quarter_size(self):
         return self.size/4
 
     @abstractmethod
-    def check_outside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
+    def check_outside(self, position):
         pass
 
     @abstractmethod
-    def check_inside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
+    def check_inside(self, position):
         pass
 
     @abstractmethod
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[np.float64], Union[bool, NDArray[np.bool_]]]:
+    def cast_path(self, position, direction):
         pass
     
 
 class Box(Geometry):
-    distance_method: str
-    distance_epsilon: Length
 
-    def __init__(self, x: Length, y: Length, z: Length, **kwds: Union[str, float]) -> None:
+    def __init__(self, x, y, z, **kwds):
         super().__init__([x, y, z])
         self.distance_method = 'ray_casting'
         self.distance_epsilon = 1.*micron
@@ -53,16 +45,16 @@ class Box(Geometry):
             if arg in kwds:
                 setattr(self, arg, kwds[arg])
 
-    def check_outside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
+    def check_outside(self, position):
         return np.max(np.abs(position) - self.half_size, axis=1) > 0
 
-    def check_inside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
+    def check_inside(self, position):
         return np.max(np.abs(position) - self.half_size, axis=1) <= 0
 
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[np.float64], Union[bool, NDArray[np.bool_]]]:
+    def cast_path(self, position, direction):
         return getattr(self, self.distance_method)(position, direction)
 
-    def ray_marching(self, position: Vector3D, *args: Any) -> Tuple[NDArray[np.float64], Union[bool, NDArray[np.bool_]]]:
+    def ray_marching(self, position, *args):
         q = np.abs(position) - self.half_size
         maxXYZ = q.max(axis=1)
         lengthq = np.linalg.norm(np.where(q > 0, q, 0.), axis=1)
@@ -71,7 +63,7 @@ class Box(Geometry):
         distance = np.abs(distance) + self.distance_epsilon
         return distance, inside
 
-    def ray_casting(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[np.float64], Union[bool, NDArray[np.bool_]]]:
+    def ray_casting(self, position, direction):
         inside = self.check_inside(position)
         norm_pos = -position/direction
         norm_size = np.abs(self.half_size/direction)
