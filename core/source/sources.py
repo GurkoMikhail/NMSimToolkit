@@ -1,14 +1,14 @@
 import numpy as np
 from core.particles.particles import ParticleArray
 from numpy import load, cos, sin, log, sqrt, matmul
-from typing import List, Optional, Any, Union, Tuple, Sequence, Generic
+from typing import List, Optional, Any, Union, Tuple, Sequence
 from numpy.typing import NDArray
 import core.other.utils as utils
 from hepunits import*
 from core.other.typing_definitions import Length, Activity, Energy, Time, Vector3D, Precision
 
 
-class Source(Generic[Precision]):
+class Source:
     """
     Класс источника частиц
 
@@ -26,7 +26,7 @@ class Source(Generic[Precision]):
     distribution: NDArray[np.float64]
     initial_activity: NDArray[np.float64]
     voxel_size: Length
-    size: Vector3D[Precision] # type: ignore
+    size: Vector3D # type: ignore
     radiation_type: str
     energy: np.ndarray
     half_life: Time
@@ -35,7 +35,7 @@ class Source(Generic[Precision]):
     rng: np.random.Generator
     emission_table: List[NDArray[Any]]
 
-    def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = 4*mm, radiation_type: str = 'Gamma', energy: Union[float, List[List[float]]] = 140.5*keV, half_life: Time = 6*hour, rng: Optional[np.random.Generator] = None, precision: Any = np.float64) -> None:
+    def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = 4*mm, radiation_type: str = 'Gamma', energy: Union[float, List[List[float]]] = 140.5*keV, half_life: Time = 6*hour, rng: Optional[np.random.Generator] = None, precision: Any = Precision) -> None:
         self.distribution = np.asarray(distribution, dtype=precision)
         self.distribution /= np.sum(self.distribution)
         self.initial_activity = np.sum(distribution) if activity is None else np.asarray(activity, dtype=precision)
@@ -44,10 +44,10 @@ class Source(Generic[Precision]):
         self.radiation_type = radiation_type
         
         energy = [[energy, 1.0], ] if not isinstance(energy, list) else energy
-        energy = np.array(energy)
-        self.energy = np.zeros(energy.shape[0], dtype=[("energy", "d"), ("probability", "d")])
-        self.energy["energy"] = energy[:, 0]
-        self.energy["probability"] = energy[:, 1]
+        energy_arr = np.array(energy)
+        self.energy = np.zeros(energy_arr.shape[0], dtype=[("energy", "d"), ("probability", "d")])
+        self.energy["energy"] = energy_arr[:, 0]
+        self.energy["probability"] = energy_arr[:, 1]
         self.energy["probability"] /= np.sum(self.energy["probability"])
         
         self.half_life = half_life
@@ -73,19 +73,19 @@ class Source(Generic[Precision]):
     def rotate(self, alpha=0., beta=0., gamma=0., rotation_center=[0., 0., 0.], in_local=False):
         """ Повернуть объём вокруг координатных осей """
         rotation_angles = np.asarray([alpha, beta, gamma])
-        rotation_center = np.asarray(rotation_center)
-        rotation_matrix = utils.compute_translation_matrix(rotation_center)
+        rotation_center_arr = np.asarray(rotation_center)
+        rotation_matrix = utils.compute_translation_matrix(rotation_center_arr)
         rotation_matrix = rotation_matrix@utils.compute_rotation_matrix(rotation_angles)
-        rotation_matrix = rotation_matrix@utils.compute_translation_matrix(-rotation_center)
+        rotation_matrix = rotation_matrix@utils.compute_translation_matrix(-rotation_center_arr)
         if in_local:
             self.transformation_matrix = self.transformation_matrix@rotation_matrix
         else:
             self.transformation_matrix = rotation_matrix@self.transformation_matrix
 
     def convert_to_global_position(self, position):
-        global_position = np.ones((position.shape[0], 4), dtype=float)
+        global_position = np.ones((position.shape[0], 4), dtype=position.dtype)
         global_position[:, :3] = position
-        matmul(global_position, self.transformation_matrix.T, out=global_position)
+        matmul(global_position, self.transformation_matrix.T.astype(position.dtype), out=global_position)
         return global_position[:, :3]
 
     def _generate_emission_table(self):
@@ -145,7 +145,7 @@ class Source(Generic[Precision]):
         direction = np.column_stack((cos_alpha, cos_beta, cos_gamma))
         return direction
 
-    def generate_particles(self, n: int) -> ParticleArray[Precision]: # type: ignore
+    def generate_particles(self, n: int) -> ParticleArray: # type: ignore
         energy = self.generate_energy(n)
         direction = self.generate_direction(n)
         position = self.generate_position(n)
@@ -155,7 +155,7 @@ class Source(Generic[Precision]):
         return particles
 
 
-class PointSource(Source[Precision]):
+class PointSource(Source):
     """
     Точечный источник
 
@@ -177,7 +177,7 @@ class PointSource(Source[Precision]):
             rng=rng
         )
 
-class Тс99m_MIBI(Source[Precision]):
+class Тс99m_MIBI(Source):
     """
     Источник 99mТс-MIBI
 
@@ -196,7 +196,7 @@ class Тс99m_MIBI(Source[Precision]):
         half_life = 6.*hour
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
-class I123(Source[Precision]):
+class I123(Source):
     """
     Источник I123
 
@@ -223,7 +223,7 @@ class I123(Source[Precision]):
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
 
-class SourcePhantom(Тс99m_MIBI[Precision]):
+class SourcePhantom(Тс99m_MIBI):
     """
     Источник 99mТс-MIBI
 
@@ -241,7 +241,7 @@ class SourcePhantom(Тс99m_MIBI[Precision]):
         super().__init__(distribution, activity, voxel_size)
 
 
-class efg3(SourcePhantom[Precision]):
+class efg3(SourcePhantom):
     """
     Источник efg3
 
@@ -256,7 +256,7 @@ class efg3(SourcePhantom[Precision]):
         super().__init__(phantom_name, activity, voxel_size)
         
 
-class efg3cut(SourcePhantom[Precision]):
+class efg3cut(SourcePhantom):
     """
     Источник efg3cut
 
@@ -271,7 +271,7 @@ class efg3cut(SourcePhantom[Precision]):
         super().__init__(phantom_name, activity, voxel_size)
 
 
-class efg3cutDefect(SourcePhantom[Precision]):
+class efg3cutDefect(SourcePhantom):
     """
     Источник efg3cutDefect
 
@@ -284,4 +284,3 @@ class efg3cutDefect(SourcePhantom[Precision]):
         phantom_name = 'efg3cutDefect'
         voxel_size = 4.*mm
         super().__init__(position, activity, phantom_name, voxel_size, rotation_angles, rotation_center)
-

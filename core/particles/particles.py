@@ -1,12 +1,12 @@
 from abc import ABC
 import numpy as np
 from numpy import cos, sin, abs
-from typing import TypeVar, Generic, Optional, Union, Any, cast
+from typing import Optional, Union, Any, cast
 from numpy.typing import NDArray
 from core.other.typing_definitions import Precision, Scalar, Vector3D, Length, Energy, Time
 
-# Define internal precision for default operations
-DEFAULT_PRECISION = np.float64
+# Define internal precision for default operations from typing_definitions
+from core.other.typing_definitions import Precision as DEFAULT_PRECISION
 
 class ParticleProperties(ABC):
     """ Базовый класс свойств частицы, обеспечивающий доступ к полям структурированного массива """
@@ -21,42 +21,42 @@ class ParticleProperties(ABC):
         return self['type'].copy()
 
     @property
-    def position(self) -> NDArray[Any]:
+    def position(self) -> Vector3D:
         """ Положение частиц """
         return self['position'].copy()
 
     @property
-    def direction(self) -> NDArray[Any]:
+    def direction(self) -> Vector3D:
         """ Направление частиц """
         return self['direction'].copy()
 
     @property
-    def energy(self) -> NDArray[Any]:
+    def energy(self) -> NDArray[Precision]:
         """ Энергия частиц """
         return self['energy'].copy()
 
     @property
-    def emission_time(self) -> NDArray[Any]:
+    def emission_time(self) -> NDArray[Precision]:
         """ Время эмиссии частиц """
         return self['emission_time'].copy()
 
     @property
-    def emission_energy(self) -> NDArray[Any]:
+    def emission_energy(self) -> NDArray[Precision]:
         """ Энергия частицы при эмиссии """
         return self['emission_energy'].copy()
 
     @property
-    def emission_position(self) -> NDArray[Any]:
+    def emission_position(self) -> Vector3D:
         """ Положение эмиссии частиц """
         return self['emission_position'].copy()
 
     @property
-    def emission_direction(self) -> NDArray[Any]:
+    def emission_direction(self) -> Vector3D:
         """ Направление эмиссии частиц """
         return self['emission_direction'].copy()
 
     @property
-    def distance_traveled(self) -> NDArray[Any]:
+    def distance_traveled(self) -> NDArray[Precision]:
         """ Пройденное расстояние частицами """
         return self['distance_traveled'].copy()
     
@@ -66,7 +66,7 @@ class ParticleProperties(ABC):
         return self['ID'].copy()
 
 
-class Particle(np.void, ParticleProperties):  # type: ignore
+class Particle(np.void, ParticleProperties): # type: ignore
     """ Класс одиночной частицы (элемент структурированного массива) """
     pass
 
@@ -89,7 +89,7 @@ def get_particle_dtype(precision: Any = DEFAULT_PRECISION) -> np.dtype:
 
 dtype_of_particle = get_particle_dtype(DEFAULT_PRECISION)
 
-class ParticleArray(np.ndarray, ParticleProperties, Generic[Precision]):
+class ParticleArray(np.ndarray, ParticleProperties):
     """ 
     Класс массива частиц
     """
@@ -99,21 +99,20 @@ class ParticleArray(np.ndarray, ParticleProperties, Generic[Precision]):
     def __new__(
         cls,
         type: NDArray[np.uint64],
-        position: NDArray[Any],
-        direction: NDArray[Any],
+        position: Vector3D,
+        direction: Vector3D,
         energy: NDArray[Precision],
         emission_time: Optional[NDArray[Precision]] = None,
-        emission_position: Optional[NDArray[Any]] = None,
-        emission_direction: Optional[NDArray[Any]] = None,
+        emission_position: Optional[Vector3D] = None,
+        emission_direction: Optional[Vector3D] = None,
         distance_traveled: Optional[NDArray[Precision]] = None
-    ) -> 'ParticleArray[Precision]':
+    ) -> 'ParticleArray':
 
-        # Определение точности на основе переданной энергии
-        precision = energy.dtype.type
-        current_dtype = get_particle_dtype(precision)
+        # Определение точности на основе конфигурации проекта
+        current_dtype = get_particle_dtype(DEFAULT_PRECISION)
 
         obj = super().__new__(cls, shape=energy.size, dtype=(Particle, current_dtype))
-        obj = cast('ParticleArray[Precision]', obj)
+        obj = cast('ParticleArray', obj)
 
         obj['type'] = type
         obj['position'] = position

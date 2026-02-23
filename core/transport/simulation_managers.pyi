@@ -1,7 +1,7 @@
 import numpy as np
 import threading as mt
 import queue
-from typing import List, Optional, Any, Union, Tuple, Callable, Generic
+from typing import List, Optional, Any, Union, Tuple, Callable
 from core.transport.propagation_managers import PropagationWithInteraction
 from core.particles.particles import ParticleArray
 from core.geometry.volumes import ElementaryVolume
@@ -10,23 +10,23 @@ from core.data.interaction_data import InteractionArray
 
 Queue = queue.Queue
 
-class SimulationManager(mt.Thread, Generic[Precision]):
+class SimulationManager(mt.Thread):
     source: Any
-    simulation_volume: ElementaryVolume[Precision]
-    propagation_manager: PropagationWithInteraction[Precision]
+    simulation_volume: ElementaryVolume
+    propagation_manager: PropagationWithInteraction
     stop_time: float
     particles_number: int
-    valid_filters: List[Callable[[ParticleArray[Precision]], np.ndarray]]
+    valid_filters: List[Callable[[ParticleArray], np.ndarray]]
     min_energy: float
     queue: Queue
-    particles: ParticleArray[Precision]
+    particles: ParticleArray
     step: int
     profile: bool
 
-    def __init__(self, source: Any, simulation_volume: ElementaryVolume[Precision], propagation_manager: Optional[PropagationWithInteraction[Precision]] = None, stop_time: float = ..., particles_number: Union[int, float] = ..., queue: Optional[Queue] = None) -> None: ...
-    def check_valid(self, particles: ParticleArray[Precision]) -> np.ndarray: ...
+    def __init__(self, source: Any, simulation_volume: ElementaryVolume, propagation_manager: Optional[PropagationWithInteraction] = None, stop_time: float = ..., particles_number: Union[int, float] = ..., queue: Optional[Queue] = None) -> None: ...
+    def check_valid(self, particles: ParticleArray) -> np.ndarray: ...
     def sigint_handler(self, signal: Any, frame: Any) -> None: ...
-    def send_data(self, data: Union[InteractionArray[Precision], str]) -> None: ...
+    def send_data(self, data: Union[InteractionArray, str]) -> None: ...
     def next_step(self) -> None: ...
     def run(self) -> None: ...
     def run_profile(self) -> None: ...

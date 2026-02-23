@@ -1,9 +1,10 @@
 import numpy as np
-from typing import Generic, Optional, Any, Union, Tuple, cast, Dict
+from typing import Optional, Any, Union, Tuple, cast, Dict
 from numpy.typing import NDArray
 from core.other.typing_definitions import Precision
 
-DEFAULT_PRECISION = np.float64
+# Define internal precision for default operations from typing_definitions
+from core.other.typing_definitions import Precision as DEFAULT_PRECISION
 
 def get_interaction_dtype(precision: Any = DEFAULT_PRECISION) -> np.dtype:
     """ Генерирует dtype для данных взаимодействия с заданной точностью """
@@ -26,15 +27,15 @@ def get_interaction_dtype(precision: Any = DEFAULT_PRECISION) -> np.dtype:
         ('distance_traveled', p_char),
     ])
 
-class InteractionArray(np.recarray, Generic[Precision]):
+class InteractionArray(np.recarray):
     """
     Класс массива данных взаимодействий
     """
-    def __new__(cls, shape: Union[int, Tuple[int, ...]], precision: Any = DEFAULT_PRECISION) -> 'InteractionArray[Precision]':
+    def __new__(cls, shape: Union[int, Tuple[int, ...]], precision: Any = DEFAULT_PRECISION) -> 'InteractionArray':
         dtype = get_interaction_dtype(precision)
         # Создаем массив и преобразуем его в recarray и затем в наш класс
         obj = np.ndarray.__new__(cls, shape, dtype=dtype).view(cls)
-        return cast('InteractionArray[Precision]', obj)
+        return cast('InteractionArray', obj)
 
     # Псевдонимы для совместимости со старым кодом процессов
     @property

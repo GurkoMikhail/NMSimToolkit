@@ -4,7 +4,7 @@ import logging
 from signal import SIGINT, signal
 from hepunits import*
 import numpy as np
-from typing import List, Optional, Any, Union, Tuple, Callable, Generic
+from typing import List, Optional, Any, Union, Tuple, Callable
 from numpy.typing import NDArray
 from core.other.utils import datetime_from_seconds
 from core.transport.propagation_managers import PropagationWithInteraction
@@ -21,19 +21,19 @@ Queue = queue.Queue
 Thread = mt.Thread
 
 
-class SimulationManager(Thread, Generic[Precision]):
+class SimulationManager(Thread):
     """ Класс менеджера симуляции """
     source: Any
-    simulation_volume: ElementaryVolume[Precision]
-    propagation_manager: PropagationWithInteraction[Precision]
+    simulation_volume: ElementaryVolume
+    propagation_manager: PropagationWithInteraction
     stop_time: float
     particles_number: int
-    valid_filters: List[Callable[[ParticleArray[Precision]], NDArray[np.bool_]]] # type: ignore
+    valid_filters: List[Callable[[ParticleArray], NDArray[np.bool_]]] # type: ignore
     min_energy: float
     queue: Queue
-    particles: ParticleArray[Precision]
+    particles: ParticleArray
 
-    def __init__(self, source: Any, simulation_volume: ElementaryVolume[Precision], propagation_manager: Optional[PropagationWithInteraction[Precision]] = None, stop_time: float = 1*s, particles_number: Union[int, float] = 10**3, queue: Optional[Queue] = None) -> None:
+    def __init__(self, source: Any, simulation_volume: ElementaryVolume, propagation_manager: Optional[PropagationWithInteraction] = None, stop_time: float = 1*s, particles_number: Union[int, float] = 10**3, queue: Optional[Queue] = None) -> None:
         super().__init__()
         self.source = source
         self.simulation_volume = simulation_volume
@@ -48,7 +48,7 @@ class SimulationManager(Thread, Generic[Precision]):
         self.daemon = True
         signal(SIGINT, self.sigint_handler)
 
-    def check_valid(self, particles: ParticleArray[Precision]) -> NDArray[np.bool_]: # type: ignore
+    def check_valid(self, particles: ParticleArray) -> NDArray[np.bool_]: # type: ignore
         result = particles.energy > self.min_energy
         result *= self.simulation_volume.check_inside(particles.position)
         for filter in self.valid_filters:
@@ -96,4 +96,3 @@ class SimulationManager(Thread, Generic[Precision]):
         stop_timepoint = datetime.now()
         _logger.warning(f'{self.name} finished at {datetime_from_seconds(self.source.timer/second)}')
         _logger.info(f'The simulation of {self.name} took {stop_timepoint - start_timepoint}')
-

@@ -4,7 +4,7 @@ import settings.database_setting as database_setting
 import settings.processes_settings as processes_settings
 from core.geometry.woodcoock_volumes import WoodcockVolume
 from hepunits import*
-from typing import List, Optional, Any, Union, Tuple, Generic
+from typing import List, Optional, Any, Union, Tuple
 from core.particles.particles import ParticleArray
 from core.geometry.volumes import ElementaryVolume
 from core.physics.processes import Process
@@ -12,9 +12,9 @@ from core.other.typing_definitions import Precision
 from core.data.interaction_data import InteractionArray
 
 
-class PropagationWithInteraction(Generic[Precision]):
+class PropagationWithInteraction:
     """ Класс распространения частиц с взаимодействием """
-    processes: List[Process[Precision]]
+    processes: List[Process]
     rng: np.random.Generator
 
     def __init__(self, processes_list: Optional[List[type]] = None, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
@@ -23,7 +23,7 @@ class PropagationWithInteraction(Generic[Precision]):
         self.rng = np.random.default_rng() if rng is None else rng
         self.processes = [process(self.attenuation_database, rng) for process in processes_list]
 
-    def __call__(self, particles: ParticleArray[Precision], volume: ElementaryVolume[Precision]) -> Optional[InteractionArray[Precision]]: # type: ignore
+    def __call__(self, particles: ParticleArray, volume: ElementaryVolume) -> Optional[InteractionArray]: # type: ignore
         """ Сделать шаг """
         distance, current_volume  = volume.cast_path(particles.position, particles.direction)
         materials = current_volume.material
@@ -82,4 +82,3 @@ class PropagationWithInteraction(Generic[Precision]):
             p0 = p1
             chosen_process.append((process, indices))
         return chosen_process
-

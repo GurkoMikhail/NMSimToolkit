@@ -1,10 +1,10 @@
 import numpy as np
-from typing import Generic, Optional, Any, Union, Tuple
+from typing import Optional, Any, Union, Tuple
 from numpy.typing import NDArray
 from core.other.typing_definitions import Precision
 
-class InteractionArray(np.recarray, Generic[Precision]):
-    def __new__(cls, shape: Union[int, Tuple[int, ...]], precision: Any = ...) -> 'InteractionArray[Precision]': ...
+class InteractionArray(np.recarray):
+    def __new__(cls, shape: Union[int, Tuple[int, ...]], precision: Any = ...) -> 'InteractionArray': ...
 
     @property
     def global_position(self) -> NDArray[Precision]: ...

@@ -3,7 +3,7 @@ from pathlib import Path
 from hepunits import*
 from h5py import File
 import numpy as np
-from typing import List, Any, Optional, Dict, Tuple, Generic, cast
+from typing import List, Any, Optional, Dict, Tuple, cast
 from numpy.typing import NDArray
 from core.other.typing_definitions import Precision
 from core.geometry.volumes import ElementaryVolume
@@ -13,21 +13,21 @@ _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.DEBUG)
 
 
-class SimulationDataManager(Generic[Precision]):
+class SimulationDataManager:
     """ 
     Основной класс менеджера данных получаемых при моделировании
     """
     filename: Path
-    sensitive_volumes: List[ElementaryVolume[Precision]]
+    sensitive_volumes: List[ElementaryVolume]
     lock: Optional[Any]
     save_emission_distribution: bool
     save_dose_distribution: bool
     distribution_voxel_size: float
     iteraction_buffer_size: int
     _buffered_interaction_number: int
-    interaction_data: Dict[str, List[InteractionArray[Precision]]]
+    interaction_data: Dict[str, List[InteractionArray]]
 
-    def __init__(self, filename: str, sensitive_volumes: List[ElementaryVolume[Precision]] = [], lock: Optional[Any] = None, **kwds: Any) -> None:
+    def __init__(self, filename: str, sensitive_volumes: List[ElementaryVolume] = [], lock: Optional[Any] = None, **kwds: Any) -> None:
         self.filename = Path(f'output data/{filename}')
         self.filename.parent.mkdir(parents=True, exist_ok=True)
         self.sensitive_volumes = sensitive_volumes
@@ -72,11 +72,11 @@ class SimulationDataManager(Generic[Precision]):
             print(f'\tSource timer: {last_time}')
             return last_time, state
 
-    def add_interaction_data(self, interaction_data: InteractionArray[Precision]) -> None:
+    def add_interaction_data(self, interaction_data: InteractionArray) -> None:
         from core.geometry.volumes import TransformableVolume
         for volume in self.sensitive_volumes:
             in_volume = volume.check_inside(interaction_data.position)
-            interaction_data_in_volume = cast(InteractionArray[Precision], interaction_data[in_volume])
+            interaction_data_in_volume = cast(InteractionArray, interaction_data[in_volume])
             if interaction_data_in_volume.size > 0:
                 # Определение точности на основе одного из вещественных полей
                 precision = interaction_data.dtype['energy_deposit'].type
@@ -148,6 +148,3 @@ class SimulationDataManager(Generic[Precision]):
             _logger.info(f'{self._buffered_interaction_number} events saved to {self.filename}')
             file.close()
         self.clear_interaction_data()
-
-
-
