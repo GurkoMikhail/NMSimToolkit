@@ -9,6 +9,7 @@ from core.particles.particles import ParticleArray
 from core.geometry.volumes import ElementaryVolume
 from core.physics.processes import Process
 from core.other.typing_definitions import Precision
+from core.data.interaction_data import InteractionArray
 
 
 class PropagationWithInteraction(Generic[Precision]):
@@ -22,7 +23,7 @@ class PropagationWithInteraction(Generic[Precision]):
         self.rng = np.random.default_rng() if rng is None else rng
         self.processes = [process(self.attenuation_database, rng) for process in processes_list]
 
-    def __call__(self, particles: ParticleArray[Precision], volume: ElementaryVolume[Precision]) -> Optional[np.recarray]: # type: ignore
+    def __call__(self, particles: ParticleArray[Precision], volume: ElementaryVolume[Precision]) -> Optional[InteractionArray[Precision]]: # type: ignore
         """ Сделать шаг """
         distance, current_volume  = volume.cast_path(particles.position, particles.direction)
         materials = current_volume.material
@@ -48,7 +49,7 @@ class PropagationWithInteraction(Generic[Precision]):
                 interaction_data.append(process(processing_particles, materials[indices]))
                 interacted_particles[indices] = processing_particles
             particles[interacted] = interacted_particles
-            return np.concatenate(interaction_data).view(np.recarray)
+            return np.concatenate(interaction_data).view(InteractionArray)
 
     def get_processes_LAC(self, particles, materials):
         LAC = []

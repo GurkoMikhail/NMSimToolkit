@@ -8,11 +8,12 @@ from numpy import pi, cos
 from hepunits import*
 
 
-from typing import Optional, Any, Union, Tuple, Generic
+from typing import Optional, Any, Union, Tuple, Generic, cast
 from numpy.typing import NDArray
 from core.particles.particles import Particle, ParticleArray
 from core.materials.materials import Material, MaterialArray
 from core.other.typing_definitions import Precision
+from core.data.interaction_data import InteractionArray
 
 
 class Process(ABC, Generic[Precision]):
@@ -44,20 +45,22 @@ class Process(ABC, Generic[Precision]):
         self._energy_range = value
         self._construct_attenuation_function(None) # type: ignore
 
-    def get_LAC(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> Any: # type: ignore
+    def get_LAC(self, particle: ParticleArray[Precision], material: Union[Material, MaterialArray]) -> Any: # type: ignore
         energy = particle.energy
         LAC = self.attenuation_function(material, energy)
         return LAC
 
-    def generate_free_path(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> Any: # type: ignore
+    def generate_free_path(self, particle: ParticleArray[Precision], material: Union[Material, MaterialArray]) -> Any: # type: ignore
         LAC = self.get_LAC(particle, material)
         freePath = self.rng.exponential(1/LAC)
         return freePath
 
-    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
+    def __call__(self, particle: ParticleArray[Precision], material: Union[Material, MaterialArray]) -> InteractionArray[Precision]: # type: ignore
         """ Применить процесс """
         size = particle.size
-        interaction_data = np.recarray(size, dtype=process_data_dtype)
+        # Определение точности
+        precision = particle.energy.dtype.type
+        interaction_data = cast(InteractionArray[Precision], InteractionArray(size, precision=precision))
         interaction_data.position = particle.position
         interaction_data.direction = particle.direction
         interaction_data.process_name = self.name
@@ -75,9 +78,9 @@ class Process(ABC, Generic[Precision]):
 class PhotoelectricEffect(Process[Precision]):
     """ Класс фотоэффекта """
 
-    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
+    def __call__(self, particle: ParticleArray[Precision], material: Union[Material, MaterialArray]) -> InteractionArray[Precision]: # type: ignore
         """ Применить фотоэффект """
-        interaction_data = super().__call__(particle, material)
+        interaction_data = cast(InteractionArray[Precision], super().__call__(particle, material)) # type: ignore
         energy_deposit = particle.energy
         particle.change_energy(energy_deposit)
         interaction_data.energy_deposit = energy_deposit
@@ -91,7 +94,7 @@ class CoherentScattering(Process[Precision]):
         Process.__init__(self, attenuation_database, rng)                
         self.theta_generator = g4coherent.initialize(self.rng)
 
-    def generate_theta(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> Any: # type: ignore
+    def generate_theta(self, particle: ParticleArray[Precision], material: Union[Material, MaterialArray]) -> Any: # type: ignore
         """ Сгенерировать угол рассеяния - theta """
         energy = particle.energy
         Z = np.array(material.Zeff, dtype=int)
@@ -103,13 +106,13 @@ class CoherentScattering(Process[Precision]):
         phi = pi*(self.rng.random(size)*2 - 1)
         return phi
 
-    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
-        """ Применить эффект Комптона """
+    def __call__(self, particle: ParticleArray[Precision], material: Union[Material, MaterialArray]) -> InteractionArray[Precision]: # type: ignore
+        """ Применить когерентное рассеяние """
         size = particle.size
         theta = self.generate_theta(particle, material)
         phi = self.generate_phi(size)
         particle.rotate(theta, phi)
-        interaction_data = super().__call__(particle, material)
+        interaction_data = cast(InteractionArray[Precision], super().__call__(particle, material)) # type: ignore
         interaction_data.scattering_angles = np.column_stack((theta, phi))
         return interaction_data
 
@@ -128,9 +131,9 @@ class ComptonScattering(CoherentScattering[Precision]):
         energy_deposit = particle_energy*k1_cos/(1 + k1_cos)
         return energy_deposit
 
-    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
+    def __call__(self, particle: ParticleArray[Precision], material: Union[Material, MaterialArray]) -> InteractionArray[Precision]: # type: ignore
         """ Применить эффект Комптона """
-        interaction_data = super().__call__(particle, material)
+        interaction_data = cast(InteractionArray[Precision], super().__call__(particle, material)) # type: ignore
         theta = interaction_data.scattering_angles[:, 0]
         energy_deposit = self.culculate_energy_deposit(theta, particle.energy)
         particle.change_energy(energy_deposit)
@@ -140,20 +143,4 @@ class ComptonScattering(CoherentScattering[Precision]):
 
 class PairProduction(Process[Precision]):
     """ Класс эффекта образования электрон-позитронных пар """
-
-
-process_data_dtype = np.dtype([
-    ('position', '3d'),
-    ('direction', '3d'),
-    ('process_name', 'U30'),
-    ('particle_type', 'U30'),
-    ('particle_ID', 'u8'),
-    ('energy_deposit', 'd'),
-    ('scattering_angles', '2d'),
-    ('emission_time', 'd'),
-    ('emission_energy', 'd'),
-    ('emission_position', '3d'),
-    ('emission_direction', '3d'),
-    ('distance_traveled', 'd'),
-])
 

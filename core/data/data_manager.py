@@ -3,10 +3,11 @@ from pathlib import Path
 from hepunits import*
 from h5py import File
 import numpy as np
-from typing import List, Any, Optional, Dict, Tuple, Generic
+from typing import List, Any, Optional, Dict, Tuple, Generic, cast
 from numpy.typing import NDArray
 from core.other.typing_definitions import Precision
 from core.geometry.volumes import ElementaryVolume
+from core.data.interaction_data import InteractionArray
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.DEBUG)
@@ -24,7 +25,7 @@ class SimulationDataManager(Generic[Precision]):
     distribution_voxel_size: float
     iteraction_buffer_size: int
     _buffered_interaction_number: int
-    interaction_data: Dict[str, List[np.recarray]]
+    interaction_data: Dict[str, List[InteractionArray[Precision]]]
 
     def __init__(self, filename: str, sensitive_volumes: List[ElementaryVolume[Precision]] = [], lock: Optional[Any] = None, **kwds: Any) -> None:
         self.filename = Path(f'output data/{filename}')
@@ -71,20 +72,24 @@ class SimulationDataManager(Generic[Precision]):
             print(f'\tSource timer: {last_time}')
             return last_time, state
 
-    def add_interaction_data(self, interaction_data: np.recarray) -> None:
+    def add_interaction_data(self, interaction_data: InteractionArray[Precision]) -> None:
+        from core.geometry.volumes import TransformableVolume
         for volume in self.sensitive_volumes:
             in_volume = volume.check_inside(interaction_data.position)
-            interaction_data_in_volume = interaction_data[in_volume]
+            interaction_data_in_volume = cast(InteractionArray[Precision], interaction_data[in_volume])
             if interaction_data_in_volume.size > 0:
-                interaction_data_for_save = np.recarray(interaction_data_in_volume.shape, dtype=interaction_data_dtype)
+                # Определение точности на основе одного из вещественных полей
+                precision = interaction_data.dtype['energy_deposit'].type
+                interaction_data_for_save = InteractionArray(interaction_data_in_volume.shape, precision=precision)
 
                 interaction_data_for_save.global_position = interaction_data_in_volume.position
                 interaction_data_for_save.global_direction = interaction_data_in_volume.direction
-                interaction_data_for_save.local_position = volume.convert_to_local_position(interaction_data_in_volume.position, as_parent=False)
-                interaction_data_for_save.local_direction = volume.convert_to_local_direction(interaction_data_in_volume.direction, as_parent=False)
+                if isinstance(volume, TransformableVolume):
+                    interaction_data_for_save.local_position = volume.convert_to_local_position(interaction_data_in_volume.position, as_parent=False)
+                    interaction_data_for_save.local_direction = volume.convert_to_local_direction(interaction_data_in_volume.direction, as_parent=False)
 
-                for field in interaction_data_in_volume.dtype.fields:
-                    if field in interaction_data_for_save.dtype.fields:
+                for field in interaction_data_in_volume.dtype.names: # type: ignore
+                    if field in interaction_data_for_save.dtype.names and field not in ['global_position', 'global_direction', 'local_position', 'local_direction']: # type: ignore
                         interaction_data_for_save[field] = interaction_data_in_volume[field]
 
                 self.interaction_data[volume.name].append(interaction_data_for_save)
@@ -93,12 +98,13 @@ class SimulationDataManager(Generic[Precision]):
             self.save_interaction_data()
             self._buffered_interaction_number = 0
 
-    def concatenate_interaction_data(self):
+    def concatenate_interaction_data(self) -> None:
         for volume in self.sensitive_volumes:
             volume_name = volume.name
-            self.interaction_data[volume_name] = np.concatenate(self.interaction_data[volume_name]).view(np.recarray)
+            if self.interaction_data[volume_name]:
+                self.interaction_data[volume_name] = np.concatenate(self.interaction_data[volume_name]).view(InteractionArray) # type: ignore
 
-    def clear_interaction_data(self):
+    def clear_interaction_data(self) -> None:
         self.interaction_data = {volume.name: [] for volume in self.sensitive_volumes}
 
     def save_interaction_data(self):
@@ -144,21 +150,4 @@ class SimulationDataManager(Generic[Precision]):
         self.clear_interaction_data()
 
 
-interaction_data_dtype = np.dtype([
-        ('global_position', '3d'),
-        ('global_direction', '3d'),
-        ('local_position', '3d'),
-        ('local_direction', '3d'),
-        ('process_name', 'S30'),
-        ('particle_type', 'S30'),
-        ('particle_ID', 'u8'),
-        ('energy_deposit', 'd'),
-        ('material_density', 'd'),
-        ('scattering_angles', '2d'),
-        ('emission_time', 'd'),
-        ('emission_energy', 'd'),
-        ('emission_position', '3d'),
-        ('emission_direction', '3d'),
-        ('distance_traveled', 'd'),
-])
 
