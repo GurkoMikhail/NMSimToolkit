@@ -3,6 +3,8 @@ from pathlib import Path
 from hepunits import*
 from h5py import File
 import numpy as np
+from typing import List, Any, Optional, Dict, Tuple
+from numpy.typing import NDArray
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.DEBUG)
@@ -12,8 +14,17 @@ class SimulationDataManager:
     """ 
     Основной класс менеджера данных получаемых при моделировании
     """
+    filename: Path
+    sensitive_volumes: List[Any]
+    lock: Optional[Any]
+    save_emission_distribution: bool
+    save_dose_distribution: bool
+    distribution_voxel_size: float
+    iteraction_buffer_size: int
+    _buffered_interaction_number: int
+    interaction_data: Dict[str, List[Any]]
 
-    def __init__(self, filename, sensitive_volumes=[], lock=None, **kwds):
+    def __init__(self, filename: str, sensitive_volumes: List[Any] = [], lock: Optional[Any] = None, **kwds: Any) -> None:
         self.filename = Path(f'output data/{filename}')
         self.filename.parent.mkdir(parents=True, exist_ok=True)
         self.sensitive_volumes = sensitive_volumes
@@ -35,7 +46,7 @@ class SimulationDataManager:
             if arg in kwds:
                 setattr(self, arg, kwds[arg])
 
-    def check_progress_in_file(self):
+    def check_progress_in_file(self) -> Tuple[Optional[float], Optional[Any]]:
         try:
             file = File(self.filename, 'r')
         except Exception:
