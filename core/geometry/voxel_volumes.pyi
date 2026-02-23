@@ -2,7 +2,7 @@ import numpy as np
 from typing import Optional, Tuple, Any
 from core.geometry.woodcoock_volumes import WoodcockParameticVolume
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Length, Vector3D, Precision
+from core.other.typing_definitions import Length, Vector3D, Float
 
 class WoodcockVoxelVolume(WoodcockParameticVolume):
     material_distribution: MaterialArray

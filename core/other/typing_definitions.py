@@ -1,26 +1,23 @@
 import numpy as np
-from typing import Union, Any
+from typing import Any
 from numpy.typing import NDArray
 
-# Static Precision configuration (change this to np.float32 if needed)
-Precision = np.float64
+# Project-wide Float configuration (change this to np.float32 if needed)
+Float = np.float64
 
-# Scalar types for scientific quantities
-Scalar = Union[float, Precision]
+# Scientific quantities (aliases using the configured Float type)
+Length = Float
+Energy = Float
+Time = Float
+Activity = Float
+Angle = Float
+Density = Float
 
-# Scientific quantities (aliases for clarity)
-Length = Scalar
-Energy = Scalar
-Time = Scalar
-Activity = Scalar
-Angle = Scalar
-Density = Scalar
-
-# Vector types
-Vector3D = NDArray[Precision]
+# Vector types (bound to configured Float)
+Vector3D = NDArray[Float]
 
 # Array type
-Array = NDArray[Precision]
+Array = NDArray[Float]
 
 # Identifiers
 ID = np.uint64

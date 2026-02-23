@@ -2,7 +2,7 @@ import numpy as np
 from typing import List, Optional, Any, Union, Tuple, Sequence
 from numpy.typing import NDArray
 from core.particles.particles import ParticleArray
-from core.other.typing_definitions import Length, Activity, Energy, Time, Vector3D, Precision
+from core.other.typing_definitions import Length, Activity, Energy, Time, Vector3D, Float
 
 class Source:
     distribution: NDArray[np.float64]

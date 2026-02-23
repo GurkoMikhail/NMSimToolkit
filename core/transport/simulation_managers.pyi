@@ -5,7 +5,7 @@ from typing import List, Optional, Any, Union, Tuple, Callable
 from core.transport.propagation_managers import PropagationWithInteraction
 from core.particles.particles import ParticleArray
 from core.geometry.volumes import ElementaryVolume
-from core.other.typing_definitions import Precision
+from core.other.typing_definitions import Float
 from core.data.interaction_data import InteractionArray
 
 Queue = queue.Queue

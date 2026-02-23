@@ -1,10 +1,10 @@
 import numpy as np
 from typing import Optional, Any, Union, Tuple, cast, Dict
 from numpy.typing import NDArray
-from core.other.typing_definitions import Precision
+from core.other.typing_definitions import Float
 
 # Define internal precision for default operations from typing_definitions
-from core.other.typing_definitions import Precision as DEFAULT_PRECISION
+from core.other.typing_definitions import Float as DEFAULT_PRECISION
 
 def get_interaction_dtype(precision: Any = DEFAULT_PRECISION) -> np.dtype:
     """ Генерирует dtype для данных взаимодействия с заданной точностью """
@@ -39,7 +39,7 @@ class InteractionArray(np.recarray):
 
     # Псевдонимы для совместимости со старым кодом процессов
     @property
-    def position(self) -> NDArray[Precision]: # type: ignore
+    def position(self) -> NDArray[Float]: # type: ignore
         return self.global_position
 
     @position.setter
@@ -47,7 +47,7 @@ class InteractionArray(np.recarray):
         self.global_position = value
 
     @property
-    def direction(self) -> NDArray[Precision]: # type: ignore
+    def direction(self) -> NDArray[Float]: # type: ignore
         return self.global_direction
 
     @direction.setter

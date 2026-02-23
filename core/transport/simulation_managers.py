@@ -10,7 +10,7 @@ from core.other.utils import datetime_from_seconds
 from core.transport.propagation_managers import PropagationWithInteraction
 from core.particles.particles import ParticleArray
 from core.geometry.volumes import ElementaryVolume
-from core.other.typing_definitions import Precision
+from core.other.typing_definitions import Float
 import threading as mt
 import queue
 

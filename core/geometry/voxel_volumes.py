@@ -4,7 +4,7 @@ from core.geometry.geometries import Box
 import numpy as np
 from typing import Optional, Tuple, Any
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Length, Vector3D, Precision
+from core.other.typing_definitions import Length, Vector3D, Float
 
 
 class WoodcockVoxelVolume(WoodcockParameticVolume):

@@ -8,7 +8,7 @@ from core.materials.materials import MaterialArray, Material
 from core.geometry.geometries import Geometry
 from core.other.nonunique_array import NonuniqueArray
 import core.other.utils as utils
-from core.other.typing_definitions import Vector3D, Precision
+from core.other.typing_definitions import Vector3D, Float
 
 
 class ElementaryVolume:
@@ -54,7 +54,7 @@ class ElementaryVolume:
         """ Проверка на непопадание в объём """
         return self.geometry.check_outside(position)
 
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Precision], 'VolumeArray']: # type: ignore
+    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], 'VolumeArray']: # type: ignore
         """ Определение объекта местонахождения и длины пути частицы """
         current_volume = VolumeArray(position.shape[0])
         distance, inside = self.geometry.cast_path(position, direction)
@@ -85,7 +85,7 @@ class VolumeWithChilds(ElementaryVolume):
             child.dublicate()
         return result
 
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Precision], 'VolumeArray']: # type: ignore
+    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], 'VolumeArray']: # type: ignore
         distance, current_volume = super().cast_path(position, direction)
         if len(self.childs) > 0:
             inside = current_volume != 0
@@ -211,7 +211,7 @@ class TransformableVolume(ElementaryVolume):
         else:
             self.transformation_matrix = self.transformation_matrix@rotation_matrix
 
-    def cast_path(self, position: Vector3D, direction: Vector3D, local: bool = False, as_parent: bool = True) -> Tuple[NDArray[Precision], 'VolumeArray']: # type: ignore
+    def cast_path(self, position: Vector3D, direction: Vector3D, local: bool = False, as_parent: bool = True) -> Tuple[NDArray[Float], 'VolumeArray']: # type: ignore
         if not local:
             position = self.convert_to_local_position(position, as_parent)
             direction = self.convert_to_local_direction(direction, as_parent)

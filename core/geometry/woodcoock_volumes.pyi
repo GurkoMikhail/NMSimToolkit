@@ -3,7 +3,7 @@ from typing import Tuple, Any, Union
 from numpy.typing import NDArray
 from core.geometry.volumes import TransformableVolume
 from core.materials.materials import MaterialArray
-from core.other.typing_definitions import Vector3D, Precision
+from core.other.typing_definitions import Vector3D, Float
 
 class WoodcockVolume(TransformableVolume): ...
 

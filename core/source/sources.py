@@ -5,7 +5,7 @@ from typing import List, Optional, Any, Union, Tuple, Sequence
 from numpy.typing import NDArray
 import core.other.utils as utils
 from hepunits import*
-from core.other.typing_definitions import Length, Activity, Energy, Time, Vector3D, Precision
+from core.other.typing_definitions import Length, Activity, Energy, Time, Vector3D, Float
 
 
 class Source:
@@ -35,7 +35,7 @@ class Source:
     rng: np.random.Generator
     emission_table: List[NDArray[Any]]
 
-    def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = 4*mm, radiation_type: str = 'Gamma', energy: Union[float, List[List[float]]] = 140.5*keV, half_life: Time = 6*hour, rng: Optional[np.random.Generator] = None, precision: Any = Precision) -> None:
+    def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = 4*mm, radiation_type: str = 'Gamma', energy: Union[float, List[List[float]]] = 140.5*keV, half_life: Time = 6*hour, rng: Optional[np.random.Generator] = None, precision: Any = Float) -> None:
         self.distribution = np.asarray(distribution, dtype=precision)
         self.distribution /= np.sum(self.distribution)
         self.initial_activity = np.sum(distribution) if activity is None else np.asarray(activity, dtype=precision)

@@ -1,7 +1,7 @@
 from core.geometry.volumes import TransformableVolume
 from typing import Tuple, Any
 from core.materials.materials import MaterialArray
-from core.other.typing_definitions import Vector3D, Precision
+from core.other.typing_definitions import Vector3D, Float
 
 
 class WoodcockVolume(TransformableVolume):

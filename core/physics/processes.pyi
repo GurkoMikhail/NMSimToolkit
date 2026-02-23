@@ -5,7 +5,7 @@ from numpy.typing import NDArray
 from core.materials.attenuation_functions import AttenuationFunction
 from core.particles.particles import Particle, ParticleArray
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Energy, Vector3D, Precision
+from core.other.typing_definitions import Energy, Vector3D, Float
 from core.data.interaction_data import InteractionArray
 
 class Process(ABC):

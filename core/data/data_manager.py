@@ -5,7 +5,7 @@ from h5py import File
 import numpy as np
 from typing import List, Any, Optional, Dict, Tuple, cast
 from numpy.typing import NDArray
-from core.other.typing_definitions import Precision
+from core.other.typing_definitions import Float
 from core.geometry.volumes import ElementaryVolume
 from core.data.interaction_data import InteractionArray
 

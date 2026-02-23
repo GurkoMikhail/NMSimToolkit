@@ -12,7 +12,7 @@ from typing import Optional, Any, Union, Tuple, cast
 from numpy.typing import NDArray
 from core.particles.particles import Particle, ParticleArray
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Precision
+from core.other.typing_definitions import Float
 from core.data.interaction_data import InteractionArray
 
 

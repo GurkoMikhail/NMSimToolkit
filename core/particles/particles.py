@@ -3,10 +3,10 @@ import numpy as np
 from numpy import cos, sin, abs
 from typing import Optional, Union, Any, cast
 from numpy.typing import NDArray
-from core.other.typing_definitions import Precision, Scalar, Vector3D, Length, Energy, Time
+from core.other.typing_definitions import Float, Vector3D, Length, Energy, Time
 
 # Define internal precision for default operations from typing_definitions
-from core.other.typing_definitions import Precision as DEFAULT_PRECISION
+from core.other.typing_definitions import Float as DEFAULT_PRECISION
 
 class ParticleProperties(ABC):
     """ Базовый класс свойств частицы, обеспечивающий доступ к полям структурированного массива """
@@ -31,17 +31,17 @@ class ParticleProperties(ABC):
         return self['direction'].copy()
 
     @property
-    def energy(self) -> NDArray[Precision]:
+    def energy(self) -> NDArray[Float]:
         """ Энергия частиц """
         return self['energy'].copy()
 
     @property
-    def emission_time(self) -> NDArray[Precision]:
+    def emission_time(self) -> NDArray[Float]:
         """ Время эмиссии частиц """
         return self['emission_time'].copy()
 
     @property
-    def emission_energy(self) -> NDArray[Precision]:
+    def emission_energy(self) -> NDArray[Float]:
         """ Энергия частицы при эмиссии """
         return self['emission_energy'].copy()
 
@@ -56,7 +56,7 @@ class ParticleProperties(ABC):
         return self['emission_direction'].copy()
 
     @property
-    def distance_traveled(self) -> NDArray[Precision]:
+    def distance_traveled(self) -> NDArray[Float]:
         """ Пройденное расстояние частицами """
         return self['distance_traveled'].copy()
     
@@ -101,11 +101,11 @@ class ParticleArray(np.ndarray, ParticleProperties):
         type: NDArray[np.uint64],
         position: Vector3D,
         direction: Vector3D,
-        energy: NDArray[Precision],
-        emission_time: Optional[NDArray[Precision]] = None,
+        energy: NDArray[Float],
+        emission_time: Optional[NDArray[Float]] = None,
         emission_position: Optional[Vector3D] = None,
         emission_direction: Optional[Vector3D] = None,
-        distance_traveled: Optional[NDArray[Precision]] = None
+        distance_traveled: Optional[NDArray[Float]] = None
     ) -> 'ParticleArray':
 
         # Определение точности на основе конфигурации проекта
@@ -132,16 +132,16 @@ class ParticleArray(np.ndarray, ParticleProperties):
         cls.count += n
         return ID_vals
 
-    def move(self, distance: NDArray[Precision]) -> None:
+    def move(self, distance: NDArray[Float]) -> None:
         """ Переместить частицы """
         self['distance_traveled'] += distance
         self['position'] += self.direction * distance.reshape((-1, 1))
 
-    def change_energy(self, delta_energy: NDArray[Precision]) -> None:
+    def change_energy(self, delta_energy: NDArray[Float]) -> None:
         """ Изменить энергию частиц """
         self['energy'] -= delta_energy
 
-    def rotate(self, theta: NDArray[Precision], phi: NDArray[Precision]) -> None:
+    def rotate(self, theta: NDArray[Float], phi: NDArray[Float]) -> None:
         """
         Повернуть направления частиц
         """

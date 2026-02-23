@@ -2,7 +2,7 @@ import numpy as np
 from pathlib import Path
 from typing import List, Any, Optional, Dict, Tuple, Union
 from core.geometry.volumes import ElementaryVolume
-from core.other.typing_definitions import Precision
+from core.other.typing_definitions import Float
 from core.data.interaction_data import InteractionArray
 
 class SimulationDataManager:
