@@ -1,12 +1,14 @@
 from collections import namedtuple
-from core.other.nonunique_array import NonuniqueArray
 from dataclasses import dataclass
 from functools import cache
-from core.materials.atomic_properties import atomic_number
+from typing import Any, Dict, List, Tuple
+
 import numpy as np
-from hepunits import*
-from typing import Dict, List, Any, Tuple
+from hepunits import cm3, g
 from numpy.typing import NDArray
+
+from core.materials.atomic_properties import atomic_number
+from core.other.nonunique_array import NonuniqueArray
 
 
 Composition = namedtuple('Composition', ['H'])
@@ -16,7 +18,7 @@ class Material:
     """ Класс материала """
     name: str = 'Vacuum'
     type: str = ''
-    density: float = 0.4*(10**(-29))*g/cm3
+    density: float = 0.4 * (10 ** (-29)) * g / cm3
     composition: Any = Composition(H=1.)
     ZtoA_ratio: float = 0.
     ID: int = 0

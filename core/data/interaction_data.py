@@ -1,6 +1,8 @@
+from typing import Tuple, Union, cast
+
 import numpy as np
-from typing import Optional, Any, Union, Tuple, cast, Dict
 from numpy.typing import NDArray
+
 from core.other.typing_definitions import Float, ID
 
 def get_interaction_dtype() -> np.dtype:
@@ -35,17 +37,17 @@ class InteractionArray(np.recarray):
 
     # Псевдонимы для совместимости со старым кодом процессов
     @property
-    def position(self) -> NDArray[Float]: # type: ignore
-        return self.global_position
+    def position(self) -> NDArray[Float]:
+        return cast(NDArray[Float], self.global_position)
 
     @position.setter
-    def position(self, value: Any) -> None:
+    def position(self, value: NDArray[Float]) -> None:
         self.global_position = value
 
     @property
-    def direction(self) -> NDArray[Float]: # type: ignore
-        return self.global_direction
+    def direction(self) -> NDArray[Float]:
+        return cast(NDArray[Float], self.global_direction)
 
     @direction.setter
-    def direction(self, value: Any) -> None:
+    def direction(self, value: NDArray[Float]) -> None:
         self.global_direction = value

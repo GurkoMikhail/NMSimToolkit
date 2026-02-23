@@ -1,13 +1,14 @@
 import logging
 from pathlib import Path
-from hepunits import*
-from h5py import File
+from typing import Any, Dict, List, Optional, Tuple, cast
+
+import h5py
 import numpy as np
-from typing import List, Any, Optional, Dict, Tuple, cast
-from numpy.typing import NDArray
-from core.other.typing_definitions import Float
-from core.geometry.volumes import ElementaryVolume
+from hepunits import mm
+
 from core.data.interaction_data import InteractionArray
+from core.geometry.volumes import ElementaryVolume
+from core.other.typing_definitions import Float
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.DEBUG)
@@ -51,7 +52,7 @@ class SimulationDataManager:
 
     def check_progress_in_file(self) -> Tuple[Optional[float], Optional[Any]]:
         try:
-            file = File(self.filename, 'r')
+            file = h5py.File(self.filename, 'r')
         except Exception:
             last_time = None
             state = None
@@ -86,9 +87,10 @@ class SimulationDataManager:
                     interaction_data_for_save.local_position = volume.convert_to_local_position(interaction_data_in_volume.position, as_parent=False)
                     interaction_data_for_save.local_direction = volume.convert_to_local_direction(interaction_data_in_volume.direction, as_parent=False)
 
-                for field in interaction_data_in_volume.dtype.names: # type: ignore
-                    if field in interaction_data_for_save.dtype.names and field not in ['global_position', 'global_direction', 'local_position', 'local_direction']: # type: ignore
-                        interaction_data_for_save[field] = interaction_data_in_volume[field]
+                if interaction_data_in_volume.dtype.names is not None and interaction_data_for_save.dtype.names is not None:
+                    for field in interaction_data_in_volume.dtype.names:
+                        if field in interaction_data_for_save.dtype.names and field not in ['global_position', 'global_direction', 'local_position', 'local_direction']:
+                            interaction_data_for_save[field] = interaction_data_in_volume[field]
 
                 self.interaction_data[volume.name].append(interaction_data_for_save)
                 self._buffered_interaction_number += interaction_data_for_save.size
@@ -100,7 +102,7 @@ class SimulationDataManager:
         for volume in self.sensitive_volumes:
             volume_name = volume.name
             if self.interaction_data[volume_name]:
-                self.interaction_data[volume_name] = np.concatenate(self.interaction_data[volume_name]).view(InteractionArray) # type: ignore
+                self.interaction_data[volume_name] = [cast(InteractionArray, np.concatenate(self.interaction_data[volume_name]).view(InteractionArray))]
 
     def clear_interaction_data(self) -> None:
         self.interaction_data = {volume.name: [] for volume in self.sensitive_volumes}
@@ -112,30 +114,37 @@ class SimulationDataManager:
             with self.lock:
                 self._save_interaction_data()
 
-    def _save_interaction_data(self):
+    def _save_interaction_data(self) -> None:
         self.concatenate_interaction_data()
         try:
-            file = File(self.filename, 'a')
+            file = h5py.File(self.filename, 'a')
         except Exception:
             _logger.exception(f'Не удалось сохранить данные в {self.filename}!')
         else:
             if not 'interaction_data' in file:
                 group = file.create_group('interaction_data')
-                for volume_name, interaction_data in self.interaction_data.items():
+                for volume_name, interaction_data_list in self.interaction_data.items():
+                    if not interaction_data_list:
+                        continue
+                    interaction_data = interaction_data_list[0]
                     volume_group = group.create_group(volume_name)
-                    for field in interaction_data.dtype.fields:
-                        maxshape = list(interaction_data[field].shape)
-                        maxshape[0] = None
-                        volume_group.create_dataset(
-                            field,
-                            data=interaction_data[field],
-                            compression="gzip",
-                            chunks=True,
-                            maxshape=maxshape
-                            )
+                    if interaction_data.dtype.fields is not None:
+                        for field in interaction_data.dtype.fields:
+                            maxshape = list(interaction_data[field].shape)
+                            maxshape[0] = None
+                            volume_group.create_dataset(
+                                field,
+                                data=interaction_data[field],
+                                compression="gzip",
+                                chunks=True,
+                                maxshape=maxshape
+                                )
             else:
                 group = file['interaction_data']
-                for volume_name, interaction_data in self.interaction_data.items():
+                for volume_name, interaction_data_list in self.interaction_data.items():
+                    if not interaction_data_list:
+                        continue
+                    interaction_data = interaction_data_list[0]
                     volume_group = group[volume_name]
                     for key in volume_group.keys():
                         volume_group[key].resize(

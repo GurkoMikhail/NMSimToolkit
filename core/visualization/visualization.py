@@ -1,13 +1,16 @@
-from hepunits import cm, m
+import queue
+from threading import Thread
+from typing import Any, List
+
 import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
-from threading import Thread
+from hepunits import cm, m
 
 
 class Visualization:
 
-    def __init__(self, queue, volumes):
+    def __init__(self, queue: queue.Queue, volumes: List[Any]) -> None:
         self.queue = queue
         self.volumes = volumes
         self.app = pg.mkQApp("Simulation visualization")

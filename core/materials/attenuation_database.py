@@ -1,12 +1,13 @@
-from typing import Iterable, Dict, Union
+from typing import Dict, Iterable, Union
+
+import h5py
 import numpy as np
-from h5py import File
-from hepunits import*
+from hepunits import eV
 
 from core.materials.materials import Material
 
 
-class AttenuationDataBase(dict):
+class AttenuationDataBase(Dict[Material, np.ndarray]):
     """ Класс базы данных коэффициентов ослабления """
     _base_name: str
     _elements_MAC: Dict[str, np.ndarray]
@@ -25,8 +26,8 @@ class AttenuationDataBase(dict):
         self._base_name = value
         self._load_elements_MAC()
 
-    def _load_elements_MAC(self):
-        file = File(f'tables/{self._base_name}.h5', 'r')
+    def _load_elements_MAC(self) -> None:
+        file = h5py.File(f'tables/{self._base_name}.h5', 'r')
         for element, element_group in file.items():
             processes_dict = {key: np.copy(value) for key, value in element_group.items()}
             energy = processes_dict.pop('Energy')

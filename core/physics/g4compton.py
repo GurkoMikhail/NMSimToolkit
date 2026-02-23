@@ -1,15 +1,16 @@
-from numba import vectorize, float64, int64, njit
-from numpy import array, arccos, log, exp, sqrt
-from numpy.random import default_rng
-from hepunits import*
+from typing import Any, Optional
+
+import numpy as np
+from hepunits import MeV, c_light, cm, h_Planck
+from numba import float64, int64, njit, vectorize
 
 
-def initialize(rng=None):
-    rng = default_rng() if rng is None else rng
+def initialize(rng: Optional[np.random.Generator] = None) -> Any:
+    rng = np.random.default_rng() if rng is None else rng
     next_d = rng.bit_generator.cffi.next_double
     state_addr = rng.bit_generator.cffi.state_address
     
-    ln10 = log(10.)
+    ln10 = np.log(10.)
     electron_mass_c2 = 0.510998910*MeV
         
         
@@ -19,7 +20,7 @@ def initialize(rng=None):
         return output
     
 
-    scat_func_fit_param = array([
+    scat_func_fit_param = np.array([
         [0,              0.,             0.,              0.,              0.,              0.,               0.,              0.,               0.,              0.,               0.,              0.,               0.,              0.,               0.,              0.],
         [1, 6.000000000e+00, 7.087999300e+00, 1.499680000e+08, -1.435559123e+01, 2.000000043e+00, -3.925518125e+02, 2.434944521e+02, -5.784393623e+01, 6.160181204e+00, -2.461326602e-01, -1.649463594e+03, 8.121933215e+02, -1.498313316e+02, 1.227279742e+01, -3.765996345e-01],
         [2, 6.000000000e+00, 7.199000403e+00, 2.500350000e+08, -1.430103027e+01, 2.000000041e+00, 3.574019365e+02, -1.978574937e+02, 3.971327838e+01, -3.443224867e+00, 1.091825227e-01, -4.009960832e+02, 1.575831469e+02, -2.174763446e+01, 1.185163045e+00, -1.814503741e-02],
@@ -125,10 +126,10 @@ def initialize(rng=None):
                 
 
     @vectorize([float64(float64, int64)], nopython=True, cache=True)
-    def compute_scattering_function(x, Z):
+    def compute_scattering_function(x: float, Z: int) -> float:
         value = float(Z)
         if x <= scat_func_fit_param[Z][3]:
-            lgq = log(x)/ln10
+            lgq = np.log(x) / ln10
             if lgq < scat_func_fit_param[Z][1]:
                 value = scat_func_fit_param[Z][4] + lgq*scat_func_fit_param[Z][5]
             elif lgq >= scat_func_fit_param[Z][1] and lgq < scat_func_fit_param[Z][2]:
@@ -143,32 +144,32 @@ def initialize(rng=None):
                         lgq*(scat_func_fit_param[Z][13] +\
                             lgq*(scat_func_fit_param[Z][14] +\
                                 lgq*scat_func_fit_param[Z][15])))
-            value = exp(value*ln10)
+            value = np.exp(value*ln10)
         return value
 
 
     @vectorize([float64(float64, int64)], nopython=True)
-    def theta_generator(energy, Z):
+    def theta_generator(energy: float, Z: int) -> float:
         e0m = energy/electron_mass_c2
 
         epsilon0_local = 1./(1. + 2.*e0m)
         epsilon0_sq = epsilon0_local*epsilon0_local
-        alpha1 = -log(epsilon0_local)
+        alpha1 = -np.log(epsilon0_local)
         alpha2 = 0.5*(1. - epsilon0_sq)
 
         wl_photon = h_Planck*c_light/energy
 
         while True:
             if alpha1/(alpha1+alpha2) > random():
-                epsilon = exp(-alpha1*random())  
+                epsilon = np.exp(-alpha1*random())
                 epsilon_sq = epsilon*epsilon
             else:
                 epsilon_sq = epsilon0_sq + (1. - epsilon0_sq)*random()
-                epsilon = sqrt(epsilon_sq)
+                epsilon = np.sqrt(epsilon_sq)
 
             one_cos_t = (1. - epsilon)/( epsilon*e0m)
             sinT2 = one_cos_t*(2. - one_cos_t)
-            x = sqrt(one_cos_t/2.)*cm/wl_photon
+            x = np.sqrt(one_cos_t/2.)*cm/wl_photon
             scattering_function = compute_scattering_function(x, Z)
             g_reject = (1. - epsilon*sinT2/(1. + epsilon_sq))*scattering_function
 
@@ -176,7 +177,7 @@ def initialize(rng=None):
                 break
 
         cos_theta = 1. - one_cos_t
-        return arccos(cos_theta)
+        return np.arccos(cos_theta)
 
 
     return theta_generator

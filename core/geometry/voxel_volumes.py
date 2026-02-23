@@ -1,10 +1,12 @@
 from functools import cache
-from core.geometry.woodcoock_volumes import WoodcockParameticVolume
-from core.geometry.geometries import Box
+from typing import Optional, Tuple, cast
+
 import numpy as np
-from typing import Optional, Tuple, Any
+
+from core.geometry.geometries import Box
+from core.geometry.woodcoock_volumes import WoodcockParameticVolume
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Length, Vector3D, Float
+from core.other.typing_definitions import Float, Length, Vector3D
 
 
 class WoodcockVoxelVolume(WoodcockParameticVolume):
@@ -47,7 +49,7 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
     def material(self, value: Material) -> None:
         pass
 
-    def _parametric_function(self, position: Vector3D) -> Tuple[np.ndarray, Any]: # type: ignore
-        indices = ((position + (self.size/2 - self.voxel_size/2))/self.voxel_size).astype(int)
+    def _parametric_function(self, position: Vector3D) -> Tuple[np.ndarray, MaterialArray]:
+        indices = ((position + (self.size / 2 - self.voxel_size / 2)) / self.voxel_size).astype(int)
         material = self.material_distribution[indices[:, 0], indices[:, 1], indices[:, 2]]
-        return np.ones_like(material, dtype=bool), material
+        return np.ones_like(material, dtype=bool), cast(MaterialArray, material)

@@ -1,14 +1,16 @@
 from abc import ABC
+from typing import Optional, Union, cast
+
 import numpy as np
-from numpy import cos, sin, abs
-from typing import Optional, Union, Any, cast
 from numpy.typing import NDArray
-from core.other.typing_definitions import Float, Vector3D, Length, Energy, Time, ID
+
+from core.other.typing_definitions import Energy, Float, ID, Length, Time, Vector3D
+
 
 class ParticleProperties(ABC):
     """ Базовый класс свойств частицы, обеспечивающий доступ к полям структурированного массива """
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str) -> Union[NDArray[np.generic], np.void]:
         # Это будет реализовано в подклассах np.void или np.ndarray
         raise NotImplementedError
 
@@ -141,14 +143,14 @@ class ParticleArray(np.ndarray, ParticleProperties):
         """
         Повернуть направления частиц
         """
-        direction = self['direction']
-        cos_theta = cos(theta)
-        sin_theta = sin(theta)
-        delta1 = sin_theta * cos(phi)
-        delta2 = sin_theta * sin(phi)
+        direction = cast(NDArray[Float], self['direction'])
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+        delta1 = sin_theta * np.cos(phi)
+        delta2 = sin_theta * np.sin(phi)
         delta = np.ones_like(cos_theta) - 2 * (direction[:, 2] < 0)
         b = direction[:, 0] * delta1 + direction[:, 1] * delta2
-        tmp = cos_theta - b / (1 + abs(direction[:, 2]))
+        tmp = cos_theta - b / (1 + np.abs(direction[:, 2]))
         direction[:, 0] = direction[:, 0] * tmp + delta1
         direction[:, 1] = direction[:, 1] * tmp + delta2
         direction[:, 2] = direction[:, 2] * cos_theta - delta * b

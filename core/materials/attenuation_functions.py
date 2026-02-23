@@ -1,14 +1,15 @@
+from typing import Any, Dict, Union
+
 import numpy as np
 from scipy.interpolate import interp1d
+
 from core.materials.materials import Material, MaterialArray
-from typing import Dict, Any, Union
-from hepunits import*
 
 
-class AttenuationFunction(dict):
+class AttenuationFunction(Dict[Material, Any]):
     """ Класс функции ослабления"""
         
-    def __init__(self, process: Any, attenuation_database: Any, kind: str = 'linear') -> None:
+    def __init__(self, process: Any, attenuation_database: Dict[Material, Dict[str, Any]], kind: str = 'linear') -> None:
         self.__class__.__name__ = self.__class__.__name__ + 'Of' + process.name
         self.__class__.__qualname__ = self.__class__.__qualname__ + 'Of' + process.name 
         for material, attenuation_data in attenuation_database.items():

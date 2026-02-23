@@ -1,18 +1,20 @@
+import logging
+import queue
+import threading as mt
 from cProfile import runctx
 from datetime import datetime
-import logging
 from signal import SIGINT, signal
-from hepunits import*
+from typing import Any, Callable, List, Optional, Tuple, Union
+
 import numpy as np
-from typing import List, Optional, Any, Union, Tuple, Callable
+from hepunits import keV, s, second
 from numpy.typing import NDArray
-from core.other.utils import datetime_from_seconds
-from core.transport.propagation_managers import PropagationWithInteraction
-from core.particles.particles import ParticleArray
+
 from core.geometry.volumes import ElementaryVolume
 from core.other.typing_definitions import Float
-import threading as mt
-import queue
+from core.other.utils import datetime_from_seconds
+from core.particles.particles import ParticleArray
+from core.transport.propagation_managers import PropagationWithInteraction
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.DEBUG)
@@ -33,7 +35,7 @@ class SimulationManager(Thread):
     queue: Queue
     particles: ParticleArray
 
-    def __init__(self, source: Any, simulation_volume: ElementaryVolume, propagation_manager: Optional[PropagationWithInteraction] = None, stop_time: float = 1*s, particles_number: Union[int, float] = 10**3, queue: Optional[Queue] = None) -> None:
+    def __init__(self, source: Any, simulation_volume: ElementaryVolume, propagation_manager: Optional[PropagationWithInteraction] = None, stop_time: float = 1*s, particles_number: Union[int, float] = 10**3, queue: Optional[queue.Queue] = None) -> None:
         super().__init__()
         self.source = source
         self.simulation_volume = simulation_volume

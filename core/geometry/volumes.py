@@ -1,14 +1,15 @@
 from copy import deepcopy
 from itertools import count
+from typing import Any, List, Optional, Sequence, Tuple, Union
+
 import numpy as np
-from numpy import matmul, inf
-from typing import List, Optional, Tuple, Union, Any, Type, Sequence
 from numpy.typing import NDArray
-from core.materials.materials import MaterialArray, Material
-from core.geometry.geometries import Geometry
-from core.other.nonunique_array import NonuniqueArray
+
 import core.other.utils as utils
-from core.other.typing_definitions import Vector3D, Float
+from core.geometry.geometries import Geometry
+from core.materials.materials import Material, MaterialArray
+from core.other.nonunique_array import NonuniqueArray
+from core.other.typing_definitions import Float, Vector3D
 
 
 class ElementaryVolume:
@@ -85,7 +86,7 @@ class VolumeWithChilds(ElementaryVolume):
             child.dublicate()
         return result
 
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], 'VolumeArray']: # type: ignore
+    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], 'VolumeArray']:
         distance, current_volume = super().cast_path(position, direction)
         if len(self.childs) > 0:
             inside = current_volume != 0
@@ -93,7 +94,7 @@ class VolumeWithChilds(ElementaryVolume):
             direction_inside = direction[inside]
             distance_inside = distance[inside]
             current_volume_inside = current_volume[inside]
-            distance_to_child = np.full((len(self.childs), position_inside.shape[0]), inf)
+            distance_to_child = np.full((len(self.childs), position_inside.shape[0]), np.inf)
             for i, child in enumerate(self.childs):
                 _distance_to_child, child_volume = child.cast_path(position_inside, direction_inside)
                 inside_child = child_volume != 0
@@ -158,7 +159,7 @@ class TransformableVolume(ElementaryVolume):
             return self.parent.total_transformation_matrix@self.transformation_matrix
         return self.transformation_matrix
 
-    def convert_to_local_position(self, position: Vector3D, as_parent: bool = True) -> Vector3D: # type: ignore
+    def convert_to_local_position(self, position: Vector3D, as_parent: bool = True) -> Vector3D:
         """ Преобразовать в локальные координаты """
         # transformation_matrix = self.transformation_matrix if as_parent else self.total_transformation_matrix
         if not as_parent and isinstance(self.parent, TransformableVolume):
@@ -166,18 +167,18 @@ class TransformableVolume(ElementaryVolume):
         transformation_matrix = self.transformation_matrix
         local_position = np.ones((position.shape[0], 4), dtype=position.dtype)
         local_position[:, :3] = position
-        matmul(local_position, transformation_matrix.T.astype(position.dtype), out=local_position)
+        np.matmul(local_position, transformation_matrix.T.astype(position.dtype), out=local_position)
         position = local_position[:, :3]
         return position
 
-    def convert_to_local_direction(self, direction: Vector3D, as_parent: bool = True) -> Vector3D: # type: ignore
+    def convert_to_local_direction(self, direction: Vector3D, as_parent: bool = True) -> Vector3D:
         """ Преобразовать в локальное направление """
         # transformation_matrix = self.transformation_matrix if as_parent else self.total_transformation_matrix
         if not as_parent and isinstance(self.parent, TransformableVolume):
             direction = self.parent.convert_to_local_direction(direction, as_parent)
         transformation_matrix = self.transformation_matrix
         direction = np.copy(direction)
-        matmul(direction, transformation_matrix[:3, :3].T.astype(direction.dtype), out=direction)
+        np.matmul(direction, transformation_matrix[:3, :3].T.astype(direction.dtype), out=direction)
         return direction
 
     def check_inside(self, position: Vector3D, local: bool = False, as_parent: bool = False) -> Union[bool, NDArray[np.bool_]]: # type: ignore
@@ -199,7 +200,7 @@ class TransformableVolume(ElementaryVolume):
         else:
             self.transformation_matrix = self.transformation_matrix@translation_matrix
 
-    def rotate(self, alpha: float = 0., beta: float = 0., gamma: float = 0., rotation_center: Sequence[float] = [0., 0., 0.], inLocal: bool = False) -> None:
+    def rotate(self, alpha: float = 0., beta: float = 0., gamma: float = 0., rotation_center: Sequence[float] = (0., 0., 0.), inLocal: bool = False) -> None:
         """ Повернуть объём вокруг координатных осей """
         rotation_angles = np.asarray([alpha, beta, gamma])
         rot_center = np.asarray(rotation_center)

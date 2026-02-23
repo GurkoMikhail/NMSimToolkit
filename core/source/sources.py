@@ -1,11 +1,13 @@
+from typing import Any, List, Optional, Sequence, Tuple, Union
+
 import numpy as np
-from core.particles.particles import ParticleArray
-from numpy import load, cos, sin, log, sqrt, matmul
-from typing import List, Optional, Any, Union, Tuple, Sequence
+from hepunits import hour, keV, mm
 from numpy.typing import NDArray
+
 import core.other.utils as utils
-from hepunits import*
-from core.other.typing_definitions import Length, Activity, Energy, Time, Vector3D, Float
+from core.other.typing_definitions import (Activity, Energy, Float, Length,
+                                           Time, Vector3D)
+from core.particles.particles import ParticleArray
 
 
 class Source:
@@ -61,31 +63,31 @@ class Source:
         ])
         self.rng = np.random.default_rng() if rng is None else rng
 
-    def translate(self, x=0., y=0., z=0., in_local=False):
+    def translate(self, x: float = 0., y: float = 0., z: float = 0., in_local: bool = False) -> None:
         """ Переместить объём """
         translation = np.asarray([x, y, z])
         translation_matrix = utils.compute_translation_matrix(translation)
         if in_local:
-            self.transformation_matrix = self.transformation_matrix@translation_matrix
+            self.transformation_matrix = self.transformation_matrix @ translation_matrix
         else:
-            self.transformation_matrix = translation_matrix@self.transformation_matrix
+            self.transformation_matrix = translation_matrix @ self.transformation_matrix
 
-    def rotate(self, alpha=0., beta=0., gamma=0., rotation_center=[0., 0., 0.], in_local=False):
+    def rotate(self, alpha: float = 0., beta: float = 0., gamma: float = 0., rotation_center: Sequence[float] = (0., 0., 0.), in_local: bool = False) -> None:
         """ Повернуть объём вокруг координатных осей """
         rotation_angles = np.asarray([alpha, beta, gamma])
         rotation_center_arr = np.asarray(rotation_center)
         rotation_matrix = utils.compute_translation_matrix(rotation_center_arr)
-        rotation_matrix = rotation_matrix@utils.compute_rotation_matrix(rotation_angles)
-        rotation_matrix = rotation_matrix@utils.compute_translation_matrix(-rotation_center_arr)
+        rotation_matrix = rotation_matrix @ utils.compute_rotation_matrix(rotation_angles)
+        rotation_matrix = rotation_matrix @ utils.compute_translation_matrix(-rotation_center_arr)
         if in_local:
-            self.transformation_matrix = self.transformation_matrix@rotation_matrix
+            self.transformation_matrix = self.transformation_matrix @ rotation_matrix
         else:
-            self.transformation_matrix = rotation_matrix@self.transformation_matrix
+            self.transformation_matrix = rotation_matrix @ self.transformation_matrix
 
-    def convert_to_global_position(self, position):
+    def convert_to_global_position(self, position: NDArray[np.generic]) -> NDArray[np.generic]:
         global_position = np.ones((position.shape[0], 4), dtype=position.dtype)
         global_position[:, :3] = position
-        matmul(global_position, self.transformation_matrix.T.astype(position.dtype), out=global_position)
+        np.matmul(global_position, self.transformation_matrix.T.astype(position.dtype), out=global_position)
         return global_position[:, :3]
 
     def _generate_emission_table(self):
@@ -101,25 +103,25 @@ class Source:
         self.emission_table = [position[indices], probability[indices]]
 
     @property
-    def activity(self):
-        return self.initial_activity*2**(-self.timer/self.half_life)
+    def activity(self) -> NDArray[np.float64]:
+        return self.initial_activity * 2 ** (-self.timer / self.half_life)
     
     @property
-    def nuclei_number(self):
-        return self.activity*self.half_life/log(2)
+    def nuclei_number(self) -> NDArray[np.float64]:
+        return self.activity * self.half_life / np.log(2)
 
-    def set_state(self, timer, rng_state=None):
+    def set_state(self, timer: Optional[Time], rng_state: Optional[Any] = None) -> None:
         if timer is not None:
             self.timer = timer
         if rng_state is None:
             return
         self.rng.bit_generator.state['state'] = rng_state
 
-    def generate_energy(self, n):
+    def generate_energy(self, n: int) -> NDArray[np.float64]:
         energy = self.rng.choice(self.energy["energy"], n, p=self.energy["probability"])
         return energy
 
-    def generate_position(self, n):
+    def generate_position(self, n: int) -> Vector3D:
         position = self.emission_table[0]
         probability = self.emission_table[1]
         position = self.rng.choice(position, n, p=probability)
@@ -127,21 +129,21 @@ class Source:
         position = self.convert_to_global_position(position)
         return position
 
-    def generate_emission_time(self, n):
-        dt = log((self.nuclei_number + n)/self.nuclei_number)*self.half_life/log(2)
-        a = 2**(-self.timer/self.half_life)
-        b = 2**(-(self.timer + dt)/self.half_life)
+    def generate_emission_time(self, n: int) -> Tuple[NDArray[np.float64], float]:
+        dt = np.log((self.nuclei_number + n) / self.nuclei_number) * self.half_life / np.log(2)
+        a = 2 ** (-self.timer / self.half_life)
+        b = 2 ** (-(self.timer + dt) / self.half_life)
         alpha = self.rng.uniform(b, a, n)
-        emission_time = -log(alpha)*self.half_life/log(2)
-        return emission_time, dt
+        emission_time = -np.log(alpha) * self.half_life / np.log(2)
+        return emission_time, float(dt)
 
-    def generate_direction(self, n):
+    def generate_direction(self, n: int) -> Vector3D:
         a1 = self.rng.random(n)
         a2 = self.rng.random(n)
-        cos_alpha = 1 - 2*a1
-        sq = sqrt(1 - cos_alpha**2)
-        cos_beta = sq*cos(2*pi*a2)
-        cos_gamma = sq*sin(2*pi*a2)
+        cos_alpha = 1 - 2 * a1
+        sq = np.sqrt(1 - cos_alpha ** 2)
+        cos_beta = sq * np.cos(2 * np.pi * a2)
+        cos_gamma = sq * np.sin(2 * np.pi * a2)
         direction = np.column_stack((cos_alpha, cos_beta, cos_gamma))
         return direction
 
@@ -236,8 +238,8 @@ class SourcePhantom(Тс99m_MIBI):
     [voxel_size] = cm
     """
 
-    def __init__(self, phantom_name, activity=None, voxel_size=4*mm):
-        distribution = load(f'Phantoms/{phantom_name}.npy')
+    def __init__(self, phantom_name: str, activity: Optional[float] = None, voxel_size: float = 4 * mm) -> None:
+        distribution = np.load(f'Phantoms/{phantom_name}.npy')
         super().__init__(distribution, activity, voxel_size)
 
 

@@ -1,10 +1,12 @@
-import numpy as np
 from abc import ABC, abstractmethod
-from numpy import inf
-from hepunits import*
-from typing import Union, Sequence, Tuple, Annotated, Any
+from typing import Any, Sequence, Tuple, Union
+
+import numpy as np
+from hepunits import micron
 from numpy.typing import NDArray
-from core.other.typing_definitions import Length, Vector3D, Float
+
+from core.other.typing_definitions import Float, Length, Vector3D
+
 
 class Geometry(ABC):
     size: Vector3D # type: ignore
@@ -68,14 +70,14 @@ class Box(Geometry):
         distance = np.abs(distance) + self.distance_epsilon
         return distance, inside
 
-    def ray_casting(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]: # type: ignore
+    def ray_casting(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         inside = self.check_inside(position)
-        norm_pos = -position/direction
-        norm_size = np.abs(self.half_size/direction)
+        norm_pos = -position / direction
+        norm_size = np.abs(self.half_size / direction)
         tmin = np.max(norm_pos - norm_size, axis=1)
         tmax = np.min(norm_pos + norm_size, axis=1)
-        distance = np.where(tmax > tmin, tmin, inf)
+        distance = np.where(tmax > tmin, tmin, np.inf)
         distance[inside] = tmax[inside]
-        distance[distance < 0] = inf
+        distance[distance < 0] = np.inf
         distance += self.distance_epsilon
         return distance, inside

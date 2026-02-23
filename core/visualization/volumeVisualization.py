@@ -1,14 +1,17 @@
+from typing import Any, Optional
+
+import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
+from hepunits import mm
 from PyQt5 import uic
-import numpy as np
+
 from core.other.utils import make3DRGBA
-from hepunits import*
 
 
 class VolumeTester:
 
-    def __init__(self, volume):
+    def __init__(self, volume: Any) -> None:
         self.volume = volume
 
     def getDistribution(self, materialParameter='density', voxelSize=4*mm):
