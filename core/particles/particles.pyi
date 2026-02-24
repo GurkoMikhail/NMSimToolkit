@@ -25,27 +25,27 @@ class ParticleProperties:
     @property
     def ID(self) -> NDArray[ID]: ...
 
-class Particle(np.void, ParticleProperties): # type: ignore
+class Particle(np.void, ParticleProperties):
     @property
-    def type(self) -> np.uint64: ... # type: ignore
+    def type(self) -> np.uint64: ...
     @property
-    def position(self) -> Vector3D: ... # type: ignore
+    def position(self) -> Vector3D: ...
     @property
-    def direction(self) -> Vector3D: ... # type: ignore
+    def direction(self) -> Vector3D: ...
     @property
-    def energy(self) -> float: ... # type: ignore
+    def energy(self) -> Float: ...
     @property
-    def emission_time(self) -> float: ... # type: ignore
+    def emission_time(self) -> Float: ...
     @property
-    def emission_energy(self) -> float: ... # type: ignore
+    def emission_energy(self) -> Float: ...
     @property
-    def emission_position(self) -> Vector3D: ... # type: ignore
+    def emission_position(self) -> Vector3D: ...
     @property
-    def emission_direction(self) -> Vector3D: ... # type: ignore
+    def emission_direction(self) -> Vector3D: ...
     @property
-    def distance_traveled(self) -> float: ... # type: ignore
+    def distance_traveled(self) -> Float: ...
     @property
-    def ID(self) -> ID: ... # type: ignore
+    def ID(self) -> ID: ...
 
 class ParticleArray(np.ndarray, ParticleProperties):
     count: int

@@ -37,7 +37,7 @@ class Source:
     rng: np.random.Generator
     emission_table: List[NDArray[Any]]
 
-    def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = Float(4 * units.mm), radiation_type: str = 'Gamma', energy: Union[Float, List[List[float]]] = Float(140.5 * units.keV), half_life: Time = Float(6 * units.hour), rng: Optional[np.random.Generator] = None) -> None:
+    def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = Float(4 * units.mm), radiation_type: str = 'Gamma', energy: Union[Float, List[List[Float]]] = Float(140.5 * units.keV), half_life: Time = Float(6 * units.hour), rng: Optional[np.random.Generator] = None) -> None:
         self.distribution = np.asarray(distribution, dtype=Float)
         self.distribution /= np.sum(self.distribution)
         self.initial_activity = np.sum(distribution) if activity is None else np.asarray(activity, dtype=Float)
@@ -45,7 +45,7 @@ class Source:
         self.size = np.asarray(self.distribution.shape)*self.voxel_size
         self.radiation_type = radiation_type
         
-        energy = [[energy, 1.0], ] if not isinstance(energy, list) else energy
+        energy = [[energy, Float(1.0)], ] if not isinstance(energy, list) else energy
         energy_arr = np.array(energy)
         self.energy = np.zeros(energy_arr.shape[0], dtype=[("energy", Float), ("probability", Float)])
         self.energy["energy"] = cast(NDArray[Float], energy_arr[:, 0])
@@ -115,7 +115,7 @@ class Source:
             self.timer = timer
         if rng_state is None:
             return
-        self.rng.bit_generator.state['state'] = rng_state # type: ignore
+        self.rng.bit_generator.state['state'] = rng_state# type: ignore 
 
     def generate_energy(self, n: int) -> NDArray[Float]:
         energy = self.rng.choice(self.energy["energy"], n, p=self.energy["probability"])

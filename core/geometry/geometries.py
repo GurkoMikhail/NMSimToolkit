@@ -11,27 +11,27 @@ from core.other.typing_definitions import Float, Length, Vector3D
 class Geometry(ABC):
     size: Vector3D
     
-    def __init__(self, size: Union[Sequence[Length], Vector3D]) -> None: # type: ignore
+    def __init__(self, size: Union[Sequence[Length], Vector3D]) -> None:
         self.size = np.array(size)
 
     @property
-    def half_size(self) -> Vector3D: # type: ignore
+    def half_size(self) -> Vector3D:
         return self.size/2
 
     @property
-    def quarter_size(self) -> Vector3D: # type: ignore
+    def quarter_size(self) -> Vector3D:
         return self.size/4
 
     @abstractmethod
-    def check_outside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]: # type: ignore
+    def check_outside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
         pass
 
     @abstractmethod
-    def check_inside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]: # type: ignore
+    def check_inside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
         pass
 
     @abstractmethod
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]: # type: ignore
+    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         pass
     
 
@@ -52,16 +52,16 @@ class Box(Geometry):
             if arg in kwds:
                 setattr(self, arg, kwds[arg])
 
-    def check_outside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]: # type: ignore
+    def check_outside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
         return np.max(np.abs(position) - self.half_size, axis=1) > 0
 
-    def check_inside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]: # type: ignore
+    def check_inside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
         return np.max(np.abs(position) - self.half_size, axis=1) <= 0
 
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]: # type: ignore
+    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         return getattr(self, self.distance_method)(position, direction)
 
-    def ray_marching(self, position: Vector3D, *args: Any) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]: # type: ignore
+    def ray_marching(self, position: Vector3D, *args: Any) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         q = np.abs(position) - self.half_size
         maxXYZ = q.max(axis=1)
         lengthq = np.linalg.norm(np.where(q > 0, q, 0.), axis=1)

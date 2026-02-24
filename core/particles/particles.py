@@ -65,7 +65,7 @@ class ParticleProperties(ABC):
         return self['ID'].copy()
 
 
-class Particle(np.void, ParticleProperties): # type: ignore
+class Particle(np.void, ParticleProperties):
     """ Класс одиночной частицы (элемент структурированного массива) """
     pass
 

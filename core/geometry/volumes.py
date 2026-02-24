@@ -200,7 +200,7 @@ class TransformableVolume(ElementaryVolume):
         else:
             self.transformation_matrix = self.transformation_matrix@translation_matrix
 
-    def rotate(self, alpha: Float = Float(0.), beta: Float = Float(0.), gamma: Float = Float(0.), rotation_center: Sequence[float] = (0., 0., 0.), inLocal: bool = False) -> None:
+    def rotate(self, alpha: Float = Float(0.), beta: Float = Float(0.), gamma: Float = Float(0.), rotation_center: Sequence[Float] = (Float(0), Float(0), Float(0)), inLocal: bool = False) -> None:
         """ Повернуть объём вокруг координатных осей """
         rotation_angles = np.asarray([alpha, beta, gamma])
         rot_center = np.asarray(rotation_center)

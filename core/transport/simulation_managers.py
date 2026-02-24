@@ -30,7 +30,7 @@ class SimulationManager(Thread):
     propagation_manager: PropagationWithInteraction
     stop_time: Float
     particles_number: int
-    valid_filters: List[Callable[[ParticleArray], NDArray[np.bool_]]] # type: ignore
+    valid_filters: List[Callable[[ParticleArray], NDArray[np.bool_]]]
     min_energy: Float
     queue: Queue
     particles: ParticleArray
@@ -50,7 +50,7 @@ class SimulationManager(Thread):
         self.daemon = True
         signal(SIGINT, self.sigint_handler)
 
-    def check_valid(self, particles: ParticleArray) -> NDArray[np.bool_]: # type: ignore
+    def check_valid(self, particles: ParticleArray) -> NDArray[np.bool_]:
         result = particles.energy > self.min_energy
         result *= self.simulation_volume.check_inside(particles.position)
         for filter in self.valid_filters:
