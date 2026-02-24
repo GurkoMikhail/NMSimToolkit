@@ -8,10 +8,20 @@ from numpy import pi, cos
 from hepunits import*
 
 
-class Process(ABC):
-    """ Класс процесса """
+from typing import Optional, Any, Union, Tuple, Generic
+from numpy.typing import NDArray
+from core.particles.particles import Particle, ParticleArray
+from core.materials.materials import Material, MaterialArray
+from core.other.typing_definitions import Precision
 
-    def __init__(self, attenuation_database=None, rng=None):
+
+class Process(ABC, Generic[Precision]):
+    """ Класс процесса """
+    rng: np.random.Generator
+    _energy_range: NDArray[np.float64] # type: ignore
+    attenuation_function: AttenuationFunction
+
+    def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         """ Конструктор процесса """
         attenuation_database = settings.attenuation_database if attenuation_database is None else attenuation_database
         self.rng = np.random.default_rng() if rng is None else rng
@@ -22,29 +32,29 @@ class Process(ABC):
         self.attenuation_function = AttenuationFunction(self, attenuation_database)
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self.__class__.__name__
 
     @property
-    def energy_range(self):
+    def energy_range(self) -> np.ndarray:
         return self._energy_range
 
     @energy_range.setter
-    def energy_range(self, value):
+    def energy_range(self, value: np.ndarray) -> None:
         self._energy_range = value
-        self._construct_attenuation_function()
+        self._construct_attenuation_function(None) # type: ignore
 
-    def get_LAC(self, particle, material):
+    def get_LAC(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> Any: # type: ignore
         energy = particle.energy
         LAC = self.attenuation_function(material, energy)
         return LAC
 
-    def generate_free_path(self, particle, material):
+    def generate_free_path(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> Any: # type: ignore
         LAC = self.get_LAC(particle, material)
         freePath = self.rng.exponential(1/LAC)
         return freePath
 
-    def __call__(self, particle, material):
+    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
         """ Применить процесс """
         size = particle.size
         interaction_data = np.recarray(size, dtype=process_data_dtype)
@@ -62,10 +72,10 @@ class Process(ABC):
         return interaction_data
 
 
-class PhotoelectricEffect(Process):
+class PhotoelectricEffect(Process[Precision]):
     """ Класс фотоэффекта """
 
-    def __call__(self, particle, material):
+    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
         """ Применить фотоэффект """
         interaction_data = super().__call__(particle, material)
         energy_deposit = particle.energy
@@ -74,14 +84,14 @@ class PhotoelectricEffect(Process):
         return interaction_data
         
 
-class CoherentScattering(Process):
+class CoherentScattering(Process[Precision]):
     """ Класс когерентного рассеяния """
     
-    def __init__(self, attenuation_database=None, rng=None):
+    def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         Process.__init__(self, attenuation_database, rng)                
         self.theta_generator = g4coherent.initialize(self.rng)
 
-    def generate_theta(self, particle, material):
+    def generate_theta(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> Any: # type: ignore
         """ Сгенерировать угол рассеяния - theta """
         energy = particle.energy
         Z = np.array(material.Zeff, dtype=int)
@@ -93,7 +103,7 @@ class CoherentScattering(Process):
         phi = pi*(self.rng.random(size)*2 - 1)
         return phi
 
-    def __call__(self, particle, material):
+    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
         """ Применить эффект Комптона """
         size = particle.size
         theta = self.generate_theta(particle, material)
@@ -104,10 +114,10 @@ class CoherentScattering(Process):
         return interaction_data
 
 
-class ComptonScattering(CoherentScattering):
+class ComptonScattering(CoherentScattering[Precision]):
     """ Класс эффекта Комптона """
 
-    def __init__(self, attenuation_database=None, rng=None):
+    def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         Process.__init__(self, attenuation_database, rng)
         self.theta_generator = g4compton.initialize(self.rng)
 
@@ -118,7 +128,7 @@ class ComptonScattering(CoherentScattering):
         energy_deposit = particle_energy*k1_cos/(1 + k1_cos)
         return energy_deposit
 
-    def __call__(self, particle, material):
+    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
         """ Применить эффект Комптона """
         interaction_data = super().__call__(particle, material)
         theta = interaction_data.scattering_angles[:, 0]
@@ -128,7 +138,7 @@ class ComptonScattering(CoherentScattering):
         return interaction_data
 
 
-class PairProduction(Process):
+class PairProduction(Process[Precision]):
     """ Класс эффекта образования электрон-позитронных пар """
 
 
