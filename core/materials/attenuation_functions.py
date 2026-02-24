@@ -2,8 +2,10 @@ from typing import Any, Dict, Union
 
 import numpy as np
 from scipy.interpolate import interp1d
+from numpy.typing import NDArray
 
 from core.materials.materials import Material, MaterialArray
+from core.other.typing_definitions import Float
 
 
 class AttenuationFunction(Dict[Material, Any]):
@@ -22,9 +24,9 @@ class AttenuationFunction(Dict[Material, Any]):
             attenuation_function = interp1d(energy, attenuation_coefficient, kind)
             self.update({material: attenuation_function})
     
-    def __call__(self, material: Union[Material, MaterialArray], energy: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+    def __call__(self, material: Union[Material, MaterialArray], energy: Union[Float, NDArray[Float]]) -> Union[Float, NDArray[Float]]:
         """ Получить линейный коэффициент ослабления """
-        mass_coefficient = np.zeros_like(energy)
+        mass_coefficient = np.zeros_like(energy, dtype=Float)
         if isinstance(material, Material):
             mass_coefficient = self[material](energy)
         elif isinstance(material, MaterialArray):

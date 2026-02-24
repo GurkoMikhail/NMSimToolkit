@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import Optional, Union, cast
+from typing import Any, Optional, Union, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -10,7 +10,7 @@ from core.other.typing_definitions import Energy, Float, ID, Length, Time, Vecto
 class ParticleProperties(ABC):
     """ Базовый класс свойств частицы, обеспечивающий доступ к полям структурированного массива """
 
-    def __getitem__(self, key: str) -> Union[NDArray[np.generic], np.void]:
+    def __getitem__(self, key: str) -> Any:
         # Это будет реализовано в подклассах np.void или np.ndarray
         raise NotImplementedError
 
@@ -110,7 +110,6 @@ class ParticleArray(np.ndarray, ParticleProperties):
         current_dtype = get_particle_dtype()
 
         obj = super().__new__(cls, shape=energy.size, dtype=(Particle, current_dtype))
-        obj = cast('ParticleArray', obj)
 
         obj['type'] = type
         obj['position'] = position

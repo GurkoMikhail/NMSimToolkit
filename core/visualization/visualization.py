@@ -2,10 +2,11 @@ import queue
 from threading import Thread
 from typing import Any, List
 
+from core.other.typing_definitions import Float
 import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
-from hepunits import cm, m
+import hepunits as units
 
 
 class Visualization:
@@ -15,13 +16,13 @@ class Visualization:
         self.volumes = volumes
         self.app = pg.mkQApp("Simulation visualization")
         self.widget = gl.GLViewWidget()
-        self.widget.setCameraPosition(distance=3*m)
+        self.widget.setCameraPosition(distance=3*units.m)
         self.widget.setWindowTitle('Simulation visualization')
         self.scatterPlotItem = gl.GLScatterPlotItem()
         self.widget.addItem(self.scatterPlotItem)
         self.linePlotItem = gl.GLLinePlotItem(mode='lines', width=0.1)
         self.widget.addItem(self.linePlotItem)
-        volumeSize = np.array((100*cm, 100*cm, 100*cm))
+        volumeSize = np.array((100*units.cm, 100*units.cm, 100*units.cm))
         self.volumeBox = gl.GLBoxItem()
         self.volumeBox.setSize(*volumeSize)
         self.volumeBox.translate(*(-volumeSize/2))
@@ -43,7 +44,7 @@ class Visualization:
         for ID in uniqueParticleID:
             indices = (particleID == ID).nonzero()[0]
             indices = np.column_stack([indices, indices]).ravel()
-            pos = np.zeros((indices.size, 3), dtype=float)
+            pos = np.zeros((indices.size, 3), dtype=Float)
             pos[0] = emissionPosition[indices[0]]
             pos[1:] = particlePosition[indices[:-1]]
             position.append(pos)

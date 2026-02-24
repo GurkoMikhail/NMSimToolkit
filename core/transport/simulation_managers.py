@@ -7,7 +7,7 @@ from signal import SIGINT, signal
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
-from hepunits import keV, s, second
+import hepunits as units
 from numpy.typing import NDArray
 
 from core.geometry.volumes import ElementaryVolume
@@ -28,14 +28,14 @@ class SimulationManager(Thread):
     source: Any
     simulation_volume: ElementaryVolume
     propagation_manager: PropagationWithInteraction
-    stop_time: float
+    stop_time: Float
     particles_number: int
     valid_filters: List[Callable[[ParticleArray], NDArray[np.bool_]]] # type: ignore
-    min_energy: float
+    min_energy: Float
     queue: Queue
     particles: ParticleArray
 
-    def __init__(self, source: Any, simulation_volume: ElementaryVolume, propagation_manager: Optional[PropagationWithInteraction] = None, stop_time: float = 1*s, particles_number: Union[int, float] = 10**3, queue: Optional[queue.Queue] = None) -> None:
+    def __init__(self, source: Any, simulation_volume: ElementaryVolume, propagation_manager: Optional[PropagationWithInteraction] = None, stop_time: Float = 1*units.s, particles_number: Union[int, Float] = 10**3, queue: Optional[queue.Queue] = None) -> None:
         super().__init__()
         self.source = source
         self.simulation_volume = simulation_volume
@@ -43,7 +43,7 @@ class SimulationManager(Thread):
         self.stop_time = stop_time
         self.particles_number = int(particles_number)
         self.valid_filters = []
-        self.min_energy = 1*keV
+        self.min_energy = 1*units.keV
         self.queue = Queue(maxsize=1) if queue is None else queue
         self.step = 1
         self.profile = False
@@ -58,7 +58,7 @@ class SimulationManager(Thread):
         return result
 
     def sigint_handler(self, signal, frame):
-        _logger.error(f'{self.name} interrupted at {datetime_from_seconds(self.source.timer/second)}')
+        _logger.error(f'{self.name} interrupted at {datetime_from_seconds(self.source.timer/units.second)}')
         self.stop_time = 0
 
     def send_data(self, data):
@@ -88,13 +88,13 @@ class SimulationManager(Thread):
 
     def _run(self):
         """ Реализация работы потока частиц """
-        _logger.warning(f'{self.name} started from {datetime_from_seconds(self.source.timer/second)} to {datetime_from_seconds(self.stop_time/second)}')
+        _logger.warning(f'{self.name} started from {datetime_from_seconds(self.source.timer/units.second)} to {datetime_from_seconds(self.stop_time/units.second)}')
         start_timepoint = datetime.now()
         self.particles = self.source.generate_particles(self.particles_number)
         while self.particles.size > 0:
                 self.next_step()
-                _logger.debug(f'Source timer of {self.name} at {datetime_from_seconds(self.source.timer/second)}')
+                _logger.debug(f'Source timer of {self.name} at {datetime_from_seconds(self.source.timer/units.second)}')
         self.queue.put('stop')
         stop_timepoint = datetime.now()
-        _logger.warning(f'{self.name} finished at {datetime_from_seconds(self.source.timer/second)}')
+        _logger.warning(f'{self.name} finished at {datetime_from_seconds(self.source.timer/units.second)}')
         _logger.info(f'The simulation of {self.name} took {stop_timepoint - start_timepoint}')

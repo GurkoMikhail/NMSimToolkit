@@ -6,20 +6,20 @@ import settings.database_setting as settings
 from core.geometry.geometries import Box
 from core.geometry.woodcoock_volumes import WoodcockParameticVolume
 from core.materials.materials import Material
-from core.other.typing_definitions import Vector3D
+from core.other.typing_definitions import Float, Vector3D
 
 
 class ParametricParallelCollimator(WoodcockParameticVolume):
     """
     Класс параметрического коллиматора с параллельными каналами
 
-    [origin = (x, y, z)] = mm\n
-    [size = (dx, dy, dz)] = mm\n
-    [hole_diameter] = mm\n
-    [septa] = mm\n
+    [origin = (x, y, z)] = units.mm\n
+    [size = (dx, dy, dz)] = units.mm\n
+    [hole_diameter] = units.mm\n
+    [septa] = units.mm\n
     """
 
-    def __init__(self, size: Union[np.ndarray, list, tuple], hole_diameter: float, septa: float, material: Optional[Material] = None, name: Optional[str] = None) -> None:
+    def __init__(self, size: Union[np.ndarray, list, tuple], hole_diameter: Float, septa: Float, material: Optional[Material] = None, name: Optional[str] = None) -> None:
         material = settings.material_database['Pb'] if material is None else material
         super().__init__(
             geometry=Box(*size),

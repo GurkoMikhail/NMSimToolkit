@@ -1,7 +1,8 @@
 from typing import Any, Optional
 
+from core.other.typing_definitions import Float
 import numpy as np
-from hepunits import MeV, c_light, cm, h_Planck
+import hepunits as units
 from numba import float64, int64, njit, vectorize
 
 
@@ -11,7 +12,7 @@ def initialize(rng: Optional[np.random.Generator] = None) -> Any:
     state_addr = rng.bit_generator.cffi.state_address
     
     ln10 = np.log(10.)
-    electron_mass_c2 = 0.510998910*MeV
+    electron_mass_c2 = 0.510998910*units.MeV
         
         
     @njit
@@ -125,9 +126,10 @@ def initialize(rng: Optional[np.random.Generator] = None) -> Any:
     ])
                 
 
+    # TODO: Consider dynamic typing based on project configuration
     @vectorize([float64(float64, int64)], nopython=True, cache=True)
-    def compute_scattering_function(x: float, Z: int) -> float:
-        value = float(Z)
+    def compute_scattering_function(x: Float, Z: int) -> Float:
+        value = Float(Z)
         if x <= scat_func_fit_param[Z][3]:
             lgq = np.log(x) / ln10
             if lgq < scat_func_fit_param[Z][1]:
@@ -148,8 +150,9 @@ def initialize(rng: Optional[np.random.Generator] = None) -> Any:
         return value
 
 
+    # TODO: Consider dynamic typing based on project configuration
     @vectorize([float64(float64, int64)], nopython=True)
-    def theta_generator(energy: float, Z: int) -> float:
+    def theta_generator(energy: Float, Z: int) -> Float:
         e0m = energy/electron_mass_c2
 
         epsilon0_local = 1./(1. + 2.*e0m)
@@ -157,7 +160,7 @@ def initialize(rng: Optional[np.random.Generator] = None) -> Any:
         alpha1 = -np.log(epsilon0_local)
         alpha2 = 0.5*(1. - epsilon0_sq)
 
-        wl_photon = h_Planck*c_light/energy
+        wl_photon = units.h_Planck*units.c_light/energy
 
         while True:
             if alpha1/(alpha1+alpha2) > random():
@@ -169,7 +172,7 @@ def initialize(rng: Optional[np.random.Generator] = None) -> Any:
 
             one_cos_t = (1. - epsilon)/( epsilon*e0m)
             sinT2 = one_cos_t*(2. - one_cos_t)
-            x = np.sqrt(one_cos_t/2.)*cm/wl_photon
+            x = np.sqrt(one_cos_t/2.)*units.cm/wl_photon
             scattering_function = compute_scattering_function(x, Z)
             g_reject = (1. - epsilon*sinT2/(1. + epsilon_sq))*scattering_function
 

@@ -38,7 +38,7 @@ class InteractionArray(np.recarray):
     # Псевдонимы для совместимости со старым кодом процессов
     @property
     def position(self) -> NDArray[Float]:
-        return cast(NDArray[Float], self.global_position)
+        return self.global_position
 
     @position.setter
     def position(self, value: NDArray[Float]) -> None:
@@ -46,7 +46,7 @@ class InteractionArray(np.recarray):
 
     @property
     def direction(self) -> NDArray[Float]:
-        return cast(NDArray[Float], self.global_direction)
+        return self.global_direction
 
     @direction.setter
     def direction(self, value: NDArray[Float]) -> None:

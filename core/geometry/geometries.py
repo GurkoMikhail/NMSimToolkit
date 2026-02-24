@@ -2,14 +2,14 @@ from abc import ABC, abstractmethod
 from typing import Any, Sequence, Tuple, Union
 
 import numpy as np
-from hepunits import micron
+import hepunits as units
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, Length, Vector3D
 
 
 class Geometry(ABC):
-    size: Vector3D # type: ignore
+    size: Vector3D
     
     def __init__(self, size: Union[Sequence[Length], Vector3D]) -> None: # type: ignore
         self.size = np.array(size)
@@ -42,7 +42,7 @@ class Box(Geometry):
     def __init__(self, x: Length, y: Length, z: Length, **kwds: Any) -> None:
         super().__init__([x, y, z])
         self.distance_method = 'ray_casting'
-        self.distance_epsilon = 1.*micron
+        self.distance_epsilon = Float(1. * units.micron)
         args = [
             'distance_method',
             'distance_epsilon'

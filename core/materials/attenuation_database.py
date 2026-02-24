@@ -2,9 +2,10 @@ from typing import Dict, Iterable, Union
 
 import h5py
 import numpy as np
-from hepunits import eV
+import hepunits as units
 
 from core.materials.materials import Material
+from core.other.typing_definitions import Float
 
 
 class AttenuationDataBase(Dict[Material, np.ndarray]):
@@ -62,7 +63,7 @@ class AttenuationDataBase(Dict[Material, np.ndarray]):
             
             _, indices, counts = np.unique(energy, return_index=True, return_counts=True)
             indices_of_shells = indices[counts > 1]
-            energy[indices_of_shells] -= 1*eV
+            energy[indices_of_shells] -= 1*units.eV
             
             list_of_energy.append(energy)
             list_of_shells.append(energy[indices_of_shells + 1])
@@ -87,5 +88,5 @@ processes_names = {
     'Incoherent scattering': 'ComptonScattering',
     'Coherent scattering': 'CoherentScattering'
 }
-processes_dtype = np.dtype([(name, float) for name in processes_names.values()])
-MAC_dtype = np.dtype([('Energy', float), ('Coefficient', processes_dtype)])
+processes_dtype = np.dtype([(name, Float) for name in processes_names.values()])
+MAC_dtype = np.dtype([('Energy', Float), ('Coefficient', processes_dtype)])

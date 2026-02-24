@@ -1,7 +1,8 @@
 from typing import Any, Optional
 
+from core.other.typing_definitions import Float
 import numpy as np
-from hepunits import c_light, cm, h_Planck
+import hepunits as units
 from numba import float64, int64, njit, vectorize
 
 
@@ -10,7 +11,7 @@ def initialize(rng: Optional[np.random.Generator] = None) -> Any:
     next_d = rng.bit_generator.cffi.next_double
     state_addr = rng.bit_generator.cffi.state_address
     
-    x = cm / (h_Planck * c_light)
+    x = units.cm / (units.h_Planck * units.c_light)
     f_factor = 0.5*x*x
 
 
@@ -138,8 +139,9 @@ def initialize(rng: Optional[np.random.Generator] = None) -> Any:
     ])
 
 
+    # TODO: Consider dynamic typing based on project configuration
     @vectorize([float64(float64, int64)], nopython=True)
-    def theta_generator(energy: float, Z: int) -> float:
+    def theta_generator(energy: Float, Z: int) -> Float:
         xx = f_factor*energy*energy
 
         n0 = PP6[Z] - 1.

@@ -52,25 +52,25 @@ class PropagationWithInteraction:
             particles[interacted] = interacted_particles
             return np.concatenate(interaction_data).view(InteractionArray)
 
-    def get_processes_LAC(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[np.float64]:
+    def get_processes_LAC(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[Float]:
         LAC = []
         for process in self.processes:
             LAC.append(process.get_LAC(particles, materials))
         return np.asarray(LAC)
 
-    def get_total_LAC(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[np.float64]:
-        total_LAC = np.zeros(particles.size, dtype=float)
+    def get_total_LAC(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[Float]:
+        total_LAC = np.zeros(particles.size, dtype=Float)
         for process in self.processes:
             total_LAC += process.get_LAC(particles, materials)
         return total_LAC
 
-    def generate_free_path(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[np.float64]:
-        free_path = np.full((len(self.processes), particles.size), np.inf, dtype=float)
+    def generate_free_path(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[Float]:
+        free_path = np.full((len(self.processes), particles.size), np.inf, dtype=Float)
         for i, process in enumerate(self.processes):
             free_path[i] = process.generate_free_path(particles, materials)
         return free_path.min(axis=0)
 
-    def choose_process(self, processes_LAC: NDArray[np.float64], total_LAC: NDArray[np.float64]) -> List[Tuple[Process, NDArray[np.int64]]]:
+    def choose_process(self, processes_LAC: NDArray[Float], total_LAC: NDArray[Float]) -> List[Tuple[Process, NDArray[np.int64]]]:
         probabilities = processes_LAC/total_LAC
         rnd = self.rng.random(total_LAC.size)
         chosen_process = []

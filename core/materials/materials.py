@@ -4,11 +4,12 @@ from functools import cache
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
-from hepunits import cm3, g
+import hepunits as units
 from numpy.typing import NDArray
 
 from core.materials.atomic_properties import atomic_number
 from core.other.nonunique_array import NonuniqueArray
+from core.other.typing_definitions import Float
 
 
 Composition = namedtuple('Composition', ['H'])
@@ -18,9 +19,9 @@ class Material:
     """ Класс материала """
     name: str = 'Vacuum'
     type: str = ''
-    density: float = 0.4 * (10 ** (-29)) * g / cm3
+    density: Float = 0.4 * (10 ** (-29)) * units.g / units.cm3
     composition: Any = Composition(H=1.)
-    ZtoA_ratio: float = 0.
+    ZtoA_ratio: Float = 0.
     ID: int = 0
 
     def __lt__(self, other: Any) -> bool:
@@ -45,21 +46,21 @@ class Material:
 
     @property
     @cache
-    def Zeff(self) -> float:
+    def Zeff(self) -> Float:
         Zeff = 0.
         for element, weight in self.composition_dict.items():
-            Zeff += atomic_number[element]*weight
+            Zeff += atomic_number[element] * weight
         return Zeff
     
     @property
     @cache
-    def composition_dict(self) -> Dict[str, float]:
+    def composition_dict(self) -> Dict[str, Float]:
         return self.composition._asdict()
     
     @property
     @cache
-    def composition_array(self) -> NDArray[np.float64]:
-        composition_array = np.zeros(shape=93, dtype=float)
+    def composition_array(self) -> NDArray[Float]:
+        composition_array = np.zeros(shape=93, dtype=Float)
         for element, weight in self.composition_dict.items():
             Z = atomic_number[element]
             composition_array[Z] = weight
@@ -81,15 +82,15 @@ class MaterialArray(NonuniqueArray):
         return self.element_list
     
     @property
-    def Zeff(self) -> NDArray[np.float64]:
-        Zeff = np.zeros_like(self, dtype=float)
+    def Zeff(self) -> NDArray[Float]:
+        Zeff = np.zeros_like(self, dtype=Float)
         for material, indices in self.inverse_indices.items():
             Zeff[indices] = material.Zeff
         return Zeff
 
     @property
-    def density(self) -> NDArray[np.float64]:
-        density = np.zeros_like(self, dtype=float)
+    def density(self) -> NDArray[Float]:
+        density = np.zeros_like(self, dtype=Float)
         for material, indices in self.inverse_indices.items():
             density[indices] = material.density
         return density

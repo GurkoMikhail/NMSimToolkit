@@ -3,7 +3,7 @@ from typing import Any, Optional
 import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
-from hepunits import mm
+import hepunits as units
 from PyQt5 import uic
 
 from core.other.utils import make3DRGBA
@@ -14,7 +14,7 @@ class VolumeTester:
     def __init__(self, volume: Any) -> None:
         self.volume = volume
 
-    def getDistribution(self, materialParameter='density', voxelSize=4*mm):
+    def getDistribution(self, materialParameter='density', voxelSize=4*units.mm):
         bins = (self.volume.size/voxelSize).astype(int)
         range = np.array([
             [-self.volume.size[0]/2, self.volume.size[0]/2],
@@ -35,7 +35,7 @@ class VolumeTester:
 
 class VolumeVisualization:
 
-    def __init__(self, data=None, voxelSize=4*mm, sliceDensity=1, smooth=False, glOptions='translucent'):
+    def __init__(self, data=None, voxelSize=4*units.mm, sliceDensity=1, smooth=False, glOptions='translucent'):
         self.data = data
         self.voxelSize = voxelSize
         self.app = pg.mkQApp('Volume visualization')
@@ -89,7 +89,7 @@ class VolumeVisualization:
 
 class VolumeDensityVisualization(VolumeVisualization):
 
-    def __init__(self, volume, voxelSize=4*mm):
+    def __init__(self, volume, voxelSize=4*units.mm):
         self.volume = volume
         self.volumeTester = VolumeTester(volume)
         super().__init__(voxelSize=voxelSize)

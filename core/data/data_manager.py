@@ -4,10 +4,10 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 
 import h5py
 import numpy as np
-from hepunits import mm
+import hepunits as units
 
 from core.data.interaction_data import InteractionArray
-from core.geometry.volumes import ElementaryVolume
+from core.geometry.volumes import ElementaryVolume, TransformableVolume
 from core.other.typing_definitions import Float
 
 _logger = logging.getLogger(__name__)
@@ -23,8 +23,8 @@ class SimulationDataManager:
     lock: Optional[Any]
     save_emission_distribution: bool
     save_dose_distribution: bool
-    distribution_voxel_size: float
-    iteraction_buffer_size: int
+    distribution_voxel_size: Float
+    interaction_buffer_size: int
     _buffered_interaction_number: int
     interaction_data: Dict[str, List[InteractionArray]]
 
@@ -35,22 +35,22 @@ class SimulationDataManager:
         self.lock = lock
         self.save_emission_distribution = True
         self.save_dose_distribution = True
-        self.distribution_voxel_size = 4.*mm
+        self.distribution_voxel_size = Float(4. * units.mm)
         self.clear_interaction_data()
-        self.iteraction_buffer_size = int(10**3)
+        self.interaction_buffer_size = int(10**3)
         self._buffered_interaction_number = 0
         self.args = [
             'save_emission_distribution',
             'save_dose_distribution',
             'distribution_voxel_size',
-            'iteraction_buffer_size'
+            'interaction_buffer_size'
             ]
 
         for arg in self.args:
             if arg in kwds:
                 setattr(self, arg, kwds[arg])
 
-    def check_progress_in_file(self) -> Tuple[Optional[float], Optional[Any]]:
+    def check_progress_in_file(self) -> Tuple[Optional[Float], Optional[Any]]:
         try:
             file = h5py.File(self.filename, 'r')
         except Exception:
@@ -61,20 +61,19 @@ class SimulationDataManager:
                 last_time = file['Source timer']
                 # state = file['Source state']
                 state = None
-                last_time = float(np.array(last_time))
+                last_time = Float(np.array(last_time))
             except Exception:
-                print(f'\tНе удалось восстановить прогресс')
+                print('\tНе удалось восстановить прогресс')
                 last_time = None
                 state = None
             finally:
-                print(f'\tПрогресс восстановлен')
+                print('\tПрогресс восстановлен')
                 file.close()
         finally:
             print(f'\tSource timer: {last_time}')
             return last_time, state
 
     def add_interaction_data(self, interaction_data: InteractionArray) -> None:
-        from core.geometry.volumes import TransformableVolume
         for volume in self.sensitive_volumes:
             in_volume = volume.check_inside(interaction_data.position)
             interaction_data_in_volume = cast(InteractionArray, interaction_data[in_volume])
@@ -94,7 +93,7 @@ class SimulationDataManager:
 
                 self.interaction_data[volume.name].append(interaction_data_for_save)
                 self._buffered_interaction_number += interaction_data_for_save.size
-        if self._buffered_interaction_number > self.iteraction_buffer_size:
+        if self._buffered_interaction_number > self.interaction_buffer_size:
             self.save_interaction_data()
             self._buffered_interaction_number = 0
 
@@ -107,7 +106,7 @@ class SimulationDataManager:
     def clear_interaction_data(self) -> None:
         self.interaction_data = {volume.name: [] for volume in self.sensitive_volumes}
 
-    def save_interaction_data(self):
+    def save_interaction_data(self) -> None:
         if self.lock is None:
             self._save_interaction_data()
         else:
@@ -121,7 +120,7 @@ class SimulationDataManager:
         except Exception:
             _logger.exception(f'Не удалось сохранить данные в {self.filename}!')
         else:
-            if not 'interaction_data' in file:
+            if 'interaction_data' not in file:
                 group = file.create_group('interaction_data')
                 for volume_name, interaction_data_list in self.interaction_data.items():
                     if not interaction_data_list:

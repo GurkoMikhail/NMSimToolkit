@@ -13,13 +13,13 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
     """
     Класс воксельного Woodcock объёма
     
-    [coordinates = (x, y, z)] = cm\n
+    [coordinates = (x, y, z)] = units.cm\n
     [material] = uint[:,:,:]\n
-    [voxel_size] = cm
+    [voxel_size] = units.cm
     """
 
     material_distribution: MaterialArray
-    _voxel_size_ratio: Length
+    _voxel_size_ratio: Vector3D
 
     def __init__(self, voxel_size: Length, material_distribution: MaterialArray, name: Optional[str] = None) -> None:
         size = np.asarray(material_distribution.shape)*voxel_size
@@ -32,11 +32,11 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
         self._voxel_size_ratio = voxel_size/self.size
 
     @property
-    def voxel_size(self) -> Vector3D: # type: ignore
+    def voxel_size(self) -> Vector3D:
         return self.size*self._voxel_size_ratio
 
     @voxel_size.setter
-    def voxel_size(self, value: Vector3D) -> None: # type: ignore
+    def voxel_size(self, value: Vector3D) -> None:
         self._voxel_size_ratio = value/self.size
 
     @property
@@ -52,4 +52,4 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
     def _parametric_function(self, position: Vector3D) -> Tuple[np.ndarray, MaterialArray]:
         indices = ((position + (self.size / 2 - self.voxel_size / 2)) / self.voxel_size).astype(int)
         material = self.material_distribution[indices[:, 0], indices[:, 1], indices[:, 2]]
-        return np.ones_like(material, dtype=bool), cast(MaterialArray, material)
+        return np.ones_like(material, dtype=bool), material
