@@ -1,19 +1,21 @@
+from typing import Any, List, Optional, Tuple, Union
+
 import numpy as np
-from numpy import inf
+from numpy.typing import NDArray
+
 import settings.database_setting as database_setting
 import settings.processes_settings as processes_settings
-from core.geometry.woodcoock_volumes import WoodcockVolume
-from hepunits import*
-from typing import List, Optional, Any, Union, Tuple, Generic
-from core.particles.particles import ParticleArray
+from core.data.interaction_data import InteractionArray
 from core.geometry.volumes import ElementaryVolume
+from core.geometry.woodcoock_volumes import WoodcockVolume
+from core.other.typing_definitions import Float
+from core.particles.particles import ParticleArray
 from core.physics.processes import Process
-from core.other.typing_definitions import Precision
 
 
-class PropagationWithInteraction(Generic[Precision]):
+class PropagationWithInteraction:
     """ Класс распространения частиц с взаимодействием """
-    processes: List[Process[Precision]]
+    processes: List[Process]
     rng: np.random.Generator
 
     def __init__(self, processes_list: Optional[List[type]] = None, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
@@ -22,7 +24,7 @@ class PropagationWithInteraction(Generic[Precision]):
         self.rng = np.random.default_rng() if rng is None else rng
         self.processes = [process(self.attenuation_database, rng) for process in processes_list]
 
-    def __call__(self, particles: ParticleArray[Precision], volume: ElementaryVolume[Precision]) -> Optional[np.recarray]: # type: ignore
+    def __call__(self, particles: ParticleArray, volume: ElementaryVolume) -> Optional[InteractionArray]:
         """ Сделать шаг """
         distance, current_volume  = volume.cast_path(particles.position, particles.direction)
         materials = current_volume.material
@@ -48,27 +50,27 @@ class PropagationWithInteraction(Generic[Precision]):
                 interaction_data.append(process(processing_particles, materials[indices]))
                 interacted_particles[indices] = processing_particles
             particles[interacted] = interacted_particles
-            return np.concatenate(interaction_data).view(np.recarray)
+            return np.concatenate(interaction_data).view(InteractionArray)
 
-    def get_processes_LAC(self, particles, materials):
+    def get_processes_LAC(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[Float]:
         LAC = []
         for process in self.processes:
             LAC.append(process.get_LAC(particles, materials))
         return np.asarray(LAC)
 
-    def get_total_LAC(self, particles, materials):
-        total_LAC = np.zeros(particles.size, dtype=float)
+    def get_total_LAC(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[Float]:
+        total_LAC = np.zeros(particles.size, dtype=Float)
         for process in self.processes:
             total_LAC += process.get_LAC(particles, materials)
         return total_LAC
 
-    def generate_free_path(self, particles, materials):
-        free_path = np.full((len(self.processes), particles.size), inf, dtype=float)
+    def generate_free_path(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[Float]:
+        free_path = np.full((len(self.processes), particles.size), np.inf, dtype=Float)
         for i, process in enumerate(self.processes):
             free_path[i] = process.generate_free_path(particles, materials)
         return free_path.min(axis=0)
 
-    def choose_process(self, processes_LAC, total_LAC):
+    def choose_process(self, processes_LAC: NDArray[Float], total_LAC: NDArray[Float]) -> List[Tuple[Process, NDArray[np.int64]]]:
         probabilities = processes_LAC/total_LAC
         rnd = self.rng.random(total_LAC.size)
         chosen_process = []
@@ -81,4 +83,3 @@ class PropagationWithInteraction(Generic[Precision]):
             p0 = p1
             chosen_process.append((process, indices))
         return chosen_process
-

@@ -1,12 +1,14 @@
-from typing import Iterable, Dict, Union
+from typing import Dict, Iterable, Union
+
+import h5py
 import numpy as np
-from h5py import File
-from hepunits import*
+import hepunits as units
 
 from core.materials.materials import Material
+from core.other.typing_definitions import Float
 
 
-class AttenuationDataBase(dict):
+class AttenuationDataBase(Dict[Material, np.ndarray]):
     """ Класс базы данных коэффициентов ослабления """
     _base_name: str
     _elements_MAC: Dict[str, np.ndarray]
@@ -25,8 +27,8 @@ class AttenuationDataBase(dict):
         self._base_name = value
         self._load_elements_MAC()
 
-    def _load_elements_MAC(self):
-        file = File(f'tables/{self._base_name}.h5', 'r')
+    def _load_elements_MAC(self) -> None:
+        file = h5py.File(f'tables/{self._base_name}.h5', 'r')
         for element, element_group in file.items():
             processes_dict = {key: np.copy(value) for key, value in element_group.items()}
             energy = processes_dict.pop('Energy')
@@ -61,7 +63,7 @@ class AttenuationDataBase(dict):
             
             _, indices, counts = np.unique(energy, return_index=True, return_counts=True)
             indices_of_shells = indices[counts > 1]
-            energy[indices_of_shells] -= 1*eV
+            energy[indices_of_shells] -= 1*units.eV
             
             list_of_energy.append(energy)
             list_of_shells.append(energy[indices_of_shells + 1])
@@ -86,5 +88,5 @@ processes_names = {
     'Incoherent scattering': 'ComptonScattering',
     'Coherent scattering': 'CoherentScattering'
 }
-processes_dtype = np.dtype([(name, float) for name in processes_names.values()])
-MAC_dtype = np.dtype([('Energy', float), ('Coefficient', processes_dtype)])
+processes_dtype = np.dtype([(name, Float) for name in processes_names.values()])
+MAC_dtype = np.dtype([('Energy', Float), ('Coefficient', processes_dtype)])

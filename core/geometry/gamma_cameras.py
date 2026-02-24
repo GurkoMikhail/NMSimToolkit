@@ -1,14 +1,18 @@
+from typing import Optional
+
 import numpy as np
-from core.geometry.volumes import TransformableVolumeWithChild, TransformableVolume
-from core.geometry.geometries import Box
+from core.other.typing_definitions import Float
+import hepunits as units
+
 import settings.database_setting as database_setting
-from hepunits import*
+from core.geometry.geometries import Box
+from core.geometry.volumes import (TransformableVolume,
+                                   TransformableVolumeWithChild)
 
 
 class GammaCamera(TransformableVolumeWithChild):
 
-
-    def __init__(self, collimator, detector, gap=1*mm, shielding_thickness=2*cm, glass_backend_thickness=5*cm, name=None):
+    def __init__(self, collimator: TransformableVolume, detector: TransformableVolume, gap: Float = Float(1 * units.mm), shielding_thickness: Float = Float(2 * units.cm), glass_backend_thickness: Float = Float(5 * units.cm), name: Optional[str] = None) -> None:
         detector_box_size = np.where(collimator.size > detector.size, collimator.size, detector.size)
         detector_box_size[2] = collimator.size[2] + gap + detector.size[2] + glass_backend_thickness
         material_database = database_setting.material_database

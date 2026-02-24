@@ -1,12 +1,11 @@
 from abc import ABC
-import numpy as np
-from numpy import cos, sin, abs
-from typing import TypeVar, Generic, Optional, Union, Any, cast
-from numpy.typing import NDArray
-from core.other.typing_definitions import Precision, Scalar, Vector3D, Length, Energy, Time
+from typing import Any, Optional, Union, cast
 
-# Define internal precision for default operations
-DEFAULT_PRECISION = np.float64
+import numpy as np
+from numpy.typing import NDArray
+
+from core.other.typing_definitions import Energy, Float, ID, Length, Time, Vector3D
+
 
 class ParticleProperties(ABC):
     """ Базовый класс свойств частицы, обеспечивающий доступ к полям структурированного массива """
@@ -21,75 +20,74 @@ class ParticleProperties(ABC):
         return self['type'].copy()
 
     @property
-    def position(self) -> NDArray[Any]:
+    def position(self) -> Vector3D:
         """ Положение частиц """
         return self['position'].copy()
 
     @property
-    def direction(self) -> NDArray[Any]:
+    def direction(self) -> Vector3D:
         """ Направление частиц """
         return self['direction'].copy()
 
     @property
-    def energy(self) -> NDArray[Any]:
+    def energy(self) -> NDArray[Float]:
         """ Энергия частиц """
         return self['energy'].copy()
 
     @property
-    def emission_time(self) -> NDArray[Any]:
+    def emission_time(self) -> NDArray[Float]:
         """ Время эмиссии частиц """
         return self['emission_time'].copy()
 
     @property
-    def emission_energy(self) -> NDArray[Any]:
+    def emission_energy(self) -> NDArray[Float]:
         """ Энергия частицы при эмиссии """
         return self['emission_energy'].copy()
 
     @property
-    def emission_position(self) -> NDArray[Any]:
+    def emission_position(self) -> Vector3D:
         """ Положение эмиссии частиц """
         return self['emission_position'].copy()
 
     @property
-    def emission_direction(self) -> NDArray[Any]:
+    def emission_direction(self) -> Vector3D:
         """ Направление эмиссии частиц """
         return self['emission_direction'].copy()
 
     @property
-    def distance_traveled(self) -> NDArray[Any]:
+    def distance_traveled(self) -> NDArray[Float]:
         """ Пройденное расстояние частицами """
         return self['distance_traveled'].copy()
     
     @property
-    def ID(self) -> NDArray[np.uint64]:
+    def ID(self) -> NDArray[ID]:
         """ Идентификатор частицы """
         return self['ID'].copy()
 
 
-class Particle(np.void, ParticleProperties):  # type: ignore
+class Particle(np.void, ParticleProperties):
     """ Класс одиночной частицы (элемент структурированного массива) """
     pass
 
 
-def get_particle_dtype(precision: Any = DEFAULT_PRECISION) -> np.dtype:
-    """ Генерирует dtype для частиц с заданной точностью """
-    p_char = 'd' if precision == np.float64 else 'f'
+def get_particle_dtype() -> np.dtype:
+    """ Генерирует dtype для частиц """
     return np.dtype([
         ('type', 'u8'),
-        ('position', f'3{p_char}'),
-        ('direction', f'3{p_char}'),
-        ('energy', p_char),
-        ('emission_time', p_char),
-        ('emission_energy', p_char),
-        ('emission_position', f'3{p_char}'),
-        ('emission_direction', f'3{p_char}'),
-        ('distance_traveled', p_char),
+        ('position', (Float, 3)),
+        ('direction', (Float, 3)),
+        ('energy', Float),
+        ('emission_time', Float),
+        ('emission_energy', Float),
+        ('emission_position', (Float, 3)),
+        ('emission_direction', (Float, 3)),
+        ('distance_traveled', Float),
         ('ID', 'u8')
     ])
 
-dtype_of_particle = get_particle_dtype(DEFAULT_PRECISION)
+dtype_of_particle = get_particle_dtype()
 
-class ParticleArray(np.ndarray, ParticleProperties, Generic[Precision]):
+class ParticleArray(np.ndarray, ParticleProperties):
     """ 
     Класс массива частиц
     """
@@ -99,21 +97,19 @@ class ParticleArray(np.ndarray, ParticleProperties, Generic[Precision]):
     def __new__(
         cls,
         type: NDArray[np.uint64],
-        position: NDArray[Any],
-        direction: NDArray[Any],
-        energy: NDArray[Precision],
-        emission_time: Optional[NDArray[Precision]] = None,
-        emission_position: Optional[NDArray[Any]] = None,
-        emission_direction: Optional[NDArray[Any]] = None,
-        distance_traveled: Optional[NDArray[Precision]] = None
-    ) -> 'ParticleArray[Precision]':
+        position: Vector3D,
+        direction: Vector3D,
+        energy: NDArray[Float],
+        emission_time: Optional[NDArray[Float]] = None,
+        emission_position: Optional[Vector3D] = None,
+        emission_direction: Optional[Vector3D] = None,
+        distance_traveled: Optional[NDArray[Float]] = None
+    ) -> 'ParticleArray':
 
-        # Определение точности на основе переданной энергии
-        precision = energy.dtype.type
-        current_dtype = get_particle_dtype(precision)
+        # Определение точности на основе конфигурации проекта
+        current_dtype = get_particle_dtype()
 
         obj = super().__new__(cls, shape=energy.size, dtype=(Particle, current_dtype))
-        obj = cast('ParticleArray[Precision]', obj)
 
         obj['type'] = type
         obj['position'] = position
@@ -128,32 +124,32 @@ class ParticleArray(np.ndarray, ParticleProperties, Generic[Precision]):
         return obj
 
     @classmethod
-    def __get_ID(cls, n: int) -> NDArray[np.uint64]:
+    def __get_ID(cls, n: int) -> NDArray[ID]:
         ID_vals = np.arange(cls.count, cls.count + n, dtype='uint64')
         cls.count += n
         return ID_vals
 
-    def move(self, distance: NDArray[Precision]) -> None:
+    def move(self, distance: NDArray[Float]) -> None:
         """ Переместить частицы """
         self['distance_traveled'] += distance
         self['position'] += self.direction * distance.reshape((-1, 1))
 
-    def change_energy(self, delta_energy: NDArray[Precision]) -> None:
+    def change_energy(self, delta_energy: NDArray[Float]) -> None:
         """ Изменить энергию частиц """
         self['energy'] -= delta_energy
 
-    def rotate(self, theta: NDArray[Precision], phi: NDArray[Precision]) -> None:
+    def rotate(self, theta: NDArray[Float], phi: NDArray[Float]) -> None:
         """
         Повернуть направления частиц
         """
-        direction = self['direction']
-        cos_theta = cos(theta)
-        sin_theta = sin(theta)
-        delta1 = sin_theta * cos(phi)
-        delta2 = sin_theta * sin(phi)
+        direction = cast(NDArray[Float], self['direction'])
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+        delta1 = sin_theta * np.cos(phi)
+        delta2 = sin_theta * np.sin(phi)
         delta = np.ones_like(cos_theta) - 2 * (direction[:, 2] < 0)
         b = direction[:, 0] * delta1 + direction[:, 1] * delta2
-        tmp = cos_theta - b / (1 + abs(direction[:, 2]))
+        tmp = cos_theta - b / (1 + np.abs(direction[:, 2]))
         direction[:, 0] = direction[:, 0] * tmp + delta1
         direction[:, 1] = direction[:, 1] * tmp + delta2
         direction[:, 2] = direction[:, 2] * cos_theta - delta * b

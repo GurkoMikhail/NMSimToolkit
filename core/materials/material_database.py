@@ -4,7 +4,8 @@ import numpy as np
 from h5py import File
 from core.materials.atomic_properties import element_symbol
 from core.materials.materials import Material
-from hepunits import*
+from core.other.typing_definitions import Float
+import hepunits as units
 
 
 class MaterialDataBase(dict):
@@ -32,16 +33,16 @@ class MaterialDataBase(dict):
         for group_name, material_type_group in file.items():
             for material_name, material_group in material_type_group.items():
                 type = group_name
-                density = float(np.copy(material_group['Density']))
+                density = Float(np.copy(material_group['Density']))
                 composition_dict = {}
                 if group_name == 'Elemental media':
                     Z = int(np.copy(material_group['Z']))
                     composition_dict.update({element_symbol[Z]: 1.})
                 else:
                     for element, weight in material_group['Composition'].items():
-                        composition_dict.update({element: float(np.copy(weight))})
+                        composition_dict.update({element: Float(np.copy(weight))})
                 try:
-                    ZtoA_ratio = float(np.copy(material_group['Z\\A']))
+                    ZtoA_ratio = Float(np.copy(material_group['Z\\A']))
                 except:
                     # print(f'Для {material_name} отсутствует Z\\A')
                     ZtoA_ratio = 0.5

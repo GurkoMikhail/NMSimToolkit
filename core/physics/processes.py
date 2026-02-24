@@ -1,69 +1,70 @@
-import core.physics.g4compton as g4compton
-import core.physics.g4coherent as g4coherent
-from core.materials.attenuation_functions import AttenuationFunction
-import settings.database_setting as settings
 from abc import ABC
+from typing import Any, Optional, Union, cast
+
 import numpy as np
-from numpy import pi, cos
-from hepunits import*
-
-
-from typing import Optional, Any, Union, Tuple, Generic
+import hepunits as units
 from numpy.typing import NDArray
-from core.particles.particles import Particle, ParticleArray
+
+import core.physics.g4coherent as g4coherent
+import core.physics.g4compton as g4compton
+import settings.database_setting as settings
+from core.data.interaction_data import InteractionArray
+from core.materials.attenuation_functions import AttenuationFunction
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Precision
+from core.other.typing_definitions import Float
+from core.particles.particles import ParticleArray
 
 
-class Process(ABC, Generic[Precision]):
+class Process(ABC):
     """ Класс процесса """
     rng: np.random.Generator
-    _energy_range: NDArray[np.float64] # type: ignore
+    _energy_range: NDArray[Float]
     attenuation_function: AttenuationFunction
+    attenuation_database: Optional[Any]
 
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         """ Конструктор процесса """
-        attenuation_database = settings.attenuation_database if attenuation_database is None else attenuation_database
+        self.attenuation_database = settings.attenuation_database if attenuation_database is None else attenuation_database
         self.rng = np.random.default_rng() if rng is None else rng
-        self._energy_range = np.array([1*keV, 1*MeV])
-        self._construct_attenuation_function(attenuation_database)
+        self._energy_range = np.array([1*units.keV, 1*units.MeV])
+        self._construct_attenuation_function()
 
-    def _construct_attenuation_function(self, attenuation_database):
-        self.attenuation_function = AttenuationFunction(self, attenuation_database)
+    def _construct_attenuation_function(self):
+        self.attenuation_function = AttenuationFunction(self, self.attenuation_database)
 
     @property
     def name(self) -> str:
         return self.__class__.__name__
 
     @property
-    def energy_range(self) -> np.ndarray:
+    def energy_range(self) -> NDArray[Float]:
         return self._energy_range
 
     @energy_range.setter
-    def energy_range(self, value: np.ndarray) -> None:
+    def energy_range(self, value: NDArray[Float]) -> None:
         self._energy_range = value
-        self._construct_attenuation_function(None) # type: ignore
+        self._construct_attenuation_function()
 
-    def get_LAC(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> Any: # type: ignore
+    def get_LAC(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]:
         energy = particle.energy
         LAC = self.attenuation_function(material, energy)
         return LAC
 
-    def generate_free_path(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> Any: # type: ignore
+    def generate_free_path(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]:
         LAC = self.get_LAC(particle, material)
         freePath = self.rng.exponential(1/LAC)
         return freePath
 
-    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
+    def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
         """ Применить процесс """
         size = particle.size
-        interaction_data = np.recarray(size, dtype=process_data_dtype)
+        interaction_data = InteractionArray(size)
         interaction_data.position = particle.position
         interaction_data.direction = particle.direction
         interaction_data.process_name = self.name
         interaction_data.particle_ID = particle.ID
-        interaction_data.energy_deposit = 0.
-        interaction_data.scattering_angles = 0.
+        interaction_data.energy_deposit = Float(0.)
+        interaction_data.scattering_angles = Float(0.)
         interaction_data.emission_time = particle.emission_time
         interaction_data.emission_energy = particle.emission_energy
         interaction_data.emission_position = particle.emission_position
@@ -72,10 +73,10 @@ class Process(ABC, Generic[Precision]):
         return interaction_data
 
 
-class PhotoelectricEffect(Process[Precision]):
+class PhotoelectricEffect(Process):
     """ Класс фотоэффекта """
 
-    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
+    def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
         """ Применить фотоэффект """
         interaction_data = super().__call__(particle, material)
         energy_deposit = particle.energy
@@ -84,27 +85,27 @@ class PhotoelectricEffect(Process[Precision]):
         return interaction_data
         
 
-class CoherentScattering(Process[Precision]):
+class CoherentScattering(Process):
     """ Класс когерентного рассеяния """
     
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         Process.__init__(self, attenuation_database, rng)                
         self.theta_generator = g4coherent.initialize(self.rng)
 
-    def generate_theta(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> Any: # type: ignore
+    def generate_theta(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]:
         """ Сгенерировать угол рассеяния - theta """
         energy = particle.energy
         Z = np.array(material.Zeff, dtype=int)
         theta = self.theta_generator(energy, Z)
         return theta
 
-    def generate_phi(self, size):
+    def generate_phi(self, size: int) -> NDArray[Float]:
         """ Сгенерировать угол рассеяния - phi """
-        phi = pi*(self.rng.random(size)*2 - 1)
+        phi = np.pi * (self.rng.random(size) * 2 - 1)
         return phi
 
-    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
-        """ Применить эффект Комптона """
+    def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
+        """ Применить когерентное рассеяние """
         size = particle.size
         theta = self.generate_theta(particle, material)
         phi = self.generate_phi(size)
@@ -114,21 +115,21 @@ class CoherentScattering(Process[Precision]):
         return interaction_data
 
 
-class ComptonScattering(CoherentScattering[Precision]):
+class ComptonScattering(CoherentScattering):
     """ Класс эффекта Комптона """
 
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         Process.__init__(self, attenuation_database, rng)
         self.theta_generator = g4compton.initialize(self.rng)
 
-    def culculate_energy_deposit(self, theta, particle_energy):
+    def culculate_energy_deposit(self, theta: NDArray[Float], particle_energy: NDArray[Float]) -> NDArray[Float]:
         """ Вычислить изменения энергий """
-        k = particle_energy/0.510998910*MeV
-        k1_cos = k*(1 - cos(theta))
-        energy_deposit = particle_energy*k1_cos/(1 + k1_cos)
+        k = particle_energy / (0.510998910 * units.MeV)
+        k1_cos = k * (1 - np.cos(theta))
+        energy_deposit = particle_energy * k1_cos / (1 + k1_cos)
         return energy_deposit
 
-    def __call__(self, particle: Union[Particle, ParticleArray[Precision]], material: Union[Material, MaterialArray]) -> np.recarray: # type: ignore
+    def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
         """ Применить эффект Комптона """
         interaction_data = super().__call__(particle, material)
         theta = interaction_data.scattering_angles[:, 0]
@@ -138,22 +139,5 @@ class ComptonScattering(CoherentScattering[Precision]):
         return interaction_data
 
 
-class PairProduction(Process[Precision]):
+class PairProduction(Process):
     """ Класс эффекта образования электрон-позитронных пар """
-
-
-process_data_dtype = np.dtype([
-    ('position', '3d'),
-    ('direction', '3d'),
-    ('process_name', 'U30'),
-    ('particle_type', 'U30'),
-    ('particle_ID', 'u8'),
-    ('energy_deposit', 'd'),
-    ('scattering_angles', '2d'),
-    ('emission_time', 'd'),
-    ('emission_energy', 'd'),
-    ('emission_position', '3d'),
-    ('emission_direction', '3d'),
-    ('distance_traveled', 'd'),
-])
-

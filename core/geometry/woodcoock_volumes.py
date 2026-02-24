@@ -1,24 +1,28 @@
+from typing import Any, Tuple, Union
+
+import numpy as np
+from numpy.typing import NDArray
+
 from core.geometry.volumes import TransformableVolume
-from typing import Tuple, Any, Generic
-from core.materials.materials import MaterialArray
-from core.other.typing_definitions import Vector3D, Precision
+from core.materials.materials import Material, MaterialArray
+from core.other.typing_definitions import Float, Vector3D
 
 
-class WoodcockVolume(TransformableVolume[Precision]):
+class WoodcockVolume(TransformableVolume):
     """
     Базовый класс Woodcock объёма
     """
 
 
-class WoodcockParameticVolume(WoodcockVolume[Precision]):
+class WoodcockParameticVolume(WoodcockVolume):
     """
     Класс параметричекого Woodcock объёма
     """
 
-    def _parametric_function(self, position: Vector3D[Precision]) -> Tuple[Any, Any]: # type: ignore
+    def _parametric_function(self, position: Vector3D) -> Tuple[Union[NDArray[np.bool_], list], Any]:
         return [], None
 
-    def get_material_by_position(self, position: Vector3D[Precision], local: bool = False, as_parent: bool = True) -> MaterialArray: # type: ignore
+    def get_material_by_position(self, position: Vector3D, local: bool = False, as_parent: bool = True) -> MaterialArray:
         if not local:
             position = self.convert_to_local_position(position, as_parent)
         material = super().get_material_by_position(position, True, as_parent)
@@ -26,4 +30,3 @@ class WoodcockParameticVolume(WoodcockVolume[Precision]):
         indices, new_material = self._parametric_function(position[inside])
         material[inside[indices]] = new_material
         return material
-
