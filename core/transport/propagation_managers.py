@@ -8,6 +8,7 @@ import settings.processes_settings as processes_settings
 from core.data.interaction_data import InteractionArray
 from core.geometry.volumes import ElementaryVolume
 from core.geometry.woodcoock_volumes import WoodcockVolume
+from core.materials.materials import Material, MaterialArray
 from core.other.typing_definitions import Float
 from core.particles.particles import ParticleArray
 from core.physics.processes import Process
@@ -44,13 +45,33 @@ class PropagationWithInteraction:
             if woodcock_volume.any():
                 materials[woodcock_volume] = volume.get_material_by_position(interacted_particles.position[woodcock_volume])
                 processes_LAC[:, woodcock_volume] = self.get_processes_LAC(interacted_particles[woodcock_volume], materials[woodcock_volume])
-            interaction_data = []
-            for process, indices in self.choose_process(processes_LAC, total_LAC):
-                processing_particles = interacted_particles[indices]
-                interaction_data.append(process(processing_particles, materials[indices]))
-                interacted_particles[indices] = processing_particles
-            particles[interacted] = interacted_particles
-            return np.concatenate(interaction_data).view(InteractionArray)
+
+            interaction_data_list = []
+
+            # Probability calculation (simplified/corrected logic if needed, kept as original intent but using local scope)
+            # Avoid division by zero
+            probabilities = np.divide(processes_LAC, total_LAC, out=np.zeros_like(processes_LAC), where=total_LAC!=0)
+            rnd = self.rng.random(total_LAC.size)
+            p0 = np.zeros(total_LAC.size, dtype=Float)
+
+            for i, process in enumerate(self.processes):
+                p1 = p0 + probabilities[i]
+                in_delta = (p0 <= rnd) & (rnd < p1)
+                indices = in_delta.nonzero()[0]
+
+                if indices.size > 0:
+                    processing_particles = interacted_particles[indices]
+                    # The process modifies the particle in place (energy, direction)
+                    res = process(processing_particles, materials[indices])
+                    interaction_data_list.append(res)
+
+                p0 = p1
+
+            if len(interaction_data_list) > 0:
+                return np.concatenate(interaction_data_list).view(InteractionArray)
+            else:
+                 return None
+        return None
 
     def get_processes_LAC(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[Float]:
         LAC = []
@@ -69,17 +90,3 @@ class PropagationWithInteraction:
         for i, process in enumerate(self.processes):
             free_path[i] = process.generate_free_path(particles, materials)
         return free_path.min(axis=0)
-
-    def choose_process(self, processes_LAC: NDArray[Float], total_LAC: NDArray[Float]) -> List[Tuple[Process, NDArray[np.int64]]]:
-        probabilities = processes_LAC/total_LAC
-        rnd = self.rng.random(total_LAC.size)
-        chosen_process = []
-        p0 = 0
-        for i, process in enumerate(self.processes):
-            p1 = p0 + probabilities[i]
-            in_delta = (p0 <= rnd)
-            in_delta *= (rnd <= p1)
-            indices = in_delta.nonzero()[0]
-            p0 = p1
-            chosen_process.append((process, indices))
-        return chosen_process
