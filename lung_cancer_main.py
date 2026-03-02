@@ -35,7 +35,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     from core.data.data_manager import SimulationDataManager
     from core.geometry.voxel_volumes import WoodcockVoxelVolume
     from core.transport.propagation_managers import PropagationWithInteraction
-    from core.source.sources import Тс99m_MIBI
+    from core.source.sources import Tc99m_MIBI
     from settings.database_setting import material_database, attenuation_database
 
     rng = np.random.default_rng(seed)
@@ -101,7 +101,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     distribution[distribution==80] = 40
     distribution[distribution==89] = 50
     distribution[distribution==140] = 200
-    source = Тс99m_MIBI(
+    source = Tc99m_MIBI(
         distribution=distribution,
         activity=300*MBq,
         voxel_size=4*mm

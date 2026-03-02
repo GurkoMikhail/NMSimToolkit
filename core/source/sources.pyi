@@ -36,13 +36,13 @@ class Source:
 class PointSource(Source):
     def __init__(self, activity: Float, energy: Float, size: Length = ..., half_life: Time = ..., rng: Optional[np.random.Generator] = None) -> None: ...
 
-class Тс99m_MIBI(Source):
+class Tc99m_MIBI(Source):
     def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = ...) -> None: ...
 
 class I123(Source):
     def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = ...) -> None: ...
 
-class SourcePhantom(Тс99m_MIBI):
+class SourcePhantom(Tc99m_MIBI):
     def __init__(self, phantom_name: str, activity: Optional[Any] = None, voxel_size: Length = ...) -> None: ...
 
 class efg3(SourcePhantom):

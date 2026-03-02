@@ -179,9 +179,9 @@ class PointSource(Source):
             rng=rng
         )
 
-class Тс99m_MIBI(Source):
+class Tc99m_MIBI(Source):
     """
-    Источник 99mТс-MIBI
+    Источник 99mTc-MIBI
 
     [position = (x, y, z)] = units.cm
 
@@ -225,9 +225,9 @@ class I123(Source):
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
 
-class SourcePhantom(Тс99m_MIBI):
+class SourcePhantom(Tc99m_MIBI):
     """
-    Источник 99mТс-MIBI
+    Источник 99mTc-MIBI
 
     [position = (x, y, z)] = units.cm
 
