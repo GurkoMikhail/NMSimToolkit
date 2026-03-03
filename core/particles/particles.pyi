@@ -44,7 +44,10 @@ class ParticleArray(np.ndarray, ParticleCore):
     distance_traveled: NDArray[Float]
     ID: NDArray[ID]
 
-    def __new__(
+    def __new__(cls, shape: Union[int, Tuple[int, ...]]) -> 'ParticleArray': ...
+
+    @classmethod
+    def create(
         cls,
         species: NDArray[np.uint64],
         position: Vector3D,

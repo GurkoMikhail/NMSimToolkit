@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, Union, cast, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -95,7 +95,13 @@ class ParticleArray(np.ndarray, ParticleCore):
 
     count: int = 0
 
-    def __new__(
+    def __new__(cls, shape: Union[int, Tuple[int, ...]]) -> 'ParticleArray':
+        current_dtype = get_particle_dtype()
+        obj = super().__new__(cls, shape=shape, dtype=(Particle, current_dtype))
+        return obj
+
+    @classmethod
+    def create(
         cls,
         species: NDArray[np.uint64],
         position: Vector3D,
@@ -107,10 +113,7 @@ class ParticleArray(np.ndarray, ParticleCore):
         distance_traveled: Optional[NDArray[Float]] = None
     ) -> 'ParticleArray':
 
-        # Определение точности на основе конфигурации проекта
-        current_dtype = get_particle_dtype()
-
-        obj = super().__new__(cls, shape=energy.size, dtype=(Particle, current_dtype))
+        obj = cls(shape=energy.size)
 
         obj['species'] = species
         obj['position'] = position

@@ -153,7 +153,7 @@ class Source:
         position = self.generate_position(n)
         emission_time, dt = self.generate_emission_time(n)
         self.timer += dt
-        particles = ParticleArray(np.zeros_like(energy, dtype=np.uint64), position, direction, energy, emission_time)
+        particles = ParticleArray.create(np.zeros_like(energy, dtype=np.uint64), position, direction, energy, emission_time)
         return particles
 
 
