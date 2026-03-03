@@ -10,13 +10,13 @@ class ParticleCore:
     """ Базовый класс свойств частицы, обеспечивающий доступ к полям структурированного массива и методы для работы с ним """
 
     species: Union[np.uint64, NDArray[np.uint64]]
-    position: Union[Vector3D, NDArray[Float]]
-    direction: Union[Vector3D, NDArray[Float]]
+    position: Vector3D
+    direction: Vector3D
     energy: Union[Float, NDArray[Float]]
     emission_time: Union[Float, NDArray[Float]]
     emission_energy: Union[Float, NDArray[Float]]
-    emission_position: Union[Vector3D, NDArray[Float]]
-    emission_direction: Union[Vector3D, NDArray[Float]]
+    emission_position: Vector3D
+    emission_direction: Vector3D
     distance_traveled: Union[Float, NDArray[Float]]
     ID: Union[ID, NDArray[ID]]
 

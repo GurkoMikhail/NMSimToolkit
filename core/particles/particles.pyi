@@ -5,13 +5,13 @@ from core.other.typing_definitions import Float, Vector3D, Energy, Time, Length,
 
 class ParticleCore:
     species: Union[np.uint64, NDArray[np.uint64]]
-    position: Union[Vector3D, NDArray[Float]]
-    direction: Union[Vector3D, NDArray[Float]]
+    position: Vector3D
+    direction: Vector3D
     energy: Union[Float, NDArray[Float]]
     emission_time: Union[Float, NDArray[Float]]
     emission_energy: Union[Float, NDArray[Float]]
-    emission_position: Union[Vector3D, NDArray[Float]]
-    emission_direction: Union[Vector3D, NDArray[Float]]
+    emission_position: Vector3D
+    emission_direction: Vector3D
     distance_traveled: Union[Float, NDArray[Float]]
     ID: Union[ID, NDArray[ID]]
 
@@ -34,13 +34,13 @@ class ParticleArray(np.ndarray, ParticleCore):
     count: int
 
     species: NDArray[np.uint64]
-    position: NDArray[Float]
-    direction: NDArray[Float]
+    position: Vector3D
+    direction: Vector3D
     energy: NDArray[Float]
     emission_time: NDArray[Float]
     emission_energy: NDArray[Float]
-    emission_position: NDArray[Float]
-    emission_direction: NDArray[Float]
+    emission_position: Vector3D
+    emission_direction: Vector3D
     distance_traveled: NDArray[Float]
     ID: NDArray[ID]
 
