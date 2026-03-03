@@ -1,73 +1,52 @@
 import numpy as np
-from typing import Union, Optional, Tuple
+from typing import Union, overload, Any, Tuple, Optional
 from numpy.typing import NDArray
 from core.other.typing_definitions import Float, Vector3D, Energy, Time, Length, ID
 
-def get_particle_dtype() -> np.dtype: ...
+class ParticleCore:
+    species: Union[np.uint64, NDArray[np.uint64]]
+    position: Union[Vector3D, NDArray[Float]]
+    direction: Union[Vector3D, NDArray[Float]]
+    energy: Union[Float, NDArray[Float]]
+    emission_time: Union[Float, NDArray[Float]]
+    emission_energy: Union[Float, NDArray[Float]]
+    emission_position: Union[Vector3D, NDArray[Float]]
+    emission_direction: Union[Vector3D, NDArray[Float]]
+    distance_traveled: Union[Float, NDArray[Float]]
+    ID: Union[ID, NDArray[ID]]
 
-dtype_of_particle: np.dtype
+    def move(self, distance: Union[Float, NDArray[Float]]) -> None: ...
+    def rotate(self, theta: Union[Float, NDArray[Float]], phi: Union[Float, NDArray[Float]]) -> None: ...
 
-class Particle(np.record):
-    @property
-    def type(self) -> np.uint64: ...
-    @type.setter
-    def type(self, value: Union[np.uint64, int]) -> None: ...
+class Particle(np.void, ParticleCore):
+    species: np.uint64
+    position: Vector3D
+    direction: Vector3D
+    energy: Float
+    emission_time: Float
+    emission_energy: Float
+    emission_position: Vector3D
+    emission_direction: Vector3D
+    distance_traveled: Float
+    ID: ID
 
-    @property
-    def position(self) -> Vector3D: ...
-    @position.setter
-    def position(self, value: Union[Vector3D, Float]) -> None: ...
-
-    @property
-    def direction(self) -> Vector3D: ...
-    @direction.setter
-    def direction(self, value: Union[Vector3D, Float]) -> None: ...
-
-    @property
-    def energy(self) -> Float: ...
-    @energy.setter
-    def energy(self, value: Union[Float, float]) -> None: ...
-
-    @property
-    def emission_time(self) -> Float: ...
-    @emission_time.setter
-    def emission_time(self, value: Union[Float, float]) -> None: ...
-
-    @property
-    def emission_energy(self) -> Float: ...
-    @emission_energy.setter
-    def emission_energy(self, value: Union[Float, float]) -> None: ...
-
-    @property
-    def emission_position(self) -> Vector3D: ...
-    @emission_position.setter
-    def emission_position(self, value: Union[Vector3D, Float]) -> None: ...
-
-    @property
-    def emission_direction(self) -> Vector3D: ...
-    @emission_direction.setter
-    def emission_direction(self, value: Union[Vector3D, Float]) -> None: ...
-
-    @property
-    def distance_traveled(self) -> Float: ...
-    @distance_traveled.setter
-    def distance_traveled(self, value: Union[Float, float]) -> None: ...
-
-    @property
-    def ID(self) -> ID: ...
-    @ID.setter
-    def ID(self, value: Union[ID, int]) -> None: ...
-
-
-class ParticleArray(np.recarray):
+class ParticleArray(np.ndarray, ParticleCore):
     count: int
 
-    def __new__(cls, shape: Union[int, Tuple[int, ...]]) -> 'ParticleArray': ...
+    species: NDArray[np.uint64]
+    position: NDArray[Float]
+    direction: NDArray[Float]
+    energy: NDArray[Float]
+    emission_time: NDArray[Float]
+    emission_energy: NDArray[Float]
+    emission_position: NDArray[Float]
+    emission_direction: NDArray[Float]
+    distance_traveled: NDArray[Float]
+    ID: NDArray[ID]
 
-    @classmethod
-    def create(
+    def __new__(
         cls,
-        type: NDArray[np.uint64],
+        species: NDArray[np.uint64],
         position: Vector3D,
         direction: Vector3D,
         energy: NDArray[Float],
@@ -77,56 +56,6 @@ class ParticleArray(np.recarray):
         distance_traveled: Optional[NDArray[Float]] = None
     ) -> 'ParticleArray': ...
 
-    @property
-    def type(self) -> NDArray[np.uint64]: ...
-    @type.setter
-    def type(self, value: Union[NDArray[np.uint64], np.uint64]) -> None: ...
+def get_particle_dtype() -> np.dtype: ...
 
-    @property
-    def position(self) -> Vector3D: ...
-    @position.setter
-    def position(self, value: Union[Vector3D, Float]) -> None: ...
-
-    @property
-    def direction(self) -> Vector3D: ...
-    @direction.setter
-    def direction(self, value: Union[Vector3D, Float]) -> None: ...
-
-    @property
-    def energy(self) -> NDArray[Float]: ...
-    @energy.setter
-    def energy(self, value: Union[NDArray[Float], Float]) -> None: ...
-
-    @property
-    def emission_time(self) -> NDArray[Float]: ...
-    @emission_time.setter
-    def emission_time(self, value: Union[NDArray[Float], Float]) -> None: ...
-
-    @property
-    def emission_energy(self) -> NDArray[Float]: ...
-    @emission_energy.setter
-    def emission_energy(self, value: Union[NDArray[Float], Float]) -> None: ...
-
-    @property
-    def emission_position(self) -> Vector3D: ...
-    @emission_position.setter
-    def emission_position(self, value: Union[Vector3D, Float]) -> None: ...
-
-    @property
-    def emission_direction(self) -> Vector3D: ...
-    @emission_direction.setter
-    def emission_direction(self, value: Union[Vector3D, Float]) -> None: ...
-
-    @property
-    def distance_traveled(self) -> NDArray[Float]: ...
-    @distance_traveled.setter
-    def distance_traveled(self, value: Union[NDArray[Float], Float]) -> None: ...
-
-    @property
-    def ID(self) -> NDArray[ID]: ...
-    @ID.setter
-    def ID(self, value: Union[NDArray[ID], ID]) -> None: ...
-
-    def move(self, distance: NDArray[Float]) -> None: ...
-    def change_energy(self, delta_energy: NDArray[Float]) -> None: ...
-    def rotate(self, theta: NDArray[Float], phi: NDArray[Float]) -> None: ...
+dtype_of_particle: np.dtype
