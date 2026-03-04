@@ -1,10 +1,10 @@
 import numpy as np
 from typing import Union, overload, Any, Tuple, Optional
 from numpy.typing import NDArray
-from core.other.typing_definitions import Float, Vector3D, Energy, Time, Length, ID
+from core.other.typing_definitions import Float, Vector3D, Energy, Time, Length, ID, Species
 
 class ParticleCore:
-    species: Union[np.uint64, NDArray[np.uint64]]
+    species: Union[Species, NDArray[Species]]
     position: Vector3D
     direction: Vector3D
     energy: Union[Float, NDArray[Float]]
@@ -18,8 +18,11 @@ class ParticleCore:
     def move(self, distance: Union[Float, NDArray[Float]]) -> None: ...
     def rotate(self, theta: Union[Float, NDArray[Float]], phi: Union[Float, NDArray[Float]]) -> None: ...
 
+    @classmethod
+    def get_dtype(cls) -> np.dtype: ...
+
 class Particle(np.void, ParticleCore):
-    species: np.uint64
+    species: Species
     position: Vector3D
     direction: Vector3D
     energy: Float
@@ -33,7 +36,7 @@ class Particle(np.void, ParticleCore):
 class ParticleArray(np.ndarray, ParticleCore):
     count: int
 
-    species: NDArray[np.uint64]
+    species: NDArray[Species]
     position: Vector3D
     direction: Vector3D
     energy: NDArray[Float]
@@ -49,7 +52,7 @@ class ParticleArray(np.ndarray, ParticleCore):
     @classmethod
     def create(
         cls,
-        species: NDArray[np.uint64],
+        species: NDArray[Species],
         position: Vector3D,
         direction: Vector3D,
         energy: NDArray[Float],
@@ -59,6 +62,3 @@ class ParticleArray(np.ndarray, ParticleCore):
         distance_traveled: Optional[NDArray[Float]] = None
     ) -> 'ParticleArray': ...
 
-def get_particle_dtype() -> np.dtype: ...
-
-dtype_of_particle: np.dtype

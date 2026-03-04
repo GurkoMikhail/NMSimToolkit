@@ -3,13 +3,13 @@ from typing import Any, Optional, Union, cast, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Energy, Float, ID, Length, Time, Vector3D
+from core.other.typing_definitions import Energy, Float, ID, Length, Time, Vector3D, Species
 
 
 class ParticleCore:
     """ Базовый класс свойств частицы, обеспечивающий доступ к полям структурированного массива и методы для работы с ним """
 
-    species: Union[np.uint64, NDArray[np.uint64]]
+    species: Union[Species, NDArray[Species]]
     position: Vector3D
     direction: Vector3D
     energy: Union[Float, NDArray[Float]]
@@ -66,27 +66,26 @@ class ParticleCore:
         self.direction = direction
 
 
+    @classmethod
+    def get_dtype(cls) -> np.dtype:
+        """ Генерирует dtype для частиц """
+        return np.dtype([
+            ('species', Species),
+            ('position', (Float, 3)),
+            ('direction', (Float, 3)),
+            ('energy', Float),
+            ('emission_time', Float),
+            ('emission_energy', Float),
+            ('emission_position', (Float, 3)),
+            ('emission_direction', (Float, 3)),
+            ('distance_traveled', Float),
+            ('ID', ID)
+        ])
+
+
 class Particle(np.void, ParticleCore):
     """ Класс одиночной частицы (элемент структурированного массива) """
     pass
-
-
-def get_particle_dtype() -> np.dtype:
-    """ Генерирует dtype для частиц """
-    return np.dtype([
-        ('species', 'u8'),
-        ('position', (Float, 3)),
-        ('direction', (Float, 3)),
-        ('energy', Float),
-        ('emission_time', Float),
-        ('emission_energy', Float),
-        ('emission_position', (Float, 3)),
-        ('emission_direction', (Float, 3)),
-        ('distance_traveled', Float),
-        ('ID', 'u8')
-    ])
-
-dtype_of_particle = get_particle_dtype()
 
 class ParticleArray(np.ndarray, ParticleCore):
     """ 
@@ -96,14 +95,14 @@ class ParticleArray(np.ndarray, ParticleCore):
     count: int = 0
 
     def __new__(cls, shape: Union[int, Tuple[int, ...]]) -> 'ParticleArray':
-        current_dtype = get_particle_dtype()
+        current_dtype = ParticleCore.get_dtype()
         obj = super().__new__(cls, shape=shape, dtype=(Particle, current_dtype))
         return obj
 
     @classmethod
     def create(
         cls,
-        species: NDArray[np.uint64],
+        species: NDArray[Species],
         position: Vector3D,
         direction: Vector3D,
         energy: NDArray[Float],
@@ -129,6 +128,6 @@ class ParticleArray(np.ndarray, ParticleCore):
 
     @classmethod
     def __get_ID(cls, n: int) -> NDArray[ID]:
-        ID_vals = np.arange(cls.count, cls.count + n, dtype='uint64')
+        ID_vals = np.arange(cls.count, cls.count + n, dtype=ID)
         cls.count += n
         return ID_vals

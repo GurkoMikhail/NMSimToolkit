@@ -59,17 +59,17 @@ class Process(ABC):
         """ Применить процесс """
         size = particle.size
         interaction_data = InteractionArray(size)
-        interaction_data.position = particle.position
-        interaction_data.direction = particle.direction
+        interaction_data.position = particle.position.copy()
+        interaction_data.direction = particle.direction.copy()
         interaction_data.process_name = self.name
-        interaction_data.particle_ID = particle.ID
+        interaction_data.particle_ID = particle.ID.copy()
         interaction_data.energy_deposit = Float(0.)
         interaction_data.scattering_angles = Float(0.)
-        interaction_data.emission_time = particle.emission_time
-        interaction_data.emission_energy = particle.emission_energy
-        interaction_data.emission_position = particle.emission_position
-        interaction_data.emission_direction = particle.emission_direction
-        interaction_data.distance_traveled = particle.distance_traveled
+        interaction_data.emission_time = particle.emission_time.copy()
+        interaction_data.emission_energy = particle.emission_energy.copy()
+        interaction_data.emission_position = particle.emission_position.copy()
+        interaction_data.emission_direction = particle.emission_direction.copy()
+        interaction_data.distance_traveled = particle.distance_traveled.copy()
         return interaction_data
 
 
