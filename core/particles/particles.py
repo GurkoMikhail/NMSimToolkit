@@ -12,12 +12,12 @@ class ParticleCore:
     species: Union[Species, NDArray[Species]]
     position: Vector3D
     direction: Vector3D
-    energy: Union[Float, NDArray[Float]]
-    emission_time: Union[Float, NDArray[Float]]
-    emission_energy: Union[Float, NDArray[Float]]
+    energy: Union[Energy, NDArray[Energy]]
+    emission_time: Union[Time, NDArray[Time]]
+    emission_energy: Union[Energy, NDArray[Energy]]
     emission_position: Vector3D
     emission_direction: Vector3D
-    distance_traveled: Union[Float, NDArray[Float]]
+    distance_traveled: Union[Length, NDArray[Length]]
     ID: Union[ID, NDArray[ID]]
 
     def __getattr__(self, name: str) -> Any:
@@ -33,7 +33,7 @@ class ParticleCore:
         else:
             super().__setattr__(name, value)
 
-    def move(self, distance: Union[Float, NDArray[Float]]) -> None:
+    def move(self, distance: Union[Length, NDArray[Length]]) -> None:
         """ Переместить частицы (работает для скаляра и массива) """
         dist_arr = np.asarray(distance)
         self.distance_traveled += dist_arr
@@ -71,14 +71,14 @@ class ParticleCore:
         """ Генерирует dtype для частиц """
         return np.dtype([
             ('species', Species),
-            ('position', (Float, 3)),
-            ('direction', (Float, 3)),
-            ('energy', Float),
-            ('emission_time', Float),
-            ('emission_energy', Float),
-            ('emission_position', (Float, 3)),
-            ('emission_direction', (Float, 3)),
-            ('distance_traveled', Float),
+            ('position', (Length, 3)),
+            ('direction', (Length, 3)),
+            ('energy', Energy),
+            ('emission_time', Time),
+            ('emission_energy', Energy),
+            ('emission_position', (Length, 3)),
+            ('emission_direction', (Length, 3)),
+            ('distance_traveled', Length),
             ('ID', ID)
         ])
 
@@ -105,11 +105,11 @@ class ParticleArray(np.ndarray, ParticleCore):
         species: NDArray[Species],
         position: Vector3D,
         direction: Vector3D,
-        energy: NDArray[Float],
-        emission_time: Optional[NDArray[Float]] = None,
+        energy: NDArray[Energy],
+        emission_time: Optional[NDArray[Time]] = None,
         emission_position: Optional[Vector3D] = None,
         emission_direction: Optional[Vector3D] = None,
-        distance_traveled: Optional[NDArray[Float]] = None
+        distance_traveled: Optional[NDArray[Length]] = None
     ) -> 'ParticleArray':
 
         obj = cls(shape=energy.size)

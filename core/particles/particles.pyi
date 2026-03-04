@@ -7,15 +7,15 @@ class ParticleCore:
     species: Union[Species, NDArray[Species]]
     position: Vector3D
     direction: Vector3D
-    energy: Union[Float, NDArray[Float]]
-    emission_time: Union[Float, NDArray[Float]]
-    emission_energy: Union[Float, NDArray[Float]]
+    energy: Union[Energy, NDArray[Energy]]
+    emission_time: Union[Time, NDArray[Time]]
+    emission_energy: Union[Energy, NDArray[Energy]]
     emission_position: Vector3D
     emission_direction: Vector3D
-    distance_traveled: Union[Float, NDArray[Float]]
+    distance_traveled: Union[Length, NDArray[Length]]
     ID: Union[ID, NDArray[ID]]
 
-    def move(self, distance: Union[Float, NDArray[Float]]) -> None: ...
+    def move(self, distance: Union[Length, NDArray[Length]]) -> None: ...
     def rotate(self, theta: Union[Float, NDArray[Float]], phi: Union[Float, NDArray[Float]]) -> None: ...
 
     @classmethod
@@ -25,12 +25,12 @@ class Particle(np.void, ParticleCore):
     species: Species
     position: Vector3D
     direction: Vector3D
-    energy: Float
-    emission_time: Float
-    emission_energy: Float
+    energy: Energy
+    emission_time: Time
+    emission_energy: Energy
     emission_position: Vector3D
     emission_direction: Vector3D
-    distance_traveled: Float
+    distance_traveled: Length
     ID: ID
 
 class ParticleArray(np.ndarray, ParticleCore):
@@ -39,12 +39,12 @@ class ParticleArray(np.ndarray, ParticleCore):
     species: NDArray[Species]
     position: Vector3D
     direction: Vector3D
-    energy: NDArray[Float]
-    emission_time: NDArray[Float]
-    emission_energy: NDArray[Float]
+    energy: NDArray[Energy]
+    emission_time: NDArray[Time]
+    emission_energy: NDArray[Energy]
     emission_position: Vector3D
     emission_direction: Vector3D
-    distance_traveled: NDArray[Float]
+    distance_traveled: NDArray[Length]
     ID: NDArray[ID]
 
     def __new__(cls, shape: Union[int, Tuple[int, ...]]) -> 'ParticleArray': ...
@@ -55,10 +55,10 @@ class ParticleArray(np.ndarray, ParticleCore):
         species: NDArray[Species],
         position: Vector3D,
         direction: Vector3D,
-        energy: NDArray[Float],
-        emission_time: Optional[NDArray[Float]] = None,
+        energy: NDArray[Energy],
+        emission_time: Optional[NDArray[Time]] = None,
         emission_position: Optional[Vector3D] = None,
         emission_direction: Optional[Vector3D] = None,
-        distance_traveled: Optional[NDArray[Float]] = None
+        distance_traveled: Optional[NDArray[Length]] = None
     ) -> 'ParticleArray': ...
 
