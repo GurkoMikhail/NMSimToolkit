@@ -1,0 +1,12 @@
+name: NMSimToolkit
+channels:
+  - defaults
+dependencies:
+  - python=3.13
+  - numba
+  - numpy
+  - scipy
+  - h5py
+  - cffi
+  - conda-forge::hepunits
+prefix: /home/user/micromamba/envs/NMSimToolkit
