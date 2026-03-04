@@ -80,7 +80,7 @@ class PhotoelectricEffect(Process):
         """ Применить фотоэффект """
         interaction_data = super().__call__(particle, material)
         energy_deposit = particle.energy
-        particle.change_energy(energy_deposit)
+        particle.energy -= energy_deposit
         interaction_data.energy_deposit = energy_deposit
         return interaction_data
         
@@ -134,7 +134,7 @@ class ComptonScattering(CoherentScattering):
         interaction_data = super().__call__(particle, material)
         theta = interaction_data.scattering_angles[:, 0]
         energy_deposit = self.culculate_energy_deposit(theta, particle.energy)
-        particle.change_energy(energy_deposit)
+        particle.energy -= energy_deposit
         interaction_data.energy_deposit = energy_deposit
         return interaction_data
 
