@@ -94,15 +94,27 @@ class VolumeWithChilds(ElementaryVolume):
             direction_inside = direction[inside]
             distance_inside = distance[inside]
             current_volume_inside = current_volume[inside]
-            distance_to_child = np.full((len(self.childs), position_inside.shape[0]), np.inf)
-            for i, child in enumerate(self.childs):
+            
+            # Инициализируем массив минимальных дистанций до детей бесконечностью
+            distance_to_child_min = np.full(position_inside.shape[0], np.inf)
+            
+            for child in self.childs:
                 _distance_to_child, child_volume = child.cast_path(position_inside, direction_inside)
-                inside_child = child_volume != 0
-                current_volume_inside[inside_child] = child_volume[inside_child]
-                distance_to_child[i] = _distance_to_child
-            distance_to_child_min = distance_to_child.min(axis=0)
+                
+                # Создаем маску для лучей, где ЭТОТ ребенок ближе всех предыдущих
+                closer_mask = (child_volume != 0) & (_distance_to_child < distance_to_child_min)
+                
+                # Обновляем объем и минимальную дистанцию ТОЛЬКО по этой маске
+                current_volume_inside[closer_mask] = child_volume[closer_mask]
+                distance_to_child_min[closer_mask] = _distance_to_child[closer_mask]
+
+            # Опциональная защита (возврат объема родителя, если граница родителя ближе границы ребенка)
+            revert_mask = distance_inside < distance_to_child_min
+            current_volume_inside[revert_mask] = self
+
             current_volume[inside] = current_volume_inside
-            distance[inside] = np.where(distance_inside < distance_to_child_min, distance_inside, distance_to_child_min)
+            distance[inside] = np.where(revert_mask, distance_inside, distance_to_child_min)
+            
         return distance, current_volume
 
     def get_material_by_position(self, position: Vector3D) -> MaterialArray:
