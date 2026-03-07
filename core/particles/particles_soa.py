@@ -81,11 +81,10 @@ class ParticleBank:
     """
 
     def __init__(self, capacity: int):
-        self.capacity = capacity
-        self.count = 0
+        self._count = 0
 
         # Instantiate base flat arrays
-        self.state = ParticleState(
+        self._state = ParticleState(
             species=np.empty(capacity, dtype=Species),
             position=Vector3DSoA(
                 x=np.empty(capacity, dtype=Length),
@@ -114,7 +113,19 @@ class ParticleBank:
             ID=np.empty(capacity, dtype=ID),
             is_active=np.zeros(capacity, dtype=np.bool_)
         )
-        self.state.validate()
+        self._state.validate()
+
+    @property
+    def capacity(self) -> int:
+        return self._state.capacity
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+    @property
+    def state(self) -> ParticleState:
+        return self._state
 
     def inject_particles(
         self,
@@ -134,7 +145,7 @@ class ParticleBank:
         num_new = species.shape[0]
 
         # Find available inactive slots (we use where to get array of indices)
-        inactive_indices = np.where(~self.state.is_active)[0]
+        inactive_indices = np.where(~self._state.is_active)[0]
 
         if num_new > inactive_indices.shape[0]:
             raise RuntimeError(
@@ -146,44 +157,44 @@ class ParticleBank:
         target_indices = inactive_indices[:num_new]
 
         # Generate IDs
-        new_ids = np.arange(self.count, self.count + num_new, dtype=ID)
-        self.count += num_new
+        new_ids = np.arange(self._count, self._count + num_new, dtype=ID)
+        self._count += num_new
 
         # Set base arrays in-place
-        self.state.is_active[target_indices] = True
-        self.state.ID[target_indices] = new_ids
-        self.state.species[target_indices] = species
-        self.state.energy[target_indices] = energy
-        self.state.emission_time[target_indices] = emission_time
-        self.state.emission_energy[target_indices] = energy
-        self.state.distance_traveled[target_indices] = distance_traveled
+        self._state.is_active[target_indices] = True
+        self._state.ID[target_indices] = new_ids
+        self._state.species[target_indices] = species
+        self._state.energy[target_indices] = energy
+        self._state.emission_time[target_indices] = emission_time
+        self._state.emission_energy[target_indices] = energy
+        self._state.distance_traveled[target_indices] = distance_traveled
 
         # Set Position
-        self.state.position.x[target_indices] = position.x
-        self.state.position.y[target_indices] = position.y
-        self.state.position.z[target_indices] = position.z
+        self._state.position.x[target_indices] = position.x
+        self._state.position.y[target_indices] = position.y
+        self._state.position.z[target_indices] = position.z
 
         # Set Direction
-        self.state.direction.x[target_indices] = direction.x
-        self.state.direction.y[target_indices] = direction.y
-        self.state.direction.z[target_indices] = direction.z
+        self._state.direction.x[target_indices] = direction.x
+        self._state.direction.y[target_indices] = direction.y
+        self._state.direction.z[target_indices] = direction.z
 
         # Set Emission Position
-        self.state.emission_position.x[target_indices] = emission_position.x
-        self.state.emission_position.y[target_indices] = emission_position.y
-        self.state.emission_position.z[target_indices] = emission_position.z
+        self._state.emission_position.x[target_indices] = emission_position.x
+        self._state.emission_position.y[target_indices] = emission_position.y
+        self._state.emission_position.z[target_indices] = emission_position.z
 
         # Set Emission Direction
-        self.state.emission_direction.x[target_indices] = emission_direction.x
-        self.state.emission_direction.y[target_indices] = emission_direction.y
-        self.state.emission_direction.z[target_indices] = emission_direction.z
+        self._state.emission_direction.x[target_indices] = emission_direction.x
+        self._state.emission_direction.y[target_indices] = emission_direction.y
+        self._state.emission_direction.z[target_indices] = emission_direction.z
 
         return target_indices
 
     @property
     def active_indices(self) -> NDArray[Index]:
         """Returns the indices of currently active particles in the pool."""
-        return np.nonzero(self.state.is_active)[0]
+        return np.nonzero(self._state.is_active)[0]
 
     def move(self, target_indices: NDArray[Index], distances: NDArray[Float]) -> None:
         """
@@ -191,11 +202,11 @@ class ParticleBank:
         """
         # Imported lazily or globally later
         from core.particles.particles_soa_kernels import move_kernel
-        move_kernel(self.state, target_indices, distances)
+        move_kernel(self._state, target_indices, distances)
 
     def rotate(self, target_indices: NDArray[Index], thetas: NDArray[Float], phis: NDArray[Float]) -> None:
         """
         Facade for rotate_kernel, applying thetas and phis across target active particles.
         """
         from core.particles.particles_soa_kernels import rotate_kernel
-        rotate_kernel(self.state, target_indices, thetas, phis)
+        rotate_kernel(self._state, target_indices, thetas, phis)
