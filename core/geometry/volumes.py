@@ -10,6 +10,7 @@ from core.geometry.geometries import Geometry
 from core.materials.materials import Material, MaterialArray
 from core.other.nonunique_array import NonuniqueArray
 from core.other.typing_definitions import Float, Vector3D
+from core.geometry.geometry_buffer import GeometryBuffer
 
 
 class ElementaryVolume:
@@ -27,6 +28,15 @@ class ElementaryVolume:
         self.material = material
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name
         self._dublicate_counter = count(1)
+        self._geometry_buffer: Optional[GeometryBuffer] = None
+
+    @property
+    def geometry_buffer(self) -> GeometryBuffer:
+        if self._geometry_buffer is None:
+            from core.geometry.compiler import SceneCompiler
+            compiler = SceneCompiler()
+            self._geometry_buffer = compiler.compile(self)
+        return self._geometry_buffer
 
     def __init_subclass__(cls):
         cls._counter = count(1)
@@ -140,7 +150,14 @@ class VolumeWithChilds(ElementaryVolume):
         else:
             print('Внимение! Добавляемый объём уже является дочерним. Новый родитель установлен')
             child.parent.childs.remove(child)
+            if hasattr(child.parent, '_invalidate_compiler_cache'):
+                getattr(child.parent, '_invalidate_compiler_cache')()
         child.parent = self
+        if hasattr(self, '_invalidate_compiler_cache'):
+            getattr(self, '_invalidate_compiler_cache')()
+        elif hasattr(child, '_invalidate_compiler_cache'):
+            # In case self is ElementaryVolume without a cache invalidator, call it on child to bubble up
+            getattr(child, '_invalidate_compiler_cache')()
 
 
 class TransformableVolume(ElementaryVolume):
@@ -211,6 +228,7 @@ class TransformableVolume(ElementaryVolume):
             self.transformation_matrix = translation_matrix@self.transformation_matrix
         else:
             self.transformation_matrix = self.transformation_matrix@translation_matrix
+        self._invalidate_compiler_cache()
 
     def rotate(self, alpha: Float = Float(0.), beta: Float = Float(0.), gamma: Float = Float(0.), rotation_center: Sequence[Float] = (Float(0), Float(0), Float(0)), inLocal: bool = False) -> None:
         """ Повернуть объём вокруг координатных осей """
@@ -223,6 +241,17 @@ class TransformableVolume(ElementaryVolume):
             self.transformation_matrix = rotation_matrix@self.transformation_matrix
         else:
             self.transformation_matrix = self.transformation_matrix@rotation_matrix
+        self._invalidate_compiler_cache()
+
+    def _invalidate_compiler_cache(self) -> None:
+        """ Инвалидировать кэш компилятора после изменения трансформаций """
+        current: Optional[ElementaryVolume] = self
+        while current is not None:
+            current._geometry_buffer = None
+            if hasattr(current, 'parent'):
+                current = getattr(current, 'parent')
+            else:
+                break
 
     def cast_path(self, position: Vector3D, direction: Vector3D, local: bool = False, as_parent: bool = True) -> Tuple[NDArray[Float], 'VolumeArray']:
         if not local:
