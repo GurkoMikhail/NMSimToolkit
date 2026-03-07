@@ -55,11 +55,18 @@ def test_soa_equivalence_and_benchmark():
 
     # ------------------ SOA (New) ------------------
     from core.particles.vector3d_soa import Vector3DSoA
+
+    pos_soa = Vector3DSoA(pos_x.copy(), pos_y.copy(), pos_z.copy())
+    pos_soa._validate()
+
+    dir_soa = Vector3DSoA(dir_x.copy(), dir_y.copy(), dir_z.copy())
+    dir_soa._validate()
+
     bank = ParticleBank(capacity=n_particles)
     injected_indices = bank.inject(
         species=species,
-        position=Vector3DSoA.create(pos_x.copy(), pos_y.copy(), pos_z.copy()),
-        direction=Vector3DSoA.create(dir_x.copy(), dir_y.copy(), dir_z.copy()),
+        position=pos_soa,
+        direction=dir_soa,
         energy=energy.copy(),
         emission_time=time_arr.copy()
     )

@@ -1,13 +1,13 @@
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
-from core.other.typing_definitions import Float, Length, Indices
+from core.other.typing_definitions import Float, Length, Index
 from core.particles.particles_soa import ParticleState
 
 @njit(cache=True)
 def move_kernel(
     state: ParticleState,
-    target_indices: Indices,
+    target_indices: NDArray[Index],
     distances: NDArray[Length]
 ) -> None:
     """
@@ -26,7 +26,7 @@ def move_kernel(
 @njit(cache=True)
 def rotate_kernel(
     state: ParticleState,
-    target_indices: Indices,
+    target_indices: NDArray[Index],
     thetas: NDArray[Float],
     phis: NDArray[Float]
 ) -> None:

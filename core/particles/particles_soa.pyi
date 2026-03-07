@@ -2,7 +2,7 @@ import numpy as np
 from typing import NamedTuple, List, Any
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Indices
+from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Index
 from core.particles.vector3d_soa import Vector3DSoA
 
 class ParticleState(NamedTuple):
@@ -21,9 +21,7 @@ class ParticleState(NamedTuple):
 
     distance_traveled: NDArray[Length]
     ID: NDArray[ID]
-
-    @classmethod
-    def create(cls, **kwargs: Any) -> 'ParticleState': ...
+    def _validate(self) -> None: ...
 
 class ParticleBank:
     _capacity: int
@@ -39,8 +37,8 @@ class ParticleBank:
 
     def __init__(self, capacity: int) -> None: ...
     def _allocate_pool(self, capacity: int) -> ParticleState: ...
-    def move(self, target_indices: Indices, distances: NDArray[Length]) -> None: ...
-    def rotate(self, target_indices: Indices, thetas: NDArray[Float], phis: NDArray[Float]) -> None: ...
+    def move(self, target_indices: NDArray[Index], distances: NDArray[Length]) -> None: ...
+    def rotate(self, target_indices: NDArray[Index], thetas: NDArray[Float], phis: NDArray[Float]) -> None: ...
     def inject(
         self,
         species: NDArray[Species],
@@ -48,4 +46,4 @@ class ParticleBank:
         direction: Vector3DSoA,
         energy: NDArray[Energy],
         emission_time: NDArray[Time],
-    ) -> Indices: ...
+    ) -> NDArray[Index]: ...

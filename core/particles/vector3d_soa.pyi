@@ -6,5 +6,4 @@ class Vector3DSoA(NamedTuple):
     x: NDArray[Float]
     y: NDArray[Float]
     z: NDArray[Float]
-    @classmethod
-    def create(cls, x: NDArray[Float], y: NDArray[Float], z: NDArray[Float]) -> 'Vector3DSoA': ...
+    def _validate(self) -> None: ...

@@ -13,4 +13,4 @@ Density: TypeAlias = Float
 Vector3D: TypeAlias = NDArray[Float]
 ID: TypeAlias = np.uint64
 Species: TypeAlias = np.uint8
-Indices: TypeAlias = NDArray[np.int64]
+Index: TypeAlias = np.int64

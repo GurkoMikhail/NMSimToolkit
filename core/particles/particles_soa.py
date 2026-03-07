@@ -2,7 +2,7 @@ import numpy as np
 from typing import NamedTuple, Any
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Indices
+from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Index
 from core.particles.vector3d_soa import Vector3DSoA
 
 class ParticleState(NamedTuple):
@@ -22,18 +22,15 @@ class ParticleState(NamedTuple):
     distance_traveled: NDArray[Length]
     ID: NDArray[ID]
 
-    @classmethod
-    def create(cls, **kwargs: Any) -> 'ParticleState':
-        instance = cls(**kwargs)
-        sizes = [len(getattr(instance, field)) for field in cls._fields if field not in ('position', 'direction', 'emission_position', 'emission_direction')]
+    def _validate(self) -> None:
+        sizes = [len(getattr(self, field)) for field in self._fields if field not in ('position', 'direction', 'emission_position', 'emission_direction')]
 
         for v3d in ('position', 'direction', 'emission_position', 'emission_direction'):
-            sizes.append(getattr(instance, v3d).x.size)
+            getattr(self, v3d)._validate()
+            sizes.append(getattr(self, v3d).x.size)
 
         if len(set(sizes)) > 1:
             raise ValueError(f"All arrays in ParticleState must have identical sizes. Got sizes: {sizes}")
-
-        return instance
 
 class ParticleBank:
     def __init__(self, capacity: int) -> None:
@@ -54,16 +51,16 @@ class ParticleBank:
         return self._state
 
     def _allocate_pool(self, capacity: int) -> ParticleState:
-        return ParticleState.create(
+        state = ParticleState(
             is_active=np.zeros(capacity, dtype=np.bool_),
             species=np.empty(capacity, dtype=Species),
 
-            position=Vector3DSoA.create(
+            position=Vector3DSoA(
                 np.empty(capacity, dtype=Float),
                 np.empty(capacity, dtype=Float),
                 np.empty(capacity, dtype=Float)
             ),
-            direction=Vector3DSoA.create(
+            direction=Vector3DSoA(
                 np.empty(capacity, dtype=Float),
                 np.empty(capacity, dtype=Float),
                 np.empty(capacity, dtype=Float)
@@ -73,12 +70,12 @@ class ParticleBank:
             emission_time=np.empty(capacity, dtype=Time),
             emission_energy=np.empty(capacity, dtype=Energy),
 
-            emission_position=Vector3DSoA.create(
+            emission_position=Vector3DSoA(
                 np.empty(capacity, dtype=Float),
                 np.empty(capacity, dtype=Float),
                 np.empty(capacity, dtype=Float)
             ),
-            emission_direction=Vector3DSoA.create(
+            emission_direction=Vector3DSoA(
                 np.empty(capacity, dtype=Float),
                 np.empty(capacity, dtype=Float),
                 np.empty(capacity, dtype=Float)
@@ -87,12 +84,14 @@ class ParticleBank:
             distance_traveled=np.empty(capacity, dtype=Length),
             ID=np.empty(capacity, dtype=ID)
         )
+        state._validate()
+        return state
 
-    def move(self, target_indices: Indices, distances: NDArray[Length]) -> None:
+    def move(self, target_indices: NDArray[Index], distances: NDArray[Length]) -> None:
         from core.particles.particles_soa_kernels import move_kernel
         move_kernel(self.state, target_indices, distances)
 
-    def rotate(self, target_indices: Indices, thetas: NDArray[Float], phis: NDArray[Float]) -> None:
+    def rotate(self, target_indices: NDArray[Index], thetas: NDArray[Float], phis: NDArray[Float]) -> None:
         from core.particles.particles_soa_kernels import rotate_kernel
         rotate_kernel(self.state, target_indices, thetas, phis)
 
@@ -103,7 +102,7 @@ class ParticleBank:
         direction: Vector3DSoA,
         energy: NDArray[Energy],
         emission_time: NDArray[Time],
-    ) -> Indices:
+    ) -> NDArray[Index]:
         """
         Injects new particles into inactive slots.
         Returns the indices of the injected particles.

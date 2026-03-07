@@ -8,8 +8,6 @@ class Vector3DSoA(NamedTuple):
     y: NDArray[Float]
     z: NDArray[Float]
 
-    @classmethod
-    def create(cls, x: NDArray[Float], y: NDArray[Float], z: NDArray[Float]) -> 'Vector3DSoA':
-        if not (x.size == y.size == z.size):
-            raise ValueError(f"Arrays must have identical sizes. Got sizes: x={x.size}, y={y.size}, z={z.size}")
-        return cls(x, y, z)
+    def _validate(self) -> None:
+        if not (self.x.size == self.y.size == self.z.size):
+            raise ValueError(f"Arrays must have identical sizes. Got sizes: x={self.x.size}, y={self.y.size}, z={self.z.size}")
