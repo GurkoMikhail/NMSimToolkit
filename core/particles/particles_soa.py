@@ -2,8 +2,8 @@ import numpy as np
 from numpy.typing import NDArray
 from typing import NamedTuple
 
-from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species
-from core.other.vectors_soa import Vector3DSoA, validate_vector3d_soa
+from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Index
+from core.other.vectors_soa import Vector3DSoA
 
 
 class ParticleState(NamedTuple):
@@ -35,42 +35,44 @@ class ParticleState(NamedTuple):
     # Object Pool lifecycle flag
     is_active: NDArray[np.bool_]
 
+    @property
+    def capacity(self) -> int:
+        return self.is_active.shape[0]
 
-def validate_particle_state(state: ParticleState) -> None:
-    """
-    Validates that all arrays within the ParticleState have
-    matching capacities and are 1-dimensional.
-    """
-    validate_vector3d_soa(state.position)
-    validate_vector3d_soa(state.direction)
-    validate_vector3d_soa(state.emission_position)
-    validate_vector3d_soa(state.emission_direction)
+    def validate(self) -> None:
+        """
+        Validates that all arrays within the ParticleState have
+        matching capacities and are 1-dimensional.
+        """
+        self.position.validate()
+        self.direction.validate()
+        self.emission_position.validate()
+        self.emission_direction.validate()
 
-    arrays = [
-        state.species,
-        state.energy,
-        state.emission_time,
-        state.emission_energy,
-        state.distance_traveled,
-        state.ID,
-        state.is_active
-    ]
+        arrays = [
+            self.species,
+            self.energy,
+            self.emission_time,
+            self.emission_energy,
+            self.distance_traveled,
+            self.ID,
+            self.is_active
+        ]
 
-    # All base fields should be 1-dimensional
-    for arr in arrays:
-        if arr.ndim != 1:
-            raise ValueError("All arrays in ParticleState must be 1-dimensional.")
+        # All base fields should be 1-dimensional
+        for arr in arrays:
+            if arr.ndim != 1:
+                raise ValueError("All arrays in ParticleState must be 1-dimensional.")
 
-    capacity = state.is_active.shape[0]
+        # Validate lengths match the pool capacity
+        for arr in arrays:
+            if arr.shape[0] != self.capacity:
+                raise ValueError("All arrays in ParticleState must have the same length (capacity).")
 
-    # Validate lengths match the pool capacity
-    for arr in arrays:
-        if arr.shape[0] != capacity:
-            raise ValueError("All arrays in ParticleState must have the same length (capacity).")
+        # Validate vector lengths against capacity
+        if self.position.x.shape[0] != self.capacity:
+            raise ValueError("Vector components in ParticleState must have the same length as the base arrays.")
 
-    # Validate vector lengths against capacity
-    if state.position.x.shape[0] != capacity:
-        raise ValueError("Vector components in ParticleState must have the same length as the base arrays.")
 
 class ParticleBank:
     """
@@ -112,19 +114,19 @@ class ParticleBank:
             ID=np.empty(capacity, dtype=ID),
             is_active=np.zeros(capacity, dtype=np.bool_)
         )
-        validate_particle_state(self.state)
+        self.state.validate()
 
     def inject_particles(
         self,
         species: NDArray[Species],
-        position: tuple[NDArray[Float], NDArray[Float], NDArray[Float]],
-        direction: tuple[NDArray[Float], NDArray[Float], NDArray[Float]],
+        position: Vector3DSoA,
+        direction: Vector3DSoA,
         energy: NDArray[Energy],
         emission_time: NDArray[Time],
-        emission_position: tuple[NDArray[Float], NDArray[Float], NDArray[Float]],
-        emission_direction: tuple[NDArray[Float], NDArray[Float], NDArray[Float]],
+        emission_position: Vector3DSoA,
+        emission_direction: Vector3DSoA,
         distance_traveled: NDArray[Length]
-    ) -> NDArray[np.int64]:
+    ) -> NDArray[Index]:
         """
         Injects new particles into inactive slots in the object pool.
         Returns the indices where the particles were successfully injected.
@@ -157,32 +159,33 @@ class ParticleBank:
         self.state.distance_traveled[target_indices] = distance_traveled
 
         # Set Position
-        self.state.position.x[target_indices] = position[0]
-        self.state.position.y[target_indices] = position[1]
-        self.state.position.z[target_indices] = position[2]
+        self.state.position.x[target_indices] = position.x
+        self.state.position.y[target_indices] = position.y
+        self.state.position.z[target_indices] = position.z
 
         # Set Direction
-        self.state.direction.x[target_indices] = direction[0]
-        self.state.direction.y[target_indices] = direction[1]
-        self.state.direction.z[target_indices] = direction[2]
+        self.state.direction.x[target_indices] = direction.x
+        self.state.direction.y[target_indices] = direction.y
+        self.state.direction.z[target_indices] = direction.z
 
         # Set Emission Position
-        self.state.emission_position.x[target_indices] = emission_position[0]
-        self.state.emission_position.y[target_indices] = emission_position[1]
-        self.state.emission_position.z[target_indices] = emission_position[2]
+        self.state.emission_position.x[target_indices] = emission_position.x
+        self.state.emission_position.y[target_indices] = emission_position.y
+        self.state.emission_position.z[target_indices] = emission_position.z
 
         # Set Emission Direction
-        self.state.emission_direction.x[target_indices] = emission_direction[0]
-        self.state.emission_direction.y[target_indices] = emission_direction[1]
-        self.state.emission_direction.z[target_indices] = emission_direction[2]
+        self.state.emission_direction.x[target_indices] = emission_direction.x
+        self.state.emission_direction.y[target_indices] = emission_direction.y
+        self.state.emission_direction.z[target_indices] = emission_direction.z
 
         return target_indices
 
-    def get_active_indices(self) -> NDArray[np.int64]:
+    @property
+    def active_indices(self) -> NDArray[Index]:
         """Returns the indices of currently active particles in the pool."""
         return np.nonzero(self.state.is_active)[0]
 
-    def move(self, target_indices: NDArray[np.int64], distances: NDArray[Float]) -> None:
+    def move(self, target_indices: NDArray[Index], distances: NDArray[Float]) -> None:
         """
         Facade for move_kernel, applying distances across target active particles.
         """
@@ -190,7 +193,7 @@ class ParticleBank:
         from core.particles.particles_soa_kernels import move_kernel
         move_kernel(self.state, target_indices, distances)
 
-    def rotate(self, target_indices: NDArray[np.int64], thetas: NDArray[Float], phis: NDArray[Float]) -> None:
+    def rotate(self, target_indices: NDArray[Index], thetas: NDArray[Float], phis: NDArray[Float]) -> None:
         """
         Facade for rotate_kernel, applying thetas and phis across target active particles.
         """

@@ -53,11 +53,12 @@ def test_particles_soa_equivalence():
     # --- 2. Initialize SoA (New) ---
     bank = ParticleBank(capacity=n)
 
+    from core.other.vectors_soa import Vector3DSoA
     # Convert vectors for SoA injection
-    pos_soa = (position[:, 0], position[:, 1], position[:, 2])
-    dir_soa = (direction[:, 0], direction[:, 1], direction[:, 2])
-    em_pos_soa = (emission_position[:, 0], emission_position[:, 1], emission_position[:, 2])
-    em_dir_soa = (emission_direction[:, 0], emission_direction[:, 1], emission_direction[:, 2])
+    pos_soa = Vector3DSoA(position[:, 0], position[:, 1], position[:, 2])
+    dir_soa = Vector3DSoA(direction[:, 0], direction[:, 1], direction[:, 2])
+    em_pos_soa = Vector3DSoA(emission_position[:, 0], emission_position[:, 1], emission_position[:, 2])
+    em_dir_soa = Vector3DSoA(emission_direction[:, 0], emission_direction[:, 1], emission_direction[:, 2])
 
     target_indices = bank.inject_particles(
         species=species,
@@ -143,10 +144,11 @@ def test_particles_soa_benchmark():
     # ---------------------------------------------
     bank = ParticleBank(capacity=n)
 
-    pos_soa = (position[:, 0], position[:, 1], position[:, 2])
-    dir_soa = (direction[:, 0], direction[:, 1], direction[:, 2])
-    em_pos_soa = (emission_position[:, 0], emission_position[:, 1], emission_position[:, 2])
-    em_dir_soa = (emission_direction[:, 0], emission_direction[:, 1], emission_direction[:, 2])
+    from core.other.vectors_soa import Vector3DSoA
+    pos_soa = Vector3DSoA(position[:, 0], position[:, 1], position[:, 2])
+    dir_soa = Vector3DSoA(direction[:, 0], direction[:, 1], direction[:, 2])
+    em_pos_soa = Vector3DSoA(emission_position[:, 0], emission_position[:, 1], emission_position[:, 2])
+    em_dir_soa = Vector3DSoA(emission_direction[:, 0], emission_direction[:, 1], emission_direction[:, 2])
 
     target_indices = bank.inject_particles(
         species=species,
