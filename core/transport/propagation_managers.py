@@ -53,10 +53,10 @@ class PropagationWithInteraction:
             return np.concatenate(interaction_data).view(InteractionArray)
 
     def get_processes_LAC(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[Float]:
-        LAC = []
-        for process in self.processes:
-            LAC.append(process.get_LAC(particles, materials))
-        return np.asarray(LAC)
+        LAC = np.empty((len(self.processes), particles.size), dtype=Float)
+        for i, process in enumerate(self.processes):
+            LAC[i] = process.get_LAC(particles, materials)
+        return LAC
 
     def get_total_LAC(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[Float]:
         total_LAC = np.zeros(particles.size, dtype=Float)
@@ -65,20 +65,20 @@ class PropagationWithInteraction:
         return total_LAC
 
     def generate_free_path(self, particles: ParticleArray, materials: Union[Any, Any]) -> NDArray[Float]:
-        free_path = np.full((len(self.processes), particles.size), np.inf, dtype=Float)
+        free_path = np.empty((len(self.processes), particles.size), dtype=Float)
         for i, process in enumerate(self.processes):
             free_path[i] = process.generate_free_path(particles, materials)
         return free_path.min(axis=0)
 
     def choose_process(self, processes_LAC: NDArray[Float], total_LAC: NDArray[Float]) -> List[Tuple[Process, NDArray[np.int64]]]:
-        probabilities = processes_LAC/total_LAC
-        rnd = self.rng.random(total_LAC.size)
+        rnd = self.rng.random(total_LAC.size) * total_LAC
         chosen_process = []
-        p0 = 0
+        p0 = np.zeros(total_LAC.size, dtype=Float)
+        in_delta = np.empty(total_LAC.size, dtype=bool)
         for i, process in enumerate(self.processes):
-            p1 = p0 + probabilities[i]
-            in_delta = (p0 <= rnd)
-            in_delta *= (rnd <= p1)
+            p1 = p0 + processes_LAC[i]
+            np.less_equal(p0, rnd, out=in_delta)
+            np.logical_and(in_delta, rnd < p1, out=in_delta)
             indices = in_delta.nonzero()[0]
             p0 = p1
             chosen_process.append((process, indices))
