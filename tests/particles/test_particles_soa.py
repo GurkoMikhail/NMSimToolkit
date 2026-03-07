@@ -54,15 +54,12 @@ def test_soa_equivalence_and_benchmark():
     aos_rotate_time = t1_aos_rotate - t0_aos_rotate
 
     # ------------------ SOA (New) ------------------
+    from core.particles.vector3d_soa import Vector3DSoA
     bank = ParticleBank(capacity=n_particles)
     injected_indices = bank.inject(
         species=species,
-        position_x=pos_x.copy(),
-        position_y=pos_y.copy(),
-        position_z=pos_z.copy(),
-        direction_x=dir_x.copy(),
-        direction_y=dir_y.copy(),
-        direction_z=dir_z.copy(),
+        position=Vector3DSoA.create(pos_x.copy(), pos_y.copy(), pos_z.copy()),
+        direction=Vector3DSoA.create(dir_x.copy(), dir_y.copy(), dir_z.copy()),
         energy=energy.copy(),
         emission_time=time_arr.copy()
     )

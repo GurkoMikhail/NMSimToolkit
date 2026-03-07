@@ -1,13 +1,9 @@
 import numpy as np
-from typing import NamedTuple, List
+from typing import NamedTuple, List, Any
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species
-
-class Vector3DSoA(NamedTuple):
-    x: NDArray[Float]
-    y: NDArray[Float]
-    z: NDArray[Float]
+from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Indices
+from core.particles.vector3d_soa import Vector3DSoA
 
 class ParticleState(NamedTuple):
     is_active: NDArray[np.bool_]
@@ -26,24 +22,30 @@ class ParticleState(NamedTuple):
     distance_traveled: NDArray[Length]
     ID: NDArray[ID]
 
+    @classmethod
+    def create(cls, **kwargs: Any) -> 'ParticleState': ...
+
 class ParticleBank:
-    capacity: int
-    count: int
-    state: ParticleState
+    _capacity: int
+    _count: int
+    _state: ParticleState
+
+    @property
+    def capacity(self) -> int: ...
+    @property
+    def count(self) -> int: ...
+    @property
+    def state(self) -> ParticleState: ...
 
     def __init__(self, capacity: int) -> None: ...
     def _allocate_pool(self, capacity: int) -> ParticleState: ...
-    def move(self, target_indices: NDArray[np.int64], distances: NDArray[Length]) -> None: ...
-    def rotate(self, target_indices: NDArray[np.int64], thetas: NDArray[Float], phis: NDArray[Float]) -> None: ...
+    def move(self, target_indices: Indices, distances: NDArray[Length]) -> None: ...
+    def rotate(self, target_indices: Indices, thetas: NDArray[Float], phis: NDArray[Float]) -> None: ...
     def inject(
         self,
         species: NDArray[Species],
-        position_x: NDArray[Float],
-        position_y: NDArray[Float],
-        position_z: NDArray[Float],
-        direction_x: NDArray[Float],
-        direction_y: NDArray[Float],
-        direction_z: NDArray[Float],
+        position: Vector3DSoA,
+        direction: Vector3DSoA,
         energy: NDArray[Energy],
         emission_time: NDArray[Time],
-    ) -> NDArray[np.int64]: ...
+    ) -> Indices: ...
