@@ -118,7 +118,16 @@ class VolumeWithChilds(ElementaryVolume):
             material[inside] = material_inside
         return material
 
+    @property
+    def shape_buffer(self) -> 'core.geometry.geometry_soa.ShapeBuffer':
+        """ Lazy compilation of ShapeBuffer """
+        if not hasattr(self, '_shape_buffer') or self._shape_buffer is None:
+            from core.geometry.geometry_soa import compile_scene
+            self._shape_buffer, self._flat_list = compile_scene(self)
+        return self._shape_buffer
+
     def add_child(self, child: 'TransformableVolume') -> None:
+        self._shape_buffer = None
         """ Добавить дочерний объём """
         assert isinstance(child, TransformableVolume), 'Только трансформируемый объём может быть дочерним'
         if child.parent is None:

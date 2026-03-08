@@ -2,64 +2,82 @@ from typing import NamedTuple, Any, List, Optional
 import numpy as np
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Float, Length
-from core.other.transform_soa import TransformSoA
+from core.other.typing_definitions import Float, Length, ShapeID, Index
+from core.other.transform_soa import TransformSoA, Matrix3x3SoA
+from core.other.vectors_soa import Vector3DSoA
 
 
-class GeometryBuffer(NamedTuple):
+class ShapeParameters(NamedTuple):
     """
-    Structure of Arrays (SoA) representation for the entire Scene Graph.
-    Contains flat 1D C-contiguous numpy arrays.
+    Universal parameters for geometry dimensions
     """
-    # 0 for Box, 1 for Cylinder (future), etc.
-    geom_type: NDArray[np.int32]
-
-    # Universal parameters for geometry dimensions
     param_0: NDArray[Float]
     param_1: NDArray[Float]
     param_2: NDArray[Float]
     param_3: NDArray[Float]
 
+    def validate(self) -> None:
+        arrays = [self.param_0, self.param_1, self.param_2, self.param_3]
+        for arr in arrays:
+            if arr.ndim != 1:
+                raise ValueError("ShapeParameters arrays must be 1-dimensional.")
+        length = arrays[0].shape[0]
+        for arr in arrays:
+            if arr.shape[0] != length:
+                raise ValueError("ShapeParameters arrays must have the same length.")
+
+    @property
+    def capacity(self) -> int:
+        return self.param_0.shape[0]
+
+class ShapeBuffer(NamedTuple):
+    """
+    Structure of Arrays (SoA) representation for the entire Scene Graph.
+    Contains flat 1D C-contiguous numpy arrays.
+    """
+    # 0 for Box, 1 for Cylinder (future), etc.
+    shape: NDArray[ShapeID]
+    shape_parameters: ShapeParameters
+
     # Inverse transformation parameters (World -> Local)
     transform: TransformSoA
 
     # Index of the next geometry to jump to if ray misses this volume (Frustum Culling)
-    miss_index: NDArray[np.int32]
+    miss_index: NDArray[Index]
 
     # Material index for mapping or ID to map back to OOP Volumes
-    material_index: NDArray[np.int32]
+    material_index: NDArray[Index]
 
     def validate(self) -> None:
         """
-        Validates that all arrays within GeometryBuffer have matching capacities
+        Validates that all arrays within ShapeBuffer have matching capacities
         and are 1-dimensional.
         """
         self.transform.validate()
+        self.shape_parameters.validate()
 
         arrays = [
-            self.geom_type,
-            self.param_0,
-            self.param_1,
-            self.param_2,
-            self.param_3,
+            self.shape,
             self.miss_index,
             self.material_index
         ]
 
         for arr in arrays:
             if arr.ndim != 1:
-                raise ValueError("All arrays in GeometryBuffer must be 1-dimensional.")
+                raise ValueError("All arrays in ShapeBuffer must be 1-dimensional.")
 
-        capacity = self.geom_type.shape[0]
+        capacity = self.shape.shape[0]
         for arr in arrays:
             if arr.shape[0] != capacity:
-                raise ValueError("All arrays in GeometryBuffer must have the same length (capacity).")
+                raise ValueError("All arrays in ShapeBuffer must have the same length (capacity).")
 
         if self.transform.capacity != capacity:
-            raise ValueError("TransformSoA arrays in GeometryBuffer must have the same length as base arrays.")
+            raise ValueError("TransformSoA arrays in ShapeBuffer must have the same length as base arrays.")
+        if self.shape_parameters.capacity != capacity:
+            raise ValueError("ShapeParameters arrays in ShapeBuffer must have the same length as base arrays.")
 
 
-def compile_scene(root_volume: Any) -> GeometryBuffer:
+def compile_scene(root_volume: Any) -> ShapeBuffer:
     """
     Compiles an OOP Scene Graph starting from root_volume into a flat GeometryBuffer.
     Performs DFS traversal, extracting inverse matrices, geometry parameters,
@@ -100,13 +118,13 @@ def compile_scene(root_volume: Any) -> GeometryBuffer:
     capacity = len(flat_list)
 
     # Initialize SoA arrays
-    geom_type = np.zeros(capacity, dtype=np.int32)
+    shape = np.zeros(capacity, dtype=ShapeID)
     param_0 = np.zeros(capacity, dtype=Float)
     param_1 = np.zeros(capacity, dtype=Float)
     param_2 = np.zeros(capacity, dtype=Float)
     param_3 = np.zeros(capacity, dtype=Float)
-    miss_index = np.zeros(capacity, dtype=np.int32)
-    material_index = np.zeros(capacity, dtype=np.int32)
+    miss_index = np.zeros(capacity, dtype=Index)
+    material_index = np.zeros(capacity, dtype=Index)
 
     # Transform arrays
     rot_00 = np.zeros(capacity, dtype=Float)
@@ -142,7 +160,7 @@ def compile_scene(root_volume: Any) -> GeometryBuffer:
     for i, (vol, mat) in enumerate(flat_list):
         # Determine geometry type
         if isinstance(vol.geometry, Box):
-            geom_type[i] = 0
+            shape[i] = 0
             # half_size
             param_0[i] = vol.geometry.half_size[0]
             param_1[i] = vol.geometry.half_size[1]
@@ -150,7 +168,7 @@ def compile_scene(root_volume: Any) -> GeometryBuffer:
             param_3[i] = getattr(vol.geometry, 'distance_epsilon', Float(1e-3))
         else:
             # Fallback for unsupported geometries
-            geom_type[i] = -1
+            shape[i] = -1
 
         # Material index
         material_index[i] = i # temporary: mapping to flat_list index for backward compatibility
@@ -179,19 +197,28 @@ def compile_scene(root_volume: Any) -> GeometryBuffer:
         tr_y[i] = mat[1, 3]
         tr_z[i] = mat[2, 3]
 
-    transform_soa = TransformSoA(
+    matrix_soa = Matrix3x3SoA(
         rot_00=rot_00, rot_01=rot_01, rot_02=rot_02,
         rot_10=rot_10, rot_11=rot_11, rot_12=rot_12,
-        rot_20=rot_20, rot_21=rot_21, rot_22=rot_22,
-        tr_x=tr_x, tr_y=tr_y, tr_z=tr_z
+        rot_20=rot_20, rot_21=rot_21, rot_22=rot_22
+    )
+    vector_soa = Vector3DSoA(x=tr_x, y=tr_y, z=tr_z)
+
+    transform_soa = TransformSoA(
+        rotation=matrix_soa,
+        translation=vector_soa
     )
 
-    buffer = GeometryBuffer(
-        geom_type=geom_type,
+    shape_parameters = ShapeParameters(
         param_0=param_0,
         param_1=param_1,
         param_2=param_2,
-        param_3=param_3,
+        param_3=param_3
+    )
+
+    buffer = ShapeBuffer(
+        shape=shape,
+        shape_parameters=shape_parameters,
         transform=transform_soa,
         miss_index=miss_index,
         material_index=material_index

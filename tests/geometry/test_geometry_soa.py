@@ -5,7 +5,6 @@ from numpy.typing import NDArray
 from core.geometry.geometries import Box
 from core.geometry.volumes import TransformableVolumeWithChild
 from core.materials.materials import Material
-from core.geometry.geometry_soa import compile_scene
 from core.geometry.geometry_soa_kernels import cast_path_kernel
 from core.particles.particles_soa import ParticleBank
 from core.other.typing_definitions import Float, Length, Energy, Time, Species, ID
@@ -35,7 +34,7 @@ def test_scene():
 
 
 def test_geometry_soa_equivalence(test_scene):
-    buffer, flat_list = compile_scene(test_scene)
+    buffer = test_scene.shape_buffer
 
     N = 100
     pos = np.zeros((N, 3), dtype=Float)
@@ -76,7 +75,7 @@ def test_geometry_soa_equivalence(test_scene):
     out_distances = np.full(N, np.inf, dtype=Float)
     out_volume_indices = np.full(N, -1, dtype=np.int32)
 
-    cast_path_kernel(bank.state, target_indices, buffer, out_distances, out_volume_indices)
+    cast_path_kernel(pos_soa, dir_soa, target_indices, buffer, out_distances, out_volume_indices)
 
     # Note: Boundary tracking vs full ray intersection may have different semantic meanings for distances.
     # But for a ray entering from outside, the entry distance should match.
@@ -90,7 +89,7 @@ def test_geometry_soa_equivalence(test_scene):
 
 def test_geometry_soa_benchmark(benchmark, test_scene):
     import time as builtin_time
-    buffer, flat_list = compile_scene(test_scene)
+    buffer = test_scene.shape_buffer
 
     N = 10000
     bank = ParticleBank(N)
@@ -123,7 +122,7 @@ def test_geometry_soa_benchmark(benchmark, test_scene):
     out_volume_indices = np.full(N, -1, dtype=np.int32)
 
     def run_soa():
-        cast_path_kernel(bank.state, target_indices, buffer, out_distances, out_volume_indices)
+        cast_path_kernel(pos_soa, dir_soa, target_indices, buffer, out_distances, out_volume_indices)
 
     # Warmup
     run_soa()
