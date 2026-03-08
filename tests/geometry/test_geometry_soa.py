@@ -76,21 +76,7 @@ def test_geometry_soa_equivalence(test_scene):
     out_volume_indices = np.full(N, -1, dtype=np.int32)
 
     cast_path_kernel(
-        pos_soa.x, pos_soa.y, pos_soa.z,
-        dir_soa.x, dir_soa.y, dir_soa.z,
-        target_indices,
-        buffer.shape_buffer.shape,
-        buffer.shape_buffer.shape_parameters.param_0,
-        buffer.shape_buffer.shape_parameters.param_1,
-        buffer.shape_buffer.shape_parameters.param_2,
-        buffer.shape_buffer.shape_parameters.param_3,
-        buffer.transform.rotation.m00, buffer.transform.rotation.m01, buffer.transform.rotation.m02,
-        buffer.transform.rotation.m10, buffer.transform.rotation.m11, buffer.transform.rotation.m12,
-        buffer.transform.rotation.m20, buffer.transform.rotation.m21, buffer.transform.rotation.m22,
-        buffer.transform.translation.x, buffer.transform.translation.y, buffer.transform.translation.z,
-        buffer.miss_index,
-        buffer.volume_index,
-        out_distances, out_volume_indices
+        pos_soa, dir_soa, target_indices, buffer, out_distances, out_volume_indices
     )
 
     # Note: Boundary tracking vs full ray intersection may have different semantic meanings for distances.
@@ -139,21 +125,7 @@ def test_geometry_soa_benchmark(benchmark, test_scene):
 
     def run_soa():
         cast_path_kernel(
-            pos_soa.x, pos_soa.y, pos_soa.z,
-            dir_soa.x, dir_soa.y, dir_soa.z,
-            target_indices,
-            buffer.shape_buffer.shape,
-            buffer.shape_buffer.shape_parameters.param_0,
-            buffer.shape_buffer.shape_parameters.param_1,
-            buffer.shape_buffer.shape_parameters.param_2,
-            buffer.shape_buffer.shape_parameters.param_3,
-            buffer.transform.rotation.m00, buffer.transform.rotation.m01, buffer.transform.rotation.m02,
-            buffer.transform.rotation.m10, buffer.transform.rotation.m11, buffer.transform.rotation.m12,
-            buffer.transform.rotation.m20, buffer.transform.rotation.m21, buffer.transform.rotation.m22,
-            buffer.transform.translation.x, buffer.transform.translation.y, buffer.transform.translation.z,
-            buffer.miss_index,
-            buffer.volume_index,
-            out_distances, out_volume_indices
+            pos_soa, dir_soa, target_indices, buffer, out_distances, out_volume_indices
         )
 
     # Warmup

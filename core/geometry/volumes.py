@@ -54,19 +54,7 @@ class ElementaryVolume:
 
     def invalidate_geometry_buffer(self) -> None:
         """ Инвалидация кэша геометрии у этого объекта и его родителей/детей. """
-        if getattr(self, '_geometry_buffer', None) is not None:
-            self._geometry_buffer = None
-
-        # Уведомить родителя (если есть)
-        if hasattr(self, 'parent') and self.parent is not None:
-            if getattr(self.parent, '_geometry_buffer', None) is not None:
-                self.parent.invalidate_geometry_buffer()
-
-        # Уведомить детей (если есть)
-        if hasattr(self, 'childs'):
-            for child in self.childs:
-                if getattr(child, '_geometry_buffer', None) is not None:
-                    child.invalidate_geometry_buffer()
+        self._geometry_buffer = None
 
     def dublicate(self):
         result = deepcopy(self)
@@ -143,6 +131,14 @@ class VolumeWithChilds(ElementaryVolume):
                 material_inside[inside_child] = child_material[inside_child]
             material[inside] = material_inside
         return material
+
+    def invalidate_geometry_buffer(self) -> None:
+        if self._geometry_buffer is not None:
+            self._geometry_buffer = None
+            for child in self.childs:
+                child.invalidate_geometry_buffer()
+        # Если есть родитель (для TransformableVolumeWithChild), он тоже должен быть инвалидирован,
+        # но это будет решаться в TransformableVolume
 
     def add_child(self, child: 'TransformableVolume') -> None:
         """ Добавить дочерний объём """
@@ -253,6 +249,11 @@ class TransformableVolume(ElementaryVolume):
             position = self.convert_to_local_position(position, as_parent)
         material = super().get_material_by_position(position)
         return material
+
+    def invalidate_geometry_buffer(self) -> None:
+        super().invalidate_geometry_buffer()
+        if self.parent is not None:
+            self.parent.invalidate_geometry_buffer()
 
     def set_parent(self, parent: VolumeWithChilds) -> None:
         assert isinstance(parent, VolumeWithChilds), 'Этот объём не может быть родителем'

@@ -10,10 +10,10 @@ from core.other.vectors_soa import Vector3DSoA
 
 @njit(cache=True)
 def _box_intersect(
-    pos_x: float, pos_y: float, pos_z: float,
-    dir_x: float, dir_y: float, dir_z: float,
-    hx: float, hy: float, hz: float
-) -> Tuple[float, float]:
+    pos_x: Float, pos_y: Float, pos_z: Float,
+    dir_x: Float, dir_y: Float, dir_z: Float,
+    hx: Float, hy: Float, hz: Float
+) -> Tuple[Float, Float]:
     """
     Computes ray intersection with an AABB Box centered at origin.
     Returns tmin, tmax.
@@ -69,29 +69,10 @@ def _box_intersect(
 
 @njit(cache=True)
 def cast_path_kernel(
-    positions_x: NDArray[Float],
-    positions_y: NDArray[Float],
-    positions_z: NDArray[Float],
-    directions_x: NDArray[Float],
-    directions_y: NDArray[Float],
-    directions_z: NDArray[Float],
+    positions: Vector3DSoA,
+    directions: Vector3DSoA,
     target_indices: NDArray[Index],
-
-    geom_shape: NDArray[np.int32],
-    param_0: NDArray[Float],
-    param_1: NDArray[Float],
-    param_2: NDArray[Float],
-    param_3: NDArray[Float],
-
-    rot_m00: NDArray[Float], rot_m01: NDArray[Float], rot_m02: NDArray[Float],
-    rot_m10: NDArray[Float], rot_m11: NDArray[Float], rot_m12: NDArray[Float],
-    rot_m20: NDArray[Float], rot_m21: NDArray[Float], rot_m22: NDArray[Float],
-
-    tr_x: NDArray[Float], tr_y: NDArray[Float], tr_z: NDArray[Float],
-
-    miss_index: NDArray[Index],
-    volume_index: NDArray[Index],
-
+    geom_buffer: GeometryBuffer,
     out_distances: NDArray[Float],
     out_volume_indices: NDArray[Index]
 ) -> None:
@@ -100,19 +81,19 @@ def cast_path_kernel(
     Applies loop unrolling for coordinate transformations and uses miss_index for Boundary Tracking / Frustum Culling.
     """
     num_particles = target_indices.shape[0]
-    num_geoms = geom_shape.shape[0]
+    num_geoms = geom_buffer.shape_buffer.shape.shape[0]
 
     for j in range(num_particles):
         p_idx = target_indices[j]
 
         # Original World Position and Direction
-        w_pos_x = positions_x[p_idx]
-        w_pos_y = positions_y[p_idx]
-        w_pos_z = positions_z[p_idx]
+        w_pos_x = positions.x[p_idx]
+        w_pos_y = positions.y[p_idx]
+        w_pos_z = positions.z[p_idx]
 
-        w_dir_x = directions_x[p_idx]
-        w_dir_y = directions_y[p_idx]
-        w_dir_z = directions_z[p_idx]
+        w_dir_x = directions.x[p_idx]
+        w_dir_y = directions.y[p_idx]
+        w_dir_z = directions.z[p_idx]
 
         closest_dist = np.inf
         closest_vol = -1
@@ -120,49 +101,49 @@ def cast_path_kernel(
         g_idx = 0
         while g_idx < num_geoms:
             # 1. Transform World -> Local (Loop Unrolling, without np.matmul)
-            m00 = rot_m00[g_idx]
-            m01 = rot_m01[g_idx]
-            m02 = rot_m02[g_idx]
-            m10 = rot_m10[g_idx]
-            m11 = rot_m11[g_idx]
-            m12 = rot_m12[g_idx]
-            m20 = rot_m20[g_idx]
-            m21 = rot_m21[g_idx]
-            m22 = rot_m22[g_idx]
+            m00 = geom_buffer.transform.rotation.m00[g_idx]
+            m01 = geom_buffer.transform.rotation.m01[g_idx]
+            m02 = geom_buffer.transform.rotation.m02[g_idx]
+            m10 = geom_buffer.transform.rotation.m10[g_idx]
+            m11 = geom_buffer.transform.rotation.m11[g_idx]
+            m12 = geom_buffer.transform.rotation.m12[g_idx]
+            m20 = geom_buffer.transform.rotation.m20[g_idx]
+            m21 = geom_buffer.transform.rotation.m21[g_idx]
+            m22 = geom_buffer.transform.rotation.m22[g_idx]
 
-            t_x = tr_x[g_idx]
-            t_y = tr_y[g_idx]
-            t_z = tr_z[g_idx]
+            tr_x = geom_buffer.transform.translation.x[g_idx]
+            tr_y = geom_buffer.transform.translation.y[g_idx]
+            tr_z = geom_buffer.transform.translation.z[g_idx]
 
             # local_pos = W * R + T (assuming total_matrix is applied like W_vec * Matrix)
             # R is 3x3, T is translation
-            l_pos_x = m00 * w_pos_x + m01 * w_pos_y + m02 * w_pos_z + t_x
-            l_pos_y = m10 * w_pos_x + m11 * w_pos_y + m12 * w_pos_z + t_y
-            l_pos_z = m20 * w_pos_x + m21 * w_pos_y + m22 * w_pos_z + t_z
+            l_pos_x = m00 * w_pos_x + m01 * w_pos_y + m02 * w_pos_z + tr_x
+            l_pos_y = m10 * w_pos_x + m11 * w_pos_y + m12 * w_pos_z + tr_y
+            l_pos_z = m20 * w_pos_x + m21 * w_pos_y + m22 * w_pos_z + tr_z
 
             l_dir_x = m00 * w_dir_x + m01 * w_dir_y + m02 * w_dir_z
             l_dir_y = m10 * w_dir_x + m11 * w_dir_y + m12 * w_dir_z
             l_dir_z = m20 * w_dir_x + m21 * w_dir_y + m22 * w_dir_z
 
             # 2. Geometry Branching (Fat Node / Generic Parameters)
-            geom_type = geom_shape[g_idx]
-            p0 = param_0[g_idx]
-            p1 = param_1[g_idx]
-            p2 = param_2[g_idx]
-            p3 = param_3[g_idx]
+            geom_type = geom_buffer.shape_buffer.shape[g_idx]
+            param_0 = geom_buffer.shape_buffer.shape_parameters.param_0[g_idx]
+            param_1 = geom_buffer.shape_buffer.shape_parameters.param_1[g_idx]
+            param_2 = geom_buffer.shape_buffer.shape_parameters.param_2[g_idx]
+            param_3 = geom_buffer.shape_buffer.shape_parameters.param_3[g_idx]
 
             if geom_type == 0:  # Box
                 tmin, tmax = _box_intersect(
                     l_pos_x, l_pos_y, l_pos_z,
                     l_dir_x, l_dir_y, l_dir_z,
-                    p0, p1, p2
+                    param_0, param_1, param_2
                 )
             else:
                 # Unsupported geometry
                 tmin = np.inf
                 tmax = -np.inf
 
-            distance_epsilon = p3
+            distance_epsilon = param_3
 
             # 3. Frustum Culling / Boundary Tracking Logic
 
@@ -170,7 +151,7 @@ def cast_path_kernel(
             if tmax < 0 or tmax < tmin:
                 # Particle ray does not intersect this volume.
                 # Jump over children.
-                g_idx = miss_index[g_idx]
+                g_idx = geom_buffer.miss_index[g_idx]
                 continue
 
             # Case 2: Hit from OUTSIDE
@@ -178,11 +159,11 @@ def cast_path_kernel(
                 dist = tmin + distance_epsilon
                 if dist < closest_dist:
                     closest_dist = dist
-                    closest_vol = volume_index[g_idx]
+                    closest_vol = geom_buffer.volume_index[g_idx]
 
                 # We do NOT check children, because they are inside this parent.
                 # The closest boundary is the entry to this parent.
-                g_idx = miss_index[g_idx]
+                g_idx = geom_buffer.miss_index[g_idx]
                 continue
 
             # Case 3: Hit from INSIDE (tmin < 0 and tmax > 0)
@@ -190,7 +171,7 @@ def cast_path_kernel(
                 dist = tmax + distance_epsilon
                 if dist < closest_dist:
                     closest_dist = dist
-                    closest_vol = volume_index[g_idx]
+                    closest_vol = geom_buffer.volume_index[g_idx]
 
                 # Particle is inside parent, moving towards exit (tmax).
                 # The ray might hit children on the way to the exit.
