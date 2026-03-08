@@ -11,21 +11,21 @@ class Matrix3x3SoA(NamedTuple):
     Structure of Arrays (SoA) representation for a 3x3 matrix.
     Contains flat 1D C-contiguous numpy arrays.
     """
-    rot_00: NDArray[Float]
-    rot_01: NDArray[Float]
-    rot_02: NDArray[Float]
-    rot_10: NDArray[Float]
-    rot_11: NDArray[Float]
-    rot_12: NDArray[Float]
-    rot_20: NDArray[Float]
-    rot_21: NDArray[Float]
-    rot_22: NDArray[Float]
+    m00: NDArray[Float]
+    m01: NDArray[Float]
+    m02: NDArray[Float]
+    m10: NDArray[Float]
+    m11: NDArray[Float]
+    m12: NDArray[Float]
+    m20: NDArray[Float]
+    m21: NDArray[Float]
+    m22: NDArray[Float]
 
     def validate(self) -> None:
         arrays = [
-            self.rot_00, self.rot_01, self.rot_02,
-            self.rot_10, self.rot_11, self.rot_12,
-            self.rot_20, self.rot_21, self.rot_22
+            self.m00, self.m01, self.m02,
+            self.m10, self.m11, self.m12,
+            self.m20, self.m21, self.m22
         ]
         for arr in arrays:
             if arr.ndim != 1:
@@ -38,7 +38,7 @@ class Matrix3x3SoA(NamedTuple):
 
     @property
     def capacity(self) -> int:
-        return self.rot_00.shape[0]
+        return self.m00.shape[0]
 
 
 class TransformSoA(NamedTuple):

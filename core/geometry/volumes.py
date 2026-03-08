@@ -27,6 +27,7 @@ class ElementaryVolume:
         self.material = material
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name
         self._dublicate_counter = count(1)
+        self._geometry_buffer = None
 
     def __init_subclass__(cls):
         cls._counter = count(1)
@@ -41,6 +42,31 @@ class ElementaryVolume:
     @size.setter
     def size(self, value: Vector3D) -> None:
         self.geometry.size = value
+        self.invalidate_geometry_buffer()
+
+    @property
+    def geometry_buffer(self) -> 'core.geometry.geometry_soa.GeometryBuffer':
+        """ Lazy compilation of GeometryBuffer """
+        if getattr(self, '_geometry_buffer', None) is None:
+            from core.geometry.geometry_soa import compile_scene
+            self._geometry_buffer = compile_scene(self)
+        return self._geometry_buffer
+
+    def invalidate_geometry_buffer(self) -> None:
+        """ Инвалидация кэша геометрии у этого объекта и его родителей/детей. """
+        if getattr(self, '_geometry_buffer', None) is not None:
+            self._geometry_buffer = None
+
+        # Уведомить родителя (если есть)
+        if hasattr(self, 'parent') and self.parent is not None:
+            if getattr(self.parent, '_geometry_buffer', None) is not None:
+                self.parent.invalidate_geometry_buffer()
+
+        # Уведомить детей (если есть)
+        if hasattr(self, 'childs'):
+            for child in self.childs:
+                if getattr(child, '_geometry_buffer', None) is not None:
+                    child.invalidate_geometry_buffer()
 
     def dublicate(self):
         result = deepcopy(self)
@@ -118,16 +144,7 @@ class VolumeWithChilds(ElementaryVolume):
             material[inside] = material_inside
         return material
 
-    @property
-    def shape_buffer(self) -> 'core.geometry.geometry_soa.ShapeBuffer':
-        """ Lazy compilation of ShapeBuffer """
-        if not hasattr(self, '_shape_buffer') or self._shape_buffer is None:
-            from core.geometry.geometry_soa import compile_scene
-            self._shape_buffer, self._flat_list = compile_scene(self)
-        return self._shape_buffer
-
     def add_child(self, child: 'TransformableVolume') -> None:
-        self._shape_buffer = None
         """ Добавить дочерний объём """
         assert isinstance(child, TransformableVolume), 'Только трансформируемый объём может быть дочерним'
         if child.parent is None:
@@ -138,6 +155,8 @@ class VolumeWithChilds(ElementaryVolume):
             print('Внимение! Добавляемый объём уже является дочерним. Новый родитель установлен')
             child.parent.childs.remove(child)
         child.parent = self
+        self.invalidate_geometry_buffer()
+        child.invalidate_geometry_buffer()
 
 
 class TransformableVolume(ElementaryVolume):
@@ -208,6 +227,7 @@ class TransformableVolume(ElementaryVolume):
             self.transformation_matrix = translation_matrix@self.transformation_matrix
         else:
             self.transformation_matrix = self.transformation_matrix@translation_matrix
+        self.invalidate_geometry_buffer()
 
     def rotate(self, alpha: Float = Float(0.), beta: Float = Float(0.), gamma: Float = Float(0.), rotation_center: Sequence[Float] = (Float(0), Float(0), Float(0)), inLocal: bool = False) -> None:
         """ Повернуть объём вокруг координатных осей """
@@ -220,6 +240,7 @@ class TransformableVolume(ElementaryVolume):
             self.transformation_matrix = rotation_matrix@self.transformation_matrix
         else:
             self.transformation_matrix = self.transformation_matrix@rotation_matrix
+        self.invalidate_geometry_buffer()
 
     def cast_path(self, position: Vector3D, direction: Vector3D, local: bool = False, as_parent: bool = True) -> Tuple[NDArray[Float], 'VolumeArray']:
         if not local:

@@ -32,12 +32,28 @@ class ShapeParameters(NamedTuple):
 
 class ShapeBuffer(NamedTuple):
     """
+    Structure of Arrays (SoA) representation for the shape.
+    """
+    shape: NDArray[ShapeID]
+    shape_parameters: ShapeParameters
+
+    def validate(self) -> None:
+        self.shape_parameters.validate()
+        if self.shape.ndim != 1:
+            raise ValueError("ShapeBuffer arrays must be 1-dimensional.")
+        if self.shape.shape[0] != self.shape_parameters.capacity:
+            raise ValueError("ShapeBuffer arrays must have the same length.")
+
+    @property
+    def capacity(self) -> int:
+        return self.shape.shape[0]
+
+class GeometryBuffer(NamedTuple):
+    """
     Structure of Arrays (SoA) representation for the entire Scene Graph.
     Contains flat 1D C-contiguous numpy arrays.
     """
-    # 0 for Box, 1 for Cylinder (future), etc.
-    shape: NDArray[ShapeID]
-    shape_parameters: ShapeParameters
+    shape_buffer: ShapeBuffer
 
     # Inverse transformation parameters (World -> Local)
     transform: TransformSoA
@@ -45,39 +61,36 @@ class ShapeBuffer(NamedTuple):
     # Index of the next geometry to jump to if ray misses this volume (Frustum Culling)
     miss_index: NDArray[Index]
 
-    # Material index for mapping or ID to map back to OOP Volumes
-    material_index: NDArray[Index]
+    # Index for mapping back to OOP Volumes
+    volume_index: NDArray[Index]
 
     def validate(self) -> None:
         """
-        Validates that all arrays within ShapeBuffer have matching capacities
+        Validates that all arrays within GeometryBuffer have matching capacities
         and are 1-dimensional.
         """
         self.transform.validate()
-        self.shape_parameters.validate()
+        self.shape_buffer.validate()
 
         arrays = [
-            self.shape,
             self.miss_index,
-            self.material_index
+            self.volume_index
         ]
 
         for arr in arrays:
             if arr.ndim != 1:
-                raise ValueError("All arrays in ShapeBuffer must be 1-dimensional.")
+                raise ValueError("All arrays in GeometryBuffer must be 1-dimensional.")
 
-        capacity = self.shape.shape[0]
+        capacity = self.shape_buffer.capacity
         for arr in arrays:
             if arr.shape[0] != capacity:
-                raise ValueError("All arrays in ShapeBuffer must have the same length (capacity).")
+                raise ValueError("All arrays in GeometryBuffer must have the same length (capacity).")
 
         if self.transform.capacity != capacity:
-            raise ValueError("TransformSoA arrays in ShapeBuffer must have the same length as base arrays.")
-        if self.shape_parameters.capacity != capacity:
-            raise ValueError("ShapeParameters arrays in ShapeBuffer must have the same length as base arrays.")
+            raise ValueError("TransformSoA arrays in GeometryBuffer must have the same length as base arrays.")
 
 
-def compile_scene(root_volume: Any) -> ShapeBuffer:
+def compile_scene(root_volume: Any) -> GeometryBuffer:
     """
     Compiles an OOP Scene Graph starting from root_volume into a flat GeometryBuffer.
     Performs DFS traversal, extracting inverse matrices, geometry parameters,
@@ -124,18 +137,18 @@ def compile_scene(root_volume: Any) -> ShapeBuffer:
     param_2 = np.zeros(capacity, dtype=Float)
     param_3 = np.zeros(capacity, dtype=Float)
     miss_index = np.zeros(capacity, dtype=Index)
-    material_index = np.zeros(capacity, dtype=Index)
+    volume_index = np.zeros(capacity, dtype=Index)
 
     # Transform arrays
-    rot_00 = np.zeros(capacity, dtype=Float)
-    rot_01 = np.zeros(capacity, dtype=Float)
-    rot_02 = np.zeros(capacity, dtype=Float)
-    rot_10 = np.zeros(capacity, dtype=Float)
-    rot_11 = np.zeros(capacity, dtype=Float)
-    rot_12 = np.zeros(capacity, dtype=Float)
-    rot_20 = np.zeros(capacity, dtype=Float)
-    rot_21 = np.zeros(capacity, dtype=Float)
-    rot_22 = np.zeros(capacity, dtype=Float)
+    m00 = np.zeros(capacity, dtype=Float)
+    m01 = np.zeros(capacity, dtype=Float)
+    m02 = np.zeros(capacity, dtype=Float)
+    m10 = np.zeros(capacity, dtype=Float)
+    m11 = np.zeros(capacity, dtype=Float)
+    m12 = np.zeros(capacity, dtype=Float)
+    m20 = np.zeros(capacity, dtype=Float)
+    m21 = np.zeros(capacity, dtype=Float)
+    m22 = np.zeros(capacity, dtype=Float)
     tr_x = np.zeros(capacity, dtype=Float)
     tr_y = np.zeros(capacity, dtype=Float)
     tr_z = np.zeros(capacity, dtype=Float)
@@ -170,8 +183,8 @@ def compile_scene(root_volume: Any) -> ShapeBuffer:
             # Fallback for unsupported geometries
             shape[i] = -1
 
-        # Material index
-        material_index[i] = i # temporary: mapping to flat_list index for backward compatibility
+        # Volume index
+        volume_index[i] = i # temporary: mapping to flat_list index for backward compatibility
 
         # Matrix is World -> Local. The total_transformation_matrix is defined as 4x4.
         # [ R R R Tx ]
@@ -183,24 +196,24 @@ def compile_scene(root_volume: Any) -> ShapeBuffer:
         # Note: if local_position is [x, y, z, 1] row vector, local_position @ mat.T = (mat @ local_position.T).T
         # This means mat is applied as M * v column vector.
         # So mat[0:3, 0:3] is rotation, mat[0:3, 3] is translation.
-        rot_00[i] = mat[0, 0]
-        rot_01[i] = mat[0, 1]
-        rot_02[i] = mat[0, 2]
-        rot_10[i] = mat[1, 0]
-        rot_11[i] = mat[1, 1]
-        rot_12[i] = mat[1, 2]
-        rot_20[i] = mat[2, 0]
-        rot_21[i] = mat[2, 1]
-        rot_22[i] = mat[2, 2]
+        m00[i] = mat[0, 0]
+        m01[i] = mat[0, 1]
+        m02[i] = mat[0, 2]
+        m10[i] = mat[1, 0]
+        m11[i] = mat[1, 1]
+        m12[i] = mat[1, 2]
+        m20[i] = mat[2, 0]
+        m21[i] = mat[2, 1]
+        m22[i] = mat[2, 2]
 
         tr_x[i] = mat[0, 3]
         tr_y[i] = mat[1, 3]
         tr_z[i] = mat[2, 3]
 
     matrix_soa = Matrix3x3SoA(
-        rot_00=rot_00, rot_01=rot_01, rot_02=rot_02,
-        rot_10=rot_10, rot_11=rot_11, rot_12=rot_12,
-        rot_20=rot_20, rot_21=rot_21, rot_22=rot_22
+        m00=m00, m01=m01, m02=m02,
+        m10=m10, m11=m11, m12=m12,
+        m20=m20, m21=m21, m22=m22
     )
     vector_soa = Vector3DSoA(x=tr_x, y=tr_y, z=tr_z)
 
@@ -216,13 +229,17 @@ def compile_scene(root_volume: Any) -> ShapeBuffer:
         param_3=param_3
     )
 
-    buffer = ShapeBuffer(
+    shape_buffer = ShapeBuffer(
         shape=shape,
-        shape_parameters=shape_parameters,
+        shape_parameters=shape_parameters
+    )
+
+    buffer = GeometryBuffer(
+        shape_buffer=shape_buffer,
         transform=transform_soa,
         miss_index=miss_index,
-        material_index=material_index
+        volume_index=volume_index
     )
     buffer.validate()
 
-    return buffer, flat_list
+    return buffer
