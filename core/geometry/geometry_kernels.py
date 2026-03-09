@@ -99,21 +99,23 @@ def cast_path_kernel(
         while g_idx < num_geoms:
             geom = geom_buffer[g_idx]
             transform = geom['transform']
+            rotation = transform['rotation']
+            translation = transform['translation']
 
             # 1. Transform World -> Local (Loop Unrolling, without np.matmul)
-            m00 = transform['m00']
-            m01 = transform['m01']
-            m02 = transform['m02']
-            m10 = transform['m10']
-            m11 = transform['m11']
-            m12 = transform['m12']
-            m20 = transform['m20']
-            m21 = transform['m21']
-            m22 = transform['m22']
+            m00 = rotation['m00']
+            m01 = rotation['m01']
+            m02 = rotation['m02']
+            m10 = rotation['m10']
+            m11 = rotation['m11']
+            m12 = rotation['m12']
+            m20 = rotation['m20']
+            m21 = rotation['m21']
+            m22 = rotation['m22']
 
-            t_x = transform['tx']
-            t_y = transform['ty']
-            t_z = transform['tz']
+            t_x = translation['x']
+            t_y = translation['y']
+            t_z = translation['z']
 
             l_pos_x = m00 * w_pos_x + m01 * w_pos_y + m02 * w_pos_z + t_x
             l_pos_y = m10 * w_pos_x + m11 * w_pos_y + m12 * w_pos_z + t_y

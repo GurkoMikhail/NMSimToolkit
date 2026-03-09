@@ -3,19 +3,11 @@ from typing import Any
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, ShapeID, Index
-
+from core.other.transform import TransformDType
 
 # Define Structured Array Types (AoS)
 
-# 1. Transform Data
-TransformDType = np.dtype([
-    ('m00', Float), ('m01', Float), ('m02', Float),
-    ('m10', Float), ('m11', Float), ('m12', Float),
-    ('m20', Float), ('m21', Float), ('m22', Float),
-    ('tx', Float), ('ty', Float), ('tz', Float)
-])
-
-# 2. Shape Data
+# 1. Shape Data
 # "В ShapeParameters включить индекс формы геометрии (shape) и дать более исчерпывающее название."
 ShapeDataDType = np.dtype([
     ('shape', ShapeID),
@@ -40,7 +32,7 @@ class GeometryCompiler:
     optimized for fast Numba raycasting.
     """
 
-    def compile_scene(self, root_volume: Any) -> NDArray[Any]:
+    def compile_scene(self, root_volume: Any) -> NDArray[np.void]:
         from core.geometry.volumes import VolumeWithChilds, TransformableVolume
         from core.geometry.geometries import Box
 
@@ -98,21 +90,21 @@ class GeometryCompiler:
 
             # Matrix: World -> Local
             # Rotation
-            buffer[i]['transform']['m00'] = mat[0, 0]
-            buffer[i]['transform']['m01'] = mat[0, 1]
-            buffer[i]['transform']['m02'] = mat[0, 2]
+            buffer[i]['transform']['rotation']['m00'] = mat[0, 0]
+            buffer[i]['transform']['rotation']['m01'] = mat[0, 1]
+            buffer[i]['transform']['rotation']['m02'] = mat[0, 2]
 
-            buffer[i]['transform']['m10'] = mat[1, 0]
-            buffer[i]['transform']['m11'] = mat[1, 1]
-            buffer[i]['transform']['m12'] = mat[1, 2]
+            buffer[i]['transform']['rotation']['m10'] = mat[1, 0]
+            buffer[i]['transform']['rotation']['m11'] = mat[1, 1]
+            buffer[i]['transform']['rotation']['m12'] = mat[1, 2]
 
-            buffer[i]['transform']['m20'] = mat[2, 0]
-            buffer[i]['transform']['m21'] = mat[2, 1]
-            buffer[i]['transform']['m22'] = mat[2, 2]
+            buffer[i]['transform']['rotation']['m20'] = mat[2, 0]
+            buffer[i]['transform']['rotation']['m21'] = mat[2, 1]
+            buffer[i]['transform']['rotation']['m22'] = mat[2, 2]
 
             # Translation
-            buffer[i]['transform']['tx'] = mat[0, 3]
-            buffer[i]['transform']['ty'] = mat[1, 3]
-            buffer[i]['transform']['tz'] = mat[2, 3]
+            buffer[i]['transform']['translation']['x'] = mat[0, 3]
+            buffer[i]['transform']['translation']['y'] = mat[1, 3]
+            buffer[i]['transform']['translation']['z'] = mat[2, 3]
 
         return buffer
