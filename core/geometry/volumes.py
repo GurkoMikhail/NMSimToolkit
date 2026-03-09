@@ -45,11 +45,11 @@ class ElementaryVolume:
         self.invalidate_geometry_buffer()
 
     @property
-    def geometry_buffer(self) -> 'core.geometry.geometry_soa.GeometryBuffer':
-        """ Lazy compilation of GeometryBuffer """
+    def geometry_buffer(self) -> NDArray[Any]:
+        """ Lazy compilation of GeometryBuffer (AoS Structured Array) """
         if getattr(self, '_geometry_buffer', None) is None:
-            from core.geometry.geometry_soa import compile_scene
-            self._geometry_buffer = compile_scene(self)
+            from core.geometry.geometry_compiler import GeometryCompiler
+            self._geometry_buffer = GeometryCompiler().compile_scene(self)
         return self._geometry_buffer
 
     def invalidate_geometry_buffer(self) -> None:

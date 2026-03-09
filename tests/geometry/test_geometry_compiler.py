@@ -5,7 +5,7 @@ from numpy.typing import NDArray
 from core.geometry.geometries import Box
 from core.geometry.volumes import TransformableVolumeWithChild
 from core.materials.materials import Material
-from core.geometry.geometry_soa_kernels import cast_path_kernel
+from core.geometry.geometry_kernels import cast_path_kernel
 from core.particles.particles_soa import ParticleBank
 from core.other.typing_definitions import Float, Length, Energy, Time, Species, ID
 from core.other.vectors_soa import Vector3DSoA
