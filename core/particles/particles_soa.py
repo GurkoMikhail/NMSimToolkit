@@ -4,6 +4,7 @@ from typing import NamedTuple
 
 from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Index
 from core.other.vectors_soa import Vector3DSoA
+from core.geometry.navigation_state import NavigationState
 
 
 class ParticleState(NamedTuple):
@@ -115,6 +116,14 @@ class ParticleBank:
         )
         self._state.validate()
 
+        self._navigation_state = NavigationState(
+            current_volume=np.full(capacity, -1, dtype=Index),
+            next_volume=np.full(capacity, -1, dtype=Index),
+            boundary_distance=np.full(capacity, np.inf, dtype=Float),
+            cached_distance=np.full(capacity, np.inf, dtype=Float)
+        )
+        self._navigation_state.validate()
+
     @property
     def capacity(self) -> int:
         return self._state.capacity
@@ -126,6 +135,10 @@ class ParticleBank:
     @property
     def state(self) -> ParticleState:
         return self._state
+
+    @property
+    def navigation_state(self) -> NavigationState:
+        return self._navigation_state
 
     def inject_particles(
         self,

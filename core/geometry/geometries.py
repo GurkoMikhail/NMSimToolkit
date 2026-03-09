@@ -33,7 +33,11 @@ class Geometry(ABC):
     @abstractmethod
     def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         pass
-    
+
+    @abstractmethod
+    def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
+        pass
+
 
 class Box(Geometry):
     distance_method: str
@@ -60,6 +64,13 @@ class Box(Geometry):
 
     def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         return getattr(self, self.distance_method)(position, direction)
+
+    def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
+        shape_data_array[index]['shape'] = 0
+        shape_data_array[index]['param_0'] = self.half_size[0]
+        shape_data_array[index]['param_1'] = self.half_size[1]
+        shape_data_array[index]['param_2'] = self.half_size[2]
+        shape_data_array[index]['param_3'] = self.distance_epsilon
 
     def ray_marching(self, position: Vector3D, *args: Any) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         q = np.abs(position) - self.half_size

@@ -32,7 +32,8 @@ class GeometryCompiler:
     optimized for fast Numba raycasting.
     """
 
-    def compile_scene(self, root_volume: Any) -> NDArray[np.void]:
+    def compile_scene(self, root_volume: 'core.geometry.volumes.ElementaryVolume') -> NDArray[np.void]:
+        import core.geometry.volumes
         from core.geometry.volumes import VolumeWithChilds, TransformableVolume
         from core.geometry.geometries import Box
 
@@ -77,12 +78,8 @@ class GeometryCompiler:
 
         for i, (vol, mat) in enumerate(flat_list):
             # Shape Data
-            if isinstance(vol.geometry, Box):
-                buffer[i]['shape_data']['shape'] = 0
-                buffer[i]['shape_data']['param_0'] = vol.geometry.half_size[0]
-                buffer[i]['shape_data']['param_1'] = vol.geometry.half_size[1]
-                buffer[i]['shape_data']['param_2'] = vol.geometry.half_size[2]
-                buffer[i]['shape_data']['param_3'] = getattr(vol.geometry, 'distance_epsilon', Float(1e-3))
+            if hasattr(vol.geometry, 'write_shape_data'):
+                vol.geometry.write_shape_data(buffer['shape_data'], i)
             else:
                 buffer[i]['shape_data']['shape'] = -1
 

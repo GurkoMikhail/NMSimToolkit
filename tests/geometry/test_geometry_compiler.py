@@ -72,11 +72,8 @@ def test_geometry_soa_equivalence(test_scene):
         distance_traveled=dist
     )
 
-    out_distances = np.full(N, np.inf, dtype=Float)
-    out_volume_indices = np.full(N, -1, dtype=np.int32)
-
     cast_path_kernel(
-        pos_soa, dir_soa, target_indices, buffer, out_distances, out_volume_indices
+        pos_soa, dir_soa, target_indices, buffer, bank.navigation_state
     )
 
     # Note: Boundary tracking vs full ray intersection may have different semantic meanings for distances.
@@ -84,10 +81,10 @@ def test_geometry_soa_equivalence(test_scene):
     # For now, let's just make sure it runs and returns finite distances for the intersection.
     # The true physical equivalence test depends heavily on the exact rules of Boundary Tracking.
 
-    assert not np.all(np.isinf(out_distances))
+    assert not np.all(np.isinf(bank.navigation_state.boundary_distance))
 
     print("OOP Distances:", oop_distances)
-    print("SoA Distances:", out_distances)
+    print("SoA Distances:", bank.navigation_state.boundary_distance)
 
 def test_geometry_soa_benchmark(benchmark, test_scene):
     import time as builtin_time
@@ -120,12 +117,9 @@ def test_geometry_soa_benchmark(benchmark, test_scene):
         distance_traveled=dist
     )
 
-    out_distances = np.full(N, np.inf, dtype=Float)
-    out_volume_indices = np.full(N, -1, dtype=np.int32)
-
     def run_soa():
         cast_path_kernel(
-            pos_soa, dir_soa, target_indices, buffer, out_distances, out_volume_indices
+            pos_soa, dir_soa, target_indices, buffer, bank.navigation_state
         )
 
     # Warmup

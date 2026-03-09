@@ -5,6 +5,7 @@ from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, Index
 from core.other.vectors_soa import Vector3DSoA
+from core.geometry.navigation_state import NavigationState
 
 @njit(cache=True)
 def _box_intersect(
@@ -70,18 +71,24 @@ def cast_path_kernel(
     directions: Vector3DSoA,
     target_indices: NDArray[Index],
     geom_buffer: NDArray,
-    out_distances: NDArray[Float],
-    out_volume_indices: NDArray[Index]
+    nav_state: NavigationState
 ) -> None:
     """
     Raycasting Numba kernel over an array of target active particles against a structured GeometryBuffer array (AoS).
     Applies loop unrolling for coordinate transformations and uses miss_index for Boundary Tracking / Frustum Culling.
+    Updates NavigationState directly for Woodcock Tracking (current_volume, next_volume, boundary_distance).
     """
     num_particles = target_indices.shape[0]
     num_geoms = geom_buffer.shape[0]
 
     for j in range(num_particles):
         p_idx = target_indices[j]
+
+        # Ray Distance Caching
+        # If the cached distance is positive, it means we can just use the cached value
+        # and do not need to recast the ray in this step. (A simplistic check, actual implementation might vary).
+        # We will assume cached_distance is handled externally or decrement it.
+        # But for now, we perform the raycast to find current volume and boundary distance.
 
         # Original World Position and Direction
         w_pos_x = positions.x[p_idx]
@@ -93,7 +100,8 @@ def cast_path_kernel(
         w_dir_z = directions.z[p_idx]
 
         closest_dist = np.inf
-        closest_vol = -1
+        current_vol = -1
+        next_vol = -1
 
         g_idx = 0
         while g_idx < num_geoms:
@@ -147,30 +155,46 @@ def cast_path_kernel(
             distance_epsilon = p3
 
             # 3. Frustum Culling / Boundary Tracking Logic
+            # We need to return CURRENT volume and distance to NEXT boundary.
 
-            # Case 1: Miss
             if tmax < 0 or tmax < tmin:
+                # Miss
                 g_idx = geom['miss_index']
                 continue
 
-            # Case 2: Hit from OUTSIDE
+            if tmin <= 0 and tmax > 0:
+                # INSIDE the volume
+                # distance to NEXT boundary is tmax
+                dist = tmax + distance_epsilon
+
+                # We update current volume
+                # Since children are strictly inside parents, the last volume we find ourselves inside
+                # (deepest in the tree) is the actual current volume.
+                # Because we traverse parents before children, and only fall through if inside parent.
+                current_vol = geom['volume_index']
+                if dist < closest_dist:
+                    closest_dist = dist
+                    next_vol = -1 # we don't necessarily know the next volume, but the distance is minimal
+
+                # Check children because we might be inside a child too
+                g_idx += 1
+
             elif tmin > 0:
+                # OUTSIDE the volume, but ray hits it in the future.
+                # This could be the NEXT boundary if we are in some parent.
                 dist = tmin + distance_epsilon
                 if dist < closest_dist:
                     closest_dist = dist
-                    closest_vol = geom['volume_index']
+                    next_vol = geom['volume_index']
 
+                # Skip checking children, because they are further away than the entry to this parent.
                 g_idx = geom['miss_index']
-                continue
 
-            # Case 3: Hit from INSIDE (tmin < 0 and tmax > 0)
             else:
-                dist = tmax + distance_epsilon
-                if dist < closest_dist:
-                    closest_dist = dist
-                    closest_vol = geom['volume_index']
+                # Miss
+                g_idx = geom['miss_index']
 
-                g_idx += 1
-
-        out_distances[j] = closest_dist
-        out_volume_indices[j] = closest_vol
+        nav_state.boundary_distance[p_idx] = closest_dist
+        nav_state.current_volume[p_idx] = current_vol
+        nav_state.next_volume[p_idx] = next_vol
+        # Ray distance caching will be decremented by the caller (propagation engine)
