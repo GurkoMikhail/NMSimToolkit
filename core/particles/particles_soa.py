@@ -119,8 +119,7 @@ class ParticleBank:
         self._navigation_state = NavigationState(
             current_volume=np.full(capacity, -1, dtype=Index),
             next_volume=np.full(capacity, -1, dtype=Index),
-            boundary_distance=np.full(capacity, np.inf, dtype=Float),
-            cached_distance=np.full(capacity, np.inf, dtype=Float)
+            boundary_distance=np.full(capacity, np.inf, dtype=Float)
         )
         self._navigation_state.validate()
 
@@ -213,9 +212,17 @@ class ParticleBank:
         """
         Facade for move_kernel, applying distances across target active particles.
         """
-        # Imported lazily or globally later
         from core.particles.particles_soa_kernels import move_kernel
         move_kernel(self._state, target_indices, distances)
+
+        # Invalidate navigation state boundaries and relocate if needed
+        self._navigation_state.boundary_distance[target_indices] -= distances
+        # Simplistic validation: if we cross the boundary, reset next_volume (needs deeper logic)
+        crossed = self._navigation_state.boundary_distance[target_indices] <= 0
+        if np.any(crossed):
+            crossed_indices = target_indices[crossed]
+            self._navigation_state.current_volume[crossed_indices] = self._navigation_state.next_volume[crossed_indices]
+            self._navigation_state.next_volume[crossed_indices] = -1
 
     def rotate(self, target_indices: NDArray[Index], thetas: NDArray[Float], phis: NDArray[Float]) -> None:
         """
@@ -223,3 +230,7 @@ class ParticleBank:
         """
         from core.particles.particles_soa_kernels import rotate_kernel
         rotate_kernel(self._state, target_indices, thetas, phis)
+
+        # Invalidate navigation cache upon direction change
+        self._navigation_state.boundary_distance[target_indices] = 0.0
+        self._navigation_state.next_volume[target_indices] = -1

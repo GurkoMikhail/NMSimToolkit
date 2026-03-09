@@ -9,10 +9,19 @@ import core.other.utils as utils
 from core.geometry.geometries import Geometry
 from core.materials.materials import Material, MaterialArray
 from core.other.nonunique_array import NonuniqueArray
-from core.other.typing_definitions import Float, Vector3D
+from core.other.typing_definitions import Float, Vector3D, Index
+from core.other.transform import TransformDType
+from core.geometry.shape_data import ShapeDataDType
 
 
-class ElementaryVolume:
+GeometryBufferDType = np.dtype([
+    ('shape_data', ShapeDataDType),
+    ('transform', TransformDType),
+    ('miss_index', Index),
+    ('volume_index', Index)
+])
+
+class Volume:
     """ Базовый класс элементарного объёма """
 
     _counter = count(1)
@@ -84,7 +93,7 @@ class ElementaryVolume:
         return material
 
 
-class VolumeWithChilds(ElementaryVolume):
+class VolumeWithChilds(Volume):
     """ Базовый класс объёма с детьми """    
     childs: List['TransformableVolume']
 
@@ -155,7 +164,7 @@ class VolumeWithChilds(ElementaryVolume):
         child.invalidate_geometry_buffer()
 
 
-class TransformableVolume(ElementaryVolume):
+class TransformableVolume(Volume):
     """ Базовый класс трансформируемого объёма """
     transformation_matrix: NDArray[Float]
     parent: Optional[VolumeWithChilds]
@@ -266,7 +275,7 @@ class TransformableVolumeWithChild(TransformableVolume, VolumeWithChilds):
 
 class VolumeArray(NonuniqueArray):
     """ Класс списка объёмов """
-    element_list: List[Optional[ElementaryVolume]]
+    element_list: List[Optional[Volume]]
 
     @property
     def material(self) -> MaterialArray:

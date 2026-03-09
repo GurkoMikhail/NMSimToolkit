@@ -85,10 +85,23 @@ def cast_path_kernel(
         p_idx = target_indices[j]
 
         # Ray Distance Caching
-        # If the cached distance is positive, it means we can just use the cached value
-        # and do not need to recast the ray in this step. (A simplistic check, actual implementation might vary).
-        # We will assume cached_distance is handled externally or decrement it.
-        # But for now, we perform the raycast to find current volume and boundary distance.
+        if nav_state.boundary_distance[p_idx] > 0.0:
+            continue
+
+        # Stateful Navigation & Relocation
+        curr_vol_idx = nav_state.current_volume[p_idx]
+        next_vol_idx = nav_state.next_volume[p_idx]
+
+        if next_vol_idx >= 0:
+            # Bottom-Up Relocation with Coplanar Boundary Epsilon Overshoot check
+            # For this simplified prototype, we assign current to next.
+            curr_vol_idx = next_vol_idx
+
+        start_idx = 0
+        end_idx = num_geoms
+        if curr_vol_idx >= 0:
+            start_idx = curr_vol_idx
+            end_idx = geom_buffer[curr_vol_idx]['miss_index']
 
         # Original World Position and Direction
         w_pos_x = positions.x[p_idx]
@@ -103,8 +116,8 @@ def cast_path_kernel(
         current_vol = -1
         next_vol = -1
 
-        g_idx = 0
-        while g_idx < num_geoms:
+        g_idx = start_idx
+        while g_idx < end_idx:
             geom = geom_buffer[g_idx]
             transform = geom['transform']
             rotation = transform['rotation']

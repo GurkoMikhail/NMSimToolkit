@@ -3,27 +3,6 @@ from typing import Any
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, ShapeID, Index
-from core.other.transform import TransformDType
-
-# Define Structured Array Types (AoS)
-
-# 1. Shape Data
-# "В ShapeParameters включить индекс формы геометрии (shape) и дать более исчерпывающее название."
-ShapeDataDType = np.dtype([
-    ('shape', ShapeID),
-    ('param_0', Float),
-    ('param_1', Float),
-    ('param_2', Float),
-    ('param_3', Float)
-])
-
-# 3. Geometry Buffer Element
-GeometryBufferDType = np.dtype([
-    ('shape_data', ShapeDataDType),
-    ('transform', TransformDType),
-    ('miss_index', Index),
-    ('volume_index', Index)
-])
 
 
 class GeometryCompiler:
@@ -32,7 +11,7 @@ class GeometryCompiler:
     optimized for fast Numba raycasting.
     """
 
-    def compile_scene(self, root_volume: 'core.geometry.volumes.ElementaryVolume') -> NDArray[np.void]:
+    def compile_scene(self, root_volume: 'core.geometry.volumes.Volume') -> NDArray[np.void]:
         import core.geometry.volumes
         from core.geometry.volumes import VolumeWithChilds, TransformableVolume
         from core.geometry.geometries import Box
@@ -59,6 +38,7 @@ class GeometryCompiler:
         dfs(root_volume, identity_matrix)
 
         capacity = len(flat_list)
+        from core.geometry.volumes import GeometryBufferDType
         buffer = np.zeros(capacity, dtype=GeometryBufferDType)
 
         def calc_miss(node_idx):

@@ -13,14 +13,12 @@ class NavigationState(NamedTuple):
     current_volume: NDArray[Index]
     next_volume: NDArray[Index]
     boundary_distance: NDArray[Float]
-    cached_distance: NDArray[Float]
 
     def validate(self) -> None:
         arrays = [
             self.current_volume,
             self.next_volume,
-            self.boundary_distance,
-            self.cached_distance
+            self.boundary_distance
         ]
         for arr in arrays:
             if arr.ndim != 1:

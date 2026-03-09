@@ -72,6 +72,8 @@ def test_geometry_soa_equivalence(test_scene):
         distance_traveled=dist
     )
 
+    bank.navigation_state.boundary_distance[:] = 0.0
+
     cast_path_kernel(
         pos_soa, dir_soa, target_indices, buffer, bank.navigation_state
     )
@@ -118,6 +120,7 @@ def test_geometry_soa_benchmark(benchmark, test_scene):
     )
 
     def run_soa():
+        bank.navigation_state.boundary_distance[:] = 0.0
         cast_path_kernel(
             pos_soa, dir_soa, target_indices, buffer, bank.navigation_state
         )
