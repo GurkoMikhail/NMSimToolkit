@@ -66,6 +66,92 @@ def _box_intersect(
 
 
 @njit(cache=True)
+def _transform_to_local(
+    w_pos_x: Float, w_pos_y: Float, w_pos_z: Float,
+    w_dir_x: Float, w_dir_y: Float, w_dir_z: Float,
+    geom: NDArray
+) -> Tuple[Float, Float, Float, Float, Float, Float]:
+    transform = geom['transform']
+    rotation = transform['rotation']
+    translation = transform['translation']
+
+    m00 = rotation['m00']
+    m01 = rotation['m01']
+    m02 = rotation['m02']
+    m10 = rotation['m10']
+    m11 = rotation['m11']
+    m12 = rotation['m12']
+    m20 = rotation['m20']
+    m21 = rotation['m21']
+    m22 = rotation['m22']
+
+    t_x = translation['x']
+    t_y = translation['y']
+    t_z = translation['z']
+
+    l_pos_x = m00 * w_pos_x + m01 * w_pos_y + m02 * w_pos_z + t_x
+    l_pos_y = m10 * w_pos_x + m11 * w_pos_y + m12 * w_pos_z + t_y
+    l_pos_z = m20 * w_pos_x + m21 * w_pos_y + m22 * w_pos_z + t_z
+
+    l_dir_x = m00 * w_dir_x + m01 * w_dir_y + m02 * w_dir_z
+    l_dir_y = m10 * w_dir_x + m11 * w_dir_y + m12 * w_dir_z
+    l_dir_z = m20 * w_dir_x + m21 * w_dir_y + m22 * w_dir_z
+
+    return l_pos_x, l_pos_y, l_pos_z, l_dir_x, l_dir_y, l_dir_z
+
+
+@njit(cache=True)
+def _get_intersection(
+    l_pos_x: Float, l_pos_y: Float, l_pos_z: Float,
+    l_dir_x: Float, l_dir_y: Float, l_dir_z: Float,
+    geom: NDArray
+) -> Tuple[Float, Float]:
+    shape_data = geom['shape_data']
+    geom_type = shape_data['shape']
+    p0 = shape_data['param_0']
+    p1 = shape_data['param_1']
+    p2 = shape_data['param_2']
+
+    if geom_type == 0:  # Box
+        return _box_intersect(
+            l_pos_x, l_pos_y, l_pos_z,
+            l_dir_x, l_dir_y, l_dir_z,
+            p0, p1, p2
+        )
+    else:
+        return np.inf, -np.inf
+
+
+@njit(cache=True)
+def _relocate_bottom_up(
+    w_pos_x: Float, w_pos_y: Float, w_pos_z: Float,
+    w_dir_x: Float, w_dir_y: Float, w_dir_z: Float,
+    curr_vol_idx: Index,
+    geom_buffer: NDArray
+) -> Index:
+    while curr_vol_idx >= 0:
+        geom = geom_buffer[curr_vol_idx]
+        l_pos_x, l_pos_y, l_pos_z, l_dir_x, l_dir_y, l_dir_z = _transform_to_local(
+            w_pos_x, w_pos_y, w_pos_z,
+            w_dir_x, w_dir_y, w_dir_z,
+            geom
+        )
+        tmin, tmax = _get_intersection(
+            l_pos_x, l_pos_y, l_pos_z,
+            l_dir_x, l_dir_y, l_dir_z,
+            geom
+        )
+
+        # Check if inside
+        if tmin <= 0.0 and tmax > 0.0:
+            return curr_vol_idx
+
+        curr_vol_idx = geom['parent_index']
+
+    return -1
+
+
+@njit(cache=True)
 def cast_path_kernel(
     positions: Vector3DSoA,
     directions: Vector3DSoA,
@@ -88,21 +174,6 @@ def cast_path_kernel(
         if nav_state.boundary_distance[p_idx] > 0.0:
             continue
 
-        # Stateful Navigation & Relocation
-        curr_vol_idx = nav_state.current_volume[p_idx]
-        next_vol_idx = nav_state.next_volume[p_idx]
-
-        if next_vol_idx >= 0:
-            # Bottom-Up Relocation with Coplanar Boundary Epsilon Overshoot check
-            # For this simplified prototype, we assign current to next.
-            curr_vol_idx = next_vol_idx
-
-        start_idx = 0
-        end_idx = num_geoms
-        if curr_vol_idx >= 0:
-            start_idx = curr_vol_idx
-            end_idx = geom_buffer[curr_vol_idx]['miss_index']
-
         # Original World Position and Direction
         w_pos_x = positions.x[p_idx]
         w_pos_y = positions.y[p_idx]
@@ -112,6 +183,23 @@ def cast_path_kernel(
         w_dir_y = directions.y[p_idx]
         w_dir_z = directions.z[p_idx]
 
+        # Stateful Navigation & Relocation
+        curr_vol_idx = nav_state.current_volume[p_idx]
+
+        if curr_vol_idx >= 0:
+            curr_vol_idx = _relocate_bottom_up(
+                w_pos_x, w_pos_y, w_pos_z,
+                w_dir_x, w_dir_y, w_dir_z,
+                curr_vol_idx,
+                geom_buffer
+            )
+
+        start_idx = 0
+        end_idx = num_geoms
+        if curr_vol_idx >= 0:
+            start_idx = curr_vol_idx
+            end_idx = geom_buffer[curr_vol_idx]['miss_index']
+
         closest_dist = np.inf
         current_vol = -1
         next_vol = -1
@@ -119,53 +207,17 @@ def cast_path_kernel(
         g_idx = start_idx
         while g_idx < end_idx:
             geom = geom_buffer[g_idx]
-            transform = geom['transform']
-            rotation = transform['rotation']
-            translation = transform['translation']
 
-            # 1. Transform World -> Local (Loop Unrolling, without np.matmul)
-            m00 = rotation['m00']
-            m01 = rotation['m01']
-            m02 = rotation['m02']
-            m10 = rotation['m10']
-            m11 = rotation['m11']
-            m12 = rotation['m12']
-            m20 = rotation['m20']
-            m21 = rotation['m21']
-            m22 = rotation['m22']
-
-            t_x = translation['x']
-            t_y = translation['y']
-            t_z = translation['z']
-
-            l_pos_x = m00 * w_pos_x + m01 * w_pos_y + m02 * w_pos_z + t_x
-            l_pos_y = m10 * w_pos_x + m11 * w_pos_y + m12 * w_pos_z + t_y
-            l_pos_z = m20 * w_pos_x + m21 * w_pos_y + m22 * w_pos_z + t_z
-
-            l_dir_x = m00 * w_dir_x + m01 * w_dir_y + m02 * w_dir_z
-            l_dir_y = m10 * w_dir_x + m11 * w_dir_y + m12 * w_dir_z
-            l_dir_z = m20 * w_dir_x + m21 * w_dir_y + m22 * w_dir_z
-
-            # 2. Geometry Branching (Fat Node / Generic Parameters)
-            shape_data = geom['shape_data']
-            geom_type = shape_data['shape']
-            p0 = shape_data['param_0']
-            p1 = shape_data['param_1']
-            p2 = shape_data['param_2']
-            p3 = shape_data['param_3']
-
-            if geom_type == 0:  # Box
-                tmin, tmax = _box_intersect(
-                    l_pos_x, l_pos_y, l_pos_z,
-                    l_dir_x, l_dir_y, l_dir_z,
-                    p0, p1, p2
-                )
-            else:
-                # Unsupported geometry
-                tmin = np.inf
-                tmax = -np.inf
-
-            distance_epsilon = p3
+            l_pos_x, l_pos_y, l_pos_z, l_dir_x, l_dir_y, l_dir_z = _transform_to_local(
+                w_pos_x, w_pos_y, w_pos_z,
+                w_dir_x, w_dir_y, w_dir_z,
+                geom
+            )
+            tmin, tmax = _get_intersection(
+                l_pos_x, l_pos_y, l_pos_z,
+                l_dir_x, l_dir_y, l_dir_z,
+                geom
+            )
 
             # 3. Frustum Culling / Boundary Tracking Logic
             # We need to return CURRENT volume and distance to NEXT boundary.
@@ -178,7 +230,7 @@ def cast_path_kernel(
             if tmin <= 0 and tmax > 0:
                 # INSIDE the volume
                 # distance to NEXT boundary is tmax
-                dist = tmax + distance_epsilon
+                dist = tmax
 
                 # We update current volume
                 # Since children are strictly inside parents, the last volume we find ourselves inside
@@ -195,7 +247,7 @@ def cast_path_kernel(
             elif tmin > 0:
                 # OUTSIDE the volume, but ray hits it in the future.
                 # This could be the NEXT boundary if we are in some parent.
-                dist = tmin + distance_epsilon
+                dist = tmin
                 if dist < closest_dist:
                     closest_dist = dist
                     next_vol = geom['volume_index']

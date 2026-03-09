@@ -5,6 +5,5 @@ ShapeDataDType = np.dtype([
     ('shape', ShapeID),
     ('param_0', Float),
     ('param_1', Float),
-    ('param_2', Float),
-    ('param_3', Float)
+    ('param_2', Float)
 ])

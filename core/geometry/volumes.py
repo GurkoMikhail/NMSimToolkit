@@ -18,6 +18,7 @@ GeometryBufferDType = np.dtype([
     ('shape_data', ShapeDataDType),
     ('transform', TransformDType),
     ('miss_index', Index),
+    ('parent_index', Index),
     ('volume_index', Index)
 ])
 

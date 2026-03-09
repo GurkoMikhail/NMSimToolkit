@@ -70,7 +70,6 @@ class Box(Geometry):
         shape_data_array[index]['param_0'] = self.half_size[0]
         shape_data_array[index]['param_1'] = self.half_size[1]
         shape_data_array[index]['param_2'] = self.half_size[2]
-        shape_data_array[index]['param_3'] = self.distance_epsilon
 
     def ray_marching(self, position: Vector3D, *args: Any) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         q = np.abs(position) - self.half_size

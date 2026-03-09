@@ -18,31 +18,31 @@ class GeometryCompiler:
 
         flat_list = []
 
-        def dfs(volume, parent_matrix):
+        def dfs(volume, parent_matrix, parent_index):
             if isinstance(volume, TransformableVolume):
                 total_matrix = volume.total_transformation_matrix
             else:
                 total_matrix = parent_matrix
 
             current_index = len(flat_list)
-            flat_list.append((volume, total_matrix))
+            flat_list.append((volume, total_matrix, parent_index))
 
             child_count = 0
             if isinstance(volume, VolumeWithChilds):
                 for child in volume.childs:
-                    child_count += dfs(child, total_matrix)
+                    child_count += dfs(child, total_matrix, current_index)
 
             return child_count + 1
 
         identity_matrix = np.eye(4, dtype=Float)
-        dfs(root_volume, identity_matrix)
+        dfs(root_volume, identity_matrix, -1)
 
         capacity = len(flat_list)
         from core.geometry.volumes import GeometryBufferDType
         buffer = np.zeros(capacity, dtype=GeometryBufferDType)
 
         def calc_miss(node_idx):
-            vol, mat = flat_list[node_idx]
+            vol, mat, p_idx = flat_list[node_idx]
             count = 1
             if isinstance(vol, VolumeWithChilds):
                 for child in vol.childs:
@@ -56,7 +56,7 @@ class GeometryCompiler:
         if capacity > 0:
             calc_miss(0)
 
-        for i, (vol, mat) in enumerate(flat_list):
+        for i, (vol, mat, p_idx) in enumerate(flat_list):
             # Shape Data
             if hasattr(vol.geometry, 'write_shape_data'):
                 vol.geometry.write_shape_data(buffer['shape_data'], i)
@@ -64,6 +64,7 @@ class GeometryCompiler:
                 buffer[i]['shape_data']['shape'] = -1
 
             buffer[i]['volume_index'] = i
+            buffer[i]['parent_index'] = p_idx
 
             # Matrix: World -> Local
             # Rotation

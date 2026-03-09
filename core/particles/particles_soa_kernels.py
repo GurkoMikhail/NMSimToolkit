@@ -25,6 +25,32 @@ def move_kernel(state: ParticleState, target_indices: NDArray[np.int64], distanc
         state.position.z[i] += state.direction.z[i] * d
 
 
+from core.geometry.navigation_state import NavigationState
+
+@njit(cache=True)
+def update_navigation_state_rotate_kernel(
+    nav_state: NavigationState,
+    target_indices: NDArray[Index]
+) -> None:
+    for i in range(target_indices.shape[0]):
+        p_idx = target_indices[i]
+        nav_state.boundary_distance[p_idx] = 0.0
+        nav_state.next_volume[p_idx] = -1
+
+@njit(cache=True)
+def update_navigation_state_move_kernel(
+    nav_state: NavigationState,
+    target_indices: NDArray[Index],
+    distances: NDArray[Float]
+) -> None:
+    for i in range(target_indices.shape[0]):
+        p_idx = target_indices[i]
+        nav_state.boundary_distance[p_idx] -= distances[i]
+
+        if nav_state.boundary_distance[p_idx] <= 0:
+            nav_state.current_volume[p_idx] = nav_state.next_volume[p_idx]
+            nav_state.next_volume[p_idx] = -1
+
 @njit(cache=True)
 def rotate_kernel(
     state: ParticleState,
