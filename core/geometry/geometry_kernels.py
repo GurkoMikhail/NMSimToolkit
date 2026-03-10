@@ -1,5 +1,5 @@
 import numpy as np
-from numba import njit
+from numba import njit, prange
 from typing import Tuple
 from numpy.typing import NDArray
 
@@ -149,7 +149,7 @@ def _relocate_bottom_up(
     return -1
 
 
-@njit(cache=True)
+@njit(cache=True, parallel=True, fastmath=True)
 def cast_path_kernel(
     positions: Vector3DSoA,
     directions: Vector3DSoA,
@@ -165,24 +165,36 @@ def cast_path_kernel(
     num_particles = target_indices.shape[0]
     num_geoms = geom_buffer.shape[0]
 
-    for j in range(num_particles):
+    # Extract arrays to avoid Numba parfor data race on NamedTuple attribute access
+    pos_x = positions.x
+    pos_y = positions.y
+    pos_z = positions.z
+    dir_x = directions.x
+    dir_y = directions.y
+    dir_z = directions.z
+
+    bound_dist = nav_state.boundary_distance
+    nav_curr_vol = nav_state.current_volume
+    nav_next_vol = nav_state.next_volume
+
+    for j in prange(num_particles):
         p_idx = target_indices[j]
 
         # Ray Distance Caching
-        if nav_state.boundary_distance[p_idx] > 0.0:
+        if bound_dist[p_idx] > 0.0:
             continue
 
         # Original World Position and Direction
-        w_pos_x = positions.x[p_idx]
-        w_pos_y = positions.y[p_idx]
-        w_pos_z = positions.z[p_idx]
+        w_pos_x = pos_x[p_idx]
+        w_pos_y = pos_y[p_idx]
+        w_pos_z = pos_z[p_idx]
 
-        w_dir_x = directions.x[p_idx]
-        w_dir_y = directions.y[p_idx]
-        w_dir_z = directions.z[p_idx]
+        w_dir_x = dir_x[p_idx]
+        w_dir_y = dir_y[p_idx]
+        w_dir_z = dir_z[p_idx]
 
         # Stateful Navigation & Relocation
-        curr_vol_idx = nav_state.current_volume[p_idx]
+        curr_vol_idx = nav_curr_vol[p_idx]
 
         if curr_vol_idx >= 0:
             curr_vol_idx = _relocate_bottom_up(
@@ -199,8 +211,8 @@ def cast_path_kernel(
             end_idx = geom_buffer[curr_vol_idx]['miss_index']
 
         closest_dist = np.inf
-        current_vol = -1
-        next_vol = -1
+        current_vol = np.int64(-1)
+        next_vol = np.int64(-1)
 
         g_idx = start_idx
         while g_idx < end_idx:
@@ -257,7 +269,7 @@ def cast_path_kernel(
                 # Miss
                 g_idx = geom['miss_index']
 
-        nav_state.boundary_distance[p_idx] = closest_dist
-        nav_state.current_volume[p_idx] = current_vol
-        nav_state.next_volume[p_idx] = next_vol
+        bound_dist[p_idx] = closest_dist
+        nav_curr_vol[p_idx] = current_vol
+        nav_next_vol[p_idx] = next_vol
         # Ray distance caching will be decremented by the caller (propagation engine)
