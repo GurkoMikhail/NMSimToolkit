@@ -149,6 +149,92 @@ def _relocate_bottom_up(
     return -1
 
 
+@njit(cache=True, inline='always')
+def _trace_single_ray(
+    w_pos_x: Float, w_pos_y: Float, w_pos_z: Float,
+    w_dir_x: Float, w_dir_y: Float, w_dir_z: Float,
+    curr_vol_idx: Index,
+    geom_buffer: NDArray
+) -> Tuple[Float, Index, Index]:
+
+    num_geoms = geom_buffer.shape[0]
+
+    if curr_vol_idx >= 0:
+        curr_vol_idx = _relocate_bottom_up(
+            w_pos_x, w_pos_y, w_pos_z,
+            w_dir_x, w_dir_y, w_dir_z,
+            curr_vol_idx,
+            geom_buffer
+        )
+
+    start_idx = 0
+    end_idx = num_geoms
+    if curr_vol_idx >= 0:
+        start_idx = curr_vol_idx
+        end_idx = geom_buffer[curr_vol_idx]['miss_index']
+
+    closest_dist = np.inf
+    current_vol = np.int64(-1)
+    next_vol = np.int64(-1)
+
+    g_idx = start_idx
+    while g_idx < end_idx:
+        geom = geom_buffer[g_idx]
+
+        l_pos_x, l_pos_y, l_pos_z, l_dir_x, l_dir_y, l_dir_z = _transform_to_local(
+            w_pos_x, w_pos_y, w_pos_z,
+            w_dir_x, w_dir_y, w_dir_z,
+            geom['transform']
+        )
+        tmin, tmax = _get_intersection(
+            l_pos_x, l_pos_y, l_pos_z,
+            l_dir_x, l_dir_y, l_dir_z,
+            geom['shape_data']
+        )
+
+        # 3. Frustum Culling / Boundary Tracking Logic
+        # We need to return CURRENT volume and distance to NEXT boundary.
+
+        if tmax < 0 or tmax < tmin:
+            # Miss
+            g_idx = geom['miss_index']
+            continue
+
+        if tmin <= 0 and tmax > 0:
+            # INSIDE the volume
+            # distance to NEXT boundary is tmax
+            dist = tmax
+
+            # We update current volume
+            # Since children are strictly inside parents, the last volume we find ourselves inside
+            # (deepest in the tree) is the actual current volume.
+            # Because we traverse parents before children, and only fall through if inside parent.
+            current_vol = geom['volume_index']
+            if dist < closest_dist:
+                closest_dist = dist
+                next_vol = np.int64(-1) # we don't necessarily know the next volume, but the distance is minimal
+
+            # Check children because we might be inside a child too
+            g_idx += 1
+
+        elif tmin > 0:
+            # OUTSIDE the volume, but ray hits it in the future.
+            # This could be the NEXT boundary if we are in some parent.
+            dist = tmin
+            if dist < closest_dist:
+                closest_dist = dist
+                next_vol = geom['volume_index']
+
+            # Skip checking children, because they are further away than the entry to this parent.
+            g_idx = geom['miss_index']
+
+        else:
+            # Miss
+            g_idx = geom['miss_index']
+
+    return closest_dist, current_vol, next_vol
+
+
 @njit(cache=True, parallel=True, fastmath=True)
 def cast_path_kernel(
     positions: Vector3DSoA,
@@ -180,96 +266,16 @@ def cast_path_kernel(
     for j in prange(num_particles):
         p_idx = target_indices[j]
 
-        # Ray Distance Caching
         if bound_dist[p_idx] > 0.0:
             continue
 
-        # Original World Position and Direction
-        w_pos_x = pos_x[p_idx]
-        w_pos_y = pos_y[p_idx]
-        w_pos_z = pos_z[p_idx]
-
-        w_dir_x = dir_x[p_idx]
-        w_dir_y = dir_y[p_idx]
-        w_dir_z = dir_z[p_idx]
-
-        # Stateful Navigation & Relocation
-        curr_vol_idx = nav_curr_vol[p_idx]
-
-        if curr_vol_idx >= 0:
-            curr_vol_idx = _relocate_bottom_up(
-                w_pos_x, w_pos_y, w_pos_z,
-                w_dir_x, w_dir_y, w_dir_z,
-                curr_vol_idx,
-                geom_buffer
-            )
-
-        start_idx = 0
-        end_idx = num_geoms
-        if curr_vol_idx >= 0:
-            start_idx = curr_vol_idx
-            end_idx = geom_buffer[curr_vol_idx]['miss_index']
-
-        closest_dist = np.inf
-        current_vol = np.int64(-1)
-        next_vol = np.int64(-1)
-
-        g_idx = start_idx
-        while g_idx < end_idx:
-            geom = geom_buffer[g_idx]
-
-            l_pos_x, l_pos_y, l_pos_z, l_dir_x, l_dir_y, l_dir_z = _transform_to_local(
-                w_pos_x, w_pos_y, w_pos_z,
-                w_dir_x, w_dir_y, w_dir_z,
-                geom['transform']
-            )
-            tmin, tmax = _get_intersection(
-                l_pos_x, l_pos_y, l_pos_z,
-                l_dir_x, l_dir_y, l_dir_z,
-                geom['shape_data']
-            )
-
-            # 3. Frustum Culling / Boundary Tracking Logic
-            # We need to return CURRENT volume and distance to NEXT boundary.
-
-            if tmax < 0 or tmax < tmin:
-                # Miss
-                g_idx = geom['miss_index']
-                continue
-
-            if tmin <= 0 and tmax > 0:
-                # INSIDE the volume
-                # distance to NEXT boundary is tmax
-                dist = tmax
-
-                # We update current volume
-                # Since children are strictly inside parents, the last volume we find ourselves inside
-                # (deepest in the tree) is the actual current volume.
-                # Because we traverse parents before children, and only fall through if inside parent.
-                current_vol = geom['volume_index']
-                if dist < closest_dist:
-                    closest_dist = dist
-                    next_vol = -1 # we don't necessarily know the next volume, but the distance is minimal
-
-                # Check children because we might be inside a child too
-                g_idx += 1
-
-            elif tmin > 0:
-                # OUTSIDE the volume, but ray hits it in the future.
-                # This could be the NEXT boundary if we are in some parent.
-                dist = tmin
-                if dist < closest_dist:
-                    closest_dist = dist
-                    next_vol = geom['volume_index']
-
-                # Skip checking children, because they are further away than the entry to this parent.
-                g_idx = geom['miss_index']
-
-            else:
-                # Miss
-                g_idx = geom['miss_index']
+        closest_dist, current_vol, next_vol = _trace_single_ray(
+            pos_x[p_idx], pos_y[p_idx], pos_z[p_idx],
+            dir_x[p_idx], dir_y[p_idx], dir_z[p_idx],
+            nav_curr_vol[p_idx],
+            geom_buffer
+        )
 
         bound_dist[p_idx] = closest_dist
         nav_curr_vol[p_idx] = current_vol
         nav_next_vol[p_idx] = next_vol
-        # Ray distance caching will be decremented by the caller (propagation engine)
