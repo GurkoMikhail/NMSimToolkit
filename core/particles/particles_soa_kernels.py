@@ -2,7 +2,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Float
+from core.other.typing_definitions import Float, Index
 from core.particles.particles_soa import ParticleState
 
 
@@ -26,6 +26,17 @@ def move_kernel(state: ParticleState, target_indices: NDArray[np.int64], distanc
 
 
 from core.geometry.navigation_state import NavigationState
+
+@njit(cache=True)
+def update_navigation_state_inject_kernel(
+    nav_state: NavigationState,
+    target_indices: NDArray[Index]
+) -> None:
+    for i in range(target_indices.shape[0]):
+        p_idx = target_indices[i]
+        nav_state.current_volume[p_idx] = -1
+        nav_state.next_volume[p_idx] = -1
+        nav_state.boundary_distance[p_idx] = 0.0
 
 @njit(cache=True)
 def update_navigation_state_rotate_kernel(

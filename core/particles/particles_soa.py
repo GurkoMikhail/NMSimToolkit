@@ -201,6 +201,10 @@ class ParticleBank:
         self._state.emission_direction.y[target_indices] = emission_direction.y
         self._state.emission_direction.z[target_indices] = emission_direction.z
 
+        # Invalidate navigation state for reused slots
+        from core.particles.particles_soa_kernels import update_navigation_state_inject_kernel
+        update_navigation_state_inject_kernel(self._navigation_state, target_indices)
+
         return target_indices
 
     @property
