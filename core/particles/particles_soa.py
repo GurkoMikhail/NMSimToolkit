@@ -202,8 +202,8 @@ class ParticleBank:
         self._state.emission_direction.z[target_indices] = emission_direction.z
 
         # Invalidate navigation state for reused slots
-        from core.particles.particles_soa_kernels import update_navigation_state_inject_kernel
-        update_navigation_state_inject_kernel(self._navigation_state, target_indices)
+        import core.particles.particles_soa_kernels as kernel
+        kernel.update_navigation_state_inject_kernel(self._navigation_state, target_indices)
 
         return target_indices
 
@@ -216,14 +216,14 @@ class ParticleBank:
         """
         Facade for move_kernel, applying distances across target active particles.
         """
-        from core.particles.particles_soa_kernels import move_kernel, update_navigation_state_move_kernel
-        move_kernel(self._state, target_indices, distances)
-        update_navigation_state_move_kernel(self._navigation_state, target_indices, distances)
+        import core.particles.particles_soa_kernels as kernel
+        kernel.move_kernel(self._state, target_indices, distances)
+        kernel.update_navigation_state_move_kernel(self._navigation_state, target_indices, distances)
 
     def rotate(self, target_indices: NDArray[Index], thetas: NDArray[Float], phis: NDArray[Float]) -> None:
         """
         Facade for rotate_kernel, applying thetas and phis across target active particles.
         """
-        from core.particles.particles_soa_kernels import rotate_kernel, update_navigation_state_rotate_kernel
-        rotate_kernel(self._state, target_indices, thetas, phis)
-        update_navigation_state_rotate_kernel(self._navigation_state, target_indices)
+        import core.particles.particles_soa_kernels as kernel
+        kernel.rotate_kernel(self._state, target_indices, thetas, phis)
+        kernel.update_navigation_state_rotate_kernel(self._navigation_state, target_indices)

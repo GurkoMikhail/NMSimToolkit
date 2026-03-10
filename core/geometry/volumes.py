@@ -11,7 +11,7 @@ from core.materials.materials import Material, MaterialArray
 from core.other.nonunique_array import NonuniqueArray
 from core.other.typing_definitions import Float, Vector3D, Index
 from core.other.transform import TransformDType
-from core.geometry.shape_data import ShapeDataDType
+from core.geometry.geometries import ShapeDataDType
 
 
 GeometryBufferDType = np.dtype([

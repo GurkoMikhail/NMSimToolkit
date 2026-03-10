@@ -1,8 +1,12 @@
 import numpy as np
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, ShapeID, Index
+from core.geometry.volumes import VolumeWithChilds, TransformableVolume, GeometryBufferDType
+
+if TYPE_CHECKING:
+    from core.geometry.volumes import Volume
 
 
 class GeometryCompiler:
@@ -11,11 +15,7 @@ class GeometryCompiler:
     optimized for fast Numba raycasting.
     """
 
-    def compile_scene(self, root_volume: 'core.geometry.volumes.Volume') -> NDArray[np.void]:
-        import core.geometry.volumes
-        from core.geometry.volumes import VolumeWithChilds, TransformableVolume
-        from core.geometry.geometries import Box
-
+    def compile_scene(self, root_volume: 'Volume') -> NDArray[np.void]:
         flat_list = []
 
         def dfs(volume, parent_matrix, parent_index):
@@ -38,7 +38,6 @@ class GeometryCompiler:
         dfs(root_volume, identity_matrix, -1)
 
         capacity = len(flat_list)
-        from core.geometry.volumes import GeometryBufferDType
         buffer = np.zeros(capacity, dtype=GeometryBufferDType)
 
         def calc_miss(node_idx):

@@ -69,9 +69,8 @@ def _box_intersect(
 def _transform_to_local(
     w_pos_x: Float, w_pos_y: Float, w_pos_z: Float,
     w_dir_x: Float, w_dir_y: Float, w_dir_z: Float,
-    geom: NDArray
+    transform: NDArray
 ) -> Tuple[Float, Float, Float, Float, Float, Float]:
-    transform = geom['transform']
     rotation = transform['rotation']
     translation = transform['translation']
 
@@ -104,9 +103,8 @@ def _transform_to_local(
 def _get_intersection(
     l_pos_x: Float, l_pos_y: Float, l_pos_z: Float,
     l_dir_x: Float, l_dir_y: Float, l_dir_z: Float,
-    geom: NDArray
+    shape_data: NDArray
 ) -> Tuple[Float, Float]:
-    shape_data = geom['shape_data']
     geom_type = shape_data['shape']
     p0 = shape_data['param_0']
     p1 = shape_data['param_1']
@@ -134,12 +132,12 @@ def _relocate_bottom_up(
         l_pos_x, l_pos_y, l_pos_z, l_dir_x, l_dir_y, l_dir_z = _transform_to_local(
             w_pos_x, w_pos_y, w_pos_z,
             w_dir_x, w_dir_y, w_dir_z,
-            geom
+            geom['transform']
         )
         tmin, tmax = _get_intersection(
             l_pos_x, l_pos_y, l_pos_z,
             l_dir_x, l_dir_y, l_dir_z,
-            geom
+            geom['shape_data']
         )
 
         # Check if inside
@@ -211,12 +209,12 @@ def cast_path_kernel(
             l_pos_x, l_pos_y, l_pos_z, l_dir_x, l_dir_y, l_dir_z = _transform_to_local(
                 w_pos_x, w_pos_y, w_pos_z,
                 w_dir_x, w_dir_y, w_dir_z,
-                geom
+                geom['transform']
             )
             tmin, tmax = _get_intersection(
                 l_pos_x, l_pos_y, l_pos_z,
                 l_dir_x, l_dir_y, l_dir_z,
-                geom
+                geom['shape_data']
             )
 
             # 3. Frustum Culling / Boundary Tracking Logic

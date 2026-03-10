@@ -5,7 +5,15 @@ import numpy as np
 import hepunits as units
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Float, Length, Vector3D
+from core.other.typing_definitions import Float, Length, Vector3D, ShapeID
+
+
+ShapeDataDType = np.dtype([
+    ('shape', ShapeID),
+    ('param_0', Float),
+    ('param_1', Float),
+    ('param_2', Float)
+])
 
 
 class Geometry(ABC):
