@@ -67,10 +67,14 @@ def _box_intersect(
 
 @njit(cache=True)
 def _transform_to_local(
-    w_pos_x: Float, w_pos_y: Float, w_pos_z: Float,
-    w_dir_x: Float, w_dir_y: Float, w_dir_z: Float,
+    world_pos_x: Float, world_pos_y: Float, world_pos_z: Float,
+    world_dir_x: Float, world_dir_y: Float, world_dir_z: Float,
     transform: NDArray
 ) -> Tuple[Float, Float, Float, Float, Float, Float]:
+    """
+    Transforms world coordinates (position and direction) into the local coordinate system
+    of a volume using loop-unrolled matrix multiplications to maximize JIT vectorization.
+    """
     rotation = transform['rotation']
     translation = transform['translation']
 
@@ -84,59 +88,69 @@ def _transform_to_local(
     m21 = rotation['m21']
     m22 = rotation['m22']
 
-    t_x = translation['x']
-    t_y = translation['y']
-    t_z = translation['z']
+    trans_x = translation['x']
+    trans_y = translation['y']
+    trans_z = translation['z']
 
-    l_pos_x = m00 * w_pos_x + m01 * w_pos_y + m02 * w_pos_z + t_x
-    l_pos_y = m10 * w_pos_x + m11 * w_pos_y + m12 * w_pos_z + t_y
-    l_pos_z = m20 * w_pos_x + m21 * w_pos_y + m22 * w_pos_z + t_z
+    local_pos_x = m00 * world_pos_x + m01 * world_pos_y + m02 * world_pos_z + trans_x
+    local_pos_y = m10 * world_pos_x + m11 * world_pos_y + m12 * world_pos_z + trans_y
+    local_pos_z = m20 * world_pos_x + m21 * world_pos_y + m22 * world_pos_z + trans_z
 
-    l_dir_x = m00 * w_dir_x + m01 * w_dir_y + m02 * w_dir_z
-    l_dir_y = m10 * w_dir_x + m11 * w_dir_y + m12 * w_dir_z
-    l_dir_z = m20 * w_dir_x + m21 * w_dir_y + m22 * w_dir_z
+    local_dir_x = m00 * world_dir_x + m01 * world_dir_y + m02 * world_dir_z
+    local_dir_y = m10 * world_dir_x + m11 * world_dir_y + m12 * world_dir_z
+    local_dir_z = m20 * world_dir_x + m21 * world_dir_y + m22 * world_dir_z
 
-    return l_pos_x, l_pos_y, l_pos_z, l_dir_x, l_dir_y, l_dir_z
+    return local_pos_x, local_pos_y, local_pos_z, local_dir_x, local_dir_y, local_dir_z
 
 
 @njit(cache=True)
 def _get_intersection(
-    l_pos_x: Float, l_pos_y: Float, l_pos_z: Float,
-    l_dir_x: Float, l_dir_y: Float, l_dir_z: Float,
+    local_pos_x: Float, local_pos_y: Float, local_pos_z: Float,
+    local_dir_x: Float, local_dir_y: Float, local_dir_z: Float,
     shape_data: NDArray
 ) -> Tuple[Float, Float]:
-    geom_type = shape_data['shape']
-    p0 = shape_data['param_0']
-    p1 = shape_data['param_1']
-    p2 = shape_data['param_2']
+    """
+    Dispatcher for intersection functions based on shape_id.
+    Returns (tmin, tmax) indicating distances to entry and exit.
+    """
+    shape_id = shape_data['shape']
+    param_0 = shape_data['param_0']
+    param_1 = shape_data['param_1']
+    param_2 = shape_data['param_2']
 
-    if geom_type == 0:  # Box
+    if shape_id == 0:  # Box
         return _box_intersect(
-            l_pos_x, l_pos_y, l_pos_z,
-            l_dir_x, l_dir_y, l_dir_z,
-            p0, p1, p2
+            local_pos_x, local_pos_y, local_pos_z,
+            local_dir_x, local_dir_y, local_dir_z,
+            param_0, param_1, param_2
         )
     else:
+        # Fallback for undefined geometry
         return np.inf, -np.inf
 
 
 @njit(cache=True)
 def _relocate_bottom_up(
-    w_pos_x: Float, w_pos_y: Float, w_pos_z: Float,
-    w_dir_x: Float, w_dir_y: Float, w_dir_z: Float,
+    world_pos_x: Float, world_pos_y: Float, world_pos_z: Float,
+    world_dir_x: Float, world_dir_y: Float, world_dir_z: Float,
     curr_vol_idx: Index,
     geom_buffer: NDArray
 ) -> Index:
+    """
+    Performs rigorous Bottom-Up geometric validation to resolve Coplanar Boundary Epsilon Overshoot.
+    Traces the parent hierarchy upward until it finds a volume that strictly contains the ray origin.
+    Returns the corrected index of the actual volume containing the point.
+    """
     while curr_vol_idx >= 0:
         geom = geom_buffer[curr_vol_idx]
-        l_pos_x, l_pos_y, l_pos_z, l_dir_x, l_dir_y, l_dir_z = _transform_to_local(
-            w_pos_x, w_pos_y, w_pos_z,
-            w_dir_x, w_dir_y, w_dir_z,
+        local_pos_x, local_pos_y, local_pos_z, local_dir_x, local_dir_y, local_dir_z = _transform_to_local(
+            world_pos_x, world_pos_y, world_pos_z,
+            world_dir_x, world_dir_y, world_dir_z,
             geom['transform']
         )
         tmin, tmax = _get_intersection(
-            l_pos_x, l_pos_y, l_pos_z,
-            l_dir_x, l_dir_y, l_dir_z,
+            local_pos_x, local_pos_y, local_pos_z,
+            local_dir_x, local_dir_y, local_dir_z,
             geom['shape_data']
         )
 
@@ -151,85 +165,77 @@ def _relocate_bottom_up(
 
 @njit(cache=True, inline='always')
 def _trace_single_ray(
-    w_pos_x: Float, w_pos_y: Float, w_pos_z: Float,
-    w_dir_x: Float, w_dir_y: Float, w_dir_z: Float,
+    world_pos_x: Float, world_pos_y: Float, world_pos_z: Float,
+    world_dir_x: Float, world_dir_y: Float, world_dir_z: Float,
     curr_vol_idx: Index,
     geom_buffer: NDArray
 ) -> Tuple[Float, Index, Index]:
-
-    num_geoms = geom_buffer.shape[0]
-
+    """
+    Device Function encapsulating the mathematical core of raycasting over the flattened scene graph.
+    Designed to be fully inlined (Zero-Cost Abstraction) into the dispatcher.
+    Returns (closest_dist, current_volume_idx, next_volume_idx).
+    """
     if curr_vol_idx >= 0:
         curr_vol_idx = _relocate_bottom_up(
-            w_pos_x, w_pos_y, w_pos_z,
-            w_dir_x, w_dir_y, w_dir_z,
+            world_pos_x, world_pos_y, world_pos_z,
+            world_dir_x, world_dir_y, world_dir_z,
             curr_vol_idx,
             geom_buffer
         )
 
-    start_idx = 0
-    end_idx = num_geoms
+    search_start_idx = 0
+    search_end_idx = geom_buffer.shape[0]
+
     if curr_vol_idx >= 0:
-        start_idx = curr_vol_idx
-        end_idx = geom_buffer[curr_vol_idx]['miss_index']
+        search_start_idx = curr_vol_idx
+        search_end_idx = geom_buffer[curr_vol_idx]['miss_index']
 
     closest_dist = np.inf
     current_vol = np.int64(-1)
     next_vol = np.int64(-1)
 
-    g_idx = start_idx
-    while g_idx < end_idx:
+    g_idx = search_start_idx
+    while g_idx < search_end_idx:
         geom = geom_buffer[g_idx]
 
-        l_pos_x, l_pos_y, l_pos_z, l_dir_x, l_dir_y, l_dir_z = _transform_to_local(
-            w_pos_x, w_pos_y, w_pos_z,
-            w_dir_x, w_dir_y, w_dir_z,
+        local_pos_x, local_pos_y, local_pos_z, local_dir_x, local_dir_y, local_dir_z = _transform_to_local(
+            world_pos_x, world_pos_y, world_pos_z,
+            world_dir_x, world_dir_y, world_dir_z,
             geom['transform']
         )
         tmin, tmax = _get_intersection(
-            l_pos_x, l_pos_y, l_pos_z,
-            l_dir_x, l_dir_y, l_dir_z,
+            local_pos_x, local_pos_y, local_pos_z,
+            local_dir_x, local_dir_y, local_dir_z,
             geom['shape_data']
         )
 
-        # 3. Frustum Culling / Boundary Tracking Logic
-        # We need to return CURRENT volume and distance to NEXT boundary.
-
+        # Frustum Culling / Boundary Tracking Logic
         if tmax < 0 or tmax < tmin:
-            # Miss
+            # Miss: Jump over all children
             g_idx = geom['miss_index']
             continue
 
         if tmin <= 0 and tmax > 0:
-            # INSIDE the volume
-            # distance to NEXT boundary is tmax
-            dist = tmax
+            # INSIDE the volume: Distance to NEXT boundary is tmax
+            if tmax < closest_dist:
+                closest_dist = tmax
+                next_vol = np.int64(-1)
 
-            # We update current volume
-            # Since children are strictly inside parents, the last volume we find ourselves inside
-            # (deepest in the tree) is the actual current volume.
-            # Because we traverse parents before children, and only fall through if inside parent.
             current_vol = geom['volume_index']
-            if dist < closest_dist:
-                closest_dist = dist
-                next_vol = np.int64(-1) # we don't necessarily know the next volume, but the distance is minimal
 
-            # Check children because we might be inside a child too
+            # Fall through to check children
             g_idx += 1
 
         elif tmin > 0:
-            # OUTSIDE the volume, but ray hits it in the future.
-            # This could be the NEXT boundary if we are in some parent.
-            dist = tmin
-            if dist < closest_dist:
-                closest_dist = dist
+            # OUTSIDE the volume: Distance to ENTRY boundary is tmin
+            if tmin < closest_dist:
+                closest_dist = tmin
                 next_vol = geom['volume_index']
 
-            # Skip checking children, because they are further away than the entry to this parent.
+            # Skip checking children, they are further away
             g_idx = geom['miss_index']
 
         else:
-            # Miss
             g_idx = geom['miss_index']
 
     return closest_dist, current_vol, next_vol
