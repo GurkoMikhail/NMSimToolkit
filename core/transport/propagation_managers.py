@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 import settings.database_setting as database_setting
 import settings.processes_settings as processes_settings
 from core.data.interaction_data import InteractionArray
-from core.geometry.volumes import ElementaryVolume
+from core.geometry.volumes import Volume
 from core.geometry.woodcoock_volumes import WoodcockVolume
 from core.other.typing_definitions import Float
 from core.particles.particles import ParticleArray
@@ -24,7 +24,7 @@ class PropagationWithInteraction:
         self.rng = np.random.default_rng() if rng is None else rng
         self.processes = [process(self.attenuation_database, rng) for process in processes_list]
 
-    def __call__(self, particles: ParticleArray, volume: ElementaryVolume) -> Optional[InteractionArray]:
+    def __call__(self, particles: ParticleArray, volume: Volume) -> Optional[InteractionArray]:
         """ Сделать шаг """
         distance, current_volume  = volume.cast_path(particles.position, particles.direction)
         materials = current_volume.material

@@ -1,11 +1,11 @@
 import numpy as np
 from typing import Optional, Tuple, Any
-from core.geometry.volumes import ElementaryVolume
+from core.geometry.volumes import Volume
 from core.other.typing_definitions import Length
 
 class VolumeTester:
-    volume: ElementaryVolume
-    def __init__(self, volume: ElementaryVolume) -> None: ...
+    volume: Volume
+    def __init__(self, volume: Volume) -> None: ...
     def getDistribution(self, materialParameter: str = 'density', voxelSize: Length = ...) -> Tuple[np.ndarray, list]: ...
 
 class VolumeVisualization:
@@ -18,7 +18,7 @@ class VolumeVisualization:
     def exec(self) -> None: ...
 
 class VolumeDensityVisualization(VolumeVisualization):
-    volume: ElementaryVolume
+    volume: Volume
     volumeTester: VolumeTester
-    def __init__(self, volume: ElementaryVolume, voxelSize: Length = ...) -> None: ...
+    def __init__(self, volume: Volume, voxelSize: Length = ...) -> None: ...
     def show(self) -> None: ...

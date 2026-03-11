@@ -10,7 +10,7 @@ import numpy as np
 import hepunits as units
 from numpy.typing import NDArray
 
-from core.geometry.volumes import ElementaryVolume
+from core.geometry.volumes import Volume
 from core.other.typing_definitions import Float
 from core.other.utils import datetime_from_seconds
 from core.particles.particles import ParticleArray
@@ -26,7 +26,7 @@ Thread = mt.Thread
 class SimulationManager(Thread):
     """ Класс менеджера симуляции """
     source: Any
-    simulation_volume: ElementaryVolume
+    simulation_volume: Volume
     propagation_manager: PropagationWithInteraction
     stop_time: Float
     particles_number: int
@@ -35,7 +35,7 @@ class SimulationManager(Thread):
     queue: Queue
     particles: ParticleArray
 
-    def __init__(self, source: Any, simulation_volume: ElementaryVolume, propagation_manager: Optional[PropagationWithInteraction] = None, stop_time: Float = 1*units.s, particles_number: Union[int, Float] = 10**3, queue: Optional[queue.Queue] = None) -> None:
+    def __init__(self, source: Any, simulation_volume: Volume, propagation_manager: Optional[PropagationWithInteraction] = None, stop_time: Float = 1*units.s, particles_number: Union[int, Float] = 10**3, queue: Optional[queue.Queue] = None) -> None:
         super().__init__()
         self.source = source
         self.simulation_volume = simulation_volume

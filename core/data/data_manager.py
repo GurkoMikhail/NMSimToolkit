@@ -7,7 +7,7 @@ import numpy as np
 import hepunits as units
 
 from core.data.interaction_data import InteractionArray
-from core.geometry.volumes import ElementaryVolume, TransformableVolume
+from core.geometry.volumes import Volume, TransformableVolume
 from core.other.typing_definitions import Float
 
 _logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ class SimulationDataManager:
     Основной класс менеджера данных получаемых при моделировании
     """
     filename: Path
-    sensitive_volumes: List[ElementaryVolume]
+    sensitive_volumes: List[Volume]
     lock: Optional[Any]
     save_emission_distribution: bool
     save_dose_distribution: bool
@@ -28,7 +28,7 @@ class SimulationDataManager:
     _buffered_interaction_number: int
     interaction_data: Dict[str, List[InteractionArray]]
 
-    def __init__(self, filename: str, sensitive_volumes: List[ElementaryVolume] = [], lock: Optional[Any] = None, **kwds: Any) -> None:
+    def __init__(self, filename: str, sensitive_volumes: List[Volume] = [], lock: Optional[Any] = None, **kwds: Any) -> None:
         self.filename = Path(f'output data/{filename}')
         self.filename.parent.mkdir(parents=True, exist_ok=True)
         self.sensitive_volumes = sensitive_volumes
