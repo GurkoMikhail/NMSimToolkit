@@ -37,7 +37,7 @@ class Volume:
         self.material = material
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name
         self._dublicate_counter = count(1)
-        self._geometry_buffer = None
+        self._geometry_buffer: Optional[NDArray[Any]] = None
 
     def __init_subclass__(cls):
         cls._counter = count(1)
@@ -57,7 +57,7 @@ class Volume:
     @property
     def geometry_buffer(self) -> NDArray[Any]:
         """ Lazy compilation of GeometryBuffer (AoS Structured Array) """
-        if getattr(self, '_geometry_buffer', None) is None:
+        if self._geometry_buffer is None:
             from core.geometry.geometry_compiler import GeometryCompiler
             self._geometry_buffer = GeometryCompiler().compile_scene(self)
         return self._geometry_buffer
