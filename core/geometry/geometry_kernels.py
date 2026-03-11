@@ -262,7 +262,7 @@ def _trace_single_ray(
     return closest_dist, current_vol, next_vol
 
 
-@njit(cache=True, parallel=True, fastmath=True)
+@njit(cache=True)
 def cast_path_kernel(
     positions: Vector3DSoA,
     directions: Vector3DSoA,
