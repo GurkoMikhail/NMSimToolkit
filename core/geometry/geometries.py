@@ -5,7 +5,15 @@ import numpy as np
 import hepunits as units
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Float, Length, Vector3D
+from core.other.typing_definitions import Float, Length, Vector3D, ShapeID
+
+
+ShapeDataDType = np.dtype([
+    ('shape', ShapeID),
+    ('param_0', Float),
+    ('param_1', Float),
+    ('param_2', Float)
+])
 
 
 class Geometry(ABC):
@@ -33,7 +41,11 @@ class Geometry(ABC):
     @abstractmethod
     def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         pass
-    
+
+    @abstractmethod
+    def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
+        pass
+
 
 class Box(Geometry):
     distance_method: str
@@ -60,6 +72,12 @@ class Box(Geometry):
 
     def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         return getattr(self, self.distance_method)(position, direction)
+
+    def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
+        shape_data_array[index]['shape'] = 0
+        shape_data_array[index]['param_0'] = self.half_size[0]
+        shape_data_array[index]['param_1'] = self.half_size[1]
+        shape_data_array[index]['param_2'] = self.half_size[2]
 
     def ray_marching(self, position: Vector3D, *args: Any) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
         q = np.abs(position) - self.half_size

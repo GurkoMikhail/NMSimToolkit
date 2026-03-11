@@ -9,10 +9,20 @@ import core.other.utils as utils
 from core.geometry.geometries import Geometry
 from core.materials.materials import Material, MaterialArray
 from core.other.nonunique_array import NonuniqueArray
-from core.other.typing_definitions import Float, Vector3D
+from core.other.typing_definitions import Float, Vector3D, Index
+from core.other.transform import TransformDType
+from core.geometry.geometries import ShapeDataDType
 
 
-class ElementaryVolume:
+GeometryBufferDType = np.dtype([
+    ('shape_data', ShapeDataDType),
+    ('transform', TransformDType),
+    ('miss_index', Index),
+    ('parent_index', Index),
+    ('volume_index', Index)
+])
+
+class Volume:
     """ Базовый класс элементарного объёма """
 
     _counter = count(1)
@@ -27,6 +37,7 @@ class ElementaryVolume:
         self.material = material
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name
         self._dublicate_counter = count(1)
+        self._geometry_buffer: Optional[NDArray[Any]] = None
 
     def __init_subclass__(cls):
         cls._counter = count(1)
@@ -41,6 +52,19 @@ class ElementaryVolume:
     @size.setter
     def size(self, value: Vector3D) -> None:
         self.geometry.size = value
+        self.invalidate_geometry_buffer()
+
+    @property
+    def geometry_buffer(self) -> NDArray[Any]:
+        """ Lazy compilation of GeometryBuffer (AoS Structured Array) """
+        if self._geometry_buffer is None:
+            from core.geometry.geometry_compiler import GeometryCompiler
+            self._geometry_buffer = GeometryCompiler().compile_scene(self)
+        return self._geometry_buffer
+
+    def invalidate_geometry_buffer(self) -> None:
+        """ Инвалидация кэша геометрии у этого объекта и его родителей/детей. """
+        self._geometry_buffer = None
 
     def dublicate(self):
         result = deepcopy(self)
@@ -70,7 +94,7 @@ class ElementaryVolume:
         return material
 
 
-class VolumeWithChilds(ElementaryVolume):
+class VolumeWithChilds(Volume):
     """ Базовый класс объёма с детьми """    
     childs: List['TransformableVolume']
 
@@ -118,6 +142,14 @@ class VolumeWithChilds(ElementaryVolume):
             material[inside] = material_inside
         return material
 
+    def invalidate_geometry_buffer(self) -> None:
+        if self._geometry_buffer is not None:
+            self._geometry_buffer = None
+            for child in self.childs:
+                child.invalidate_geometry_buffer()
+        # Если есть родитель (для TransformableVolumeWithChild), он тоже должен быть инвалидирован,
+        # но это будет решаться в TransformableVolume
+
     def add_child(self, child: 'TransformableVolume') -> None:
         """ Добавить дочерний объём """
         assert isinstance(child, TransformableVolume), 'Только трансформируемый объём может быть дочерним'
@@ -129,9 +161,11 @@ class VolumeWithChilds(ElementaryVolume):
             print('Внимение! Добавляемый объём уже является дочерним. Новый родитель установлен')
             child.parent.childs.remove(child)
         child.parent = self
+        self.invalidate_geometry_buffer()
+        child.invalidate_geometry_buffer()
 
 
-class TransformableVolume(ElementaryVolume):
+class TransformableVolume(Volume):
     """ Базовый класс трансформируемого объёма """
     transformation_matrix: NDArray[Float]
     parent: Optional[VolumeWithChilds]
@@ -199,6 +233,7 @@ class TransformableVolume(ElementaryVolume):
             self.transformation_matrix = translation_matrix@self.transformation_matrix
         else:
             self.transformation_matrix = self.transformation_matrix@translation_matrix
+        self.invalidate_geometry_buffer()
 
     def rotate(self, alpha: Float = Float(0.), beta: Float = Float(0.), gamma: Float = Float(0.), rotation_center: Sequence[Float] = (Float(0), Float(0), Float(0)), inLocal: bool = False) -> None:
         """ Повернуть объём вокруг координатных осей """
@@ -211,6 +246,7 @@ class TransformableVolume(ElementaryVolume):
             self.transformation_matrix = rotation_matrix@self.transformation_matrix
         else:
             self.transformation_matrix = self.transformation_matrix@rotation_matrix
+        self.invalidate_geometry_buffer()
 
     def cast_path(self, position: Vector3D, direction: Vector3D, local: bool = False, as_parent: bool = True) -> Tuple[NDArray[Float], 'VolumeArray']:
         if not local:
@@ -224,6 +260,11 @@ class TransformableVolume(ElementaryVolume):
         material = super().get_material_by_position(position)
         return material
 
+    def invalidate_geometry_buffer(self) -> None:
+        super().invalidate_geometry_buffer()
+        if self.parent is not None:
+            self.parent.invalidate_geometry_buffer()
+
     def set_parent(self, parent: VolumeWithChilds) -> None:
         assert isinstance(parent, VolumeWithChilds), 'Этот объём не может быть родителем'
         parent.add_child(self)
@@ -235,7 +276,7 @@ class TransformableVolumeWithChild(TransformableVolume, VolumeWithChilds):
 
 class VolumeArray(NonuniqueArray):
     """ Класс списка объёмов """
-    element_list: List[Optional[ElementaryVolume]]
+    element_list: List[Optional[Volume]]
 
     @property
     def material(self) -> MaterialArray:

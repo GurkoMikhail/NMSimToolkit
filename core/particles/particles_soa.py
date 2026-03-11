@@ -4,6 +4,7 @@ from typing import NamedTuple
 
 from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Index
 from core.other.vectors_soa import Vector3DSoA
+from core.geometry.navigation_state import NavigationState
 
 
 class ParticleState(NamedTuple):
@@ -115,6 +116,13 @@ class ParticleBank:
         )
         self._state.validate()
 
+        self._navigation_state = NavigationState(
+            current_volume=np.full(capacity, -1, dtype=Index),
+            next_volume=np.full(capacity, -1, dtype=Index),
+            boundary_distance=np.full(capacity, np.inf, dtype=Float)
+        )
+        self._navigation_state.validate()
+
     @property
     def capacity(self) -> int:
         return self._state.capacity
@@ -126,6 +134,10 @@ class ParticleBank:
     @property
     def state(self) -> ParticleState:
         return self._state
+
+    @property
+    def navigation_state(self) -> NavigationState:
+        return self._navigation_state
 
     def inject_particles(
         self,
@@ -189,6 +201,10 @@ class ParticleBank:
         self._state.emission_direction.y[target_indices] = emission_direction.y
         self._state.emission_direction.z[target_indices] = emission_direction.z
 
+        # Invalidate navigation state for reused slots
+        import core.particles.particles_soa_kernels as kernel
+        kernel.update_navigation_state_inject_kernel(self._navigation_state, target_indices)
+
         return target_indices
 
     @property
@@ -200,13 +216,14 @@ class ParticleBank:
         """
         Facade for move_kernel, applying distances across target active particles.
         """
-        # Imported lazily or globally later
-        from core.particles.particles_soa_kernels import move_kernel
-        move_kernel(self._state, target_indices, distances)
+        import core.particles.particles_soa_kernels as kernel
+        kernel.move_kernel(self._state, target_indices, distances)
+        kernel.update_navigation_state_move_kernel(self._navigation_state, target_indices, distances)
 
     def rotate(self, target_indices: NDArray[Index], thetas: NDArray[Float], phis: NDArray[Float]) -> None:
         """
         Facade for rotate_kernel, applying thetas and phis across target active particles.
         """
-        from core.particles.particles_soa_kernels import rotate_kernel
-        rotate_kernel(self._state, target_indices, thetas, phis)
+        import core.particles.particles_soa_kernels as kernel
+        kernel.rotate_kernel(self._state, target_indices, thetas, phis)
+        kernel.update_navigation_state_rotate_kernel(self._navigation_state, target_indices)
