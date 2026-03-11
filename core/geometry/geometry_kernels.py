@@ -175,6 +175,9 @@ def _trace_single_ray(
     Designed to be fully inlined (Zero-Cost Abstraction) into the dispatcher.
     Returns (closest_dist, current_volume_idx, next_volume_idx).
     """
+
+    # === [1] RELOCATION (BOTTOM-UP) ===
+    # If the particle has a known volume, verify if it's still inside (due to Coplanar Boundary Epsilon Overshoot).
     if curr_vol_idx >= 0:
         curr_vol_idx = _relocate_bottom_up(
             world_pos_x, world_pos_y, world_pos_z,
@@ -183,59 +186,77 @@ def _trace_single_ray(
             geom_buffer
         )
 
-    search_start_idx = 0
-    search_end_idx = geom_buffer.shape[0]
-
+    # === [2] INITIALIZATION ===
+    # If the particle exited the root volume (curr_vol_idx == -1 after relocation),
+    # there is no need to search from 0 again because it's completely outside the world.
+    # But if it's freshly injected (initial curr_vol_idx == -1), we must search from root.
     if curr_vol_idx >= 0:
+        # Search restricted to current volume and its children
         search_start_idx = curr_vol_idx
         search_end_idx = geom_buffer[curr_vol_idx]['miss_index']
+    else:
+        # Full scene search (for newly injected particles)
+        search_start_idx = 0
+        search_end_idx = geom_buffer.shape[0]
 
     closest_dist = np.inf
-    current_vol = np.int64(-1)
-    next_vol = np.int64(-1)
+    current_vol = -1
+    next_vol = -1
 
+    # === [3] RAY TRAVERSAL LOOP ===
     g_idx = search_start_idx
     while g_idx < search_end_idx:
         geom = geom_buffer[g_idx]
 
+        # Transform World -> Local
         local_pos_x, local_pos_y, local_pos_z, local_dir_x, local_dir_y, local_dir_z = _transform_to_local(
             world_pos_x, world_pos_y, world_pos_z,
             world_dir_x, world_dir_y, world_dir_z,
             geom['transform']
         )
+
+        # Calculate intersection tmin, tmax
         tmin, tmax = _get_intersection(
             local_pos_x, local_pos_y, local_pos_z,
             local_dir_x, local_dir_y, local_dir_z,
             geom['shape_data']
         )
 
-        # Frustum Culling / Boundary Tracking Logic
+        # --- Frustum Culling / Boundary Tracking Logic ---
         if tmax < 0 or tmax < tmin:
-            # Miss: Jump over all children
+            # MISS: Ray completely misses this volume.
+            # Jump over all its children via miss_index.
             g_idx = geom['miss_index']
             continue
 
         if tmin <= 0 and tmax > 0:
-            # INSIDE the volume: Distance to NEXT boundary is tmax
+            # INSIDE: The particle is currently inside this volume.
+            # The next boundary is its exit (tmax).
             if tmax < closest_dist:
                 closest_dist = tmax
-                next_vol = np.int64(-1)
+                # We don't know the exact next volume at this level, so reset it.
+                next_vol = -1
 
+            # Record as current volume. Because we traverse parent->child,
+            # the deepest child we find ourselves in will overwrite this.
             current_vol = geom['volume_index']
 
             # Fall through to check children
             g_idx += 1
 
         elif tmin > 0:
-            # OUTSIDE the volume: Distance to ENTRY boundary is tmin
+            # OUTSIDE: The particle is outside, but the ray will hit it (tmin).
+            # This is a candidate for the next volume boundary.
             if tmin < closest_dist:
                 closest_dist = tmin
                 next_vol = geom['volume_index']
 
-            # Skip checking children, they are further away
+            # We hit the outer boundary, but we are not inside.
+            # We do NOT check children because they are further away (inside this volume).
             g_idx = geom['miss_index']
 
         else:
+            # Edge case fallback (e.g. point exactly on surface and pointing away)
             g_idx = geom['miss_index']
 
     return closest_dist, current_vol, next_vol
@@ -255,7 +276,6 @@ def cast_path_kernel(
     Updates NavigationState directly for Woodcock Tracking (current_volume, next_volume, boundary_distance).
     """
     num_particles = target_indices.shape[0]
-    num_geoms = geom_buffer.shape[0]
 
     # Extract arrays to avoid Numba parfor data race on NamedTuple attribute access
     pos_x = positions.x
