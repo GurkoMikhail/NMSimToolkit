@@ -12,6 +12,7 @@ from core.other.nonunique_array import NonuniqueArray
 from core.other.typing_definitions import Float, Vector3D, Index
 from core.other.transform import TransformDType
 from core.geometry.geometries import ShapeDataDType
+from core.geometry.flattened_scene import FlattenedScene
 
 
 GeometryBufferDType = np.dtype([
@@ -38,12 +39,35 @@ class Volume:
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name
         self._dublicate_counter = count(1)
         self._geometry_buffer: Optional[NDArray[Any]] = None
+        self._flattened_scene: Optional[FlattenedScene] = None
 
     def __init_subclass__(cls):
         cls._counter = count(1)
 
     def __repr__(self):
         return f'{self.name}'
+
+    @property
+    def flattened_scene(self) -> FlattenedScene:
+        """ Lazy evaluation of the flattened scene starting from this volume. """
+        if self._flattened_scene is None:
+            self._flattened_scene = FlattenedScene(self)
+        return self._flattened_scene
+
+    @property
+    def cfunc_address(self) -> int:
+        """ Address of the @cfunc for Woodcock paramteric volumes. Defaults to 0 for normal volumes. """
+        return 0
+
+    @property
+    def majorant_material(self) -> Material:
+        """ Returns the majorant material. Defaults to self.material for normal volumes. """
+        return self.material
+
+    @property
+    def material_list(self) -> List[Material]:
+        """ Returns a list of all materials used in this volume (and its children). """
+        return [self.material]
 
     @property
     def size(self) -> Vector3D:
@@ -65,6 +89,7 @@ class Volume:
     def invalidate_geometry_buffer(self) -> None:
         """ Инвалидация кэша геометрии у этого объекта и его родителей/детей. """
         self._geometry_buffer = None
+        self._flattened_scene = None
 
     def dublicate(self):
         result = deepcopy(self)
@@ -101,6 +126,13 @@ class VolumeWithChilds(Volume):
     def __init__(self, geometry: Geometry, material: Material, name: Optional[str] = None) -> None:
         super().__init__(geometry, material, name)
         self.childs = []
+
+    @property
+    def material_list(self) -> List[Material]:
+        materials = [self.material]
+        for child in self.childs:
+            materials.extend(child.material_list)
+        return materials
 
     def dublicate(self):
         result = super().dublicate()
@@ -143,8 +175,9 @@ class VolumeWithChilds(Volume):
         return material
 
     def invalidate_geometry_buffer(self) -> None:
-        if self._geometry_buffer is not None:
+        if self._geometry_buffer is not None or self._flattened_scene is not None:
             self._geometry_buffer = None
+            self._flattened_scene = None
             for child in self.childs:
                 child.invalidate_geometry_buffer()
         # Если есть родитель (для TransformableVolumeWithChild), он тоже должен быть инвалидирован,
