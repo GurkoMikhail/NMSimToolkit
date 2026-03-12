@@ -2,7 +2,7 @@ import numpy as np
 from typing import List, Tuple, TYPE_CHECKING
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Float
+from core.other.typing_definitions import Float, Index
 
 if TYPE_CHECKING:
     from core.geometry.volumes import Volume
@@ -15,11 +15,11 @@ class FlattenedScene:
     """
 
     def __init__(self, root_volume: 'Volume'):
-        self._flat_list: List[Tuple['Volume', NDArray[Float], int]] = []
+        self._flat_list: List[Tuple['Volume', NDArray[Float], Index]] = []
         self._flatten_scene_graph(root_volume)
 
     @property
-    def flat_list(self) -> List[Tuple['Volume', NDArray[Float], int]]:
+    def flat_list(self) -> List[Tuple['Volume', NDArray[Float], Index]]:
         """
         Returns a flattened list where each element is a tuple:
         (Volume, total_transformation_matrix, parent_index)
@@ -29,7 +29,7 @@ class FlattenedScene:
     def _flatten_scene_graph(self, root_volume: 'Volume') -> None:
         from core.geometry.volumes import TransformableVolume, VolumeWithChilds
 
-        def dfs(volume: 'Volume', parent_matrix: NDArray[Float], parent_index: int) -> int:
+        def dfs(volume: 'Volume', parent_matrix: NDArray[Float], parent_index: Index) -> Index:
             if isinstance(volume, TransformableVolume):
                 total_matrix = volume.total_transformation_matrix
             else:

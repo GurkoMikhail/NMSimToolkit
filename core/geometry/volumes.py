@@ -9,7 +9,7 @@ import core.other.utils as utils
 from core.geometry.geometries import Geometry
 from core.materials.materials import Material, MaterialArray
 from core.other.nonunique_array import NonuniqueArray
-from core.other.typing_definitions import Float, Vector3D, Index
+from core.other.typing_definitions import Float, Vector3D, Index, CFuncAddress
 from core.other.transform import TransformDType
 from core.geometry.geometries import ShapeDataDType
 from core.geometry.flattened_scene import FlattenedScene
@@ -55,7 +55,7 @@ class Volume:
         return self._flattened_scene
 
     @property
-    def cfunc_address(self) -> int:
+    def material_cfunc_address(self) -> CFuncAddress:
         """ Address of the @cfunc for Woodcock paramteric volumes. Defaults to 0 for normal volumes. """
         return 0
 
@@ -76,7 +76,7 @@ class Volume:
     @size.setter
     def size(self, value: Vector3D) -> None:
         self.geometry.size = value
-        self.invalidate_geometry_buffer()
+        self.invalidate_scene()
 
     @property
     def geometry_buffer(self) -> NDArray[Any]:
@@ -86,7 +86,7 @@ class Volume:
             self._geometry_buffer = GeometryCompiler().compile_scene(self)
         return self._geometry_buffer
 
-    def invalidate_geometry_buffer(self) -> None:
+    def invalidate_scene(self) -> None:
         """ Инвалидация кэша геометрии у этого объекта и его родителей/детей. """
         self._geometry_buffer = None
         self._flattened_scene = None
@@ -174,12 +174,12 @@ class VolumeWithChilds(Volume):
             material[inside] = material_inside
         return material
 
-    def invalidate_geometry_buffer(self) -> None:
+    def invalidate_scene(self) -> None:
         if self._geometry_buffer is not None or self._flattened_scene is not None:
             self._geometry_buffer = None
             self._flattened_scene = None
             for child in self.childs:
-                child.invalidate_geometry_buffer()
+                child.invalidate_scene()
         # Если есть родитель (для TransformableVolumeWithChild), он тоже должен быть инвалидирован,
         # но это будет решаться в TransformableVolume
 
@@ -194,8 +194,8 @@ class VolumeWithChilds(Volume):
             print('Внимение! Добавляемый объём уже является дочерним. Новый родитель установлен')
             child.parent.childs.remove(child)
         child.parent = self
-        self.invalidate_geometry_buffer()
-        child.invalidate_geometry_buffer()
+        self.invalidate_scene()
+        child.invalidate_scene()
 
 
 class TransformableVolume(Volume):
@@ -266,7 +266,7 @@ class TransformableVolume(Volume):
             self.transformation_matrix = translation_matrix@self.transformation_matrix
         else:
             self.transformation_matrix = self.transformation_matrix@translation_matrix
-        self.invalidate_geometry_buffer()
+        self.invalidate_scene()
 
     def rotate(self, alpha: Float = Float(0.), beta: Float = Float(0.), gamma: Float = Float(0.), rotation_center: Sequence[Float] = (Float(0), Float(0), Float(0)), inLocal: bool = False) -> None:
         """ Повернуть объём вокруг координатных осей """
@@ -279,7 +279,7 @@ class TransformableVolume(Volume):
             self.transformation_matrix = rotation_matrix@self.transformation_matrix
         else:
             self.transformation_matrix = self.transformation_matrix@rotation_matrix
-        self.invalidate_geometry_buffer()
+        self.invalidate_scene()
 
     def cast_path(self, position: Vector3D, direction: Vector3D, local: bool = False, as_parent: bool = True) -> Tuple[NDArray[Float], 'VolumeArray']:
         if not local:
@@ -293,10 +293,10 @@ class TransformableVolume(Volume):
         material = super().get_material_by_position(position)
         return material
 
-    def invalidate_geometry_buffer(self) -> None:
-        super().invalidate_geometry_buffer()
+    def invalidate_scene(self) -> None:
+        super().invalidate_scene()
         if self.parent is not None:
-            self.parent.invalidate_geometry_buffer()
+            self.parent.invalidate_scene()
 
     def set_parent(self, parent: VolumeWithChilds) -> None:
         assert isinstance(parent, VolumeWithChilds), 'Этот объём не может быть родителем'

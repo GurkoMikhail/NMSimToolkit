@@ -37,11 +37,8 @@ class MaterialBank:
         bank = cls()
 
         # We need the maximum ID to size the AoS lookup arrays correctly.
-        max_id = max((mat.ID for mat in materials_list), default=-1)
-        if max_id == -1:
-            max_id = 0
-
-        capacity = max_id + 1
+        import settings.database_setting as settings
+        capacity = len(settings.material_database) + 1
 
         bank.mat_info_buffer = np.zeros(capacity, dtype=MaterialInfoDType)
         bank.mat_pointers = np.zeros(capacity, dtype=MaterialPointerDType)
