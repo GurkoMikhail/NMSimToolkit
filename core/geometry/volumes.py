@@ -132,7 +132,7 @@ class VolumeWithChilds(Volume):
         materials = [self.material]
         for child in self.childs:
             materials.extend(child.material_list)
-        return materials
+        return list(set(materials))
 
     def dublicate(self):
         result = super().dublicate()

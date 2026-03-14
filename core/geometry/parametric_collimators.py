@@ -49,13 +49,13 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
     def _compile_cfunc(self):
         mat_id = self.material.ID
         vac_id = self._vacuum.ID
-        px = float(self._period[0])
-        py = float(self._period[1])
-        cx = float(self._corner[0])
-        cy = float(self._corner[1])
-        ad = float(self._ad)
-        a = float(self._a)
-        ad_2 = float(self._ad_2)
+        px = Float(self._period[0])
+        py = Float(self._period[1])
+        cx = Float(self._corner[0])
+        cy = Float(self._corner[1])
+        ad = Float(self._ad)
+        a = Float(self._a)
+        ad_2 = Float(self._ad_2)
 
         @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat), cache=True)
         def parametric_func(x, y, z):
@@ -132,9 +132,9 @@ class ParametricParallelSquareCollimator(WoodcockParameticVolume):
     def _compile_cfunc(self):
         mat_id = self.material.ID
         vac_id = self._vacuum.ID
-        period = float(self._period)
-        half_period = float(self._half_period)
-        half_hole = float(self._half_hole)
+        period = Float(self._period)
+        half_period = Float(self._half_period)
+        half_hole = Float(self._half_hole)
 
         @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat), cache=True)
         def parametric_func(x, y, z):
