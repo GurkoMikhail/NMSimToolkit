@@ -57,23 +57,26 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
         a = Float(self._a)
         ad_2 = Float(self._ad_2)
 
+        from numba import njit
+
+        @njit(inline='always', cache=True)
+        def is_hexagon(ax, ay):
+            return (ax <= ad) and (a * ay + ax / 4.0 <= ad_2)
+
         @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat), cache=True)
         def parametric_func(x, y, z):
-            # Hexagonal hole check logic (Numba scalar)
             mx = x % px
             my = y % py
             ax1 = abs(mx - cx)
             ay1 = abs(my - cy)
 
-            c1 = (ax1 <= ad) and (a * ay1 + ax1 / 4.0 <= ad_2)
-            if c1:
+            if is_hexagon(ax1, ay1):
                 return vac_id
 
             ax2 = abs(ax1 - cx)
             ay2 = abs(ay1 - cy)
 
-            c2 = (ax2 <= ad) and (a * ay2 + ax2 / 4.0 <= ad_2)
-            if c2:
+            if is_hexagon(ax2, ay2):
                 return vac_id
 
             return mat_id
@@ -81,12 +84,15 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
         return parametric_func
 
     def _parametric_function(self, position: Vector3D) -> Tuple[np.ndarray, Material]:
+        def is_hexagon(ax, ay):
+            return (ax <= self._ad) * (self._a * ay + ax / 4 <= self._ad_2)
+
         position_2d = np.mod(position[:, :2], self._period)
         position_2d = np.abs(position_2d - self._corner)
-        collimated = (position_2d[:, 0] <= self._ad) * (self._a * position_2d[:, 1] + position_2d[:, 0] / 4 <= self._ad_2)
-        # Replicating original behavior exactly, although redundant
+        collimated = is_hexagon(position_2d[:, 0], position_2d[:, 1])
+
         position_remaining = np.abs(position_2d[~collimated] - self._corner)
-        collimated[~collimated] = (position_remaining[:, 0] <= self._ad) * (self._a * position_remaining[:, 1] + position_remaining[:, 0] / 4 <= self._ad_2)
+        collimated[~collimated] = is_hexagon(position_remaining[:, 0], position_remaining[:, 1])
         return collimated, self._vacuum
 
 
