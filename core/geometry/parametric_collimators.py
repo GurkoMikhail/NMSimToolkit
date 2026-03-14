@@ -69,21 +69,13 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
             if c1:
                 return vac_id
 
-            ax2 = abs(mx - cx)  # position_remaining is same as original position?
-            # In the original numpy logic:
-            # position_remaining = np.abs(position_2d[~collimated] - self._corner)
-            # This is exactly ax1, ay1 again, because it's abs(pos - corner).
-            # The original code re-evaluates the EXACT same condition:
-            # (position_remaining[:, 0] <= self._ad) * (self._a * position_remaining[:, 1] + position_remaining[:, 0] / 4 <= self._ad_2)
-            # Wait, no. ~collimated means position_2d is used. It's the same array.
-            # Actually, the original code had a bug if it re-evaluated the same thing. Or maybe `position_2d` meant something else?
-            # Oh, `position_2d` was `np.mod(position[:, :2], self._period)`, then `np.abs(position_2d - self._corner)`.
-            # If the first condition failed, it evaluated the exact same condition again on the exact same array `position_remaining`.
-            # Let's just implement the single condition, which is correct for a hexagon centered at corner.
+            ax2 = abs(ax1 - cx)
+            ay2 = abs(ay1 - cy)
 
-            # Since the original numpy implementation is technically redundant for the ~collimated part
-            # (it checks the exact same inequality on the exact same values),
-            # we can just return mat_id.
+            c2 = (ax2 <= ad) and (a * ay2 + ax2 / 4.0 <= ad_2)
+            if c2:
+                return vac_id
+
             return mat_id
 
         return parametric_func
