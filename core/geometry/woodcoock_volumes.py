@@ -5,7 +5,9 @@ from numpy.typing import NDArray
 
 from core.geometry.volumes import TransformableVolume
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Float, Vector3D
+from numba import cfunc, types
+
+from core.other.typing_definitions import Float, Vector3D, CFuncAddress, NumbaFloat, NumbaIndex
 
 
 class WoodcockVolume(TransformableVolume):
@@ -16,8 +18,38 @@ class WoodcockVolume(TransformableVolume):
 
 class WoodcockParameticVolume(WoodcockVolume):
     """
-    Класс параметричекого Woodcock объёма
+    Класс параметрического Woodcock объёма
     """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._cfunc = None
+
+    @property
+    def material_cfunc_address(self) -> CFuncAddress:
+        if self._cfunc is None:
+            self._cfunc = self._compile_cfunc()
+        return self._cfunc.address
+
+    def _compile_cfunc(self):
+        """
+        Должен быть переопределен в наследниках для генерации @cfunc,
+        которая принимает x, y, z и возвращает ID материала (int64).
+        По умолчанию возвращает ID мажорантного материала (self.material).
+        """
+        material_id = self.material.ID
+        @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat), cache=True)
+        def default_parametric_func(x, y, z):
+            return material_id
+        return default_parametric_func
+
+    @property
+    def material_list(self) -> list[Material]:
+        """
+        Переопределите в наследниках, если используются другие материалы.
+        По умолчанию возвращает только мажорантный материал.
+        """
+        return super().material_list
 
     def _parametric_function(self, position: Vector3D) -> Tuple[Union[NDArray[np.bool_], list], Any]:
         return [], None

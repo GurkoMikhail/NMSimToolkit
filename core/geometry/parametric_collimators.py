@@ -4,9 +4,10 @@ import numpy as np
 
 import settings.database_setting as settings
 from core.geometry.geometries import Box
+from numba import cfunc
 from core.geometry.woodcoock_volumes import WoodcockParameticVolume
 from core.materials.materials import Material
-from core.other.typing_definitions import Float, Vector3D
+from core.other.typing_definitions import Float, Vector3D, NumbaIndex, NumbaFloat
 
 
 class ParametricParallelCollimator(WoodcockParameticVolume):
@@ -31,6 +32,10 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
         self._vacuum = settings.material_database['Vacuum']
         self._compute_constants()
     
+    @property
+    def material_list(self) -> list[Material]:
+        return [self.material, self._vacuum]
+
     def _compute_constants(self) -> None:
         x_period = self._hole_diameter + self._septa
         y_period = np.sqrt(3) * x_period
@@ -41,12 +46,53 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
         self._ad = self._a * d
         self._ad_2 = self._ad / 2
 
+    def _compile_cfunc(self):
+        mat_id = self.material.ID
+        vac_id = self._vacuum.ID
+        px = Float(self._period[0])
+        py = Float(self._period[1])
+        cx = Float(self._corner[0])
+        cy = Float(self._corner[1])
+        ad = Float(self._ad)
+        a = Float(self._a)
+        ad_2 = Float(self._ad_2)
+
+        from numba import njit
+
+        @njit(inline='always', cache=True)
+        def is_hexagon(ax, ay):
+            return (ax <= ad) and (a * ay + ax / 4.0 <= ad_2)
+
+        @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat), cache=True)
+        def parametric_func(x, y, z):
+            mx = x % px
+            my = y % py
+            ax1 = abs(mx - cx)
+            ay1 = abs(my - cy)
+
+            if is_hexagon(ax1, ay1):
+                return vac_id
+
+            ax2 = abs(ax1 - cx)
+            ay2 = abs(ay1 - cy)
+
+            if is_hexagon(ax2, ay2):
+                return vac_id
+
+            return mat_id
+
+        return parametric_func
+
     def _parametric_function(self, position: Vector3D) -> Tuple[np.ndarray, Material]:
+        def is_hexagon(ax, ay):
+            return (ax <= self._ad) * (self._a * ay + ax / 4 <= self._ad_2)
+
         position_2d = np.mod(position[:, :2], self._period)
         position_2d = np.abs(position_2d - self._corner)
-        collimated = (position_2d[:, 0] <= self._ad) * (self._a * position_2d[:, 1] + position_2d[:, 0] / 4 <= self._ad_2)
+        collimated = is_hexagon(position_2d[:, 0], position_2d[:, 1])
+
         position_remaining = np.abs(position_2d[~collimated] - self._corner)
-        collimated[~collimated] = (position_remaining[:, 0] <= self._ad) * (self._a * position_remaining[:, 1] + position_remaining[:, 0] / 4 <= self._ad_2)
+        collimated[~collimated] = is_hexagon(position_remaining[:, 0], position_remaining[:, 1])
         return collimated, self._vacuum
 
 
@@ -72,10 +118,31 @@ class ParametricParallelSquareCollimator(WoodcockParameticVolume):
         self._vacuum = settings.material_database["Vacuum"]
         self._compute_constants()
 
+    @property
+    def material_list(self) -> list[Material]:
+        return [self.material, self._vacuum]
+
     def _compute_constants(self) -> None:
         self._period = self._hole_width + self._septa
         self._half_period = 0.5 * self._period
         self._half_hole = 0.5 * self._hole_width
+
+    def _compile_cfunc(self):
+        mat_id = self.material.ID
+        vac_id = self._vacuum.ID
+        period = Float(self._period)
+        half_period = Float(self._half_period)
+        half_hole = Float(self._half_hole)
+
+        @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat), cache=True)
+        def parametric_func(x, y, z):
+            ux = (x % period) - half_period
+            uy = (y % period) - half_period
+            if abs(ux) <= half_hole and abs(uy) <= half_hole:
+                return vac_id
+            return mat_id
+
+        return parametric_func
 
     def _parametric_function(self, position: Vector3D) -> Tuple[np.ndarray, Material]:
         xy = position[:, :2]

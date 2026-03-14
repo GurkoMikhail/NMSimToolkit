@@ -1,7 +1,6 @@
-from typing import TypeAlias, Final
+from typing import TypeAlias, Final, Any
 import numpy as np
 from numpy.typing import NDArray
-from numba import from_dtype
 
 Float: TypeAlias = np.float64
 Length: TypeAlias = Float
@@ -18,5 +17,5 @@ Index: TypeAlias = np.int64
 ShapeID: TypeAlias = np.int32
 CFuncAddress: TypeAlias = np.int64
 
-NumbaFloat = from_dtype(np.dtype(Float))
-NumbaIndex = from_dtype(np.dtype(Index))
+NumbaFloat: Any
+NumbaIndex: Any
