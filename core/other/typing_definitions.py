@@ -15,8 +15,9 @@ Vector3D: TypeAlias = NDArray[Float]
 ID: TypeAlias = np.uint64
 Species: TypeAlias = np.uint8
 Index: TypeAlias = np.int64
+from typing import Any
 ShapeID: TypeAlias = np.int32
-CFuncAddress: TypeAlias = np.int64
+CFuncType: TypeAlias = Any
 
 NumbaFloat = from_dtype(np.dtype(Float))
 NumbaIndex = from_dtype(np.dtype(Index))

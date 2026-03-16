@@ -111,10 +111,7 @@ class TestStep3Benchmarks(unittest.TestCase):
 
         collimator = ParametricParallelCollimator(size, hole_diameter, septa, material)
 
-        # Get the compiled C-function pointer and cast it back to a python callable for testing
-        from ctypes import cast, CFUNCTYPE, c_int64, c_double
-        cfunc_type = CFUNCTYPE(c_int64, c_double, c_double, c_double)
-        cfunc_callable = cast(collimator.material_cfunc_address, cfunc_type)
+        cfunc_callable = collimator.material_cfunc
 
         num_points = 100_000
         # Random positions inside the collimator XY plane
@@ -127,43 +124,23 @@ class TestStep3Benchmarks(unittest.TestCase):
 
         # 2. Benchmark Numba @cfunc Loop
         from numba import njit
-        from numba.core import types
+        import ctypes
 
-        # cfunc returns an address, we can wrap it in an njit call using a function pointer
-        import numba
-
-        # JIT wrapper to call the cfunc address natively without python overhead
-        @njit
-        def numba_cfunc_loop(addr, pos, out_ids):
-            # Define function signature to cast pointer
-            sig = types.int64(types.float64, types.float64, types.float64)
-            func = numba.cfunc(sig)(addr)
-            for i in range(pos.shape[0]):
-                out_ids[i] = func(pos[i, 0], pos[i, 1], pos[i, 2])
-
-        numba_mat_ids = np.zeros(num_points, dtype=np.int64)
-
-        # Try to compile and run. Numba's `numba.cfunc(sig)(addr)` might not work dynamically inside njit.
-        # Alternatively, we can use `ctypes` cast inside `njit` if supported, but typically
-        # we pass the address to a Numba cffi wrapper.
-        # Let's see if we can use a simpler approach: define the cfunc directly or use `numba.core.typing.cffi_utils`
-        # Actually, Numba has a `numba.types.FunctionType` but the easiest way to test is to just compile a generic
-        # wrapper. If not, `CFUNCTYPE` passed as an argument to `njit` function might work. Let's try passing the Python `cfunc_callable` to `njit(objmode)`.
-        # No, objmode breaks zero-allocation and performance.
-        # Let's use `numba.core.typing.cffi_utils` or just use the python pointer cast if we must.
-        # Wait, you can cast an address to a function pointer in Numba using `ctypes.cast`.
-        # Or better yet, we just compile it!
-        # Actually, let's use `ctypes.cast` inside Numba. Wait, Numba doesn't fully support dynamic ctypes cast.
-
-        # Let's just create a factory function that takes the address at JIT time.
-        # Numba supports calling c-pointers using `ctypes.CFUNCTYPE`.
+        # Numba can call CFUNCTYPE natively if passed in, we just need to wrap it.
+        # Wait, you can just call it from Python! Oh, the user wants to benchmark
+        # Numba's speed calling it. We can just use the memory address inside njit
+        # but let's try just letting Numba parse the CFUNCTYPE.
 
         @njit
         def cfunc_loop(c_ptr, pos, out_ids):
             for i in range(pos.shape[0]):
                 out_ids[i] = c_ptr(pos[i, 0], pos[i, 1], pos[i, 2])
 
+        numba_mat_ids = np.zeros(num_points, dtype=np.int64)
+
         # Compile and run
+        addr = ctypes.cast(cfunc_callable, ctypes.c_void_p).value
+        # Actually passing CFUNCTYPE directly to njit works in recent Numba versions
         cfunc_loop(cfunc_callable, positions[:1], numba_mat_ids[:1])
 
         start_time = time.perf_counter()
@@ -201,9 +178,7 @@ class TestStep3Benchmarks(unittest.TestCase):
 
         volume = WoodcockVoxelVolume(voxel_size, mat_dist)
 
-        from ctypes import cast, CFUNCTYPE, c_int64, c_double
-        cfunc_type = CFUNCTYPE(c_int64, c_double, c_double, c_double)
-        cfunc_callable = cast(volume.material_cfunc_address, cfunc_type)
+        cfunc_callable = volume.material_cfunc
 
         num_points = 100_000
         # Generate points strictly inside the bounds (size = shape * voxel_size)

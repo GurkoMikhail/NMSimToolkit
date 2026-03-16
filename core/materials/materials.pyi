@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Any, Tuple, Optional
 from numpy.typing import NDArray
 from core.other.nonunique_array import NonuniqueArray
-from core.other.typing_definitions import Float
+from core.other.typing_definitions import Float, Index
 
 class Composition(Tuple[Float, ...]):
     def _asdict(self) -> Dict[str, Float]: ...
@@ -36,4 +36,4 @@ class MaterialArray(NonuniqueArray):
     @property
     def density(self) -> NDArray[Float]: ...
     @property
-    def ID(self) -> NDArray[np.int64]: ...
+    def ID(self) -> NDArray[Index]: ...

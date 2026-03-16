@@ -5,7 +5,7 @@ from core.geometry.geometries import Geometry
 from core.materials.materials import Material, MaterialArray
 from core.other.nonunique_array import NonuniqueArray
 from core.geometry.flattened_scene import FlattenedScene
-from core.other.typing_definitions import Vector3D, Length, Float, CFuncAddress
+from core.other.typing_definitions import Vector3D, Length, Float, CFuncType
 
 T = TypeVar('T')
 
@@ -17,7 +17,7 @@ class Volume:
     @property
     def flattened_scene(self) -> FlattenedScene: ...
     @property
-    def material_cfunc_address(self) -> CFuncAddress: ...
+    def material_cfunc(self) -> CFuncType: ...
     @property
     def majorant_material(self) -> Material: ...
     @property

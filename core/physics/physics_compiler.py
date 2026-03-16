@@ -87,11 +87,11 @@ class PhysicsCompiler:
         capacity = len(flat_list)
 
         majorant_material_map = np.zeros(capacity, dtype=Index)
-        woodcock_function_pointers = np.zeros(capacity, dtype=Index)
+        woodcock_function_pointers = np.empty(capacity, dtype=object)
 
         for i, (vol, _, _) in enumerate(flat_list):
             majorant_material_map[i] = vol.majorant_material.ID
-            woodcock_function_pointers[i] = vol.material_cfunc_address
+            woodcock_function_pointers[i] = vol.material_cfunc
 
         return PhysicsBuffer(
             material_bank=material_bank,

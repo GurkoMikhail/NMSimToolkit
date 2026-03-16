@@ -7,4 +7,4 @@ from core.other.typing_definitions import Index
 class PhysicsBuffer(NamedTuple):
     material_bank: MaterialBank
     majorant_material_map: NDArray[Index]
-    woodcock_function_pointers: NDArray[Index]
+    woodcock_function_pointers: NDArray[object]

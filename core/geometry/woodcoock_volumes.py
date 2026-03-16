@@ -7,7 +7,7 @@ from core.geometry.volumes import TransformableVolume
 from core.materials.materials import Material, MaterialArray
 from numba import cfunc, types
 
-from core.other.typing_definitions import Float, Vector3D, CFuncAddress, NumbaFloat, NumbaIndex
+from core.other.typing_definitions import Float, Vector3D, CFuncType, NumbaFloat, NumbaIndex
 
 
 class WoodcockVolume(TransformableVolume):
@@ -26,10 +26,10 @@ class WoodcockParameticVolume(WoodcockVolume):
         self._cfunc = None
 
     @property
-    def material_cfunc_address(self) -> CFuncAddress:
+    def material_cfunc(self) -> CFuncType:
         if self._cfunc is None:
             self._cfunc = self._compile_cfunc()
-        return self._cfunc.address
+        return self._cfunc.ctypes
 
     def _compile_cfunc(self):
         """
