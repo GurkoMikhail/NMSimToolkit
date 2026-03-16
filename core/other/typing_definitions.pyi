@@ -16,6 +16,7 @@ Species: TypeAlias = np.uint8
 Index: TypeAlias = np.int64
 ShapeID: TypeAlias = np.int32
 CFuncType: TypeAlias = Any
+CFuncAddress: TypeAlias = np.uint64
 
 NumbaFloat: Any
 NumbaIndex: Any

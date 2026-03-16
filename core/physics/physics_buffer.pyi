@@ -1,3 +1,4 @@
+import numpy as np
 from typing import NamedTuple
 from numpy.typing import NDArray
 
@@ -7,4 +8,4 @@ from core.other.typing_definitions import Index
 class PhysicsBuffer(NamedTuple):
     material_bank: MaterialBank
     majorant_material_map: NDArray[Index]
-    woodcock_function_pointers: NDArray[object]
+    woodcock_function_pointers: NDArray[np.uint64]

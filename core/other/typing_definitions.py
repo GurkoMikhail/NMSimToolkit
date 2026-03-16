@@ -18,6 +18,7 @@ Index: TypeAlias = np.int64
 from typing import Any
 ShapeID: TypeAlias = np.int32
 CFuncType: TypeAlias = Any
+CFuncAddress: TypeAlias = np.uint64
 
 NumbaFloat = from_dtype(np.dtype(Float))
 NumbaIndex = from_dtype(np.dtype(Index))

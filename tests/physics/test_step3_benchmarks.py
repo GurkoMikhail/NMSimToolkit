@@ -111,7 +111,9 @@ class TestStep3Benchmarks(unittest.TestCase):
 
         collimator = ParametricParallelCollimator(size, hole_diameter, septa, material)
 
+        import ctypes
         cfunc_callable = collimator.material_cfunc
+        cfunc_address = ctypes.cast(cfunc_callable, ctypes.c_void_p).value
 
         num_points = 100_000
         # Random positions inside the collimator XY plane
@@ -124,27 +126,26 @@ class TestStep3Benchmarks(unittest.TestCase):
 
         # 2. Benchmark Numba @cfunc Loop
         from numba import njit
-        import ctypes
+        from numba.core import types
+        import numba
 
-        # Numba can call CFUNCTYPE natively if passed in, we just need to wrap it.
-        # Wait, you can just call it from Python! Oh, the user wants to benchmark
-        # Numba's speed calling it. We can just use the memory address inside njit
-        # but let's try just letting Numba parse the CFUNCTYPE.
+        # We need to construct the CFUNCTYPE dynamically in python to pass it to Numba
+        from ctypes import cast, CFUNCTYPE, c_int64, c_double
+        cfunc_type = CFUNCTYPE(c_int64, c_double, c_double, c_double)
+        cfunc_instance = cast(cfunc_address, cfunc_type)
 
         @njit
-        def cfunc_loop(c_ptr, pos, out_ids):
+        def cfunc_loop(func_ptr, pos, out_ids):
             for i in range(pos.shape[0]):
-                out_ids[i] = c_ptr(pos[i, 0], pos[i, 1], pos[i, 2])
+                out_ids[i] = func_ptr(pos[i, 0], pos[i, 1], pos[i, 2])
 
         numba_mat_ids = np.zeros(num_points, dtype=np.int64)
 
         # Compile and run
-        addr = ctypes.cast(cfunc_callable, ctypes.c_void_p).value
-        # Actually passing CFUNCTYPE directly to njit works in recent Numba versions
-        cfunc_loop(cfunc_callable, positions[:1], numba_mat_ids[:1])
+        cfunc_loop(cfunc_instance, positions[:1], numba_mat_ids[:1])
 
         start_time = time.perf_counter()
-        cfunc_loop(cfunc_callable, positions, numba_mat_ids)
+        cfunc_loop(cfunc_instance, positions, numba_mat_ids)
         numba_time = time.perf_counter() - start_time
 
         print(f"\n--- Parametric Collimator Benchmark ({num_points} samples) ---")
@@ -178,7 +179,9 @@ class TestStep3Benchmarks(unittest.TestCase):
 
         volume = WoodcockVoxelVolume(voxel_size, mat_dist)
 
+        import ctypes
         cfunc_callable = volume.material_cfunc
+        cfunc_address = ctypes.cast(cfunc_callable, ctypes.c_void_p).value
 
         num_points = 100_000
         # Generate points strictly inside the bounds (size = shape * voxel_size)
@@ -192,17 +195,23 @@ class TestStep3Benchmarks(unittest.TestCase):
 
         # 2. Numba @cfunc Logic
         from numba import njit
+        from numba.core import types
+        import numba
+
+        from ctypes import cast, CFUNCTYPE, c_int64, c_double
+        cfunc_type = CFUNCTYPE(c_int64, c_double, c_double, c_double)
+        cfunc_instance = cast(cfunc_address, cfunc_type)
 
         @njit
-        def cfunc_loop_voxel(c_ptr, pos, out_ids):
+        def cfunc_loop_voxel(func_ptr, pos, out_ids):
             for i in range(pos.shape[0]):
-                out_ids[i] = c_ptr(pos[i, 0], pos[i, 1], pos[i, 2])
+                out_ids[i] = func_ptr(pos[i, 0], pos[i, 1], pos[i, 2])
 
         numba_mat_ids = np.zeros(num_points, dtype=np.int64)
-        cfunc_loop_voxel(cfunc_callable, positions[:1], numba_mat_ids[:1])
+        cfunc_loop_voxel(cfunc_instance, positions[:1], numba_mat_ids[:1])
 
         start_time = time.perf_counter()
-        cfunc_loop_voxel(cfunc_callable, positions, numba_mat_ids)
+        cfunc_loop_voxel(cfunc_instance, positions, numba_mat_ids)
         numba_time = time.perf_counter() - start_time
 
         print(f"\n--- Voxel Volume Benchmark ({num_points} samples) ---")
