@@ -9,7 +9,7 @@ import core.other.utils as utils
 from core.geometry.geometries import Geometry
 from core.materials.materials import Material, MaterialArray
 from core.other.nonunique_array import NonuniqueArray
-from core.other.typing_definitions import Float, Vector3D, Index, CFuncType
+from core.other.typing_definitions import Float, Vector3D, Index, CMaterialFunc
 from core.other.transform import TransformDType
 from core.geometry.geometries import ShapeDataDType
 from core.geometry.flattened_scene import FlattenedScene
@@ -55,7 +55,7 @@ class Volume:
         return self._flattened_scene
 
     @property
-    def material_cfunc(self) -> CFuncType:
+    def material_cfunc(self) -> CMaterialFunc:
         """ CFUNCTYPE pointer of the @cfunc for Woodcock paramteric volumes. Defaults to None for normal volumes. """
         return None
 

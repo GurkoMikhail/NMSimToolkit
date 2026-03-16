@@ -16,8 +16,18 @@ ID: TypeAlias = np.uint64
 Species: TypeAlias = np.uint8
 Index: TypeAlias = np.int64
 from typing import Any
+import ctypes
+
 ShapeID: TypeAlias = np.int32
-CFuncType: TypeAlias = Any
+
+# CFUNCTYPE strictly signatured for material lookup functions
+CMaterialFunc = ctypes.CFUNCTYPE(
+    np.ctypeslib.as_ctypes_type(Index),
+    np.ctypeslib.as_ctypes_type(Float),
+    np.ctypeslib.as_ctypes_type(Float),
+    np.ctypeslib.as_ctypes_type(Float)
+)
+
 CFuncAddress: TypeAlias = np.uint64
 
 NumbaFloat = from_dtype(np.dtype(Float))

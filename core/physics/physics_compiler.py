@@ -7,7 +7,7 @@ from core.physics.processes import Process
 from core.materials.material_bank import MaterialBank, MaterialInfoDType, MaterialPointerDType
 from core.physics.physics_buffer import PhysicsBuffer
 from core.materials.materials import Material
-from core.other.typing_definitions import Index, Float
+from core.other.typing_definitions import Index, Float, CFuncAddress
 
 class PhysicsCompiler:
     """
@@ -87,11 +87,15 @@ class PhysicsCompiler:
         capacity = len(flat_list)
 
         majorant_material_map = np.zeros(capacity, dtype=Index)
-        woodcock_function_pointers = np.empty(capacity, dtype=object)
+        woodcock_function_pointers = np.zeros(capacity, dtype=CFuncAddress)
 
         for i, (vol, _, _) in enumerate(flat_list):
             majorant_material_map[i] = vol.majorant_material.ID
-            woodcock_function_pointers[i] = vol.material_cfunc
+            if vol.material_cfunc is not None:
+                import ctypes
+                woodcock_function_pointers[i] = ctypes.cast(vol.material_cfunc, ctypes.c_void_p).value
+            else:
+                woodcock_function_pointers[i] = 0
 
         return PhysicsBuffer(
             material_bank=material_bank,
