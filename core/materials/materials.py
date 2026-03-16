@@ -95,3 +95,9 @@ class MaterialArray(NonuniqueArray):
             density[indices] = material.density
         return density
 
+    @property
+    def ID(self) -> NDArray[np.int64]:
+        material_id = np.zeros_like(self, dtype=np.int64)
+        for material, indices in self.inverse_indices.items():
+            material_id[indices] = material.ID
+        return material_id
