@@ -4,9 +4,10 @@ from typing import Optional, Tuple, cast
 import numpy as np
 
 from core.geometry.geometries import Box
+from numba import cfunc
 from core.geometry.woodcoock_volumes import WoodcockParameticVolume
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Float, Length, Vector3D
+from core.other.typing_definitions import Float, Index, Length, Vector3D, NumbaFloat, NumbaIndex
 
 
 class WoodcockVoxelVolume(WoodcockParameticVolume):
@@ -48,6 +49,44 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
     @material.setter
     def material(self, value: Material) -> None:
         pass
+
+    @property
+    def material_list(self) -> list[Material]:
+        return self.material_distribution.material_list
+
+    def _compile_cfunc(self):
+        # Flatten the 3D material IDs into a 1D numba array for fast lookup
+        mat_dist_3d = self.material_distribution.ID
+        shape_x = Index(mat_dist_3d.shape[0])
+        shape_y = Index(mat_dist_3d.shape[1])
+        shape_z = Index(mat_dist_3d.shape[2])
+        mat_dist_1d = mat_dist_3d.flatten()
+
+        size_x = Float(self.size[0])
+        size_y = Float(self.size[1])
+        size_z = Float(self.size[2])
+
+        vox_size_x = Float(self.voxel_size[0])
+        vox_size_y = Float(self.voxel_size[1])
+        vox_size_z = Float(self.voxel_size[2])
+
+        @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat), cache=True)
+        def parametric_func(x, y, z):
+            # Compute 3D indices (replicating numpy logic)
+            ix = Index((x + (size_x / 2.0 - vox_size_x / 2.0)) / vox_size_x)
+            iy = Index((y + (size_y / 2.0 - vox_size_y / 2.0)) / vox_size_y)
+            iz = Index((z + (size_z / 2.0 - vox_size_z / 2.0)) / vox_size_z)
+
+            # Bounds checking (clamping to valid voxel indices)
+            ix = max(0, min(ix, shape_x - 1))
+            iy = max(0, min(iy, shape_y - 1))
+            iz = max(0, min(iz, shape_z - 1))
+
+            # Flat 3D lookup: index = ix * (shape_y * shape_z) + iy * shape_z + iz
+            flat_idx = ix * shape_y * shape_z + iy * shape_z + iz
+            return mat_dist_1d[flat_idx]
+
+        return parametric_func
 
     def _parametric_function(self, position: Vector3D) -> Tuple[np.ndarray, MaterialArray]:
         indices = ((position + (self.size / 2 - self.voxel_size / 2)) / self.voxel_size).astype(int)

@@ -16,7 +16,7 @@ class GeometryCompiler:
         Main entry point for scene compilation.
         Converts the OOP hierarchy into a flat numpy AoS structure.
         """
-        flat_list = self._flatten_scene_graph(root_volume)
+        flat_list = root_volume.flattened_scene.flat_list
         capacity = len(flat_list)
         buffer = np.zeros(capacity, dtype=GeometryBufferDType)
 
@@ -25,34 +25,6 @@ class GeometryCompiler:
             self._populate_buffer(flat_list, buffer)
 
         return buffer
-
-    def _flatten_scene_graph(self, root_volume: Volume) -> list:
-        """
-        Traverses the OOP Scene Graph via DFS and returns a flattened list.
-        Each element is a tuple: (Volume, total_transformation_matrix, parent_index).
-        """
-        flat_list = []
-
-        def dfs(volume: Volume, parent_matrix: NDArray[Float], parent_index: int) -> int:
-            if isinstance(volume, TransformableVolume):
-                total_matrix = volume.total_transformation_matrix
-            else:
-                total_matrix = parent_matrix
-
-            current_index = len(flat_list)
-            flat_list.append((volume, total_matrix, parent_index))
-
-            child_count = 0
-            if isinstance(volume, VolumeWithChilds):
-                for child in volume.childs:
-                    child_count += dfs(child, total_matrix, current_index)
-
-            return child_count + 1
-
-        identity_matrix = np.eye(4, dtype=Float)
-        dfs(root_volume, identity_matrix, -1)
-
-        return flat_list
 
     def _compute_miss_indices(self, flat_list: list, buffer: NDArray[np.void]) -> None:
         """

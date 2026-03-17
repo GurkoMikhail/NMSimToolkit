@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 
 from core.materials.atomic_properties import atomic_number
 from core.other.nonunique_array import NonuniqueArray
-from core.other.typing_definitions import Float
+from core.other.typing_definitions import Float, Index
 
 
 Composition = namedtuple('Composition', ['H'])
@@ -95,3 +95,9 @@ class MaterialArray(NonuniqueArray):
             density[indices] = material.density
         return density
 
+    @property
+    def ID(self) -> NDArray[Index]:
+        material_id = np.zeros_like(self, dtype=Index)
+        for material, indices in self.inverse_indices.items():
+            material_id[indices] = material.ID
+        return material_id
