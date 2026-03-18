@@ -32,3 +32,10 @@ CFuncAddress: TypeAlias = np.uint64
 
 NumbaFloat = from_dtype(np.dtype(Float))
 NumbaIndex = from_dtype(np.dtype(Index))
+
+# Next_double CFFI function pointer definition for Numba
+import numba.types as nt
+from numba import typeof
+import numba
+
+CRNGBitGenFunc = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_void_p)
