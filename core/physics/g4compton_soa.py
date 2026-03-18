@@ -2,7 +2,7 @@ import numpy as np
 import hepunits as units
 from numba import njit
 import core.physics.g4compton as g4compton
-from core.other.typing_definitions import Float, Index
+from core.other.typing_definitions import Float, Charge
 from core.physics.interaction_soa import RNGContext
 
 # Extract the constants from the old g4compton module
@@ -12,7 +12,7 @@ ln10 = np.log(10.)
 electron_mass_c2 = 0.510998910 * units.MeV
 
 @njit(cache=True, inline='always')
-def _compute_scattering_function_scalar(x: float, Z: int) -> float:
+def _compute_scattering_function_scalar(x: Float, Z: Charge) -> Float:
     """
     Scalar version of the scattering function computation.
     """
@@ -37,7 +37,7 @@ def _compute_scattering_function_scalar(x: float, Z: int) -> float:
     return value
 
 @njit(cache=True, inline='always')
-def _generate_compton_theta_scalar(energy: float, Z: int, rng_ctx: RNGContext) -> float:
+def _generate_compton_theta_scalar(energy: Float, Z: Charge, rng_ctx: RNGContext) -> Float:
     """
     Scalar, in-place random generation of Compton scattering angle theta.
     """
@@ -79,7 +79,7 @@ def _generate_compton_theta_scalar(energy: float, Z: int, rng_ctx: RNGContext) -
     return np.arccos(cos_theta)
 
 @njit(cache=True, inline='always')
-def _calculate_compton_energy_deposit_scalar(theta: float, particle_energy: float) -> float:
+def _calculate_compton_energy_deposit_scalar(theta: Float, particle_energy: Float) -> Float:
     """
     Calculate energy deposit for a given theta.
     """

@@ -2,7 +2,7 @@ import numpy as np
 from typing import NamedTuple
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Index, ID, Energy, Float
+from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID
 from core.other.vectors_soa import Vector3DSoA
 
 
@@ -21,7 +21,7 @@ class InteractionBuffer(NamedTuple):
     SoA Ring/Flush buffer for in-place logging of particle interactions.
     Allocated once and reused to avoid array concatenation and memory fragmentation.
     """
-    process_id: NDArray[Index]
+    process_id: NDArray[ProcessID]
     particle_ID: NDArray[ID]
     energy_deposit: NDArray[Energy]
     scattering_theta: NDArray[Float]
@@ -66,29 +66,29 @@ class InteractionBuffer(NamedTuple):
         if self.cursor.shape != (1,):
             raise ValueError("Cursor must be a 1-dimensional array of length 1.")
 
-
-def allocate_interaction_buffer(capacity: int) -> InteractionBuffer:
-    """
-    Allocates an empty InteractionBuffer with the specified capacity.
-    """
-    buffer = InteractionBuffer(
-        process_id=np.empty(capacity, dtype=Index),
-        particle_ID=np.empty(capacity, dtype=ID),
-        energy_deposit=np.empty(capacity, dtype=Energy),
-        scattering_theta=np.empty(capacity, dtype=Float),
-        scattering_phi=np.empty(capacity, dtype=Float),
-        position=Vector3DSoA(
-            x=np.empty(capacity, dtype=Float),
-            y=np.empty(capacity, dtype=Float),
-            z=np.empty(capacity, dtype=Float)
-        ),
-        direction=Vector3DSoA(
-            x=np.empty(capacity, dtype=Float),
-            y=np.empty(capacity, dtype=Float),
-            z=np.empty(capacity, dtype=Float)
-        ),
-        cursor=np.zeros(1, dtype=Index),
-        capacity=capacity
-    )
-    buffer.validate()
-    return buffer
+    @classmethod
+    def allocate(cls, capacity: int) -> 'InteractionBuffer':
+        """
+        Allocates an empty InteractionBuffer with the specified capacity.
+        """
+        buffer = cls(
+            process_id=np.empty(capacity, dtype=ProcessID),
+            particle_ID=np.empty(capacity, dtype=ID),
+            energy_deposit=np.empty(capacity, dtype=Energy),
+            scattering_theta=np.empty(capacity, dtype=Float),
+            scattering_phi=np.empty(capacity, dtype=Float),
+            position=Vector3DSoA(
+                x=np.empty(capacity, dtype=Float),
+                y=np.empty(capacity, dtype=Float),
+                z=np.empty(capacity, dtype=Float)
+            ),
+            direction=Vector3DSoA(
+                x=np.empty(capacity, dtype=Float),
+                y=np.empty(capacity, dtype=Float),
+                z=np.empty(capacity, dtype=Float)
+            ),
+            cursor=np.zeros(1, dtype=Index),
+            capacity=capacity
+        )
+        buffer.validate()
+        return buffer

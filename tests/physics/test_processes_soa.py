@@ -6,7 +6,7 @@ from numba import njit
 import ctypes
 
 from core.particles.particles_soa import ParticleBank
-from core.physics.interaction_soa import allocate_interaction_buffer, RNGContext
+from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.physics.processes_soa_kernels import make_photoelectric_kernel, make_compton_kernel, make_coherent_kernel
 
 # Old implementations for testing math correctness
@@ -40,7 +40,7 @@ class TestProcessesSoA(unittest.TestCase):
         self.bank._state.energy[:] = energy
         self.target_indices = np.arange(self.capacity, dtype=np.int64)
 
-        self.buffer = allocate_interaction_buffer(self.capacity)
+        self.buffer = InteractionBuffer.allocate(self.capacity)
 
         self.rng = np.random.default_rng(42)
 
@@ -54,8 +54,9 @@ class TestProcessesSoA(unittest.TestCase):
 
     def test_photoelectric_kernel(self):
         kernel = make_photoelectric_kernel(process_id=1)
+        Z = np.int8(13)
 
-        kernel(self.bank.state, self.target_indices, self.buffer, self.rng_ctx)
+        kernel(self.bank.state, self.target_indices, Z, self.buffer, self.rng_ctx)
 
         self.assertEqual(self.buffer.cursor[0], self.capacity)
 
@@ -70,7 +71,7 @@ class TestProcessesSoA(unittest.TestCase):
 
     def test_compton_kernel(self):
         kernel = make_compton_kernel(process_id=2)
-        Z = 13  # Aluminum
+        Z = np.int8(13)  # Aluminum
 
         # Warmup and Benchmark
         kernel(self.bank.state, self.target_indices, Z, self.buffer, self.rng_ctx)
@@ -81,7 +82,7 @@ class TestProcessesSoA(unittest.TestCase):
         end = time.perf_counter()
         print(f"\n[BENCHMARK] SoA Compton Scattering 100x (N={self.capacity}): {end - start:.5f}s")
 
-        self.assertEqual(self.buffer.cursor[0], self.capacity)
+        self.assertEqual(self.buffer.cursor[0], self.capacity * 101)
 
         # Energy deposit should be logged and subtracted (we did 101 iterations, so checking the exact formula is tricky now)
         # We can just verify it decreased
@@ -96,7 +97,7 @@ class TestProcessesSoA(unittest.TestCase):
 
     def test_coherent_kernel(self):
         kernel = make_coherent_kernel(process_id=3)
-        Z = 82  # Lead
+        Z = np.int8(82)  # Lead
 
         kernel(self.bank.state, self.target_indices, Z, self.buffer, self.rng_ctx)
 
@@ -106,7 +107,7 @@ class TestProcessesSoA(unittest.TestCase):
         end = time.perf_counter()
         print(f"\n[BENCHMARK] SoA Coherent Scattering 100x (N={self.capacity}): {end - start:.5f}s")
 
-        self.assertEqual(self.buffer.cursor[0], self.capacity)
+        self.assertEqual(self.buffer.cursor[0], self.capacity * 101)
 
         # Energy deposit is 0 for coherent scattering
         np.testing.assert_array_equal(self.buffer.energy_deposit, 0.0)

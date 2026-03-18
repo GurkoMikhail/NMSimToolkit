@@ -2,14 +2,21 @@ import numpy as np
 import hepunits as units
 from numba import njit
 from core.physics.interaction_soa import RNGContext
-from core.other.typing_definitions import Float, Index
+from core.other.typing_definitions import Float, Charge
 from core.physics.g4coherent_arrays import PP0, PP1, PP2, PP3, PP4, PP5, PP6, PP7, PP8
 
 x = units.cm / (units.h_Planck * units.c_light)
 f_factor = 0.5 * x * x
 
 @njit(cache=True, inline='always')
-def _generate_coherent_theta_scalar(energy: float, Z: int, rng_ctx: RNGContext) -> float:
+def _calculate_w(xx: Float, b: Float, n: Float, numlim: Float) -> Float:
+    """Calculates the scaling weight factor w."""
+    x = 2.0 * xx * b
+    return n * x * (1. - 0.5 * (n - 1.0) * x * (1. - (n - 2.0) * x / 3.)) if x < numlim else 1. - np.exp(-n * np.log(1. + x))
+
+
+@njit(cache=True, inline='always')
+def _generate_coherent_theta_scalar(energy: Float, Z: Charge, rng_ctx: RNGContext) -> Float:
     """
     Scalar, in-place random generation of coherent scattering angle theta.
     """
@@ -23,23 +30,9 @@ def _generate_coherent_theta_scalar(energy: float, Z: int, rng_ctx: RNGContext) 
     b2 = PP5[Z]
 
     numlim = 0.02
-    x = 2. * xx * b0
-    if x < numlim:
-        w0 = n0 * x * (1. - 0.5 * (n0 - 1.0) * x * (1. - (n0 - 2.0) * x / 3.))
-    else:
-        w0 = 1. - np.exp(-n0 * np.log(1. + x))
-
-    x = 2. * xx * b1
-    if x < numlim:
-        w1 = n1 * x * (1. - 0.5 * (n1 - 1.0) * x * (1. - (n1 - 2.0) * x / 3.))
-    else:
-        w1 = 1. - np.exp(-n1 * np.log(1. + x))
-
-    x = 2. * xx * b2
-    if x < numlim:
-        w2 = n2 * x * (1. - 0.5 * (n2 - 1.0) * x * (1. - (n2 - 2.0) * x / 3.))
-    else:
-        w2 = 1. - np.exp(-n2 * np.log(1. + x))
+    w0 = _calculate_w(xx, b0, n0, numlim)
+    w1 = _calculate_w(xx, b1, n1, numlim)
+    w2 = _calculate_w(xx, b2, n2, numlim)
 
     x0 = w0 * PP0[Z] / (b0 * n0)
     x1 = w1 * PP1[Z] / (b1 * n1)

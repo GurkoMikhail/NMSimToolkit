@@ -3,7 +3,7 @@ from numba import njit
 from numpy.typing import NDArray
 import ctypes
 
-from core.other.typing_definitions import Index
+from core.other.typing_definitions import Index, Charge, ProcessID
 from core.particles.particles_soa import ParticleState
 from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.physics.g4compton_soa import _generate_compton_theta_scalar, _calculate_compton_energy_deposit_scalar
@@ -11,14 +11,71 @@ from core.physics.g4coherent_soa import _generate_coherent_theta_scalar
 from core.other.vectors_soa import _rotate_direction_scalar
 
 
+@njit(cache=True, inline='always')
+def _fill_interaction_buffer_scalar(
+    inter_buffer: InteractionBuffer,
+    process_id: ProcessID,
+    particle_ID: np.uint64,
+    energy_deposit: float,
+    scattering_theta: float,
+    scattering_phi: float,
+    pos_x: float, pos_y: float, pos_z: float,
+    dir_x: float, dir_y: float, dir_z: float
+) -> None:
+    """Logs the interaction directly to the buffer using wrap-around cursor if necessary."""
+    idx = inter_buffer.cursor[0] % inter_buffer.capacity
+
+    inter_buffer.process_id[idx] = process_id
+    inter_buffer.particle_ID[idx] = particle_ID
+    inter_buffer.energy_deposit[idx] = energy_deposit
+
+    inter_buffer.scattering_theta[idx] = scattering_theta
+    inter_buffer.scattering_phi[idx] = scattering_phi
+
+    inter_buffer.position.x[idx] = pos_x
+    inter_buffer.position.y[idx] = pos_y
+    inter_buffer.position.z[idx] = pos_z
+
+    inter_buffer.direction.x[idx] = dir_x
+    inter_buffer.direction.y[idx] = dir_y
+    inter_buffer.direction.z[idx] = dir_z
+
+    inter_buffer.cursor[0] += 1
+
+
+@njit(cache=True, inline='always')
+def _photoelectric_device_func(
+    p_idx: int,
+    state: ParticleState,
+    inter_buffer: InteractionBuffer,
+    process_id: ProcessID
+) -> None:
+    # The entire energy of the particle is deposited
+    energy_deposit = state.energy[p_idx]
+    state.energy[p_idx] = 0.0
+
+    _fill_interaction_buffer_scalar(
+        inter_buffer,
+        process_id,
+        state.ID[p_idx],
+        energy_deposit,
+        0.0, 0.0,
+        state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
+        state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
+    )
+
+
 def make_photoelectric_kernel(process_id: int):
     """
     Creates a photoelectric effect kernel with a baked-in process_id.
     """
+    process_id_c = np.uint8(process_id)
+
     @njit(cache=True)
     def _photoelectric_kernel(
         state: ParticleState,
         target_indices: NDArray[Index],
+        Z: Charge,
         inter_buffer: InteractionBuffer,
         rng_ctx: RNGContext
     ) -> None:
@@ -27,47 +84,61 @@ def make_photoelectric_kernel(process_id: int):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-
-            # The entire energy of the particle is deposited
-            energy_deposit = state.energy[p_idx]
-            state.energy[p_idx] = 0.0
-
-            # Logging IN-PLACE
-            idx = inter_buffer.cursor[0]
-
-            # Check capacity to prevent out-of-bounds (the manager should flush when needed)
-            if idx >= inter_buffer.capacity:
-                continue
-
-            inter_buffer.process_id[idx] = process_id
-            inter_buffer.particle_ID[idx] = state.ID[p_idx]
-            inter_buffer.energy_deposit[idx] = energy_deposit
-
-            inter_buffer.scattering_theta[idx] = 0.0
-            inter_buffer.scattering_phi[idx] = 0.0
-
-            inter_buffer.position.x[idx] = state.position.x[p_idx]
-            inter_buffer.position.y[idx] = state.position.y[p_idx]
-            inter_buffer.position.z[idx] = state.position.z[p_idx]
-
-            inter_buffer.direction.x[idx] = state.direction.x[p_idx]
-            inter_buffer.direction.y[idx] = state.direction.y[p_idx]
-            inter_buffer.direction.z[idx] = state.direction.z[p_idx]
-
-            inter_buffer.cursor[0] += 1
+            _photoelectric_device_func(p_idx, state, inter_buffer, process_id_c)
 
     return _photoelectric_kernel
+
+
+@njit(cache=True, inline='always')
+def _compton_device_func(
+    p_idx: int,
+    state: ParticleState,
+    Z: Charge,
+    inter_buffer: InteractionBuffer,
+    rng_ctx: RNGContext,
+    process_id: ProcessID
+) -> None:
+    energy = state.energy[p_idx]
+
+    theta = _generate_compton_theta_scalar(energy, Z, rng_ctx)
+    phi = np.pi * (rng_ctx.next_double(rng_ctx.state_addr) * 2.0 - 1.0)
+
+    energy_deposit = _calculate_compton_energy_deposit_scalar(theta, energy)
+
+    # Update particle state IN-PLACE
+    state.energy[p_idx] -= energy_deposit
+
+    dir_x = state.direction.x[p_idx]
+    dir_y = state.direction.y[p_idx]
+    dir_z = state.direction.z[p_idx]
+
+    new_dir_x, new_dir_y, new_dir_z = _rotate_direction_scalar(dir_x, dir_y, dir_z, theta, phi)
+    state.direction.x[p_idx] = new_dir_x
+    state.direction.y[p_idx] = new_dir_y
+    state.direction.z[p_idx] = new_dir_z
+
+    _fill_interaction_buffer_scalar(
+        inter_buffer,
+        process_id,
+        state.ID[p_idx],
+        energy_deposit,
+        theta, phi,
+        state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
+        state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
+    )
 
 
 def make_compton_kernel(process_id: int):
     """
     Creates a Compton scattering kernel with a baked-in process_id.
     """
+    process_id_c = np.uint8(process_id)
+
     @njit(cache=True)
     def _compton_kernel(
         state: ParticleState,
         target_indices: NDArray[Index],
-        Z: int,
+        Z: Charge,
         inter_buffer: InteractionBuffer,
         rng_ctx: RNGContext
     ) -> None:
@@ -75,65 +146,61 @@ def make_compton_kernel(process_id: int):
         Applies Compton scattering IN-PLACE to target particles and logs to inter_buffer.
         Requires effective Z of the material.
         """
-        next_double = rng_ctx.next_double
-        state_addr = rng_ctx.state_addr
-
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-
-            energy = state.energy[p_idx]
-
-            theta = _generate_compton_theta_scalar(energy, Z, rng_ctx)
-            phi = np.pi * (next_double(state_addr) * 2.0 - 1.0)
-
-            energy_deposit = _calculate_compton_energy_deposit_scalar(theta, energy)
-
-            # Update particle state IN-PLACE
-            state.energy[p_idx] -= energy_deposit
-
-            dir_x = state.direction.x[p_idx]
-            dir_y = state.direction.y[p_idx]
-            dir_z = state.direction.z[p_idx]
-
-            new_dir_x, new_dir_y, new_dir_z = _rotate_direction_scalar(dir_x, dir_y, dir_z, theta, phi)
-            state.direction.x[p_idx] = new_dir_x
-            state.direction.y[p_idx] = new_dir_y
-            state.direction.z[p_idx] = new_dir_z
-
-            # Logging IN-PLACE
-            idx = inter_buffer.cursor[0]
-            if idx >= inter_buffer.capacity:
-                continue
-
-            inter_buffer.process_id[idx] = process_id
-            inter_buffer.particle_ID[idx] = state.ID[p_idx]
-            inter_buffer.energy_deposit[idx] = energy_deposit
-
-            inter_buffer.scattering_theta[idx] = theta
-            inter_buffer.scattering_phi[idx] = phi
-
-            inter_buffer.position.x[idx] = state.position.x[p_idx]
-            inter_buffer.position.y[idx] = state.position.y[p_idx]
-            inter_buffer.position.z[idx] = state.position.z[p_idx]
-
-            inter_buffer.direction.x[idx] = state.direction.x[p_idx]
-            inter_buffer.direction.y[idx] = state.direction.y[p_idx]
-            inter_buffer.direction.z[idx] = state.direction.z[p_idx]
-
-            inter_buffer.cursor[0] += 1
+            _compton_device_func(p_idx, state, Z, inter_buffer, rng_ctx, process_id_c)
 
     return _compton_kernel
+
+
+@njit(cache=True, inline='always')
+def _coherent_device_func(
+    p_idx: int,
+    state: ParticleState,
+    Z: Charge,
+    inter_buffer: InteractionBuffer,
+    rng_ctx: RNGContext,
+    process_id: ProcessID
+) -> None:
+    energy = state.energy[p_idx]
+
+    theta = _generate_coherent_theta_scalar(energy, Z, rng_ctx)
+    phi = np.pi * (rng_ctx.next_double(rng_ctx.state_addr) * 2.0 - 1.0)
+
+    # Coherent scattering has 0 energy deposit
+    energy_deposit = 0.0
+
+    dir_x = state.direction.x[p_idx]
+    dir_y = state.direction.y[p_idx]
+    dir_z = state.direction.z[p_idx]
+
+    new_dir_x, new_dir_y, new_dir_z = _rotate_direction_scalar(dir_x, dir_y, dir_z, theta, phi)
+    state.direction.x[p_idx] = new_dir_x
+    state.direction.y[p_idx] = new_dir_y
+    state.direction.z[p_idx] = new_dir_z
+
+    _fill_interaction_buffer_scalar(
+        inter_buffer,
+        process_id,
+        state.ID[p_idx],
+        energy_deposit,
+        theta, phi,
+        state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
+        state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
+    )
 
 
 def make_coherent_kernel(process_id: int):
     """
     Creates a Coherent (Rayleigh) scattering kernel with a baked-in process_id.
     """
+    process_id_c = np.uint8(process_id)
+
     @njit(cache=True)
     def _coherent_kernel(
         state: ParticleState,
         target_indices: NDArray[Index],
-        Z: int,
+        Z: Charge,
         inter_buffer: InteractionBuffer,
         rng_ctx: RNGContext
     ) -> None:
@@ -141,49 +208,8 @@ def make_coherent_kernel(process_id: int):
         Applies Coherent scattering IN-PLACE to target particles and logs to inter_buffer.
         Requires effective Z of the material.
         """
-        next_double = rng_ctx.next_double
-        state_addr = rng_ctx.state_addr
-
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-
-            energy = state.energy[p_idx]
-
-            theta = _generate_coherent_theta_scalar(energy, Z, rng_ctx)
-            phi = np.pi * (next_double(state_addr) * 2.0 - 1.0)
-
-            # Coherent scattering has 0 energy deposit
-            energy_deposit = 0.0
-
-            dir_x = state.direction.x[p_idx]
-            dir_y = state.direction.y[p_idx]
-            dir_z = state.direction.z[p_idx]
-
-            new_dir_x, new_dir_y, new_dir_z = _rotate_direction_scalar(dir_x, dir_y, dir_z, theta, phi)
-            state.direction.x[p_idx] = new_dir_x
-            state.direction.y[p_idx] = new_dir_y
-            state.direction.z[p_idx] = new_dir_z
-
-            # Logging IN-PLACE
-            idx = inter_buffer.cursor[0]
-            if idx >= inter_buffer.capacity:
-                continue
-
-            inter_buffer.process_id[idx] = process_id
-            inter_buffer.particle_ID[idx] = state.ID[p_idx]
-            inter_buffer.energy_deposit[idx] = energy_deposit
-
-            inter_buffer.scattering_theta[idx] = theta
-            inter_buffer.scattering_phi[idx] = phi
-
-            inter_buffer.position.x[idx] = state.position.x[p_idx]
-            inter_buffer.position.y[idx] = state.position.y[p_idx]
-            inter_buffer.position.z[idx] = state.position.z[p_idx]
-
-            inter_buffer.direction.x[idx] = state.direction.x[p_idx]
-            inter_buffer.direction.y[idx] = state.direction.y[p_idx]
-            inter_buffer.direction.z[idx] = state.direction.z[p_idx]
-
-            inter_buffer.cursor[0] += 1
+            _coherent_device_func(p_idx, state, Z, inter_buffer, rng_ctx, process_id_c)
 
     return _coherent_kernel

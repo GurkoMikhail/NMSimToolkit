@@ -9,7 +9,7 @@ from numba import njit
 
 
 @njit(inline='always')
-def _rotate_direction_scalar(dir_x: float, dir_y: float, dir_z: float, theta: float, phi: float) -> tuple[float, float, float]:
+def _rotate_direction_scalar(dir_x: Float, dir_y: Float, dir_z: Float, theta: Float, phi: Float) -> tuple[Float, Float, Float]:
     """
     Applies a theta and phi rotation to a 3D unit direction vector.
     Calculations strictly inline without allocations.
