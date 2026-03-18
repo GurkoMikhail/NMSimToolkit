@@ -32,17 +32,13 @@ def _generate_coherent_theta_scalar(energy: Float, Z: Charge, rng_ctx: RNGContex
     numlim = 0.02
 
     x0_val = 2.0 * xx * b0
-    x1_val = 2.0 * xx * b1
-    x2_val = 2.0 * xx * b2
+    w0 = _calc_w_true(x0_val, n0) if x0_val < numlim else _calc_w_false(x0_val, n0)
 
-    if max(x0_val, max(x1_val, x2_val)) < numlim:
-        w0 = _calc_w_true(x0_val, n0)
-        w1 = _calc_w_true(x1_val, n1)
-        w2 = _calc_w_true(x2_val, n2)
-    else:
-        w0 = _calc_w_false(x0_val, n0)
-        w1 = _calc_w_false(x1_val, n1)
-        w2 = _calc_w_false(x2_val, n2)
+    x1_val = 2.0 * xx * b1
+    w1 = _calc_w_true(x1_val, n1) if x1_val < numlim else _calc_w_false(x1_val, n1)
+
+    x2_val = 2.0 * xx * b2
+    w2 = _calc_w_true(x2_val, n2) if x2_val < numlim else _calc_w_false(x2_val, n2)
 
     x0 = w0 * PP0[Z] / (b0 * n0)
     x1 = w1 * PP1[Z] / (b1 * n1)
