@@ -43,7 +43,7 @@ def _push_to_interaction_buffer(
     inter_buffer.cursor[0] += 1
 
 
-def make_photoelectric_kernel(process_id: int):
+def make_photoelectric_kernel(process_id: ProcessID):
     """
     Creates a photoelectric effect kernel with a baked-in process_id.
     """
@@ -87,7 +87,7 @@ def make_photoelectric_kernel(process_id: int):
     return _photoelectric_kernel
 
 
-def make_compton_kernel(process_id: int):
+def make_compton_kernel(process_id: ProcessID):
     """
     Creates a Compton scattering kernel with a baked-in process_id.
     """
@@ -149,7 +149,7 @@ def make_compton_kernel(process_id: int):
     return _compton_kernel
 
 
-def make_coherent_kernel(process_id: int):
+def make_coherent_kernel(process_id: ProcessID):
     """
     Creates a Coherent (Rayleigh) scattering kernel with a baked-in process_id.
     """
