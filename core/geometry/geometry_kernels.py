@@ -305,3 +305,13 @@ def cast_path_kernel(
         bound_dist[p_idx] = closest_dist
         nav_curr_vol[p_idx] = current_vol
         nav_next_vol[p_idx] = next_vol
+
+@njit(cache=True, inline='always')
+def update_navigation_state_rotate_kernel(nav_state: NavigationState, target_indices: NDArray[Index]) -> None:
+    """
+    Invalidates navigation state (boundary_distance) after a rotation,
+    forcing cast_path_kernel to recalculate it.
+    """
+    for j in range(len(target_indices)):
+        p_idx = target_indices[j]
+        nav_state.boundary_distance[p_idx] = 0.0
