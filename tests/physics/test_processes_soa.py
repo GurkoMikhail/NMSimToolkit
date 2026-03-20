@@ -50,13 +50,7 @@ class TestProcessesSoA(unittest.TestCase):
 
         self.rng = np.random.default_rng(42)
 
-        cffi_next_double = self.rng.bit_generator.cffi.next_double
-        state_addr = self.rng.bit_generator.cffi.state_address
-
-        self.rng_ctx = RNGContext(
-            next_double=cffi_next_double,
-            state_addr=state_addr
-        )
+        self.rng_ctx = RNGContext.from_numpy_rng(self.rng)
 
     def test_photoelectric_kernel(self):
         kernel = make_photoelectric_kernel(process_id=1)
@@ -76,65 +70,59 @@ class TestProcessesSoA(unittest.TestCase):
         np.testing.assert_array_equal(self.buffer.process_id, 1)
 
     def test_compton_kernel_equivalence_and_performance(self):
-        kernel = make_compton_kernel(process_id=2)
         Z = np.int8(13)  # Aluminum
 
-        # 1. Physics Equivalence
+        # 1. Physics Equivalence on Large Sample
         old_rng = np.random.default_rng(1234)
         old_theta_generator = old_compton.initialize(old_rng)
 
-        # Old implementation uses scalar values and `@vectorize`, so we compute N thetas:
-        # Note: since the new logic uses multiple RNG calls per particle (theta, then phi),
-        # we can't easily reproduce the exact sequence using `old_theta_generator` on an array
-        # unless `old_theta_generator` does precisely the same RNG calls per element.
-        # Actually `old_theta_generator` also generates theta using the same rejection sampling!
-        # Let's verify equivalence:
         energy_arr = np.full(self.capacity, 0.5 * units.MeV)
         Z_arr = np.full(self.capacity, 13)
         theta_old = old_theta_generator(energy_arr, Z_arr)
 
         # New implementation with identically seeded RNG
         new_rng = np.random.default_rng(1234)
-        cffi_next_double = new_rng.bit_generator.cffi.next_double
-        state_addr = new_rng.bit_generator.cffi.state_address
-        new_rng_ctx = RNGContext(next_double=cffi_next_double, state_addr=state_addr)
+        new_rng_ctx = RNGContext.from_numpy_rng(new_rng)
 
-        # Reset bank states for equivalence check
-        self.bank.state.energy[:] = energy_arr
-
-        # To perfectly match the old stream, the old logic ONLY calculates theta and consumes RNG state.
-        # The NEW logic calculates theta AND THEN phi! This means particle 2's theta in the new stream
-        # will use RNG states shifted by phi calculations of particle 1!
-        # So we can't do a straightforward sequence comparison on arrays of N > 1 unless we test N=1
-        # or we test the theta generation independently. Let's test a single particle for exact equivalence.
-        old_rng_1 = np.random.default_rng(777)
-        old_theta_generator_1 = old_compton.initialize(old_rng_1)
-        theta_old_single = old_theta_generator_1(np.float64(0.5 * units.MeV), np.int64(13))
-
-        new_rng_1 = np.random.default_rng(777)
-        cffi_next_double_1 = new_rng_1.bit_generator.cffi.next_double
-        state_addr_1 = new_rng_1.bit_generator.cffi.state_address
-        new_rng_ctx_1 = RNGContext(next_double=cffi_next_double_1, state_addr=state_addr_1)
-
+        # Define a wrapper to extract exactly N thetas to avoid shifting RNG via phi
         from core.physics.g4compton_soa import _generate_compton_theta_scalar
-        theta_new_single = _generate_compton_theta_scalar(0.5 * units.MeV, np.int8(13), new_rng_ctx_1)
 
-        self.assertAlmostEqual(theta_old_single, theta_new_single, places=5)
+        @njit(cache=True)
+        def _get_new_thetas(cap, energies, z_val, ctx):
+            out = np.empty(cap, dtype=np.float64)
+            for i in range(cap):
+                out[i] = _generate_compton_theta_scalar(energies[i], z_val, ctx)
+            return out
+
+        theta_new = _get_new_thetas(self.capacity, energy_arr, Z, new_rng_ctx)
+
+        np.testing.assert_allclose(theta_old, theta_new, rtol=1e-5)
 
     def test_coherent_kernel_equivalence(self):
-        old_rng_1 = np.random.default_rng(777)
-        old_theta_generator_1 = old_coherent.initialize(old_rng_1)
-        theta_old_single = old_theta_generator_1(np.float64(0.5 * units.MeV), np.int64(82))
+        Z = np.int8(82)  # Lead
 
-        new_rng_1 = np.random.default_rng(777)
-        cffi_next_double_1 = new_rng_1.bit_generator.cffi.next_double
-        state_addr_1 = new_rng_1.bit_generator.cffi.state_address
-        new_rng_ctx_1 = RNGContext(next_double=cffi_next_double_1, state_addr=state_addr_1)
+        old_rng = np.random.default_rng(777)
+        old_theta_generator = old_coherent.initialize(old_rng)
+
+        energy_arr = np.full(self.capacity, 0.5 * units.MeV)
+        Z_arr = np.full(self.capacity, 82)
+        theta_old = old_theta_generator(energy_arr, Z_arr)
+
+        new_rng = np.random.default_rng(777)
+        new_rng_ctx = RNGContext.from_numpy_rng(new_rng)
 
         from core.physics.g4coherent_soa import _generate_coherent_theta_scalar
-        theta_new_single = _generate_coherent_theta_scalar(0.5 * units.MeV, np.int8(82), new_rng_ctx_1)
 
-        self.assertAlmostEqual(theta_old_single, theta_new_single, places=5)
+        @njit(cache=True)
+        def _get_new_thetas_coh(cap, energies, z_val, ctx):
+            out = np.empty(cap, dtype=np.float64)
+            for i in range(cap):
+                out[i] = _generate_coherent_theta_scalar(energies[i], z_val, ctx)
+            return out
+
+        theta_new = _get_new_thetas_coh(self.capacity, energy_arr, Z, new_rng_ctx)
+
+        np.testing.assert_allclose(theta_old, theta_new, rtol=1e-5)
 
     def test_compton_kernel(self):
         kernel = make_compton_kernel(process_id=2)

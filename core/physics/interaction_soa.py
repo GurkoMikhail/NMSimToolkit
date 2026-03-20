@@ -15,6 +15,16 @@ class RNGContext(NamedTuple):
     next_double: Any
     state_addr: int
 
+    @classmethod
+    def from_numpy_rng(cls, rng: np.random.Generator) -> 'RNGContext':
+        """
+        Extracts the CFFI next_double pointer and state address from a NumPy generator.
+        """
+        return cls(
+            next_double=rng.bit_generator.cffi.next_double,
+            state_addr=rng.bit_generator.cffi.state_address
+        )
+
 
 class InteractionBuffer(NamedTuple):
     """
