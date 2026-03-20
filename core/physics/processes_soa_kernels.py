@@ -12,6 +12,12 @@ from core.other.vectors_soa import _rotate_direction_scalar
 
 
 @njit(cache=True, inline='always')
+def _generate_scattering_phi_scalar(rng_ctx: RNGContext) -> Float:
+    """Generates the azimuthal scattering angle phi uniformly in [-pi, pi]."""
+    return np.pi * (rng_ctx.next_double(rng_ctx.state_addr) * 2.0 - 1.0)
+
+
+@njit(cache=True, inline='always')
 def _push_to_interaction_buffer(
     inter_buffer: InteractionBuffer,
     process_id: ProcessID,
@@ -104,7 +110,7 @@ def make_compton_kernel(process_id: ProcessID):
         energy = state.energy[p_idx]
 
         theta = _generate_compton_theta_scalar(energy, Z, rng_ctx)
-        phi = np.pi * (rng_ctx.next_double(rng_ctx.state_addr) * 2.0 - 1.0)
+        phi = _generate_scattering_phi_scalar(rng_ctx)
 
         energy_deposit = _calculate_compton_energy_deposit_scalar(theta, energy)
 
@@ -166,7 +172,7 @@ def make_coherent_kernel(process_id: ProcessID):
         energy = state.energy[p_idx]
 
         theta = _generate_coherent_theta_scalar(energy, Z, rng_ctx)
-        phi = np.pi * (rng_ctx.next_double(rng_ctx.state_addr) * 2.0 - 1.0)
+        phi = _generate_scattering_phi_scalar(rng_ctx)
 
         # Coherent scattering has 0 energy deposit
         energy_deposit = 0.0
