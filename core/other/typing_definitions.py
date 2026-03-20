@@ -32,3 +32,6 @@ CFuncAddress: TypeAlias = np.uint64
 
 NumbaFloat = from_dtype(np.dtype(Float))
 NumbaIndex = from_dtype(np.dtype(Index))
+
+ProcessID: TypeAlias = np.uint8
+Charge: TypeAlias = np.int8

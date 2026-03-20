@@ -5,6 +5,36 @@ from numpy.typing import NDArray
 from core.other.typing_definitions import Float
 
 
+from numba import njit
+
+
+@njit(inline='always')
+def _rotate_direction_scalar(dir_x: Float, dir_y: Float, dir_z: Float, theta: Float, phi: Float) -> tuple[Float, Float, Float]:
+    """
+    Applies a theta and phi rotation to a 3D unit direction vector.
+    Calculations strictly inline without allocations.
+    """
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+
+    delta1 = sin_theta * np.cos(phi)
+    delta2 = sin_theta * np.sin(phi)
+
+    delta = 1.0
+    if dir_z < 0.0:
+        delta = -1.0
+
+    b = dir_x * delta1 + dir_y * delta2
+    abs_z = np.abs(dir_z)
+    tmp = cos_theta - b / (1.0 + abs_z)
+
+    new_dir_x = dir_x * tmp + delta1
+    new_dir_y = dir_y * tmp + delta2
+    new_dir_z = dir_z * cos_theta - delta * b
+
+    return new_dir_x, new_dir_y, new_dir_z
+
+
 class Vector3DSoA(NamedTuple):
     """
     Structure of Arrays (SoA) representation for 3D vectors.
