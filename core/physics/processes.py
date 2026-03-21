@@ -66,7 +66,7 @@ class Process(ABC):
         return freePath
 
     def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext, materials_buffer: NDArray[Index]) -> None:
-        self._kernel(bank.state, target_indices, interaction_buffer, physics_buffer, rng_ctx, materials_buffer)
+        self._kernel(bank.state, target_indices, materials_buffer, interaction_buffer, physics_buffer, rng_ctx)
         if self.invalidates_navigation:
             update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 
@@ -117,9 +117,6 @@ class CoherentScattering(Process):
         self._kernel = make_coherent_kernel(self.process_id)
 
 
-        from core.particles.particles_soa_kernels import update_navigation_state_rotate_kernel
-        update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
-
 
     def generate_theta(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]:
         """ Сгенерировать угол рассеяния - theta """
@@ -153,9 +150,6 @@ class ComptonScattering(CoherentScattering):
         self.theta_generator = g4compton.initialize(self.rng)
         self._kernel = make_compton_kernel(self.process_id)
 
-
-        from core.particles.particles_soa_kernels import update_navigation_state_rotate_kernel
-        update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 
 
     def culculate_energy_deposit(self, theta: NDArray[Float], particle_energy: NDArray[Float]) -> NDArray[Float]:

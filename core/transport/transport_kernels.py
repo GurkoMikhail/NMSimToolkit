@@ -84,7 +84,7 @@ def make_transport_kernel(num_processes: int):
                     # Woodcock checking
                     cfunc_addr = physics_buffer.woodcock_function_pointers[current_vol]
                     if cfunc_addr != 0:
-                        real_material_id = call_cfunc_ptr(cfunc_addr, state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx])
+                        material_id = call_cfunc_ptr(cfunc_addr, state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx])
 
                         real_lacs = np.empty(num_processes, dtype=np.float64)
                         _get_macroscopic_cross_sections(state.energy[p_idx], real_material_id, physics_buffer.material_bank, real_lacs)

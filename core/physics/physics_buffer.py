@@ -7,13 +7,21 @@ from core.other.typing_definitions import Index, CFuncAddress
 
 from core.other.typing_definitions import Float, Charge
 
+class ElementCSR(NamedTuple):
+    """
+    CSR arrays for element sampling (Z and mass fractions).
+    """
+    element_offsets: NDArray[Index]
+    element_Z: NDArray[Charge]
+    element_fraction: NDArray[Float]
+
 class PhysicsBuffer(NamedTuple):
     """
     Data buffer compiled by PhysicsCompiler containing:
     - Dynamic MaterialBank
     - Majorant Material Map for Woodcock Tracking
     - Woodcock Function Pointers (@cfunc addresses)
-    - CSR arrays for element sampling (Z and mass fractions)
+    - ElementCSR containing Z and mass fractions arrays
     """
     material_bank: MaterialBank
     majorant_material_map: NDArray[Index]
