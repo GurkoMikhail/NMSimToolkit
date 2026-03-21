@@ -6,7 +6,6 @@ from numpy.typing import NDArray
 from core.other.typing_definitions import Index, Float, CFuncAddress
 from core.particles.particles_soa import ParticleState
 from core.geometry.navigation_state import NavigationState
-from core.geometry.geometry_kernels import _trace_single_ray
 from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.interaction_soa import RNGContext
 from core.physics.physics_kernels import _get_macroscopic_cross_sections
@@ -31,40 +30,25 @@ def call_cfunc_ptr(typingctx, ptr, x, y, z):
 
 
 
-@njit(cache=True)
-def transport_kernel(
-    state: ParticleState,
-    nav_state: NavigationState,
-    target_indices: NDArray[Index],
-    geom_buffer: NDArray,
-    physics_buffer: PhysicsBuffer,
-    rng_ctx: RNGContext,
-    process_ids: NDArray[Index],
-    mapped_process_ids: NDArray[Index],
-    out_lacs_buffer: NDArray[Float],
-    real_lacs_buffer: NDArray[Float]
-) -> None:
-    """
-    Numba kernel for particle transport and delta tracking.
-    mapped_process_ids maps the index in out_lacs to the actual process_id.
-    """
-    num_particles = target_indices.shape[0]
-    num_processes = mapped_process_ids.shape[0]
 
-    for j in prange(num_particles):
-        p_idx = target_indices[j]
+def make_transport_kernel(num_processes: int):
+    @njit(cache=True)
+    def transport_kernel(
+        state: ParticleState,
+        nav_state: NavigationState,
+        target_indices: NDArray[Index],
+        physics_buffer: PhysicsBuffer,
+        rng_ctx: RNGContext,
+        process_ids: NDArray[Index],
+        mapped_process_ids: NDArray[Index]
+    ) -> None:
+        num_particles = target_indices.shape[0]
 
-        # 1. Raycast if boundary_distance is 0
-        if nav_state.boundary_distance[p_idx] <= 0.0:
-            closest_dist, current_vol, next_vol = _trace_single_ray(
-                state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
-                state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx],
-                nav_state.current_volume[p_idx],
-                geom_buffer
-            )
-            nav_state.boundary_distance[p_idx] = closest_dist
-            nav_state.current_volume[p_idx] = current_vol
-            nav_state.next_volume[p_idx] = next_vol
+        for j in prange(num_particles):
+            p_idx = target_indices[j]
+
+
+
 
         # Delta Tracking Loop
         while True:
@@ -78,7 +62,7 @@ def transport_kernel(
             material_id = physics_buffer.majorant_material_map[current_vol]
 
             # Get majorant (or real for analog) LACs
-            out_lacs = out_lacs_buffer[p_idx]
+            out_lacs = np.zeros(num_processes, dtype=np.float64)
             _get_macroscopic_cross_sections(state.energy[p_idx], material_id, physics_buffer.material_bank, out_lacs)
 
             total_lac = 0.0
@@ -108,7 +92,7 @@ def transport_kernel(
 
 
 
-                    real_lacs = real_lacs_buffer[p_idx]
+                    real_lacs = np.zeros(num_processes, dtype=np.float64)
                     _get_macroscopic_cross_sections(state.energy[p_idx], real_material_id, physics_buffer.material_bank, real_lacs)
 
                     real_total_lac = 0.0
@@ -154,3 +138,5 @@ def transport_kernel(
                 nav_state.boundary_distance[p_idx] = 0.0
                 process_ids[p_idx] = -1
                 break
+
+    return transport_kernel

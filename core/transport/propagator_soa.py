@@ -1,3 +1,4 @@
+from core.geometry.geometry_kernels import cast_path_kernel
 import numpy as np
 from typing import List, Optional, Any
 from numpy.typing import NDArray
@@ -9,7 +10,7 @@ from core.particles.particles_soa import ParticleBank
 from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.physics.physics_buffer import PhysicsBuffer
 from core.other.typing_definitions import Index
-from core.transport.transport_kernels import transport_kernel
+from core.transport.transport_kernels import make_transport_kernel
 
 class ParticlePropagator:
     """ Python class for managing particle propagation per-step (DOD style). """
@@ -29,8 +30,7 @@ class ParticlePropagator:
 
 
         self._flags_buffer = np.empty(0, dtype=Index)
-        self._out_lacs_buffer = np.empty((0, len(self.processes)), dtype=np.float64)
-        self._real_lacs_buffer = np.empty((0, len(self.processes)), dtype=np.float64)
+        self._transport_kernel = make_transport_kernel(len(self.processes))
 
     def step(self, bank: ParticleBank, interaction_buffer: InteractionBuffer, geometry_buffer: NDArray, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
         """
@@ -43,21 +43,25 @@ class ParticlePropagator:
         # Ensure flags buffer capacity
         if self._flags_buffer.size < bank.capacity:
             self._flags_buffer = np.empty(bank.capacity, dtype=Index)
-            self._out_lacs_buffer = np.zeros((bank.capacity, len(self.processes)), dtype=np.float64)
-            self._real_lacs_buffer = np.zeros((bank.capacity, len(self.processes)), dtype=np.float64)
 
-        # 1. Delta Tracking & Raycast
-        transport_kernel(
+        # 1. Raycast for invalidated particles
+        cast_path_kernel(
+            bank.state.position,
+            bank.state.direction,
+            active_indices,
+            geometry_buffer,
+            bank.navigation_state
+        )
+
+        # 2. Delta Tracking
+        self._transport_kernel(
             bank.state,
             bank.navigation_state,
             active_indices,
-            geometry_buffer,
             physics_buffer,
             rng_ctx,
             self._flags_buffer,
-            self.process_ids,
-            self._out_lacs_buffer,
-            self._real_lacs_buffer
+            self.process_ids
         )
 
         # 2. Stream Compaction & Dispatch to Process kernels
@@ -67,4 +71,4 @@ class ParticlePropagator:
             target_indices = active_indices[mask]
 
             if target_indices.size > 0:
-                process.apply(bank, target_indices, interaction_buffer, physics_buffer, rng_ctx)
+                process.apply(bank, target_indices, interaction_buffer, rng_ctx)

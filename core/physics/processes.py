@@ -1,6 +1,6 @@
 
 from core.physics.processes_soa_kernels import make_photoelectric_kernel, make_compton_kernel, make_coherent_kernel
-from core.geometry.geometry_kernels import update_navigation_state_rotate_kernel
+from core.particles.particles_soa_kernels import update_navigation_state_rotate_kernel
 from abc import ABC
 from typing import Any, Optional, Union, cast
 
@@ -18,7 +18,6 @@ from core.other.typing_definitions import Float, ProcessID
 from core.particles.particles import ParticleArray
 from core.particles.particles_soa import ParticleBank
 from core.physics.interaction_soa import InteractionBuffer, RNGContext
-from core.physics.physics_buffer import PhysicsBuffer
 from core.other.typing_definitions import Index
 
 
@@ -64,7 +63,7 @@ class Process(ABC):
         freePath = self.rng.exponential(1/LAC)
         return freePath
 
-    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
+    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, rng_ctx: RNGContext) -> None:
         pass
 
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
@@ -93,10 +92,8 @@ class PhotoelectricEffect(Process):
         super().__init__(attenuation_database, rng)
         self._kernel = make_photoelectric_kernel(self.process_id)
 
-    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
+    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, rng_ctx: RNGContext) -> None:
         self._kernel(bank.state, target_indices, 0, interaction_buffer, rng_ctx)
-        # Photoelectric kills the particle
-        bank.state.energy[target_indices] = 0.0
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
         """ Применить фотоэффект """
         interaction_data = super().__call__(particle, material)
@@ -115,10 +112,9 @@ class CoherentScattering(Process):
         self.theta_generator = g4coherent.initialize(self.rng)
         self._kernel = make_coherent_kernel(self.process_id)
 
-    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
-        # Z is not strictly used by kernel if it accesses materials, but we'll pass 0 for now
+    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, rng_ctx: RNGContext) -> None:
         self._kernel(bank.state, target_indices, 0, interaction_buffer, rng_ctx)
-        from core.geometry.geometry_kernels import update_navigation_state_rotate_kernel
+        from core.particles.particles_soa_kernels import update_navigation_state_rotate_kernel
         update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 
 
@@ -153,9 +149,9 @@ class ComptonScattering(CoherentScattering):
         self.theta_generator = g4compton.initialize(self.rng)
         self._kernel = make_compton_kernel(self.process_id)
 
-    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
+    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, rng_ctx: RNGContext) -> None:
         self._kernel(bank.state, target_indices, 0, interaction_buffer, rng_ctx)
-        from core.geometry.geometry_kernels import update_navigation_state_rotate_kernel
+        from core.particles.particles_soa_kernels import update_navigation_state_rotate_kernel
         update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 
 
