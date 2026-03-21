@@ -28,6 +28,31 @@ def call_cfunc_ptr(typingctx, ptr, x, y, z):
     return sig, codegen
 
 
+@njit(cache=True, inline='always')
+def _get_random_double(rng_ctx: RNGContext) -> Float:
+    return rng_ctx.next_double(rng_ctx.state_addr)
+
+@njit(cache=True, inline='always')
+def _generate_free_path(majorant_lac: Float, rng_ctx: RNGContext) -> Float:
+    if majorant_lac <= 0.0:
+        return np.inf
+    return -np.log(_get_random_double(rng_ctx)) / majorant_lac
+
+@njit(cache=True, inline='always')
+def _sample_process_id(
+    rnd: Float,
+    out_lacs: NDArray[np.float64],
+    mapped_process_ids: NDArray[Index],
+    num_processes: int
+) -> Index:
+    p0 = 0.0
+    for i in range(num_processes):
+        p1 = p0 + out_lacs[i]
+        if p0 <= rnd < p1:
+            return mapped_process_ids[i]
+        p0 = p1
+    return -1
+
 def make_transport_kernel(num_processes: int):
     @njit
     def transport_kernel(
@@ -60,12 +85,7 @@ def make_transport_kernel(num_processes: int):
             for i in range(num_processes):
                 majorant_lac += out_lacs[i]
 
-            if majorant_lac <= 0.0:
-                free_path = np.inf
-            else:
-                free_path = -np.log(rng_ctx.next_double(rng_ctx.state_addr)) / majorant_lac
-
-            is_real_interaction = False
+            free_path = _generate_free_path(majorant_lac, rng_ctx)
 
             while free_path < nav_state.boundary_distance[p_idx]:
                 state.position.x[p_idx] += state.direction.x[p_idx] * free_path
@@ -75,39 +95,32 @@ def make_transport_kernel(num_processes: int):
 
                 if cfunc_addr != 0:
                     mat_id = call_cfunc_ptr(cfunc_addr, state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx])
-                    _get_macroscopic_cross_sections(state.energy[p_idx], mat_id, physics_buffer.material_bank, out_lacs)
+                    if mat_id != majorant_mat_id:
+                        _get_macroscopic_cross_sections(state.energy[p_idx], mat_id, physics_buffer.material_bank, out_lacs)
                 else:
                     mat_id = majorant_mat_id
 
-                rnd = rng_ctx.next_double(rng_ctx.state_addr) * majorant_lac
-                p0 = 0.0
+                rnd = _get_random_double(rng_ctx) * majorant_lac
 
-                for i in range(num_processes):
-                    p1 = p0 + out_lacs[i]
-                    if p0 <= rnd < p1:
-                        materials_buffer[p_idx] = mat_id
-                        process_ids[p_idx] = mapped_process_ids[i]
-                        is_real_interaction = True
-                        break
-                    p0 = p1
+                selected_process = _sample_process_id(rnd, out_lacs, mapped_process_ids, num_processes)
 
-                if is_real_interaction:
+                if selected_process != -1:
+                    materials_buffer[p_idx] = mat_id
+                    process_ids[p_idx] = selected_process
                     break
 
                 # Fictitious interaction (Delta scattering)
-                free_path = -np.log(rng_ctx.next_double(rng_ctx.state_addr)) / majorant_lac
+                free_path = _generate_free_path(majorant_lac, rng_ctx)
 
-            if is_real_interaction:
-                continue
+            else:
+                # Reached boundary
+                shift = nav_state.boundary_distance[p_idx] + 1e-6
+                state.position.x[p_idx] += state.direction.x[p_idx] * shift
+                state.position.y[p_idx] += state.direction.y[p_idx] * shift
+                state.position.z[p_idx] += state.direction.z[p_idx] * shift
 
-            # Reached boundary
-            shift = nav_state.boundary_distance[p_idx] + 1e-6
-            state.position.x[p_idx] += state.direction.x[p_idx] * shift
-            state.position.y[p_idx] += state.direction.y[p_idx] * shift
-            state.position.z[p_idx] += state.direction.z[p_idx] * shift
-
-            nav_state.current_volume[p_idx] = nav_state.next_volume[p_idx]
-            nav_state.boundary_distance[p_idx] = 0.0
-            process_ids[p_idx] = -1
+                nav_state.current_volume[p_idx] = nav_state.next_volume[p_idx]
+                nav_state.boundary_distance[p_idx] = 0.0
+                process_ids[p_idx] = -1
 
     return transport_kernel
