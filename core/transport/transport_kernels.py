@@ -40,13 +40,14 @@ def _generate_free_path(majorant_lac: Float, rng_ctx: RNGContext) -> Float:
 
 @njit(cache=True, inline='always')
 def _sample_process_id(
-    rnd: Float,
+    majorant_lac: Float,
     out_lacs: NDArray[np.float64],
     mapped_process_ids: NDArray[Index],
-    num_processes: int
+    rng_ctx: RNGContext
 ) -> Index:
+    rnd = _get_random_double(rng_ctx) * majorant_lac
     p0 = 0.0
-    for i in range(num_processes):
+    for i in range(len(out_lacs)):
         p1 = p0 + out_lacs[i]
         if p0 <= rnd < p1:
             return mapped_process_ids[i]
@@ -95,14 +96,11 @@ def make_transport_kernel(num_processes: int):
 
                 if cfunc_addr != 0:
                     mat_id = call_cfunc_ptr(cfunc_addr, state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx])
-                    if mat_id != majorant_mat_id:
-                        _get_macroscopic_cross_sections(state.energy[p_idx], mat_id, physics_buffer.material_bank, out_lacs)
+                    _get_macroscopic_cross_sections(state.energy[p_idx], mat_id, physics_buffer.material_bank, out_lacs)
                 else:
                     mat_id = majorant_mat_id
 
-                rnd = _get_random_double(rng_ctx) * majorant_lac
-
-                selected_process = _sample_process_id(rnd, out_lacs, mapped_process_ids, num_processes)
+                selected_process = _sample_process_id(majorant_lac, out_lacs, mapped_process_ids, rng_ctx)
 
                 if selected_process != -1:
                     materials_buffer[p_idx] = mat_id
