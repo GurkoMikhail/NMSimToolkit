@@ -99,18 +99,28 @@ class SimulationManagerSOA(Thread):
         self.send_data("FLUSH_SIGNAL")
         self.interaction_buffer.cursor[0] = 0
 
+
+    def _invalidate_by_energy(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
+        return self.bank.state.energy[active_indices] < self.min_energy
+
+    def _invalidate_by_volume(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
+        return self.bank.navigation_state.current_volume[active_indices] == -1
+
+    def _apply_invalidators(self, active_indices: NDArray[Index]) -> None:
+        dead_mask = np.zeros(len(active_indices), dtype=np.bool_)
+        for invalidator in self.invalidators:
+            dead_mask |= invalidator(active_indices)
+
+        if np.any(dead_mask):
+            dead_indices = active_indices[dead_mask]
+            self.bank.state.is_active[dead_indices] = False
+            self.bank.state.energy[dead_indices] = 0.0
+
     def next_step(self):
         active_indices = self.bank.active_indices
 
         if active_indices.size == 0:
-            # First injection if bank is entirely empty
-            if self.source.timer <= self.stop_time:
-                num_to_inject = self.bank.capacity
-                new_particles = self.source.generate_particles(num_to_inject)
-                self.bank.inject_particles(new_particles)
-                active_indices = self.bank.active_indices
-            else:
-                return
+            return
 
         # Pre-flight Check: Ensure buffer has enough space for a worst-case scenario
         if self.interaction_buffer.cursor[0] + len(active_indices) > self.interaction_buffer.capacity:
@@ -125,17 +135,8 @@ class SimulationManagerSOA(Thread):
             self.rng_ctx
         )
 
-        # Invalidation (Stream Compaction)
-        # 1. Below threshold energy
-        # 2. Left the simulation volume (nav_state.current_volume == -1)
-        dead_energy_mask = self.bank.state.energy[active_indices] < self.min_energy
-        dead_volume_mask = self.bank.navigation_state.current_volume[active_indices] == -1
-        dead_mask = dead_energy_mask | dead_volume_mask
-
-        if np.any(dead_mask):
-            dead_indices = active_indices[dead_mask]
-            self.bank.state.is_active[dead_indices] = False
-            self.bank.state.energy[dead_indices] = 0.0
+        # Invalidation
+        self._apply_invalidators(active_indices)
 
         # Continuous Replenishment
         if self.source.timer <= self.stop_time:
