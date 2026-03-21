@@ -71,4 +71,4 @@ class ParticlePropagator:
             target_indices = active_indices[mask]
 
             if target_indices.size > 0:
-                process.apply(bank, target_indices, interaction_buffer, rng_ctx)
+                process.apply(bank, target_indices, interaction_buffer, physics_buffer, rng_ctx)
