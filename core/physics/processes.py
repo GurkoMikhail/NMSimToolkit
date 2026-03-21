@@ -26,6 +26,7 @@ from core.other.typing_definitions import Index
 class Process(ABC):
     """ Класс процесса """
     process_id: ProcessID
+    invalidates_navigation: bool = False
     rng: np.random.Generator
     _energy_range: NDArray[Float]
     attenuation_function: AttenuationFunction
@@ -64,8 +65,10 @@ class Process(ABC):
         freePath = self.rng.exponential(1/LAC)
         return freePath
 
-    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
-        pass
+    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext, materials_buffer: NDArray[Index]) -> None:
+        self._kernel(bank.state, target_indices, interaction_buffer, physics_buffer, rng_ctx, materials_buffer)
+        if self.invalidates_navigation:
+            update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
         """ Применить процесс """
@@ -93,8 +96,7 @@ class PhotoelectricEffect(Process):
         super().__init__(attenuation_database, rng)
         self._kernel = make_photoelectric_kernel(self.process_id)
 
-    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
-        self._kernel(bank.state, target_indices, 0, interaction_buffer, rng_ctx)
+
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
         """ Применить фотоэффект """
         interaction_data = super().__call__(particle, material)
@@ -107,14 +109,14 @@ class PhotoelectricEffect(Process):
 class CoherentScattering(Process):
     """ Класс когерентного рассеяния """
     process_id = ProcessID(2)
+    invalidates_navigation = True
     
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         Process.__init__(self, attenuation_database, rng)                
         self.theta_generator = g4coherent.initialize(self.rng)
         self._kernel = make_coherent_kernel(self.process_id)
 
-    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
-        self._kernel(bank.state, target_indices, 0, interaction_buffer, rng_ctx)
+
         from core.particles.particles_soa_kernels import update_navigation_state_rotate_kernel
         update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 
@@ -144,14 +146,14 @@ class CoherentScattering(Process):
 class ComptonScattering(CoherentScattering):
     """ Класс эффекта Комптона """
     process_id = ProcessID(1)
+    invalidates_navigation = True
 
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         Process.__init__(self, attenuation_database, rng)
         self.theta_generator = g4compton.initialize(self.rng)
         self._kernel = make_compton_kernel(self.process_id)
 
-    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
-        self._kernel(bank.state, target_indices, 0, interaction_buffer, rng_ctx)
+
         from core.particles.particles_soa_kernels import update_navigation_state_rotate_kernel
         update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 

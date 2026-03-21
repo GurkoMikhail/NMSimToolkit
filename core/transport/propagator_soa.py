@@ -31,6 +31,7 @@ class ParticlePropagator:
 
         self._flags_buffer = np.empty(0, dtype=Index)
         self._transport_kernel = make_transport_kernel(len(self.processes))
+        self._materials_buffer = np.empty(0, dtype=Index)
 
     def step(self, bank: ParticleBank, interaction_buffer: InteractionBuffer, geometry_buffer: NDArray, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
         """
@@ -43,6 +44,7 @@ class ParticlePropagator:
         # Ensure flags buffer capacity
         if self._flags_buffer.size < bank.capacity:
             self._flags_buffer = np.empty(bank.capacity, dtype=Index)
+            self._materials_buffer = np.empty(bank.capacity, dtype=Index)
 
         # 1. Raycast for invalidated particles
         cast_path_kernel(
@@ -61,6 +63,7 @@ class ParticlePropagator:
             physics_buffer,
             rng_ctx,
             self._flags_buffer,
+            self._materials_buffer,
             self.process_ids
         )
 
@@ -71,4 +74,4 @@ class ParticlePropagator:
             target_indices = active_indices[mask]
 
             if target_indices.size > 0:
-                process.apply(bank, target_indices, interaction_buffer, physics_buffer, rng_ctx)
+                process.apply(bank, target_indices, interaction_buffer, physics_buffer, rng_ctx, self._materials_buffer)

@@ -1,3 +1,4 @@
+from core.physics.physics_buffer import PhysicsBuffer
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
@@ -48,6 +49,27 @@ def _push_to_interaction_buffer(
 
     inter_buffer.cursor[0] += 1
 
+@njit(cache=True, inline='always')
+def _sample_Z_scalar(mat_id: Index, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> Charge:
+    start = physics_buffer.element_offsets[mat_id]
+    end = physics_buffer.element_offsets[mat_id + 1]
+
+    if end - start == 1:
+        return physics_buffer.element_Z[start]
+
+    rnd = rng_ctx.next_double(rng_ctx.state_addr)
+    p0 = 0.0
+
+    for i in range(start, end):
+        p1 = p0 + physics_buffer.element_fraction[i]
+        if p0 <= rnd < p1:
+            return physics_buffer.element_Z[i]
+        p0 = p1
+
+    # Fallback
+    return physics_buffer.element_Z[end - 1]
+
+
 
 def make_photoelectric_kernel(process_id: ProcessID):
     """
@@ -79,9 +101,10 @@ def make_photoelectric_kernel(process_id: ProcessID):
     def _photoelectric_kernel(
         state: ParticleState,
         target_indices: NDArray[Index],
-        Z: Charge,
         inter_buffer: InteractionBuffer,
-        rng_ctx: RNGContext
+        physics_buffer: PhysicsBuffer,
+        rng_ctx: RNGContext,
+        materials_buffer: NDArray[Index]
     ) -> None:
         """
         Applies photoelectric effect IN-PLACE to target particles and logs to inter_buffer.
@@ -103,11 +126,15 @@ def make_compton_kernel(process_id: ProcessID):
     def _compton_device_func(
         p_idx: Index,
         state: ParticleState,
-        Z: Charge,
         inter_buffer: InteractionBuffer,
-        rng_ctx: RNGContext
+        physics_buffer: PhysicsBuffer,
+        rng_ctx: RNGContext,
+        materials_buffer: NDArray[Index]
     ) -> None:
         energy = state.energy[p_idx]
+
+        mat_id = materials_buffer[p_idx]
+        Z = _sample_Z_scalar(mat_id, physics_buffer, rng_ctx)
 
         theta = _generate_compton_theta_scalar(energy, Z, rng_ctx)
         phi = _generate_scattering_phi_scalar(rng_ctx)
@@ -140,9 +167,10 @@ def make_compton_kernel(process_id: ProcessID):
     def _compton_kernel(
         state: ParticleState,
         target_indices: NDArray[Index],
-        Z: Charge,
         inter_buffer: InteractionBuffer,
-        rng_ctx: RNGContext
+        physics_buffer: PhysicsBuffer,
+        rng_ctx: RNGContext,
+        materials_buffer: NDArray[Index]
     ) -> None:
         """
         Applies Compton scattering IN-PLACE to target particles and logs to inter_buffer.
@@ -150,7 +178,7 @@ def make_compton_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _compton_device_func(p_idx, state, Z, inter_buffer, rng_ctx)
+            _compton_device_func(p_idx, state, inter_buffer, physics_buffer, rng_ctx, materials_buffer)
 
     return _compton_kernel
 
@@ -165,11 +193,14 @@ def make_coherent_kernel(process_id: ProcessID):
     def _coherent_device_func(
         p_idx: Index,
         state: ParticleState,
-        Z: Charge,
         inter_buffer: InteractionBuffer,
-        rng_ctx: RNGContext
+        physics_buffer: PhysicsBuffer,
+        rng_ctx: RNGContext,
+        materials_buffer: NDArray[Index]
     ) -> None:
         energy = state.energy[p_idx]
+        mat_id = materials_buffer[p_idx]
+        Z = _sample_Z_scalar(mat_id, physics_buffer, rng_ctx)
 
         theta = _generate_coherent_theta_scalar(energy, Z, rng_ctx)
         phi = _generate_scattering_phi_scalar(rng_ctx)
@@ -200,9 +231,10 @@ def make_coherent_kernel(process_id: ProcessID):
     def _coherent_kernel(
         state: ParticleState,
         target_indices: NDArray[Index],
-        Z: Charge,
         inter_buffer: InteractionBuffer,
-        rng_ctx: RNGContext
+        physics_buffer: PhysicsBuffer,
+        rng_ctx: RNGContext,
+        materials_buffer: NDArray[Index]
     ) -> None:
         """
         Applies Coherent scattering IN-PLACE to target particles and logs to inter_buffer.
@@ -210,6 +242,6 @@ def make_coherent_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _coherent_device_func(p_idx, state, Z, inter_buffer, rng_ctx)
+            _coherent_device_func(p_idx, state, inter_buffer, physics_buffer, rng_ctx, materials_buffer)
 
     return _coherent_kernel
