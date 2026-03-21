@@ -21,10 +21,9 @@ def call_cfunc_ptr(typingctx, ptr, x, y, z):
     def codegen(context, builder, signature, args):
         ptr_val, x_val, y_val, z_val = args
         # Cast integer pointer to a function pointer
-        fnty = context.get_function_pointer_type(
-            types.int64(types.float64, types.float64, types.float64)
-        )
-        fnptr = builder.inttoptr(ptr_val, fnty)
+        from llvmlite import ir
+        fnty = ir.FunctionType(ir.IntType(64), [ir.DoubleType(), ir.DoubleType(), ir.DoubleType()])
+        fnptr = builder.inttoptr(ptr_val, fnty.as_pointer())
         return builder.call(fnptr, [x_val, y_val, z_val])
     return sig, codegen
 
@@ -48,6 +47,9 @@ def make_transport_kernel(num_processes: int):
         for j in range(num_particles):
             p_idx = target_indices[j]
 
+            out_lacs = np.empty(num_processes, dtype=np.float64)
+            real_lacs = np.empty(num_processes, dtype=np.float64)
+
             # Delta Tracking Loop
             while True:
                 current_vol = nav_state.current_volume[p_idx]
@@ -60,7 +62,6 @@ def make_transport_kernel(num_processes: int):
                 material_id = physics_buffer.majorant_material_map[current_vol]
 
                 # Get majorant (or real for analog) LACs
-                out_lacs = np.empty(num_processes, dtype=np.float64)
                 _get_macroscopic_cross_sections(state.energy[p_idx], material_id, physics_buffer.material_bank, out_lacs)
 
                 total_lac = 0.0
@@ -86,8 +87,7 @@ def make_transport_kernel(num_processes: int):
                     if cfunc_addr != 0:
                         material_id = call_cfunc_ptr(cfunc_addr, state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx])
 
-                        real_lacs = np.empty(num_processes, dtype=np.float64)
-                        _get_macroscopic_cross_sections(state.energy[p_idx], real_material_id, physics_buffer.material_bank, real_lacs)
+                        _get_macroscopic_cross_sections(state.energy[p_idx], material_id, physics_buffer.material_bank, real_lacs)
 
                         real_total_lac = 0.0
                         for i in range(num_processes):
@@ -122,7 +122,7 @@ def make_transport_kernel(num_processes: int):
 
                     # Transient Material Buffer
                     if cfunc_addr != 0:
-                        materials_buffer[p_idx] = real_material_id
+                        materials_buffer[p_idx] = material_id
                     else:
                         materials_buffer[p_idx] = material_id
 
