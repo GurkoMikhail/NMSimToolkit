@@ -1,5 +1,5 @@
 
-from numba import njit, prange
+from numba import njit
 import numpy as np
 from numpy.typing import NDArray
 
@@ -29,6 +29,60 @@ def call_cfunc_ptr(typingctx, ptr, x, y, z):
 
 
 
+
+@njit(inline='always')
+def _woodcock_acceptance_test(
+    p_idx: Index,
+    state: ParticleState,
+    current_vol: Index,
+    total_lac: Float,
+    physics_buffer: PhysicsBuffer,
+    rng_ctx: RNGContext,
+    num_processes: int,
+    out_lacs: NDArray[np.float64],
+    materials_buffer: NDArray[Index]
+) -> bool:
+    cfunc_addr = physics_buffer.woodcock_function_pointers[current_vol]
+    if cfunc_addr != 0:
+        material_id = call_cfunc_ptr(cfunc_addr, state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx])
+        real_lacs = np.empty(num_processes, dtype=np.float64)
+        _get_macroscopic_cross_sections(state.energy[p_idx], material_id, physics_buffer.material_bank, real_lacs)
+
+        real_total_lac = 0.0
+        for i in range(num_processes):
+            real_total_lac += real_lacs[i]
+
+        prob = real_total_lac / total_lac if total_lac > 0.0 else 0.0
+        if rng_ctx.next_double(rng_ctx.state_addr) > prob:
+            return False # Fictitious interaction
+
+        for i in range(num_processes):
+            out_lacs[i] = real_lacs[i]
+
+        materials_buffer[p_idx] = material_id
+        return True
+    else:
+        material_id = physics_buffer.majorant_material_map[current_vol]
+        materials_buffer[p_idx] = material_id
+        return True
+
+@njit(inline='always')
+def _sample_process(
+    total_lac: Float,
+    out_lacs: NDArray[np.float64],
+    mapped_process_ids: NDArray[Index],
+    rng_ctx: RNGContext,
+    num_processes: int
+) -> Index:
+    # Scale RNG to avoid division
+    rnd = rng_ctx.next_double(rng_ctx.state_addr) * total_lac
+    p0 = 0.0
+    for i in range(num_processes):
+        p1 = p0 + out_lacs[i]
+        if p0 <= rnd < p1:
+            return mapped_process_ids[i]
+        p0 = p1
+    return mapped_process_ids[num_processes - 1]
 
 def make_transport_kernel(num_processes: int):
     @njit
@@ -82,50 +136,21 @@ def make_transport_kernel(num_processes: int):
                     state.position.z[p_idx] += state.direction.z[p_idx] * free_path
                     nav_state.boundary_distance[p_idx] -= free_path
 
-                    # Woodcock checking
-                    cfunc_addr = physics_buffer.woodcock_function_pointers[current_vol]
-                    if cfunc_addr != 0:
-                        material_id = call_cfunc_ptr(cfunc_addr, state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx])
+                    # Woodcock acceptance test
+                    accepted = _woodcock_acceptance_test(
+                        p_idx, state, current_vol, total_lac, physics_buffer, rng_ctx, num_processes, out_lacs, materials_buffer
+                    )
 
-                        _get_macroscopic_cross_sections(state.energy[p_idx], material_id, physics_buffer.material_bank, real_lacs)
+                    if not accepted:
+                        continue
 
-                        real_total_lac = 0.0
-                        for i in range(num_processes):
-                            real_total_lac += real_lacs[i]
-
-                        prob = real_total_lac / total_lac if total_lac > 0.0 else 0.0
-                        if rng_ctx.next_double(rng_ctx.state_addr) > prob:
-                            # Fictitious interaction (Delta scattering)
-                            continue
-
-                        # Real interaction: update out_lacs to use for sampling
-                        for i in range(num_processes):
-                            out_lacs[i] = real_lacs[i]
-                        total_lac = real_total_lac
+                    # Update total_lac to real_total_lac for correct process sampling
+                    new_total_lac = 0.0
+                    for i in range(num_processes):
+                        new_total_lac += out_lacs[i]
 
                     # Sample process
-                    rnd = rng_ctx.next_double(rng_ctx.state_addr) * total_lac
-                    p0 = 0.0
-                    selected_proc_idx = -1
-                    for i in range(num_processes):
-                        p1 = p0 + out_lacs[i]
-                        if p0 <= rnd < p1:
-                            selected_proc_idx = i
-                            break
-                        p0 = p1
-
-                    # Fallback if precision issues
-                    if selected_proc_idx == -1:
-                        selected_proc_idx = num_processes - 1
-
-                    process_ids[p_idx] = mapped_process_ids[selected_proc_idx]
-
-                    # Transient Material Buffer
-                    if cfunc_addr != 0:
-                        materials_buffer[p_idx] = material_id
-                    else:
-                        materials_buffer[p_idx] = material_id
-
+                    process_ids[p_idx] = _sample_process(new_total_lac, out_lacs, mapped_process_ids, rng_ctx, num_processes)
                     break
 
                 else:
