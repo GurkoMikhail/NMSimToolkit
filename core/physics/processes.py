@@ -65,8 +65,8 @@ class Process(ABC):
         freePath = self.rng.exponential(1/LAC)
         return freePath
 
-    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext, materials_buffer: NDArray[Index]) -> None:
-        self._kernel(bank.state, target_indices, materials_buffer, interaction_buffer, physics_buffer, rng_ctx)
+    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext, material_ids: NDArray[Index]) -> None:
+        self._kernel(bank.state, target_indices, material_ids, interaction_buffer, physics_buffer, rng_ctx)
         if self.invalidates_navigation:
             update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 

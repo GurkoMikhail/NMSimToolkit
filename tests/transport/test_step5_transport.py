@@ -7,6 +7,7 @@ from typing import Any
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from core.transport.transport_kernels import make_transport_kernel
+from core.transport.transport_buffer import TransportBuffer
 from core.particles.particles_soa import ParticleBank
 from core.physics.physics_buffer import PhysicsBuffer, ElementCSR
 from core.physics.interaction_soa import RNGContext
@@ -61,10 +62,12 @@ class TestStep5TransportLogic(unittest.TestCase):
         rng = np.random.default_rng(42)
         rng_ctx = RNGContext.from_numpy_rng(rng)
 
-        transport_kernel = make_transport_kernel(3)
-        process_ids = np.empty(10, dtype=Index)
-        materials_buffer = np.empty(10, dtype=Index)
         mapped_process_ids = np.array([0, 1, 2], dtype=Index)
+        transport_kernel = make_transport_kernel(mapped_process_ids)
+        transport_buffer = TransportBuffer(
+            process_ids=np.empty(10, dtype=Index),
+            material_ids=np.empty(10, dtype=Index)
+        )
         active_indices = np.arange(10, dtype=Index)
 
         transport_kernel(
@@ -73,9 +76,7 @@ class TestStep5TransportLogic(unittest.TestCase):
             active_indices,
             physics_buffer,
             rng_ctx,
-            process_ids,
-            materials_buffer,
-            mapped_process_ids
+            transport_buffer
         )
 
         self.assertTrue(np.all(bank.state.position.x > 0.0))

@@ -11,6 +11,7 @@ from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.physics.physics_buffer import PhysicsBuffer
 from core.other.typing_definitions import Index
 from core.transport.transport_kernels import make_transport_kernel
+from core.transport.transport_buffer import TransportBuffer
 
 class ParticlePropagator:
     """ Python class for managing particle propagation per-step (DOD style). """
@@ -29,9 +30,11 @@ class ParticlePropagator:
         self.process_ids = np.array([p.process_id for p in self.processes], dtype=Index)
 
 
-        self._flags_buffer = np.empty(0, dtype=Index)
-        self._transport_kernel = make_transport_kernel(len(self.processes))
-        self._materials_buffer = np.empty(0, dtype=Index)
+        self._transport_kernel = make_transport_kernel(self.process_ids)
+        self.transport_buffer = TransportBuffer(
+            process_ids=np.empty(0, dtype=Index),
+            material_ids=np.empty(0, dtype=Index)
+        )
 
     def step(self, bank: ParticleBank, interaction_buffer: InteractionBuffer, geometry_buffer: NDArray, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
         """
@@ -42,9 +45,11 @@ class ParticlePropagator:
             return
 
         # Ensure flags buffer capacity
-        if self._flags_buffer.size < bank.capacity:
-            self._flags_buffer = np.empty(bank.capacity, dtype=Index)
-            self._materials_buffer = np.empty(bank.capacity, dtype=Index)
+        if self.transport_buffer.process_ids.size < bank.capacity:
+            self.transport_buffer = TransportBuffer(
+                process_ids=np.empty(bank.capacity, dtype=Index),
+                material_ids=np.empty(bank.capacity, dtype=Index)
+            )
 
         # 1. Raycast for invalidated particles
         cast_path_kernel(
@@ -62,16 +67,14 @@ class ParticlePropagator:
             active_indices,
             physics_buffer,
             rng_ctx,
-            self._flags_buffer,
-            self._materials_buffer,
-            self.process_ids
+            self.transport_buffer
         )
 
-        # 2. Stream Compaction & Dispatch to Process kernels
+        # 3. Stream Compaction & Dispatch to Process kernels
         for process in self.processes:
             # Find which active particles underwent this process
-            mask = self._flags_buffer[active_indices] == process.process_id
+            mask = self.transport_buffer.process_ids[active_indices] == process.process_id
             target_indices = active_indices[mask]
 
             if target_indices.size > 0:
-                process.apply(bank, target_indices, interaction_buffer, physics_buffer, rng_ctx, self._materials_buffer)
+                process.apply(bank, target_indices, interaction_buffer, physics_buffer, rng_ctx, self.transport_buffer.material_ids)

@@ -1,9 +1,11 @@
+from core.transport.transport_buffer import TransportBuffer
 
 from numba import njit
 import numpy as np
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Index, Float, CFuncAddress
+
 from core.particles.particles_soa import ParticleState
 from core.geometry.navigation_state import NavigationState
 from core.physics.physics_buffer import PhysicsBuffer
@@ -38,23 +40,20 @@ def _generate_free_path(majorant_lac: Float, rng_ctx: RNGContext) -> Float:
         return np.inf
     return -np.log(_get_random_double(rng_ctx)) / majorant_lac
 
-@njit(cache=True, inline='always')
-def _sample_process_id(
-    majorant_lac: Float,
-    out_lacs: NDArray[np.float64],
-    mapped_process_ids: NDArray[Index],
-    rng_ctx: RNGContext
-) -> Index:
-    rnd = _get_random_double(rng_ctx) * majorant_lac
-    p0 = 0.0
-    for i in range(len(out_lacs)):
-        p1 = p0 + out_lacs[i]
-        if p0 <= rnd < p1:
-            return mapped_process_ids[i]
-        p0 = p1
-    return -1
+def make_transport_kernel(mapped_process_ids: NDArray[Index]):
+    num_processes = mapped_process_ids.shape[0]
 
-def make_transport_kernel(num_processes: int):
+    @njit(inline='always')
+    def _sample_process_id(majorant_lac: Float, out_lacs: NDArray[np.float64], rng_ctx: RNGContext) -> Index:
+        rnd = _get_random_double(rng_ctx) * majorant_lac
+        p0 = 0.0
+        for i in range(num_processes):
+            p1 = p0 + out_lacs[i]
+            if p0 <= rnd < p1:
+                return mapped_process_ids[i]
+            p0 = p1
+        return -1
+
     @njit
     def transport_kernel(
         state: ParticleState,
@@ -62,11 +61,11 @@ def make_transport_kernel(num_processes: int):
         target_indices: NDArray[Index],
         physics_buffer: PhysicsBuffer,
         rng_ctx: RNGContext,
-        process_ids: NDArray[Index],
-        materials_buffer: NDArray[Index],
-        mapped_process_ids: NDArray[Index]
+        transport_buffer: TransportBuffer
     ) -> None:
         num_particles = target_indices.shape[0]
+        process_ids = transport_buffer.process_ids
+        material_ids = transport_buffer.material_ids
 
         for j in range(num_particles):
             p_idx = target_indices[j]
@@ -100,10 +99,10 @@ def make_transport_kernel(num_processes: int):
                 else:
                     mat_id = majorant_mat_id
 
-                selected_process = _sample_process_id(majorant_lac, out_lacs, mapped_process_ids, rng_ctx)
+                selected_process = _sample_process_id(majorant_lac, out_lacs, rng_ctx)
 
                 if selected_process != -1:
-                    materials_buffer[p_idx] = mat_id
+                    material_ids[p_idx] = mat_id
                     process_ids[p_idx] = selected_process
                     break
 

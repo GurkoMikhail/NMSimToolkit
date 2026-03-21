@@ -101,7 +101,7 @@ def make_photoelectric_kernel(process_id: ProcessID):
     def _photoelectric_kernel(
         state: ParticleState,
         target_indices: NDArray[Index],
-        materials_buffer: NDArray[Index],
+        material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
         rng_ctx: RNGContext
@@ -126,14 +126,14 @@ def make_compton_kernel(process_id: ProcessID):
     def _compton_device_func(
         p_idx: Index,
         state: ParticleState,
-        materials_buffer: NDArray[Index],
+        material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
         rng_ctx: RNGContext
     ) -> None:
         energy = state.energy[p_idx]
 
-        mat_id = materials_buffer[p_idx]
+        mat_id = material_ids[p_idx]
         Z = _sample_Z_scalar(mat_id, physics_buffer, rng_ctx)
 
         theta = _generate_compton_theta_scalar(energy, Z, rng_ctx)
@@ -167,7 +167,7 @@ def make_compton_kernel(process_id: ProcessID):
     def _compton_kernel(
         state: ParticleState,
         target_indices: NDArray[Index],
-        materials_buffer: NDArray[Index],
+        material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
         rng_ctx: RNGContext
@@ -178,7 +178,7 @@ def make_compton_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _compton_device_func(p_idx, state, materials_buffer, inter_buffer, physics_buffer, rng_ctx)
+            _compton_device_func(p_idx, state, material_ids, inter_buffer, physics_buffer, rng_ctx)
 
     return _compton_kernel
 
@@ -193,13 +193,13 @@ def make_coherent_kernel(process_id: ProcessID):
     def _coherent_device_func(
         p_idx: Index,
         state: ParticleState,
-        materials_buffer: NDArray[Index],
+        material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
         rng_ctx: RNGContext
     ) -> None:
         energy = state.energy[p_idx]
-        mat_id = materials_buffer[p_idx]
+        mat_id = material_ids[p_idx]
         Z = _sample_Z_scalar(mat_id, physics_buffer, rng_ctx)
 
         theta = _generate_coherent_theta_scalar(energy, Z, rng_ctx)
@@ -231,7 +231,7 @@ def make_coherent_kernel(process_id: ProcessID):
     def _coherent_kernel(
         state: ParticleState,
         target_indices: NDArray[Index],
-        materials_buffer: NDArray[Index],
+        material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
         rng_ctx: RNGContext
@@ -242,6 +242,6 @@ def make_coherent_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _coherent_device_func(p_idx, state, materials_buffer, inter_buffer, physics_buffer, rng_ctx)
+            _coherent_device_func(p_idx, state, material_ids, inter_buffer, physics_buffer, rng_ctx)
 
     return _coherent_kernel
