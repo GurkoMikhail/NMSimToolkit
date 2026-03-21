@@ -64,10 +64,7 @@ class TestStep5TransportLogic(unittest.TestCase):
 
         mapped_process_ids = np.array([0, 1, 2], dtype=Index)
         transport_kernel = make_transport_kernel(mapped_process_ids)
-        transport_buffer = TransportBuffer(
-            process_ids=np.empty(10, dtype=Index),
-            material_ids=np.empty(10, dtype=Index)
-        )
+        transport_buffer = TransportBuffer.allocate(10)
         active_indices = np.arange(10, dtype=Index)
 
         transport_kernel(
@@ -75,8 +72,8 @@ class TestStep5TransportLogic(unittest.TestCase):
             bank.navigation_state,
             active_indices,
             physics_buffer,
-            rng_ctx,
-            transport_buffer
+            transport_buffer,
+            rng_ctx
         )
 
         self.assertTrue(np.all(bank.state.position.x > 0.0))

@@ -60,8 +60,8 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
         nav_state: NavigationState,
         target_indices: NDArray[Index],
         physics_buffer: PhysicsBuffer,
-        rng_ctx: RNGContext,
-        transport_buffer: TransportBuffer
+        transport_buffer: TransportBuffer,
+        rng_ctx: RNGContext
     ) -> None:
         num_particles = target_indices.shape[0]
         process_ids = transport_buffer.process_ids

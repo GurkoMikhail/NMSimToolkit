@@ -31,10 +31,7 @@ class ParticlePropagator:
 
 
         self._transport_kernel = make_transport_kernel(self.process_ids)
-        self.transport_buffer = TransportBuffer(
-            process_ids=np.empty(0, dtype=Index),
-            material_ids=np.empty(0, dtype=Index)
-        )
+        self.transport_buffer = TransportBuffer.allocate(0)
 
     def step(self, bank: ParticleBank, interaction_buffer: InteractionBuffer, geometry_buffer: NDArray, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
         """
@@ -46,10 +43,7 @@ class ParticlePropagator:
 
         # Ensure flags buffer capacity
         if self.transport_buffer.process_ids.size < bank.capacity:
-            self.transport_buffer = TransportBuffer(
-                process_ids=np.empty(bank.capacity, dtype=Index),
-                material_ids=np.empty(bank.capacity, dtype=Index)
-            )
+            self.transport_buffer = TransportBuffer.allocate(bank.capacity)
 
         # 1. Raycast for invalidated particles
         cast_path_kernel(
@@ -66,8 +60,8 @@ class ParticlePropagator:
             bank.navigation_state,
             active_indices,
             physics_buffer,
-            rng_ctx,
-            self.transport_buffer
+            self.transport_buffer,
+            rng_ctx
         )
 
         # 3. Stream Compaction & Dispatch to Process kernels
@@ -77,4 +71,4 @@ class ParticlePropagator:
             target_indices = active_indices[mask]
 
             if target_indices.size > 0:
-                process.apply(bank, target_indices, interaction_buffer, physics_buffer, rng_ctx, self.transport_buffer.material_ids)
+                process.apply(bank, target_indices, interaction_buffer, physics_buffer, self.transport_buffer.material_ids, rng_ctx)
