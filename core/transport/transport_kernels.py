@@ -12,9 +12,7 @@ from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.interaction_soa import RNGContext
 from core.physics.physics_kernels import _get_macroscopic_cross_sections
 
-import ctypes
 from numba.extending import intrinsic
-from numba.core import cgutils
 from numba.core import types
 
 @intrinsic
@@ -44,7 +42,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
     num_processes = mapped_process_ids.shape[0]
 
     @njit(inline='always')
-    def _sample_process_id(majorant_lac: Float, process_lacs: NDArray[np.float64], rng_ctx: RNGContext) -> Index:
+    def _sample_process_id(majorant_lac: Float, process_lacs: NDArray[Float], rng_ctx: RNGContext) -> Index:
         rnd = _get_random_double(rng_ctx) * majorant_lac
         p0 = 0.0
         for i in range(num_processes):
@@ -68,7 +66,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
         material_ids = transport_buffer.material_ids
 
         # Pre-allocate temporary buffer outside the particle loop
-        process_lacs = np.empty(num_processes, dtype=np.float64)
+        process_lacs = np.empty(num_processes, dtype=Float)
 
         for j in range(num_particles):
             p_idx = target_indices[j]

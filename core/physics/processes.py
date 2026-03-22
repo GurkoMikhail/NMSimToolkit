@@ -3,7 +3,7 @@ from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.processes_soa_kernels import make_photoelectric_kernel, make_compton_kernel, make_coherent_kernel
 from core.particles.particles_soa_kernels import update_navigation_state_rotate_kernel
 from abc import ABC
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, Union
 
 import numpy as np
 import hepunits as units

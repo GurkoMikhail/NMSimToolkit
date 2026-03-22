@@ -2,7 +2,6 @@ from core.physics.physics_buffer import PhysicsBuffer
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
-import ctypes
 
 from core.other.typing_definitions import Index, Charge, ProcessID, ID, Energy, Float
 from core.particles.particles_soa import ParticleState
