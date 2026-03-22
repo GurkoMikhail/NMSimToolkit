@@ -1,5 +1,9 @@
+from core.physics.physics_buffer import PhysicsBuffer
+
+from core.physics.processes_soa_kernels import make_photoelectric_kernel, make_compton_kernel, make_coherent_kernel
+from core.particles.particles_soa_kernels import update_navigation_state_rotate_kernel
 from abc import ABC
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, Union
 
 import numpy as np
 import hepunits as units
@@ -11,12 +15,18 @@ import settings.database_setting as settings
 from core.data.interaction_data import InteractionArray
 from core.materials.attenuation_functions import AttenuationFunction
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Float
+from core.other.typing_definitions import Float, ProcessID
 from core.particles.particles import ParticleArray
+from core.particles.particles_soa import ParticleBank
+from core.physics.interaction_soa import InteractionBuffer, RNGContext
+from core.other.typing_definitions import Index
+
 
 
 class Process(ABC):
     """ Класс процесса """
+    process_id: ProcessID
+    invalidates_navigation: bool = False
     rng: np.random.Generator
     _energy_range: NDArray[Float]
     attenuation_function: AttenuationFunction
@@ -55,6 +65,11 @@ class Process(ABC):
         freePath = self.rng.exponential(1/LAC)
         return freePath
 
+    def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, material_ids: NDArray[Index], rng_ctx: RNGContext) -> None:
+        self._kernel(bank.state, target_indices, material_ids, interaction_buffer, physics_buffer, rng_ctx)
+        if self.invalidates_navigation:
+            update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
+
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
         """ Применить процесс """
         size = particle.size
@@ -75,6 +90,12 @@ class Process(ABC):
 
 class PhotoelectricEffect(Process):
     """ Класс фотоэффекта """
+    process_id = ProcessID(0)
+
+    def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
+        super().__init__(attenuation_database, rng)
+        self._kernel = make_photoelectric_kernel(self.process_id)
+
 
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
         """ Применить фотоэффект """
@@ -87,10 +108,15 @@ class PhotoelectricEffect(Process):
 
 class CoherentScattering(Process):
     """ Класс когерентного рассеяния """
+    process_id = ProcessID(2)
+    invalidates_navigation = True
     
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         Process.__init__(self, attenuation_database, rng)                
         self.theta_generator = g4coherent.initialize(self.rng)
+        self._kernel = make_coherent_kernel(self.process_id)
+
+
 
     def generate_theta(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]:
         """ Сгенерировать угол рассеяния - theta """
@@ -103,7 +129,6 @@ class CoherentScattering(Process):
         """ Сгенерировать угол рассеяния - phi """
         phi = np.pi * (self.rng.random(size) * 2 - 1)
         return phi
-
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
         """ Применить когерентное рассеяние """
         size = particle.size
@@ -117,10 +142,15 @@ class CoherentScattering(Process):
 
 class ComptonScattering(CoherentScattering):
     """ Класс эффекта Комптона """
+    process_id = ProcessID(1)
+    invalidates_navigation = True
 
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         Process.__init__(self, attenuation_database, rng)
         self.theta_generator = g4compton.initialize(self.rng)
+        self._kernel = make_compton_kernel(self.process_id)
+
+
 
     def culculate_energy_deposit(self, theta: NDArray[Float], particle_energy: NDArray[Float]) -> NDArray[Float]:
         """ Вычислить изменения энергий """
@@ -128,7 +158,6 @@ class ComptonScattering(CoherentScattering):
         k1_cos = k * (1 - np.cos(theta))
         energy_deposit = particle_energy * k1_cos / (1 + k1_cos)
         return energy_deposit
-
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
         """ Применить эффект Комптона """
         interaction_data = super().__call__(particle, material)
