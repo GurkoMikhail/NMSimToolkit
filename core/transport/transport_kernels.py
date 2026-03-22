@@ -44,11 +44,11 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
     num_processes = mapped_process_ids.shape[0]
 
     @njit(inline='always')
-    def _sample_process_id(majorant_lac: Float, out_lacs: NDArray[np.float64], rng_ctx: RNGContext) -> Index:
+    def _sample_process_id(majorant_lac: Float, process_lacs: NDArray[np.float64], rng_ctx: RNGContext) -> Index:
         rnd = _get_random_double(rng_ctx) * majorant_lac
         p0 = 0.0
-        for i in range(len(mapped_process_ids)):
-            p1 = p0 + out_lacs[i]
+        for i in range(num_processes):
+            p1 = p0 + process_lacs[i]
             if p0 <= rnd < p1:
                 return mapped_process_ids[i]
             p0 = p1
@@ -68,7 +68,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
         material_ids = transport_buffer.material_ids
 
         # Pre-allocate temporary buffer outside the particle loop
-        out_lacs = np.empty(len(mapped_process_ids), dtype=np.float64)
+        process_lacs = np.empty(num_processes, dtype=np.float64)
 
         for j in range(num_particles):
             p_idx = target_indices[j]
@@ -82,11 +82,11 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
             cfunc_addr = physics_buffer.woodcock_function_pointers[current_vol]
 
             # Get majorant cross-sections
-            _get_macroscopic_cross_sections(state.energy[p_idx], majorant_mat_id, physics_buffer.material_bank, out_lacs)
+            _get_macroscopic_cross_sections(state.energy[p_idx], majorant_mat_id, physics_buffer.material_bank, process_lacs)
 
             majorant_lac = 0.0
-            for i in range(len(mapped_process_ids)):
-                majorant_lac += out_lacs[i]
+            for i in range(num_processes):
+                majorant_lac += process_lacs[i]
 
             free_path = _generate_free_path(majorant_lac, rng_ctx)
 
@@ -98,11 +98,11 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
 
                 if cfunc_addr != 0:
                     mat_id = call_cfunc_ptr(cfunc_addr, state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx])
-                    _get_macroscopic_cross_sections(state.energy[p_idx], mat_id, physics_buffer.material_bank, out_lacs)
+                    _get_macroscopic_cross_sections(state.energy[p_idx], mat_id, physics_buffer.material_bank, process_lacs)
                 else:
                     mat_id = majorant_mat_id
 
-                selected_process = _sample_process_id(majorant_lac, out_lacs, rng_ctx)
+                selected_process = _sample_process_id(majorant_lac, process_lacs, rng_ctx)
 
                 if selected_process != -1:
                     material_ids[p_idx] = mat_id

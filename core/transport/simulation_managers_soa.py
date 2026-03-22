@@ -41,6 +41,7 @@ class SimulationManagerSOA(Thread):
     geometry_buffer: NDArray
     physics_buffer: PhysicsBuffer
     rng_ctx: RNGContext
+    invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
 
     def __init__(
         self,
