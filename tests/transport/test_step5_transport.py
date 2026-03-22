@@ -16,7 +16,7 @@ from core.other.typing_definitions import Index, Float, Charge, CFuncAddress
 
 class TestStep5TransportLogic(unittest.TestCase):
     def test_transport_kernel_execution(self):
-        bank = ParticleBank(10)
+        bank = ParticleBank.allocate(10)
         bank.state.is_active[:] = True
         bank.state.energy[:] = 1.0
         bank.state.position.x[:] = 0.0

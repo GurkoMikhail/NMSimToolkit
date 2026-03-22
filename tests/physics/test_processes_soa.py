@@ -24,7 +24,7 @@ from core.other.vectors_soa import _rotate_direction_scalar
 class TestProcessesSoA(unittest.TestCase):
     def setUp(self):
         self.capacity = 1000
-        self.bank = ParticleBank(self.capacity)
+        self.bank = ParticleBank.allocate(self.capacity)
 
         # Inject some particles
         species = np.full(self.capacity, 1, dtype=np.uint8)
@@ -41,9 +41,9 @@ class TestProcessesSoA(unittest.TestCase):
         dir_vec.z[:] = 1.0
 
         # Simulate active
-        self.bank._state.is_active[:] = True
-        self.bank._state.ID[:] = np.arange(self.capacity, dtype=np.uint64)
-        self.bank._state.energy[:] = energy
+        self.bank.state.is_active[:] = True
+        self.bank.state.ID[:] = np.arange(self.capacity, dtype=np.uint64)
+        self.bank.state.energy[:] = energy
         self.target_indices = np.arange(self.capacity, dtype=np.int64)
 
         self.buffer = InteractionBuffer.allocate(self.capacity)
@@ -54,9 +54,9 @@ class TestProcessesSoA(unittest.TestCase):
 
     def test_photoelectric_kernel(self):
         kernel = make_photoelectric_kernel(process_id=1)
-        Z = np.int8(13)
+        material_ids = np.full(self.capacity, 13)
 
-        kernel(self.bank.state, self.target_indices, Z, self.buffer, self.rng_ctx)
+        kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
 
         self.assertEqual(self.buffer.cursor[0], self.capacity)
 
@@ -70,15 +70,15 @@ class TestProcessesSoA(unittest.TestCase):
         np.testing.assert_array_equal(self.buffer.process_id, 1)
 
     def test_compton_kernel_equivalence_and_performance(self):
-        Z = np.int8(13)  # Aluminum
+        material_ids = np.full(self.capacity, 13)  # Aluminum
 
         # 1. Physics Equivalence on Large Sample
         old_rng = np.random.default_rng(1234)
         old_theta_generator = old_compton.initialize(old_rng)
 
         energy_arr = np.full(self.capacity, 0.5 * units.MeV)
-        Z_arr = np.full(self.capacity, 13)
-        theta_old = old_theta_generator(energy_arr, Z_arr)
+        material_ids = np.full(self.capacity, 13)
+        theta_old = old_theta_generator(energy_arr, material_ids)
 
         # New implementation with identically seeded RNG
         new_rng = np.random.default_rng(1234)
@@ -94,19 +94,19 @@ class TestProcessesSoA(unittest.TestCase):
                 out[i] = _generate_compton_theta_scalar(energies[i], z_val, ctx)
             return out
 
-        theta_new = _get_new_thetas(self.capacity, energy_arr, Z, new_rng_ctx)
+        theta_new = _get_new_thetas(self.capacity, energy_arr, material_ids, new_rng_ctx)
 
         np.testing.assert_allclose(theta_old, theta_new, rtol=1e-5)
 
     def test_coherent_kernel_equivalence(self):
-        Z = np.int8(82)  # Lead
+        material_ids = np.full(self.capacity, 82)  # Lead
 
         old_rng = np.random.default_rng(777)
         old_theta_generator = old_coherent.initialize(old_rng)
 
         energy_arr = np.full(self.capacity, 0.5 * units.MeV)
-        Z_arr = np.full(self.capacity, 82)
-        theta_old = old_theta_generator(energy_arr, Z_arr)
+        material_ids = np.full(self.capacity, 82)
+        theta_old = old_theta_generator(energy_arr, material_ids)
 
         new_rng = np.random.default_rng(777)
         new_rng_ctx = RNGContext.from_numpy_rng(new_rng)
@@ -120,20 +120,20 @@ class TestProcessesSoA(unittest.TestCase):
                 out[i] = _generate_coherent_theta_scalar(energies[i], z_val, ctx)
             return out
 
-        theta_new = _get_new_thetas_coh(self.capacity, energy_arr, Z, new_rng_ctx)
+        theta_new = _get_new_thetas_coh(self.capacity, energy_arr, material_ids, new_rng_ctx)
 
         np.testing.assert_allclose(theta_old, theta_new, rtol=1e-5)
 
     def test_compton_kernel(self):
         kernel = make_compton_kernel(process_id=2)
-        Z = np.int8(13)  # Aluminum
+        material_ids = np.full(self.capacity, 13)  # Aluminum
 
         # 1. Memory Consumption Benchmark
         # First run to compile the kernel and allocate Numba overhead
-        kernel(self.bank.state, self.target_indices, Z, self.buffer, self.rng_ctx)
+        kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
 
         tracemalloc.start()
-        kernel(self.bank.state, self.target_indices, Z, self.buffer, self.rng_ctx)
+        kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
@@ -145,21 +145,21 @@ class TestProcessesSoA(unittest.TestCase):
         # 2. Speed Benchmark
         start = time.perf_counter()
         for _ in range(100):
-            kernel(self.bank.state, self.target_indices, Z, self.buffer, self.rng_ctx)
+            kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
         end = time.perf_counter()
         print(f"[BENCHMARK] NEW SoA Compton Scattering 100x (N={self.capacity}): {end - start:.5f}s")
 
         old_rng = np.random.default_rng(1234)
         old_theta_generator = old_compton.initialize(old_rng)
         energy_arr = np.full(self.capacity, 0.5 * units.MeV)
-        Z_arr = np.full(self.capacity, 13)
+        material_ids = np.full(self.capacity, 13)
         # compile old
-        old_theta_generator(energy_arr, Z_arr)
+        old_theta_generator(energy_arr, material_ids)
 
         tracemalloc.start()
         start = time.perf_counter()
         for _ in range(100):
-            theta_old = old_theta_generator(energy_arr, Z_arr)
+            theta_old = old_theta_generator(energy_arr, material_ids)
             phi = np.pi * (old_rng.random(self.capacity) * 2 - 1)
         end = time.perf_counter()
         current, old_peak = tracemalloc.get_traced_memory()
@@ -177,13 +177,13 @@ class TestProcessesSoA(unittest.TestCase):
 
     def test_coherent_kernel(self):
         kernel = make_coherent_kernel(process_id=3)
-        Z = np.int8(82)  # Lead
+        material_ids = np.full(self.capacity, 82)  # Lead
 
         # Warmup
-        kernel(self.bank.state, self.target_indices, Z, self.buffer, self.rng_ctx)
+        kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
 
         tracemalloc.start()
-        kernel(self.bank.state, self.target_indices, Z, self.buffer, self.rng_ctx)
+        kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
@@ -192,21 +192,21 @@ class TestProcessesSoA(unittest.TestCase):
 
         start = time.perf_counter()
         for _ in range(100):
-            kernel(self.bank.state, self.target_indices, Z, self.buffer, self.rng_ctx)
+            kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
         end = time.perf_counter()
         print(f"[BENCHMARK] NEW SoA Coherent Scattering 100x (N={self.capacity}): {end - start:.5f}s")
 
         old_rng = np.random.default_rng(1234)
         old_theta_generator = old_coherent.initialize(old_rng)
         energy_arr = np.full(self.capacity, 0.5 * units.MeV)
-        Z_arr = np.full(self.capacity, 82)
+        material_ids = np.full(self.capacity, 82)
         # compile old
-        old_theta_generator(energy_arr, Z_arr)
+        old_theta_generator(energy_arr, material_ids)
 
         tracemalloc.start()
         start = time.perf_counter()
         for _ in range(100):
-            theta_old = old_theta_generator(energy_arr, Z_arr)
+            theta_old = old_theta_generator(energy_arr, material_ids)
             phi = np.pi * (old_rng.random(self.capacity) * 2 - 1)
         end = time.perf_counter()
         current, old_peak = tracemalloc.get_traced_memory()

@@ -176,15 +176,12 @@ class SourceSoA:
         species = np.zeros(n, dtype=Species)
         distance_traveled = np.zeros(n, dtype=Length)
 
-        # Инжектируем частицы, используя одни и те же векторы для стартовой и текущей позиции/направления
         target_indices = bank.inject_particles(
             species=species,
             position=position,
             direction=direction,
             energy=energy,
             emission_time=emission_time,
-            emission_position=position,
-            emission_direction=direction,
             distance_traveled=distance_traveled
         )
         return target_indices

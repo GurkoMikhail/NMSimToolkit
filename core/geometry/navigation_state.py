@@ -31,3 +31,16 @@ class NavigationState(NamedTuple):
     @property
     def capacity(self) -> int:
         return self.current_volume.shape[0]
+
+    @classmethod
+    def allocate(cls, capacity: int) -> 'NavigationState':
+        """
+        Allocates a NavigationState with pre-filled default values.
+        """
+        buffer = cls(
+            current_volume=np.full(capacity, -1, dtype=Index),
+            next_volume=np.full(capacity, -1, dtype=Index),
+            boundary_distance=np.full(capacity, np.inf, dtype=Float)
+        )
+        buffer.validate()
+        return buffer

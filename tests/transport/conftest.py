@@ -22,7 +22,7 @@ def mock_rng_ctx():
 @pytest.fixture
 def mock_particle_bank():
     capacity = 5
-    bank = ParticleBank(capacity)
+    bank = ParticleBank.allocate(capacity)
     bank.state.is_active[:] = True
     bank.state.energy[:] = 1.0 # 1 MeV
     bank.state.position.x[:] = 0.0

@@ -105,7 +105,7 @@ def main():
 
     # 4. Profile SoA
     print("4. Profiling SoA (Numba) raycasting...")
-    bank = ParticleBank(N)
+    bank = ParticleBank.allocate(N)
     species = np.ones(N, dtype=Species)
     pos_soa = Vector3DSoA(x=pos[:,0], y=pos[:,1], z=pos[:,2])
     dir_soa = Vector3DSoA(x=dir[:,0], y=dir[:,1], z=dir[:,2])

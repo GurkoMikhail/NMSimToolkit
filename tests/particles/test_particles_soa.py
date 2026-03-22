@@ -1,5 +1,9 @@
 import numpy as np
 import time
+import sys
+import os
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from core.particles.particles import ParticleArray
 from core.particles.particles_soa import ParticleBank
@@ -51,7 +55,7 @@ def test_particles_soa_equivalence():
     )
 
     # --- 2. Initialize SoA (New) ---
-    bank = ParticleBank(capacity=n)
+    bank = ParticleBank.allocate(n)
 
     from core.other.vectors_soa import Vector3DSoA
     # Convert vectors for SoA injection
@@ -142,7 +146,7 @@ def test_particles_soa_benchmark():
     # ---------------------------------------------
     # 2. Benchmark SoA
     # ---------------------------------------------
-    bank = ParticleBank(capacity=n)
+    bank = ParticleBank.allocate(n)
 
     from core.other.vectors_soa import Vector3DSoA
     pos_soa = Vector3DSoA(position[:, 0], position[:, 1], position[:, 2])
