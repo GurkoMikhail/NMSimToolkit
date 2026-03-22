@@ -72,6 +72,7 @@ class SimulationManagerSOA(Thread):
         self.bank = ParticleBank.allocate(self.particles_number)
         self.interaction_buffer = InteractionBuffer.allocate(buffer_capacity)
         self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
+        self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
 
         signal(SIGINT, self.sigint_handler)
 
