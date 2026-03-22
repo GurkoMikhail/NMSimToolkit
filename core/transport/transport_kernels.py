@@ -67,7 +67,9 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
         process_ids = transport_buffer.process_ids
         material_ids = transport_buffer.material_ids
 
-        out_lacs = np.zeros(len(mapped_process_ids), dtype=np.float64)
+        # Pre-allocate temporary buffer outside the particle loop
+        out_lacs = np.empty(len(mapped_process_ids), dtype=np.float64)
+
         for j in range(num_particles):
             p_idx = target_indices[j]
 
@@ -78,6 +80,8 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
 
             majorant_mat_id = physics_buffer.majorant_material_map[current_vol]
             cfunc_addr = physics_buffer.woodcock_function_pointers[current_vol]
+
+            # Get majorant cross-sections
             _get_macroscopic_cross_sections(state.energy[p_idx], majorant_mat_id, physics_buffer.material_bank, out_lacs)
 
             majorant_lac = 0.0
@@ -86,7 +90,6 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
 
             free_path = _generate_free_path(majorant_lac, rng_ctx)
 
-            out_lacs = np.empty(len(mapped_process_ids), dtype=np.float64)
             while free_path < nav_state.boundary_distance[p_idx]:
                 state.position.x[p_idx] += state.direction.x[p_idx] * free_path
                 state.position.y[p_idx] += state.direction.y[p_idx] * free_path
@@ -94,7 +97,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
                 nav_state.boundary_distance[p_idx] -= free_path
 
                 if cfunc_addr != 0:
-                    mat_id = majorant_mat_id
+                    mat_id = call_cfunc_ptr(cfunc_addr, state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx])
                     _get_macroscopic_cross_sections(state.energy[p_idx], mat_id, physics_buffer.material_bank, out_lacs)
                 else:
                     mat_id = majorant_mat_id
