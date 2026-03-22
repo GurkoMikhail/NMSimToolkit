@@ -5,9 +5,10 @@ from numpy.typing import NDArray
 from core.geometry.volumes import Volume
 from core.physics.processes import Process
 from core.materials.material_bank import MaterialBank, MaterialInfoDType, MaterialPointerDType
-from core.physics.physics_buffer import PhysicsBuffer
+from core.physics.physics_buffer import PhysicsBuffer, ElementCSR
 from core.materials.materials import Material
-from core.other.typing_definitions import Index, Float, CFuncAddress
+from core.materials.atomic_properties import atomic_number
+from core.other.typing_definitions import Index, Float, CFuncAddress, Charge
 
 class PhysicsCompiler:
     """
@@ -71,6 +72,34 @@ class PhysicsCompiler:
             physics_lac_table=physics_lac_table
         )
 
+    def _build_element_csr(self, materials_list: List[Material], capacity: int) -> ElementCSR:
+        counts = np.zeros(capacity, dtype=Index)
+        for material in materials_list:
+            counts[material.ID] = len(material.composition_dict)
+
+        element_offsets = np.zeros(capacity + 1, dtype=Index)
+        element_offsets[1:] = np.cumsum(counts)
+
+        total_elements = element_offsets[-1]
+        element_Z = np.zeros(total_elements, dtype=Charge)
+        element_fraction = np.zeros(total_elements, dtype=Float)
+
+        for material in materials_list:
+            start_idx = element_offsets[material.ID]
+            total_weight = sum(material.composition_dict.values())
+
+            current_idx = start_idx
+            for element, weight in material.composition_dict.items():
+                element_Z[current_idx] = atomic_number[element]
+                element_fraction[current_idx] = weight / total_weight
+                current_idx += 1
+
+        return ElementCSR(
+            element_offsets=element_offsets,
+            element_Z=element_Z,
+            element_fraction=element_fraction
+        )
+
     def compile_scene(self, root_volume: Volume, processes_list: List[Process]) -> PhysicsBuffer:
         """
         Builds the complete PhysicsBuffer from the root volume and active processes.
@@ -81,6 +110,10 @@ class PhysicsCompiler:
 
         # Build dynamic material bank (Zero Memory Waste)
         material_bank = self._build_material_bank(unique_materials, processes_list)
+
+        # Build element CSR for sampling elements
+        capacity_mat_info = len(material_bank.mat_info_buffer)
+        element_csr = self._build_element_csr(unique_materials, capacity_mat_info)
 
         # Get the flattened scene to ensure indexes match the GeometryBuffer
         flat_list = root_volume.flattened_scene.flat_list
@@ -100,5 +133,6 @@ class PhysicsCompiler:
         return PhysicsBuffer(
             material_bank=material_bank,
             majorant_material_map=majorant_material_map,
-            woodcock_function_pointers=woodcock_function_pointers
+            woodcock_function_pointers=woodcock_function_pointers,
+            element_csr=element_csr
         )
