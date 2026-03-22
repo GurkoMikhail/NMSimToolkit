@@ -16,6 +16,7 @@ from core.other.utils import datetime_from_seconds
 from core.particles.particles_soa import ParticleBank
 from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.physics.physics_buffer import PhysicsBuffer
+from core.source.sources_soa import SourceSoA
 from core.transport.propagator_soa import ParticlePropagator
 
 _logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ class SimulationManagerSOA(Thread):
     DOD-optimized Simulation Manager with Continuous Injection
     and in-place Stream Compaction handling.
     """
-    source: Any
+    source: SourceSoA
     simulation_volume: Volume
     propagator: ParticlePropagator
     stop_time: Float
@@ -45,7 +46,7 @@ class SimulationManagerSOA(Thread):
 
     def __init__(
         self,
-        source: Any,
+        source: SourceSoA,
         simulation_volume: Volume,
         geometry_buffer: NDArray,
         physics_buffer: PhysicsBuffer,
@@ -69,7 +70,7 @@ class SimulationManagerSOA(Thread):
         self.profile = False
         self.daemon = True
 
-        self.bank = ParticleBank.allocate(self.particles_number)
+        self.bank = ParticleBank(self.particles_number)
         self.interaction_buffer = InteractionBuffer.allocate(buffer_capacity)
         self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
@@ -147,8 +148,7 @@ class SimulationManagerSOA(Thread):
             num_to_inject = self.bank.capacity - num_active
 
             if num_to_inject > 0:
-                new_particles = self.source.generate_particles(num_to_inject)
-                self.bank.inject_particles(new_particles)
+                self.source.inject(self.bank, num_to_inject)
 
         self.step += 1
 
@@ -166,7 +166,7 @@ class SimulationManagerSOA(Thread):
         start_timepoint = datetime.now()
 
         # Initial injection
-        self.bank.inject_particles(self.source.generate_particles(self.particles_number))
+        self.source.inject(self.bank, self.particles_number)
 
         while np.count_nonzero(self.bank.state.is_active) > 0 or self.source.timer <= self.stop_time:
             self.next_step()
