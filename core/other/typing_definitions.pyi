@@ -20,3 +20,6 @@ CFuncAddress: TypeAlias = np.uint64
 
 NumbaFloat: Any
 NumbaIndex: Any
+
+ProcessID: TypeAlias = np.uint8
+Charge: TypeAlias = np.int8
