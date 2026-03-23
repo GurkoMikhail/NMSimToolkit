@@ -55,3 +55,16 @@ class Vector3DSoA(NamedTuple):
         length = self.x.shape[0]
         if self.y.shape[0] != length or self.z.shape[0] != length:
             raise ValueError("Vector3DSoA arrays must have the same length.")
+
+    @classmethod
+    def allocate(cls, capacity: int, dtype: np.dtype = Float) -> 'Vector3DSoA':
+        """
+        Allocates a Vector3DSoA with uninitialized memory for the given capacity.
+        """
+        buffer = cls(
+            x=np.empty(capacity, dtype=dtype),
+            y=np.empty(capacity, dtype=dtype),
+            z=np.empty(capacity, dtype=dtype)
+        )
+        buffer.validate()
+        return buffer
