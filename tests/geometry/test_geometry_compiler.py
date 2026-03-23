@@ -119,8 +119,6 @@ def main():
         direction=dir_soa,
         energy=energy,
         emission_time=time_arr,
-        emission_position=pos_soa,
-        emission_direction=dir_soa,
         distance_traveled=dist
     )
 
