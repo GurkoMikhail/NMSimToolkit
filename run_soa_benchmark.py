@@ -19,6 +19,7 @@ from core.source.sources_soa import PointSourceSoA
 from core.transport.simulation_managers_soa import SimulationManagerSOA
 from core.transport.propagator_soa import ParticlePropagator
 from core.physics.physics_compiler import PhysicsCompiler
+from core.data.data_manager_soa import DataManagerSoA
 
 def run_benchmark():
     # 1. Geometry Setup
@@ -94,24 +95,21 @@ def run_benchmark():
         buffer_capacity=100000
     )
 
-    # We need a consumer to swallow queue events so the manager does not block
-    import threading
-    def consume_queue(q):
-        while True:
-            data = q.get()
-            if data == 'stop':
-                break
-            # just swallow data
+    # 6. Initialize DataManagerSoA
+    print("Setting up data manager...")
+    data_manager = DataManagerSoA(
+        filename="benchmark_soa.hdf5",
+        sensitive_volumes=[detector],
+        queue=manager.queue
+    )
+    data_manager.start()
 
-    consumer_thread = threading.Thread(target=consume_queue, args=(manager.queue,))
-    consumer_thread.daemon = True
-    consumer_thread.start()
-
-    # 6. Run Simulation
+    # 7. Run Simulation
     print("Starting simulation...")
     start_time = time.perf_counter()
     manager.start()
     manager.join()
+    data_manager.join()
     end_time = time.perf_counter()
 
     print(f"Simulation finished in {end_time - start_time:.4f} seconds.")
