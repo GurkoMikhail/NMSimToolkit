@@ -97,9 +97,22 @@ class SimulationManagerSOA(Thread):
             return
 
         _logger.debug(f'{self.name} flushing {count} events')
-        # Emulate flushing for compatibility with downstream
-        # Ideally, we convert InteractionBuffer slice to InteractionArray here
-        self.send_data("FLUSH_SIGNAL")
+
+        chunk = {
+            'process_id': self.interaction_buffer.process_id[:count].copy(),
+            'particle_ID': self.interaction_buffer.particle_ID[:count].copy(),
+            'energy_deposit': self.interaction_buffer.energy_deposit[:count].copy(),
+            'scattering_theta': self.interaction_buffer.scattering_theta[:count].copy(),
+            'scattering_phi': self.interaction_buffer.scattering_phi[:count].copy(),
+            'pos_x': self.interaction_buffer.position.x[:count].copy(),
+            'pos_y': self.interaction_buffer.position.y[:count].copy(),
+            'pos_z': self.interaction_buffer.position.z[:count].copy(),
+            'dir_x': self.interaction_buffer.direction.x[:count].copy(),
+            'dir_y': self.interaction_buffer.direction.y[:count].copy(),
+            'dir_z': self.interaction_buffer.direction.z[:count].copy(),
+        }
+
+        self.send_data(chunk)
         self.interaction_buffer.cursor[0] = 0
 
 
