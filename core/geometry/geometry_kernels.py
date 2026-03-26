@@ -155,7 +155,7 @@ def _relocate_bottom_up(
         )
 
         # Check if inside
-        if tmin <= 0.0 and tmax > 0.0:
+        if tmin <= 0 and tmax > 0:
             return curr_vol_idx
 
         curr_vol_idx = geom['parent_index']
