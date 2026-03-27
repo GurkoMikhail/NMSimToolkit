@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 
 from core.other.typing_definitions import Index, Float, CFuncAddress
 
-from core.particles.particles_soa import ParticleState
+from core.particles.particles_soa import KinematicState
 from core.particles.particles_soa_kernels import _move_particle
 from core.geometry.navigation_state import NavigationState
 from core.physics.physics_buffer import PhysicsBuffer
@@ -55,7 +55,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
 
     @njit
     def transport_kernel(
-        state: ParticleState,
+        state: KinematicState,
         nav_state: NavigationState,
         target_indices: NDArray[Index],
         physics_buffer: PhysicsBuffer,
@@ -119,3 +119,34 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
                 process_ids[p_idx] = -1
 
     return transport_kernel
+
+from core.particles.initial_state import InitialState
+from core.physics.interaction_soa import InitialStateBuffer
+
+@njit(cache=True)
+def _push_to_initial_state_kernel(
+    initial_state: InitialState,
+    active_indices: NDArray[Index],
+    process_ids: NDArray[Index],
+    initial_state_buffer: InitialStateBuffer
+) -> None:
+    num_active = active_indices.shape[0]
+    for i in range(num_active):
+        p_idx = active_indices[i]
+        if process_ids[p_idx] != -1 and not initial_state.has_interacted[p_idx]:
+            initial_state.has_interacted[p_idx] = True
+
+            idx = initial_state_buffer.cursor[0] % initial_state_buffer.capacity
+            initial_state_buffer.particle_ID[idx] = initial_state.ID[p_idx]
+            initial_state_buffer.emission_time[idx] = initial_state.emission_time[p_idx]
+            initial_state_buffer.emission_energy[idx] = initial_state.emission_energy[p_idx]
+
+            initial_state_buffer.emission_position.x[idx] = initial_state.emission_position.x[p_idx]
+            initial_state_buffer.emission_position.y[idx] = initial_state.emission_position.y[p_idx]
+            initial_state_buffer.emission_position.z[idx] = initial_state.emission_position.z[p_idx]
+
+            initial_state_buffer.emission_direction.x[idx] = initial_state.emission_direction.x[p_idx]
+            initial_state_buffer.emission_direction.y[idx] = initial_state.emission_direction.y[p_idx]
+            initial_state_buffer.emission_direction.z[idx] = initial_state.emission_direction.z[p_idx]
+
+            initial_state_buffer.cursor[0] += 1

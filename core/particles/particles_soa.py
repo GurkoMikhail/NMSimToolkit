@@ -5,89 +5,16 @@ from typing import NamedTuple
 from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Index
 from core.other.vectors_soa import Vector3DSoA
 from core.geometry.navigation_state import NavigationState
-from core.particles.emission_state import EmissionState
-
-
-class ParticleState(NamedTuple):
-    """
-    Structure of Arrays (SoA) database for particle states.
-    Contains strictly 1D flat, C-contiguous NumPy arrays.
-    """
-    species: NDArray[Species]
-
-    # Position Vector
-    position: Vector3DSoA
-
-    # Direction Vector
-    direction: Vector3DSoA
-
-    energy: NDArray[Energy]
-
-    distance_traveled: NDArray[Length]
-    ID: NDArray[ID]
-
-    # Object Pool lifecycle flag
-    is_active: NDArray[np.bool_]
-
-    @property
-    def capacity(self) -> int:
-        return self.is_active.shape[0]
-
-    def validate(self) -> None:
-        """
-        Validates that all arrays within the ParticleState have
-        matching capacities and are 1-dimensional.
-        """
-        self.position.validate()
-        self.direction.validate()
-
-        arrays = [
-            self.species,
-            self.energy,
-            self.distance_traveled,
-            self.ID,
-            self.is_active
-        ]
-
-        # All base fields should be 1-dimensional
-        for arr in arrays:
-            if arr.ndim != 1:
-                raise ValueError("All arrays in ParticleState must be 1-dimensional.")
-
-        # Validate lengths match the pool capacity
-        for arr in arrays:
-            if arr.shape[0] != self.capacity:
-                raise ValueError("All arrays in ParticleState must have the same length (capacity).")
-
-        # Validate vector lengths against capacity
-        if self.position.x.shape[0] != self.capacity:
-            raise ValueError("Vector components in ParticleState must have the same length as the base arrays.")
-
-    @classmethod
-    def allocate(cls, capacity: int) -> 'ParticleState':
-        """
-        Allocates an empty ParticleState with the specified capacity.
-        """
-        buffer = cls(
-            species=np.empty(capacity, dtype=Species),
-            position=Vector3DSoA.allocate(capacity, dtype=Length),
-            direction=Vector3DSoA.allocate(capacity, dtype=Float),
-            energy=np.empty(capacity, dtype=Energy),
-            distance_traveled=np.empty(capacity, dtype=Length),
-            ID=np.empty(capacity, dtype=ID),
-            is_active=np.zeros(capacity, dtype=np.bool_)
-        )
-        buffer.validate()
-        return buffer
-
+from core.particles.kinematic_state import KinematicState
+from core.particles.initial_state import InitialState
 
 class ParticleBank(NamedTuple):
     """
     Facade for managing the object pool of SoA-based particles.
     Separates OOP lifecycle management from Numba computational kernels.
     """
-    state: ParticleState
-    emission_state: EmissionState
+    state: KinematicState
+    initial_state: InitialState
     navigation_state: NavigationState
     count_array: NDArray[Index]
     capacity: int
@@ -97,13 +24,13 @@ class ParticleBank(NamedTuple):
         """
         Allocates a complete ParticleBank Object Pool with its internal arrays.
         """
-        state = ParticleState.allocate(capacity)
-        emission_state = EmissionState.allocate(capacity)
+        state = KinematicState.allocate(capacity)
+        initial_state = InitialState.allocate(capacity)
         navigation_state = NavigationState.allocate(capacity)
         count_array = np.zeros(1, dtype=Index)
         return cls(
             state=state,
-            emission_state=emission_state,
+            initial_state=initial_state,
             navigation_state=navigation_state,
             count_array=count_array,
             capacity=capacity
@@ -148,11 +75,13 @@ class ParticleBank(NamedTuple):
 
         # Set base arrays in-place
         self.state.is_active[target_indices] = True
-        self.state.ID[target_indices] = new_ids
+        self.initial_state.ID[target_indices] = new_ids
+        self.initial_state.has_interacted[target_indices] = False
+
         self.state.species[target_indices] = species
         self.state.energy[target_indices] = energy
-        self.emission_state.emission_time[target_indices] = emission_time
-        self.emission_state.emission_energy[target_indices] = energy
+        self.initial_state.emission_time[target_indices] = emission_time
+        self.initial_state.emission_energy[target_indices] = energy
         self.state.distance_traveled[target_indices] = distance_traveled
 
         # Set Position
@@ -166,14 +95,14 @@ class ParticleBank(NamedTuple):
         self.state.direction.z[target_indices] = direction.z
 
         # Set Emission Position
-        self.emission_state.emission_position.x[target_indices] = position.x
-        self.emission_state.emission_position.y[target_indices] = position.y
-        self.emission_state.emission_position.z[target_indices] = position.z
+        self.initial_state.emission_position.x[target_indices] = position.x
+        self.initial_state.emission_position.y[target_indices] = position.y
+        self.initial_state.emission_position.z[target_indices] = position.z
 
         # Set Emission Direction
-        self.emission_state.emission_direction.x[target_indices] = direction.x
-        self.emission_state.emission_direction.y[target_indices] = direction.y
-        self.emission_state.emission_direction.z[target_indices] = direction.z
+        self.initial_state.emission_direction.x[target_indices] = direction.x
+        self.initial_state.emission_direction.y[target_indices] = direction.y
+        self.initial_state.emission_direction.z[target_indices] = direction.z
 
         # Invalidate navigation state for reused slots
         import core.particles.particles_soa_kernels as kernel
