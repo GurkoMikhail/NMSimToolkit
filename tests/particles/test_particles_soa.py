@@ -1,3 +1,4 @@
+import sys, os; sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 import numpy as np
 import time
 import sys
@@ -70,8 +71,6 @@ def test_particles_soa_equivalence():
         direction=dir_soa,
         energy=energy,
         emission_time=emission_time,
-        emission_position=em_pos_soa,
-        emission_direction=em_dir_soa,
         distance_traveled=distance_traveled
     )
 
@@ -160,8 +159,6 @@ def test_particles_soa_benchmark():
         direction=dir_soa,
         energy=energy,
         emission_time=emission_time,
-        emission_position=em_pos_soa,
-        emission_direction=em_dir_soa,
         distance_traveled=distance_traveled
     )
 
@@ -179,3 +176,7 @@ def test_particles_soa_benchmark():
 
     # Require at least some positive speedup (SoA should be better or equal at scale)
     assert soa_time < aos_time * 1.5, "SoA implementation is unexpectedly slow."
+
+if __name__ == '__main__':
+    test_particles_soa_equivalence()
+    test_particles_soa_benchmark()
