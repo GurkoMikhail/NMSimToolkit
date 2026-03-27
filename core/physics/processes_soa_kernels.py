@@ -8,7 +8,7 @@ from core.particles.particles_soa import ParticleState
 from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.physics.g4compton_soa import _generate_compton_theta_scalar, _calculate_compton_energy_deposit_scalar
 from core.physics.g4coherent_soa import _generate_coherent_theta_scalar
-from core.other.vectors_soa import _rotate_direction_scalar
+from core.particles.particles_soa_kernels import _rotate_particle
 
 
 @njit(cache=True, inline='always')
@@ -143,14 +143,7 @@ def make_compton_kernel(process_id: ProcessID):
         # Update particle state IN-PLACE
         state.energy[p_idx] -= energy_deposit
 
-        dir_x = state.direction.x[p_idx]
-        dir_y = state.direction.y[p_idx]
-        dir_z = state.direction.z[p_idx]
-
-        new_dir_x, new_dir_y, new_dir_z = _rotate_direction_scalar(dir_x, dir_y, dir_z, theta, phi)
-        state.direction.x[p_idx] = new_dir_x
-        state.direction.y[p_idx] = new_dir_y
-        state.direction.z[p_idx] = new_dir_z
+        _rotate_particle(state, p_idx, theta, phi)
 
         _push_to_interaction_buffer(
             inter_buffer,
@@ -207,14 +200,7 @@ def make_coherent_kernel(process_id: ProcessID):
         # Coherent scattering has 0 energy deposit
         energy_deposit = 0.0
 
-        dir_x = state.direction.x[p_idx]
-        dir_y = state.direction.y[p_idx]
-        dir_z = state.direction.z[p_idx]
-
-        new_dir_x, new_dir_y, new_dir_z = _rotate_direction_scalar(dir_x, dir_y, dir_z, theta, phi)
-        state.direction.x[p_idx] = new_dir_x
-        state.direction.y[p_idx] = new_dir_y
-        state.direction.z[p_idx] = new_dir_z
+        _rotate_particle(state, p_idx, theta, phi)
 
         _push_to_interaction_buffer(
             inter_buffer,
