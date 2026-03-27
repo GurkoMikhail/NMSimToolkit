@@ -33,6 +33,7 @@ class DataManagerSoA(threading.Thread):
         self.sensitive_volumes = sensitive_volumes
         self.queue = queue
         self.daemon = True
+        self.emission_cache = {}
 
     def run(self):
         """
@@ -48,18 +49,35 @@ class DataManagerSoA(threading.Thread):
             elif isinstance(chunk, dict):
                 self.append_data(chunk)
 
-    def append_data(self, chunk: Dict[str, np.ndarray]) -> None:
+    def append_data(self, chunk: Dict[str, Dict[str, np.ndarray]]) -> None:
         """
         Filters the chunk by sensitive volumes using check_inside,
         formats data to legacy representation, and writes to HDF5.
         """
-        pos_x = chunk['pos_x']
-        pos_y = chunk['pos_y']
-        pos_z = chunk['pos_z']
+        interactions = chunk['interactions']
+        initial_states = chunk['initial_states']
 
-        dir_x = chunk['dir_x']
-        dir_y = chunk['dir_y']
-        dir_z = chunk['dir_z']
+        # Update initial states cache
+        p_ids = initial_states['particle_ID']
+        for i, p_id in enumerate(p_ids):
+            self.emission_cache[p_id] = {
+                'time': initial_states['emission_time'][i],
+                'energy': initial_states['emission_energy'][i],
+                'pos_x': initial_states['pos_x'][i],
+                'pos_y': initial_states['pos_y'][i],
+                'pos_z': initial_states['pos_z'][i],
+                'dir_x': initial_states['dir_x'][i],
+                'dir_y': initial_states['dir_y'][i],
+                'dir_z': initial_states['dir_z'][i],
+            }
+
+        pos_x = interactions['pos_x']
+        pos_y = interactions['pos_y']
+        pos_z = interactions['pos_z']
+
+        dir_x = interactions['dir_x']
+        dir_y = interactions['dir_y']
+        dir_z = interactions['dir_z']
 
         global_position = np.column_stack((pos_x, pos_y, pos_z))
         global_direction = np.column_stack((dir_x, dir_y, dir_z))
@@ -97,11 +115,11 @@ class DataManagerSoA(threading.Thread):
                 local_direction = vol_global_dir.copy()
 
             # 4. Filter scalar arrays
-            process_id = chunk['process_id'][mask]
-            particle_ID = chunk['particle_ID'][mask]
-            energy_deposit = chunk['energy_deposit'][mask]
-            scattering_theta = chunk['scattering_theta'][mask]
-            scattering_phi = chunk['scattering_phi'][mask]
+            process_id = interactions['process_id'][mask]
+            particle_ID = interactions['particle_ID'][mask]
+            energy_deposit = interactions['energy_deposit'][mask]
+            scattering_theta = interactions['scattering_theta'][mask]
+            scattering_phi = interactions['scattering_phi'][mask]
 
             n_events = len(process_id)
             events_saved += n_events
@@ -114,11 +132,21 @@ class DataManagerSoA(threading.Thread):
             # Create dummy arrays for missing legacy fields
             particle_type = np.full(n_events, b'', dtype='S30')
             material_density = np.zeros(n_events, dtype=np.float64)
+            distance_traveled = np.zeros(n_events, dtype=np.float64)
+
+            # Map initial states from cache
             emission_time = np.zeros(n_events, dtype=np.float64)
             emission_energy = np.zeros(n_events, dtype=np.float64)
             emission_position = np.zeros((n_events, 3), dtype=np.float64)
             emission_direction = np.zeros((n_events, 3), dtype=np.float64)
-            distance_traveled = np.zeros(n_events, dtype=np.float64)
+
+            for i, p_id in enumerate(particle_ID):
+                initial = self.emission_cache.get(p_id)
+                if initial is not None:
+                    emission_time[i] = initial['time']
+                    emission_energy[i] = initial['energy']
+                    emission_position[i] = [initial['pos_x'], initial['pos_y'], initial['pos_z']]
+                    emission_direction[i] = [initial['dir_x'], initial['dir_y'], initial['dir_z']]
 
             scattering_angles = np.column_stack((scattering_theta, scattering_phi))
 
