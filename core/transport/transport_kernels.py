@@ -50,24 +50,23 @@ def _push_to_initial_state_kernel(
     for j in range(target_indices.shape[0]):
         p_idx = target_indices[j]
 
-        if not initial_state.has_interacted[p_idx]:
-            initial_state.has_interacted[p_idx] = True
+        initial_state.has_interacted[p_idx] = True
 
-            idx = initial_state_buffer.cursor[0] % initial_state_buffer.capacity
+        idx = initial_state_buffer.cursor[0] % initial_state_buffer.capacity
 
-            initial_state_buffer.particle_ID[idx] = initial_state.ID[p_idx]
-            initial_state_buffer.emission_time[idx] = initial_state.emission_time[p_idx]
-            initial_state_buffer.emission_energy[idx] = initial_state.emission_energy[p_idx]
+        initial_state_buffer.particle_ID[idx] = initial_state.ID[p_idx]
+        initial_state_buffer.emission_time[idx] = initial_state.emission_time[p_idx]
+        initial_state_buffer.emission_energy[idx] = initial_state.emission_energy[p_idx]
 
-            initial_state_buffer.emission_position.x[idx] = initial_state.emission_position.x[p_idx]
-            initial_state_buffer.emission_position.y[idx] = initial_state.emission_position.y[p_idx]
-            initial_state_buffer.emission_position.z[idx] = initial_state.emission_position.z[p_idx]
+        initial_state_buffer.emission_position.x[idx] = initial_state.emission_position.x[p_idx]
+        initial_state_buffer.emission_position.y[idx] = initial_state.emission_position.y[p_idx]
+        initial_state_buffer.emission_position.z[idx] = initial_state.emission_position.z[p_idx]
 
-            initial_state_buffer.emission_direction.x[idx] = initial_state.emission_direction.x[p_idx]
-            initial_state_buffer.emission_direction.y[idx] = initial_state.emission_direction.y[p_idx]
-            initial_state_buffer.emission_direction.z[idx] = initial_state.emission_direction.z[p_idx]
+        initial_state_buffer.emission_direction.x[idx] = initial_state.emission_direction.x[p_idx]
+        initial_state_buffer.emission_direction.y[idx] = initial_state.emission_direction.y[p_idx]
+        initial_state_buffer.emission_direction.z[idx] = initial_state.emission_direction.z[p_idx]
 
-            initial_state_buffer.cursor[0] += 1
+        initial_state_buffer.cursor[0] += 1
 
 def make_transport_kernel(mapped_process_ids: NDArray[Index]):
     num_processes = mapped_process_ids.shape[0]

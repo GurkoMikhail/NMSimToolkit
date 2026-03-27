@@ -85,7 +85,7 @@ def make_photoelectric_kernel(process_id: ProcessID):
         p_idx: Index,
         state: KinematicState,
         particle_ids: NDArray[ID],
-        current_volumes: NDArray[Index],
+        volume_ids: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer
     ) -> None:
@@ -96,7 +96,7 @@ def make_photoelectric_kernel(process_id: ProcessID):
         _push_to_interaction_buffer(
             inter_buffer,
             process_id_c,
-            current_volumes[p_idx],
+            volume_ids[p_idx],
             material_ids[p_idx],
             particle_ids[p_idx],
             energy_deposit,
@@ -110,7 +110,7 @@ def make_photoelectric_kernel(process_id: ProcessID):
         state: KinematicState,
         particle_ids: NDArray[ID],
         target_indices: NDArray[Index],
-        current_volumes: NDArray[Index],
+        volume_ids: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
@@ -121,7 +121,7 @@ def make_photoelectric_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _photoelectric_device_func(p_idx, state, particle_ids, current_volumes, material_ids, inter_buffer)
+            _photoelectric_device_func(p_idx, state, particle_ids, volume_ids, material_ids, inter_buffer)
 
     return _photoelectric_kernel
 
@@ -137,7 +137,7 @@ def make_compton_kernel(process_id: ProcessID):
         p_idx: Index,
         state: KinematicState,
         particle_ids: NDArray[ID],
-        current_volumes: NDArray[Index],
+        volume_ids: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
@@ -161,7 +161,7 @@ def make_compton_kernel(process_id: ProcessID):
         _push_to_interaction_buffer(
             inter_buffer,
             process_id_c,
-            current_volumes[p_idx],
+            volume_ids[p_idx],
             mat_id,
             particle_ids[p_idx],
             energy_deposit,
@@ -175,7 +175,7 @@ def make_compton_kernel(process_id: ProcessID):
         state: KinematicState,
         particle_ids: NDArray[ID],
         target_indices: NDArray[Index],
-        current_volumes: NDArray[Index],
+        volume_ids: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
@@ -187,7 +187,7 @@ def make_compton_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _compton_device_func(p_idx, state, particle_ids, current_volumes, material_ids, inter_buffer, physics_buffer, rng_ctx)
+            _compton_device_func(p_idx, state, particle_ids, volume_ids, material_ids, inter_buffer, physics_buffer, rng_ctx)
 
     return _compton_kernel
 
@@ -203,7 +203,7 @@ def make_coherent_kernel(process_id: ProcessID):
         p_idx: Index,
         state: KinematicState,
         particle_ids: NDArray[ID],
-        current_volumes: NDArray[Index],
+        volume_ids: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
@@ -224,7 +224,7 @@ def make_coherent_kernel(process_id: ProcessID):
         _push_to_interaction_buffer(
             inter_buffer,
             process_id_c,
-            current_volumes[p_idx],
+            volume_ids[p_idx],
             mat_id,
             particle_ids[p_idx],
             energy_deposit,
@@ -238,7 +238,7 @@ def make_coherent_kernel(process_id: ProcessID):
         state: KinematicState,
         particle_ids: NDArray[ID],
         target_indices: NDArray[Index],
-        current_volumes: NDArray[Index],
+        volume_ids: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
@@ -250,6 +250,6 @@ def make_coherent_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _coherent_device_func(p_idx, state, particle_ids, current_volumes, material_ids, inter_buffer, physics_buffer, rng_ctx)
+            _coherent_device_func(p_idx, state, particle_ids, volume_ids, material_ids, inter_buffer, physics_buffer, rng_ctx)
 
     return _coherent_kernel

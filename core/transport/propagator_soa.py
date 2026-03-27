@@ -68,6 +68,9 @@ class ParticlePropagator:
 
         # 3. Push to initial state buffer for interacting particles
         interacting_mask = self.transport_buffer.process_ids[active_indices] != -1
+        # Also filter out those that have already interacted
+        interacting_mask &= ~bank.initial_state.has_interacted[active_indices]
+
         interacting_indices = active_indices[interacting_mask]
 
         if interacting_indices.size > 0:
