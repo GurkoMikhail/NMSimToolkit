@@ -14,6 +14,7 @@ from core.transport.transport_kernels import make_transport_kernel, _push_to_ini
 from core.transport.transport_buffer import TransportBuffer
 
 class ParticlePropagator:
+    """ Python class for managing particle propagation per-step (DOD style). """
     processes: List[Process]
     process_ids: NDArray[Index]
     rng: np.random.Generator
@@ -31,16 +32,22 @@ class ParticlePropagator:
         self.initial_state_buffer = InitialStateBuffer.allocate(0)
 
     def step(self, bank: ParticleBank, interaction_buffer: InteractionBuffer, geometry_buffer: NDArray, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
+        """
+        Executes a single physics step for all active particles.
+        """
         active_indices = bank.active_indices
         if active_indices.size == 0:
             return
 
+        # Ensure flags buffer capacity
         if self.transport_buffer.process_ids.size < bank.capacity:
             self.transport_buffer = TransportBuffer.allocate(bank.capacity)
 
+        # Ensure initial state buffer capacity
         if self.initial_state_buffer.capacity < bank.capacity:
             self.initial_state_buffer = InitialStateBuffer.allocate(bank.capacity)
 
+        # 1. Raycast for invalidated particles
         cast_path_kernel(
             bank.state.position,
             bank.state.direction,
@@ -49,6 +56,7 @@ class ParticlePropagator:
             bank.navigation_state
         )
 
+        # 2. Delta Tracking
         self._transport_kernel(
             bank.state,
             bank.navigation_state,
@@ -58,6 +66,7 @@ class ParticlePropagator:
             rng_ctx
         )
 
+        # 3. First Touch Logging
         _push_to_initial_state_kernel(
             bank.initial_state,
             active_indices,
@@ -65,7 +74,9 @@ class ParticlePropagator:
             self.initial_state_buffer
         )
 
+        # 4. Stream Compaction & Dispatch to Process kernels
         for process in self.processes:
+            # Find which active particles underwent this process
             mask = self.transport_buffer.process_ids[active_indices] == process.process_id
             target_indices = active_indices[mask]
 

@@ -22,6 +22,7 @@ from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.other.typing_definitions import Index
 
 class Process(ABC):
+    """ Класс процесса """
     process_id: ProcessID
     invalidates_navigation: bool = False
     rng: np.random.Generator
@@ -30,6 +31,7 @@ class Process(ABC):
     attenuation_database: Optional[Any]
 
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
+        """ Конструктор процесса """
         self.attenuation_database = settings.attenuation_database if attenuation_database is None else attenuation_database
         self.rng = np.random.default_rng() if rng is None else rng
         self._energy_range = np.array([1*units.keV, 1*units.MeV])
@@ -67,6 +69,7 @@ class Process(ABC):
             update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
+        """ Применить процесс """
         size = particle.size
         interaction_data = InteractionArray(size)
         interaction_data.position = particle.position
@@ -83,6 +86,7 @@ class Process(ABC):
         return interaction_data
 
 class PhotoelectricEffect(Process):
+    """ Класс фотоэффекта """
     process_id = ProcessID(0)
 
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
@@ -90,6 +94,7 @@ class PhotoelectricEffect(Process):
         self._kernel = make_photoelectric_kernel(self.process_id)
 
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
+        """ Применить фотоэффект """
         interaction_data = super().__call__(particle, material)
         energy_deposit = particle.energy
         particle.energy -= energy_deposit
@@ -97,6 +102,7 @@ class PhotoelectricEffect(Process):
         return interaction_data
 
 class CoherentScattering(Process):
+    """ Класс когерентного рассеяния """
     process_id = ProcessID(2)
     invalidates_navigation = True
     
@@ -106,16 +112,19 @@ class CoherentScattering(Process):
         self._kernel = make_coherent_kernel(self.process_id)
 
     def generate_theta(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]:
+        """ Сгенерировать угол рассеяния - theta """
         energy = particle.energy
         Z = np.array(material.Zeff, dtype=int)
         theta = self.theta_generator(energy, Z)
         return theta
 
     def generate_phi(self, size: int) -> NDArray[Float]:
+        """ Сгенерировать угол рассеяния - phi """
         phi = np.pi * (self.rng.random(size) * 2 - 1)
         return phi
 
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
+        """ Применить когерентное рассеяние """
         size = particle.size
         theta = self.generate_theta(particle, material)
         phi = self.generate_phi(size)
@@ -125,6 +134,7 @@ class CoherentScattering(Process):
         return interaction_data
 
 class ComptonScattering(CoherentScattering):
+    """ Класс эффекта Комптона """
     process_id = ProcessID(1)
     invalidates_navigation = True
 
@@ -134,12 +144,14 @@ class ComptonScattering(CoherentScattering):
         self._kernel = make_compton_kernel(self.process_id)
 
     def culculate_energy_deposit(self, theta: NDArray[Float], particle_energy: NDArray[Float]) -> NDArray[Float]:
+        """ Вычислить изменения энергий """
         k = particle_energy / (0.510998910 * units.MeV)
         k1_cos = k * (1 - np.cos(theta))
         energy_deposit = particle_energy * k1_cos / (1 + k1_cos)
         return energy_deposit
 
     def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
+        """ Применить эффект Комптона """
         interaction_data = super().__call__(particle, material)
         theta = interaction_data.scattering_angles[:, 0]
         energy_deposit = self.culculate_energy_deposit(theta, particle.energy)
