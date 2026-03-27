@@ -18,7 +18,8 @@ from core.physics.processes_soa_kernels import make_photoelectric_kernel, make_c
 # Old implementations for testing math correctness
 import core.physics.g4compton as old_compton
 import core.physics.g4coherent as old_coherent
-from core.other.vectors_soa import _rotate_direction_scalar
+from core.particles.particles_soa_kernels import _rotate_particle
+from core.particles.particles_soa import ParticleState
 
 
 class TestProcessesSoA(unittest.TestCase):
@@ -222,12 +223,24 @@ class TestProcessesSoA(unittest.TestCase):
         dir_norms = np.sqrt(self.bank.state.direction.x**2 + self.bank.state.direction.y**2 + self.bank.state.direction.z**2)
         np.testing.assert_allclose(dir_norms, 1.0, rtol=1e-5)
 
-    def test_rotate_direction_scalar(self):
+    def test_rotate_particle(self):
         # Base vector
-        dir_x, dir_y, dir_z = 0.0, 0.0, 1.0
+        state = ParticleState.allocate(1)
+        state.direction.x[0] = 0.0
+        state.direction.y[0] = 0.0
+        state.direction.z[0] = 1.0
+
         theta, phi = np.pi/4, np.pi/2
 
-        nx, ny, nz = _rotate_direction_scalar(dir_x, dir_y, dir_z, theta, phi)
+        @njit
+        def _wrapper(state, p_idx, theta, phi):
+            _rotate_particle(state, p_idx, theta, phi)
+
+        _wrapper(state, 0, theta, phi)
+
+        nx = state.direction.x[0]
+        ny = state.direction.y[0]
+        nz = state.direction.z[0]
 
         norm = np.sqrt(nx**2 + ny**2 + nz**2)
         self.assertAlmostEqual(norm, 1.0, places=5)

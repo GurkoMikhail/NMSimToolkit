@@ -6,6 +6,46 @@ from core.other.typing_definitions import Float, Index
 from core.particles.particles_soa import ParticleState
 
 
+@njit(inline='always')
+def _move_particle(state: ParticleState, p_idx: Index, distance: Float) -> None:
+    """
+    In-place inline kernel that updates distance_traveled and position vectors
+    for a single particle.
+    """
+    state.distance_traveled[p_idx] += distance
+    state.position.x[p_idx] += state.direction.x[p_idx] * distance
+    state.position.y[p_idx] += state.direction.y[p_idx] * distance
+    state.position.z[p_idx] += state.direction.z[p_idx] * distance
+
+@njit(inline='always')
+def _rotate_particle(state: ParticleState, p_idx: Index, theta: Float, phi: Float) -> None:
+    """
+    In-place inline kernel that applies theta and phi rotations
+    to the direction vector of a single particle.
+    """
+    dir_x = state.direction.x[p_idx]
+    dir_y = state.direction.y[p_idx]
+    dir_z = state.direction.z[p_idx]
+
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+
+    delta1 = sin_theta * np.cos(phi)
+    delta2 = sin_theta * np.sin(phi)
+
+    delta = 1.0
+    if dir_z < 0.0:
+        delta = -1.0
+
+    b = dir_x * delta1 + dir_y * delta2
+    abs_z = np.abs(dir_z)
+    tmp = cos_theta - b / (1.0 + abs_z)
+
+    state.direction.x[p_idx] = dir_x * tmp + delta1
+    state.direction.y[p_idx] = dir_y * tmp + delta2
+    state.direction.z[p_idx] = dir_z * cos_theta - delta * b
+
+
 @njit(cache=True)
 def move_kernel(state: ParticleState, target_indices: NDArray[np.int64], distances: NDArray[Float]) -> None:
     """
@@ -14,15 +54,7 @@ def move_kernel(state: ParticleState, target_indices: NDArray[np.int64], distanc
     """
     for j in range(len(target_indices)):
         i = target_indices[j]
-        d = distances[j]
-
-        # Update distance traveled
-        state.distance_traveled[i] += d
-
-        # Update Position vectors in-place without vector allocation
-        state.position.x[i] += state.direction.x[i] * d
-        state.position.y[i] += state.direction.y[i] * d
-        state.position.z[i] += state.direction.z[i] * d
+        _move_particle(state, i, distances[j])
 
 
 from core.geometry.navigation_state import NavigationState
@@ -75,31 +107,4 @@ def rotate_kernel(
     """
     for j in range(len(target_indices)):
         i = target_indices[j]
-        theta = thetas[j]
-        phi = phis[j]
-
-        dir_x = state.direction.x[i]
-        dir_y = state.direction.y[i]
-        dir_z = state.direction.z[i]
-
-        cos_theta = np.cos(theta)
-        sin_theta = np.sin(theta)
-
-        delta1 = sin_theta * np.cos(phi)
-        delta2 = sin_theta * np.sin(phi)
-
-        # Delta calculation matching the old logic: np.ones_like(cos_theta) - 2 * (direction[..., 2] < 0)
-        delta = 1.0
-        if dir_z < 0.0:
-            delta = -1.0
-
-        b = dir_x * delta1 + dir_y * delta2
-
-        # In Python: tmp = cos_theta - b / (1 + np.abs(direction[..., 2]))
-        abs_z = np.abs(dir_z)
-        tmp = cos_theta - b / (1.0 + abs_z)
-
-        # Apply the new rotated components directly to the struct array fields
-        state.direction.x[i] = dir_x * tmp + delta1
-        state.direction.y[i] = dir_y * tmp + delta2
-        state.direction.z[i] = dir_z * cos_theta - delta * b
+        _rotate_particle(state, i, thetas[j], phis[j])

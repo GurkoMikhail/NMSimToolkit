@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 from core.other.typing_definitions import Index, Float, CFuncAddress
 
 from core.particles.particles_soa import ParticleState
+from core.particles.particles_soa_kernels import _move_particle
 from core.geometry.navigation_state import NavigationState
 from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.interaction_soa import RNGContext
@@ -89,9 +90,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
             free_path = _generate_free_path(majorant_lac, rng_ctx)
 
             while free_path < nav_state.boundary_distance[p_idx]:
-                state.position.x[p_idx] += state.direction.x[p_idx] * free_path
-                state.position.y[p_idx] += state.direction.y[p_idx] * free_path
-                state.position.z[p_idx] += state.direction.z[p_idx] * free_path
+                _move_particle(state, p_idx, free_path)
                 nav_state.boundary_distance[p_idx] -= free_path
 
                 if cfunc_addr != 0:
@@ -113,9 +112,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
             else:
                 # Reached boundary
                 shift = nav_state.boundary_distance[p_idx] + 1e-6
-                state.position.x[p_idx] += state.direction.x[p_idx] * shift
-                state.position.y[p_idx] += state.direction.y[p_idx] * shift
-                state.position.z[p_idx] += state.direction.z[p_idx] * shift
+                _move_particle(state, p_idx, shift)
 
                 nav_state.current_volume[p_idx] = nav_state.next_volume[p_idx]
                 nav_state.boundary_distance[p_idx] = 0.0
