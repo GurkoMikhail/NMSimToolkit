@@ -4,7 +4,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Index, Charge, ProcessID, ID, Energy, Float
-from core.particles.particles_soa import ParticleState
+from core.particles.kinematic_state import KinematicState
 from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.physics.g4compton_soa import _generate_compton_theta_scalar, _calculate_compton_energy_deposit_scalar
 from core.physics.g4coherent_soa import _generate_coherent_theta_scalar
@@ -21,6 +21,8 @@ def _generate_scattering_phi_scalar(rng_ctx: RNGContext) -> Float:
 def _push_to_interaction_buffer(
     inter_buffer: InteractionBuffer,
     process_id: ProcessID,
+    volume_id: Index,
+    material_id: Index,
     particle_ID: ID,
     energy_deposit: Energy,
     scattering_theta: Float,
@@ -32,6 +34,8 @@ def _push_to_interaction_buffer(
     idx = inter_buffer.cursor[0] % inter_buffer.capacity
 
     inter_buffer.process_id[idx] = process_id
+    inter_buffer.volume_id[idx] = volume_id
+    inter_buffer.material_id[idx] = material_id
     inter_buffer.particle_ID[idx] = particle_ID
     inter_buffer.energy_deposit[idx] = energy_deposit
 
@@ -79,7 +83,10 @@ def make_photoelectric_kernel(process_id: ProcessID):
     @njit(cache=True, inline='always')
     def _photoelectric_device_func(
         p_idx: Index,
-        state: ParticleState,
+        state: KinematicState,
+        particle_ids: NDArray[ID],
+        current_volumes: NDArray[Index],
+        material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer
     ) -> None:
         # The entire energy of the particle is deposited
@@ -89,7 +96,9 @@ def make_photoelectric_kernel(process_id: ProcessID):
         _push_to_interaction_buffer(
             inter_buffer,
             process_id_c,
-            state.ID[p_idx],
+            current_volumes[p_idx],
+            material_ids[p_idx],
+            particle_ids[p_idx],
             energy_deposit,
             0.0, 0.0,
             state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
@@ -98,8 +107,10 @@ def make_photoelectric_kernel(process_id: ProcessID):
 
     @njit(cache=True)
     def _photoelectric_kernel(
-        state: ParticleState,
+        state: KinematicState,
+        particle_ids: NDArray[ID],
         target_indices: NDArray[Index],
+        current_volumes: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
@@ -110,7 +121,7 @@ def make_photoelectric_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _photoelectric_device_func(p_idx, state, inter_buffer)
+            _photoelectric_device_func(p_idx, state, particle_ids, current_volumes, material_ids, inter_buffer)
 
     return _photoelectric_kernel
 
@@ -124,7 +135,9 @@ def make_compton_kernel(process_id: ProcessID):
     @njit(cache=True, inline='always')
     def _compton_device_func(
         p_idx: Index,
-        state: ParticleState,
+        state: KinematicState,
+        particle_ids: NDArray[ID],
+        current_volumes: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
@@ -148,7 +161,9 @@ def make_compton_kernel(process_id: ProcessID):
         _push_to_interaction_buffer(
             inter_buffer,
             process_id_c,
-            state.ID[p_idx],
+            current_volumes[p_idx],
+            mat_id,
+            particle_ids[p_idx],
             energy_deposit,
             theta, phi,
             state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
@@ -157,8 +172,10 @@ def make_compton_kernel(process_id: ProcessID):
 
     @njit(cache=True)
     def _compton_kernel(
-        state: ParticleState,
+        state: KinematicState,
+        particle_ids: NDArray[ID],
         target_indices: NDArray[Index],
+        current_volumes: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
@@ -170,7 +187,7 @@ def make_compton_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _compton_device_func(p_idx, state, material_ids, inter_buffer, physics_buffer, rng_ctx)
+            _compton_device_func(p_idx, state, particle_ids, current_volumes, material_ids, inter_buffer, physics_buffer, rng_ctx)
 
     return _compton_kernel
 
@@ -184,7 +201,9 @@ def make_coherent_kernel(process_id: ProcessID):
     @njit(cache=True, inline='always')
     def _coherent_device_func(
         p_idx: Index,
-        state: ParticleState,
+        state: KinematicState,
+        particle_ids: NDArray[ID],
+        current_volumes: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
@@ -205,7 +224,9 @@ def make_coherent_kernel(process_id: ProcessID):
         _push_to_interaction_buffer(
             inter_buffer,
             process_id_c,
-            state.ID[p_idx],
+            current_volumes[p_idx],
+            mat_id,
+            particle_ids[p_idx],
             energy_deposit,
             theta, phi,
             state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
@@ -214,8 +235,10 @@ def make_coherent_kernel(process_id: ProcessID):
 
     @njit(cache=True)
     def _coherent_kernel(
-        state: ParticleState,
+        state: KinematicState,
+        particle_ids: NDArray[ID],
         target_indices: NDArray[Index],
+        current_volumes: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         physics_buffer: PhysicsBuffer,
@@ -227,6 +250,6 @@ def make_coherent_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _coherent_device_func(p_idx, state, material_ids, inter_buffer, physics_buffer, rng_ctx)
+            _coherent_device_func(p_idx, state, particle_ids, current_volumes, material_ids, inter_buffer, physics_buffer, rng_ctx)
 
     return _coherent_kernel

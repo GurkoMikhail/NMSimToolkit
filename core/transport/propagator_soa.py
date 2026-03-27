@@ -7,10 +7,10 @@ import settings.processes_settings as processes_settings
 import settings.database_setting as database_setting
 from core.physics.processes import Process
 from core.particles.particles_soa import ParticleBank
-from core.physics.interaction_soa import InteractionBuffer, RNGContext
+from core.physics.interaction_soa import InteractionBuffer, RNGContext, InitialStateBuffer
 from core.physics.physics_buffer import PhysicsBuffer
 from core.other.typing_definitions import Index
-from core.transport.transport_kernels import make_transport_kernel
+from core.transport.transport_kernels import make_transport_kernel, _push_to_initial_state_kernel
 from core.transport.transport_buffer import TransportBuffer
 
 class ParticlePropagator:
@@ -32,6 +32,7 @@ class ParticlePropagator:
 
         self._transport_kernel = make_transport_kernel(self.process_ids)
         self.transport_buffer = TransportBuffer.allocate(0)
+        self.initial_state_buffer = InitialStateBuffer.allocate(0)
 
     def step(self, bank: ParticleBank, interaction_buffer: InteractionBuffer, geometry_buffer: NDArray, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
         """
@@ -44,6 +45,7 @@ class ParticlePropagator:
         # Ensure flags buffer capacity
         if self.transport_buffer.process_ids.size < bank.capacity:
             self.transport_buffer = TransportBuffer.allocate(bank.capacity)
+            self.initial_state_buffer = InitialStateBuffer.allocate(bank.capacity)
 
         # 1. Raycast for invalidated particles
         cast_path_kernel(
@@ -64,7 +66,14 @@ class ParticlePropagator:
             rng_ctx
         )
 
-        # 3. Stream Compaction & Dispatch to Process kernels
+        # 3. Push to initial state buffer for interacting particles
+        interacting_mask = self.transport_buffer.process_ids[active_indices] != -1
+        interacting_indices = active_indices[interacting_mask]
+
+        if interacting_indices.size > 0:
+            _push_to_initial_state_kernel(bank.initial_state, interacting_indices, self.initial_state_buffer)
+
+        # 4. Stream Compaction & Dispatch to Process kernels
         for process in self.processes:
             # Find which active particles underwent this process
             mask = self.transport_buffer.process_ids[active_indices] == process.process_id

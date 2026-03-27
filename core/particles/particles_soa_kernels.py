@@ -3,11 +3,11 @@ from numba import njit
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, Index
-from core.particles.particles_soa import ParticleState
+from core.particles.kinematic_state import KinematicState
 
 
 @njit(inline='always')
-def _move_particle(state: ParticleState, p_idx: Index, distance: Float) -> None:
+def _move_particle(state: KinematicState, p_idx: Index, distance: Float) -> None:
     """
     In-place inline kernel that updates distance_traveled and position vectors
     for a single particle.
@@ -18,7 +18,7 @@ def _move_particle(state: ParticleState, p_idx: Index, distance: Float) -> None:
     state.position.z[p_idx] += state.direction.z[p_idx] * distance
 
 @njit(inline='always')
-def _rotate_particle(state: ParticleState, p_idx: Index, theta: Float, phi: Float) -> None:
+def _rotate_particle(state: KinematicState, p_idx: Index, theta: Float, phi: Float) -> None:
     """
     In-place inline kernel that applies theta and phi rotations
     to the direction vector of a single particle.
@@ -47,7 +47,7 @@ def _rotate_particle(state: ParticleState, p_idx: Index, theta: Float, phi: Floa
 
 
 @njit(cache=True)
-def move_kernel(state: ParticleState, target_indices: NDArray[np.int64], distances: NDArray[Float]) -> None:
+def move_kernel(state: KinematicState, target_indices: NDArray[np.int64], distances: NDArray[Float]) -> None:
     """
     In-place kernel that updates distance_traveled and position vectors
     for specific target active particles.
@@ -96,7 +96,7 @@ def update_navigation_state_move_kernel(
 
 @njit(cache=True)
 def rotate_kernel(
-    state: ParticleState,
+    state: KinematicState,
     target_indices: NDArray[np.int64],
     thetas: NDArray[Float],
     phis: NDArray[Float]

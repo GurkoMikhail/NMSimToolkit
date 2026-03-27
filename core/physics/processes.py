@@ -66,7 +66,7 @@ class Process(ABC):
         return freePath
 
     def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, material_ids: NDArray[Index], rng_ctx: RNGContext) -> None:
-        self._kernel(bank.state, target_indices, material_ids, interaction_buffer, physics_buffer, rng_ctx)
+        self._kernel(bank.state, bank.initial_state.ID, target_indices, bank.navigation_state.current_volume, material_ids, interaction_buffer, physics_buffer, rng_ctx)
         if self.invalidates_navigation:
             update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 
