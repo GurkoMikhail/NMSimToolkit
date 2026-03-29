@@ -11,6 +11,7 @@ from core.particles.initial_state import InitialState
 from core.physics.interaction_soa import InitialStateBuffer
 from core.particles.particles_soa_kernels import _move_particle
 from core.geometry.navigation_state import NavigationState
+from core.geometry.geometry_kernels import _transform_to_local
 from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.interaction_soa import RNGContext
 from core.physics.physics_kernels import _get_macroscopic_cross_sections
@@ -89,6 +90,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
         target_indices: NDArray[Index],
         physics_buffer: PhysicsBuffer,
         transport_buffer: TransportBuffer,
+        geom_buffer: NDArray,
         rng_ctx: RNGContext
     ) -> None:
         num_particles = target_indices.shape[0]
@@ -123,7 +125,13 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
                 nav_state.boundary_distance[p_idx] -= free_path
 
                 if cfunc_addr != 0:
-                    mat_id = call_cfunc_ptr(cfunc_addr, state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx])
+                    vol_transform = geom_buffer[current_vol]['transform']
+                    loc_x, loc_y, loc_z, _, _, _ = _transform_to_local(
+                        state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
+                        0.0, 0.0, 0.0,
+                        vol_transform
+                    )
+                    mat_id = call_cfunc_ptr(cfunc_addr, loc_x, loc_y, loc_z)
                     _get_macroscopic_cross_sections(state.energy[p_idx], mat_id, physics_buffer.material_bank, process_lacs)
                 else:
                     mat_id = majorant_mat_id
