@@ -61,6 +61,7 @@ class ParticlePropagator:
             active_indices,
             physics_buffer,
             self.transport_buffer,
+            geometry_buffer,
             rng_ctx
         )
 
