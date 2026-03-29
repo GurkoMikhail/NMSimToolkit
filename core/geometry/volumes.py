@@ -223,7 +223,7 @@ class TransformableVolume(Volume):
     @property
     def total_transformation_matrix(self) -> NDArray[Float]:
         if isinstance(self.parent, TransformableVolume):
-            return self.parent.total_transformation_matrix@self.transformation_matrix
+            return self.transformation_matrix@self.parent.total_transformation_matrix
         return self.transformation_matrix
 
     def convert_to_local_position(self, position: Vector3D, as_parent: bool = True) -> Vector3D:
