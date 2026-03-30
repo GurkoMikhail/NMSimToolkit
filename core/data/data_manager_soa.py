@@ -26,14 +26,14 @@ class DataManagerSoA(threading.Thread):
         3: b'PairProduction'
     }
 
-    def __init__(self, filename: str, sensitive_volumes: List[Volume], queue: Any = None) -> None:
+    def __init__(self, filename: str, sensitive_volumes: List[Volume], queue: Any = None, lock: Optional[Any] = None) -> None:
         super().__init__()
         self.filename = Path(f'output data/{filename}')
         self.filename.parent.mkdir(parents=True, exist_ok=True)
         self.sensitive_volumes = sensitive_volumes
         self.queue = queue
+        self.lock = lock
         self.daemon = True
-        self.emission_cache = {}
 
     def run(self):
         """
@@ -49,28 +49,78 @@ class DataManagerSoA(threading.Thread):
             elif isinstance(chunk, dict):
                 self.append_data(chunk)
 
-    def append_data(self, chunk: Dict[str, Dict[str, np.ndarray]]) -> None:
+    def _write_with_retry(self, write_func: Any) -> None:
         """
-        Filters the chunk by sensitive volumes using check_inside,
-        formats data to legacy representation, and writes to HDF5.
+        Executes an HDF5 write function with retry logic and optional mutex locking.
         """
-        interactions = chunk['interactions']
-        initial_states = chunk['initial_states']
+        import time
+        retries = 100
 
-        # Update initial states cache
-        p_ids = initial_states['particle_ID']
-        for i, p_id in enumerate(p_ids):
-            self.emission_cache[p_id] = {
-                'time': initial_states['emission_time'][i],
-                'energy': initial_states['emission_energy'][i],
-                'pos_x': initial_states['pos_x'][i],
-                'pos_y': initial_states['pos_y'][i],
-                'pos_z': initial_states['pos_z'][i],
-                'dir_x': initial_states['dir_x'][i],
-                'dir_y': initial_states['dir_y'][i],
-                'dir_z': initial_states['dir_z'][i],
-            }
+        def do_write():
+            for i in range(retries):
+                try:
+                    with h5py.File(self.filename, 'a') as f:
+                        write_func(f)
+                    return
+                except (OSError, BlockingIOError):
+                    if i == retries - 1:
+                        raise
+                    time.sleep(0.1)
 
+        if self.lock is not None:
+            with self.lock:
+                do_write()
+        else:
+            do_write()
+
+    def append_data(self, chunk: Dict[str, Any]) -> None:
+        """
+        Routes the chunk to the appropriate write method based on type.
+        """
+        chunk_type = chunk.get('type')
+        if chunk_type == 'initial_states':
+            self._write_initial_states(chunk['data'])
+        elif chunk_type == 'interactions':
+            self._write_interactions(chunk['data'])
+
+    def _write_initial_states(self, initial_states: Dict[str, np.ndarray]) -> None:
+        """
+        Writes initial states to the /initial_states group in HDF5.
+        """
+        def write_func(f: h5py.File):
+            if 'initial_states' not in f:
+                group = f.create_group('initial_states')
+            else:
+                group = f['initial_states']
+
+            for field, array in initial_states.items():
+                if field not in group:
+                    maxshape = list(array.shape)
+                    maxshape[0] = None
+                    group.create_dataset(
+                        field,
+                        data=array,
+                        compression="gzip",
+                        chunks=True,
+                        maxshape=tuple(maxshape)
+                    )
+                else:
+                    current_size = group[field].shape[0]
+                    new_size = current_size + array.shape[0]
+                    group[field].resize(new_size, axis=0)
+                    group[field][current_size:] = array
+
+        try:
+            self._write_with_retry(write_func)
+            _logger.info(f"{len(initial_states['particle_ID'])} initial states saved to {self.filename}")
+        except OSError:
+            _logger.exception(f'Failed to save initial states to {self.filename}!')
+
+    def _write_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
+        """
+        Filters the interactions by sensitive volumes using check_inside,
+        formats data to legacy representation (without emission fields), and writes to HDF5.
+        """
         pos_x = interactions['pos_x']
         pos_y = interactions['pos_y']
         pos_z = interactions['pos_z']
@@ -134,23 +184,9 @@ class DataManagerSoA(threading.Thread):
             material_density = np.zeros(n_events, dtype=np.float64)
             distance_traveled = np.zeros(n_events, dtype=np.float64)
 
-            # Map initial states from cache
-            emission_time = np.zeros(n_events, dtype=np.float64)
-            emission_energy = np.zeros(n_events, dtype=np.float64)
-            emission_position = np.zeros((n_events, 3), dtype=np.float64)
-            emission_direction = np.zeros((n_events, 3), dtype=np.float64)
-
-            for i, p_id in enumerate(particle_ID):
-                initial = self.emission_cache.get(p_id)
-                if initial is not None:
-                    emission_time[i] = initial['time']
-                    emission_energy[i] = initial['energy']
-                    emission_position[i] = [initial['pos_x'], initial['pos_y'], initial['pos_z']]
-                    emission_direction[i] = [initial['dir_x'], initial['dir_y'], initial['dir_z']]
-
             scattering_angles = np.column_stack((scattering_theta, scattering_phi))
 
-            # Store in map
+            # Store in map (emission fields excluded!)
             volume_data_map[volume.name] = {
                 'global_position': vol_global_pos,
                 'global_direction': vol_global_dir,
@@ -162,10 +198,6 @@ class DataManagerSoA(threading.Thread):
                 'energy_deposit': energy_deposit,
                 'material_density': material_density,
                 'scattering_angles': scattering_angles,
-                'emission_time': emission_time,
-                'emission_energy': emission_energy,
-                'emission_position': emission_position,
-                'emission_direction': emission_direction,
                 'distance_traveled': distance_traveled
             }
 
@@ -173,37 +205,37 @@ class DataManagerSoA(threading.Thread):
         if not volume_data_map:
             return
 
-        try:
-            with h5py.File(self.filename, 'a') as f:
-                if 'interaction_data' not in f:
-                    group = f.create_group('interaction_data')
+        def write_func(f: h5py.File):
+            if 'interaction_data' not in f:
+                group = f.create_group('interaction_data')
+            else:
+                group = f['interaction_data']
+
+            for volume_name, data in volume_data_map.items():
+                if volume_name not in group:
+                    volume_group = group.create_group(volume_name)
+                    for field, array in data.items():
+                        maxshape = list(array.shape)
+                        maxshape[0] = None
+                        volume_group.create_dataset(
+                            field,
+                            data=array,
+                            compression="gzip",
+                            chunks=True,
+                            maxshape=tuple(maxshape)
+                        )
                 else:
-                    group = f['interaction_data']
+                    volume_group = group[volume_name]
+                    for field, array in data.items():
+                        if field in volume_group:
+                            current_size = volume_group[field].shape[0]
+                            new_size = current_size + array.shape[0]
+                            volume_group[field].resize(new_size, axis=0)
+                            volume_group[field][current_size:] = array
 
-                for volume_name, data in volume_data_map.items():
-                    if volume_name not in group:
-                        volume_group = group.create_group(volume_name)
-                        for field, array in data.items():
-                            maxshape = list(array.shape)
-                            maxshape[0] = None
-                            volume_group.create_dataset(
-                                field,
-                                data=array,
-                                compression="gzip",
-                                chunks=True,
-                                maxshape=tuple(maxshape)
-                            )
-                    else:
-                        volume_group = group[volume_name]
-                        for field, array in data.items():
-                            if field in volume_group:
-                                current_size = volume_group[field].shape[0]
-                                new_size = current_size + array.shape[0]
-                                volume_group[field].resize(new_size, axis=0)
-                                volume_group[field][current_size:] = array
-
+        try:
+            self._write_with_retry(write_func)
+            _logger.info(f'{events_saved} events saved to {self.filename}')
         except OSError:
-            _logger.exception(f'Failed to save data to {self.filename}!')
+            _logger.exception(f'Failed to save interactions to {self.filename}!')
             return
-
-        _logger.info(f'{events_saved} events saved to {self.filename}')

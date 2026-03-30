@@ -87,20 +87,19 @@ class SimulationManagerSOA(Thread):
         # but for now we just pass a copy or slice.
         self.queue.put(data)
 
-    def flush_buffer(self) -> None:
+    def flush_interactions(self) -> None:
         """
-        Flushes the interaction buffer to the queue if it's full.
-        To avoid complex SoA-to-AoS conversion here, we can just trigger a queue put.
+        Flushes only the interaction buffer to the queue if it's full.
         """
         interaction_count = self.data_buffer.interactions.cursor[0]
-        initial_count = self.data_buffer.initial_states.cursor[0]
-        if interaction_count == 0 and initial_count == 0:
+        if interaction_count == 0:
             return
 
-        _logger.debug(f'{self.name} flushing {interaction_count} interactions and {initial_count} initial states')
+        _logger.debug(f'{self.name} flushing {interaction_count} interactions')
 
         chunk = {
-            'interactions': {
+            'type': 'interactions',
+            'data': {
                 'process_id': self.data_buffer.interactions.process_id[:interaction_count].copy(),
                 'volume_id': self.data_buffer.interactions.volume_id[:interaction_count].copy(),
                 'material_id': self.data_buffer.interactions.material_id[:interaction_count].copy(),
@@ -114,8 +113,26 @@ class SimulationManagerSOA(Thread):
                 'dir_x': self.data_buffer.interactions.direction.x[:interaction_count].copy(),
                 'dir_y': self.data_buffer.interactions.direction.y[:interaction_count].copy(),
                 'dir_z': self.data_buffer.interactions.direction.z[:interaction_count].copy(),
-            },
-            'initial_states': {
+            }
+        }
+
+        self.send_data(chunk)
+        self.data_buffer.interactions.cursor[0] = 0
+
+
+    def flush_initial_states(self) -> None:
+        """
+        Flushes only the initial states buffer to the queue if it's full.
+        """
+        initial_count = self.data_buffer.initial_states.cursor[0]
+        if initial_count == 0:
+            return
+
+        _logger.debug(f'{self.name} flushing {initial_count} initial states')
+
+        chunk = {
+            'type': 'initial_states',
+            'data': {
                 'particle_ID': self.data_buffer.initial_states.particle_ID[:initial_count].copy(),
                 'emission_time': self.data_buffer.initial_states.emission_time[:initial_count].copy(),
                 'emission_energy': self.data_buffer.initial_states.emission_energy[:initial_count].copy(),
@@ -129,7 +146,6 @@ class SimulationManagerSOA(Thread):
         }
 
         self.send_data(chunk)
-        self.data_buffer.interactions.cursor[0] = 0
         self.data_buffer.initial_states.cursor[0] = 0
 
 
@@ -156,9 +172,11 @@ class SimulationManagerSOA(Thread):
             return
 
         # Pre-flight Check: Ensure buffer has enough space for a worst-case scenario
-        if self.data_buffer.interactions.cursor[0] + len(active_indices) > self.data_buffer.interactions.capacity or \
-           self.data_buffer.initial_states.cursor[0] + len(active_indices) > self.data_buffer.initial_states.capacity:
-            self.flush_buffer()
+        if self.data_buffer.interactions.cursor[0] + len(active_indices) > self.data_buffer.interactions.capacity:
+            self.flush_interactions()
+
+        if self.data_buffer.initial_states.cursor[0] + len(active_indices) > self.data_buffer.initial_states.capacity:
+            self.flush_initial_states()
 
         # Step physics and kinematics
         self.propagator.step(
@@ -204,7 +222,8 @@ class SimulationManagerSOA(Thread):
             _logger.debug(f'Source timer of {self.name} at {datetime_from_seconds(self.source.timer/units.second)}')
 
         # Final flush
-        self.flush_buffer()
+        self.flush_interactions()
+        self.flush_initial_states()
         self.queue.put('stop')
 
         stop_timepoint = datetime.now()
