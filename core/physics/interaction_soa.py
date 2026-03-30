@@ -110,6 +110,24 @@ class InteractionBuffer(NamedTuple):
         return buffer
 
 
+class SimulationDataBuffer(NamedTuple):
+    """
+    Combined Data-Oriented logging buffer for particle transport.
+    """
+    interactions: InteractionBuffer
+    initial_states: InitialStateBuffer
+
+    @classmethod
+    def allocate(cls, interaction_capacity: int, initial_state_capacity: int) -> 'SimulationDataBuffer':
+        """
+        Allocates both interaction and initial state buffers with given capacities.
+        """
+        return cls(
+            interactions=InteractionBuffer.allocate(interaction_capacity),
+            initial_states=InitialStateBuffer.allocate(initial_state_capacity)
+        )
+
+
 from core.other.typing_definitions import Time, Length
 
 class InitialStateBuffer(NamedTuple):
@@ -164,21 +182,3 @@ class InitialStateBuffer(NamedTuple):
         )
         buffer.validate()
         return buffer
-
-
-class SimulationDataBuffer(NamedTuple):
-    """
-    Combined Data-Oriented logging buffer for particle transport.
-    """
-    interactions: InteractionBuffer
-    initial_states: InitialStateBuffer
-
-    @classmethod
-    def allocate(cls, interaction_capacity: int, initial_state_capacity: int) -> 'SimulationDataBuffer':
-        """
-        Allocates both interaction and initial state buffers with given capacities.
-        """
-        return cls(
-            interactions=InteractionBuffer.allocate(interaction_capacity),
-            initial_states=InitialStateBuffer.allocate(initial_state_capacity)
-        )

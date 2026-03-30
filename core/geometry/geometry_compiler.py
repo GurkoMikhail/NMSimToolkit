@@ -59,22 +59,20 @@ class GeometryCompiler:
             buffer[i]['parent_index'] = p_idx
 
             # Matrix: World -> Local (Unrolled explicitly)
-            inv_mat = np.linalg.inv(mat)
-
             rotation = buffer[i]['transform']['rotation']
-            rotation['m00'] = inv_mat[0, 0]
-            rotation['m01'] = inv_mat[0, 1]
-            rotation['m02'] = inv_mat[0, 2]
+            rotation['m00'] = mat[0, 0]
+            rotation['m01'] = mat[0, 1]
+            rotation['m02'] = mat[0, 2]
 
-            rotation['m10'] = inv_mat[1, 0]
-            rotation['m11'] = inv_mat[1, 1]
-            rotation['m12'] = inv_mat[1, 2]
+            rotation['m10'] = mat[1, 0]
+            rotation['m11'] = mat[1, 1]
+            rotation['m12'] = mat[1, 2]
 
-            rotation['m20'] = inv_mat[2, 0]
-            rotation['m21'] = inv_mat[2, 1]
-            rotation['m22'] = inv_mat[2, 2]
+            rotation['m20'] = mat[2, 0]
+            rotation['m21'] = mat[2, 1]
+            rotation['m22'] = mat[2, 2]
 
             translation = buffer[i]['transform']['translation']
-            translation['x'] = inv_mat[0, 3]
-            translation['y'] = inv_mat[1, 3]
-            translation['z'] = inv_mat[2, 3]
+            translation['x'] = mat[0, 3]
+            translation['y'] = mat[1, 3]
+            translation['z'] = mat[2, 3]
