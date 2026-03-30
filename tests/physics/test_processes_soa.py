@@ -13,13 +13,15 @@ import ctypes
 
 from core.particles.particles_soa import ParticleBank
 from core.physics.interaction_soa import InteractionBuffer, RNGContext
+from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.processes_soa_kernels import make_photoelectric_kernel, make_compton_kernel, make_coherent_kernel
 
 # Old implementations for testing math correctness
 import core.physics.g4compton as old_compton
 import core.physics.g4coherent as old_coherent
 from core.particles.particles_soa_kernels import _rotate_particle
-from core.particles.particles_soa import ParticleState
+from core.particles.kinematic_state import KinematicState
+from core.other.typing_definitions import ID, Index
 
 
 class TestProcessesSoA(unittest.TestCase):
@@ -43,7 +45,7 @@ class TestProcessesSoA(unittest.TestCase):
 
         # Simulate active
         self.bank.state.is_active[:] = True
-        self.bank.state.ID[:] = np.arange(self.capacity, dtype=np.uint64)
+        self.bank.initial_state.ID[:] = np.arange(self.capacity, dtype=np.uint64)
         self.bank.state.energy[:] = energy
         self.target_indices = np.arange(self.capacity, dtype=np.int64)
 
@@ -56,8 +58,15 @@ class TestProcessesSoA(unittest.TestCase):
     def test_photoelectric_kernel(self):
         kernel = make_photoelectric_kernel(process_id=1)
         material_ids = np.full(self.capacity, 13)
+        particle_ids = np.arange(self.capacity, dtype=ID)
+        current_volumes = np.zeros(self.capacity, dtype=Index)
 
-        kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
+        # Need a dummy physics buffer just so Numba doesn't crash on type inference for other kernels
+        # even though PE kernel might not use it directly, wait, PE kernel does use it? No, but let's pass None if it works.
+        # Actually in the code:
+        # _photoelectric_kernel(state, particle_ids, target_indices, current_volumes, material_ids, inter_buffer, physics_buffer, rng_ctx)
+
+        kernel(self.bank.state, particle_ids, self.target_indices, current_volumes, material_ids, self.buffer, None, self.rng_ctx)
 
         self.assertEqual(self.buffer.cursor[0], self.capacity)
 
@@ -89,10 +98,10 @@ class TestProcessesSoA(unittest.TestCase):
         from core.physics.g4compton_soa import _generate_compton_theta_scalar
 
         @njit(cache=True)
-        def _get_new_thetas(cap, energies, z_val, ctx):
+        def _get_new_thetas(cap, energies, z_vals, ctx):
             out = np.empty(cap, dtype=np.float64)
             for i in range(cap):
-                out[i] = _generate_compton_theta_scalar(energies[i], z_val, ctx)
+                out[i] = _generate_compton_theta_scalar(energies[i], z_vals[i], ctx)
             return out
 
         theta_new = _get_new_thetas(self.capacity, energy_arr, material_ids, new_rng_ctx)
@@ -115,26 +124,50 @@ class TestProcessesSoA(unittest.TestCase):
         from core.physics.g4coherent_soa import _generate_coherent_theta_scalar
 
         @njit(cache=True)
-        def _get_new_thetas_coh(cap, energies, z_val, ctx):
+        def _get_new_thetas_coh(cap, energies, z_vals, ctx):
             out = np.empty(cap, dtype=np.float64)
             for i in range(cap):
-                out[i] = _generate_coherent_theta_scalar(energies[i], z_val, ctx)
+                out[i] = _generate_coherent_theta_scalar(energies[i], z_vals[i], ctx)
             return out
 
         theta_new = _get_new_thetas_coh(self.capacity, energy_arr, material_ids, new_rng_ctx)
 
         np.testing.assert_allclose(theta_old, theta_new, rtol=1e-5)
 
+    def _create_mock_physics_buffer(self):
+        # Create a mock physics buffer with a single material Z=13
+        from collections import namedtuple
+        from core.other.typing_definitions import Charge, Float, Index
+
+        class MockCSR(namedtuple('MockCSR', ['element_offsets', 'element_Z', 'element_fraction'])):
+            pass
+
+        csr = MockCSR(
+            element_offsets=np.array([0, 1, 2], dtype=Index),
+            element_Z=np.array([13, 82], dtype=Charge),
+            element_fraction=np.array([1.0, 1.0], dtype=Float)
+        )
+
+        class MockPhysicsBuffer(namedtuple('MockPhysicsBuffer', ['element_csr'])):
+            pass
+
+        return MockPhysicsBuffer(element_csr=csr)
+
     def test_compton_kernel(self):
         kernel = make_compton_kernel(process_id=2)
-        material_ids = np.full(self.capacity, 13)  # Aluminum
+        # Material index 0 is Z=13
+        material_ids = np.full(self.capacity, 0, dtype=Index)  # Aluminum
+        particle_ids = np.arange(self.capacity, dtype=ID)
+        current_volumes = np.zeros(self.capacity, dtype=Index)
+
+        physics_buffer = self._create_mock_physics_buffer()
 
         # 1. Memory Consumption Benchmark
         # First run to compile the kernel and allocate Numba overhead
-        kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
+        kernel(self.bank.state, particle_ids, self.target_indices, current_volumes, material_ids, self.buffer, physics_buffer, self.rng_ctx)
 
         tracemalloc.start()
-        kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
+        kernel(self.bank.state, particle_ids, self.target_indices, current_volumes, material_ids, self.buffer, physics_buffer, self.rng_ctx)
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
@@ -146,7 +179,7 @@ class TestProcessesSoA(unittest.TestCase):
         # 2. Speed Benchmark
         start = time.perf_counter()
         for _ in range(100):
-            kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
+            kernel(self.bank.state, particle_ids, self.target_indices, current_volumes, material_ids, self.buffer, physics_buffer, self.rng_ctx)
         end = time.perf_counter()
         print(f"[BENCHMARK] NEW SoA Compton Scattering 100x (N={self.capacity}): {end - start:.5f}s")
 
@@ -178,13 +211,18 @@ class TestProcessesSoA(unittest.TestCase):
 
     def test_coherent_kernel(self):
         kernel = make_coherent_kernel(process_id=3)
-        material_ids = np.full(self.capacity, 82)  # Lead
+        # Material index 1 is Z=82
+        material_ids = np.full(self.capacity, 1, dtype=Index)  # Lead
+        particle_ids = np.arange(self.capacity, dtype=ID)
+        current_volumes = np.zeros(self.capacity, dtype=Index)
+
+        physics_buffer = self._create_mock_physics_buffer()
 
         # Warmup
-        kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
+        kernel(self.bank.state, particle_ids, self.target_indices, current_volumes, material_ids, self.buffer, physics_buffer, self.rng_ctx)
 
         tracemalloc.start()
-        kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
+        kernel(self.bank.state, particle_ids, self.target_indices, current_volumes, material_ids, self.buffer, physics_buffer, self.rng_ctx)
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
@@ -193,7 +231,7 @@ class TestProcessesSoA(unittest.TestCase):
 
         start = time.perf_counter()
         for _ in range(100):
-            kernel(self.bank.state, self.target_indices, material_ids, self.buffer, None, self.rng_ctx)
+            kernel(self.bank.state, particle_ids, self.target_indices, current_volumes, material_ids, self.buffer, physics_buffer, self.rng_ctx)
         end = time.perf_counter()
         print(f"[BENCHMARK] NEW SoA Coherent Scattering 100x (N={self.capacity}): {end - start:.5f}s")
 
@@ -225,7 +263,7 @@ class TestProcessesSoA(unittest.TestCase):
 
     def test_rotate_particle(self):
         # Base vector
-        state = ParticleState.allocate(1)
+        state = KinematicState.allocate(1)
         state.direction.x[0] = 0.0
         state.direction.y[0] = 0.0
         state.direction.z[0] = 1.0

@@ -6,7 +6,9 @@ from numpy.typing import NDArray
 
 from core.other.typing_definitions import Index, Float, CFuncAddress
 
-from core.particles.particles_soa import ParticleState
+from core.particles.kinematic_state import KinematicState
+from core.particles.initial_state import InitialState
+from core.physics.interaction_soa import InitialStateBuffer
 from core.particles.particles_soa_kernels import _move_particle
 from core.geometry.navigation_state import NavigationState
 from core.geometry.geometry_kernels import _transform_to_local
@@ -40,6 +42,33 @@ def _generate_free_path(majorant_lac: Float, rng_ctx: RNGContext) -> Float:
         return np.inf
     return -np.log(_get_random_double(rng_ctx)) / majorant_lac
 
+@njit(cache=True)
+def _push_to_initial_state_kernel(
+    initial_state: InitialState,
+    target_indices: NDArray[Index],
+    initial_state_buffer: InitialStateBuffer
+) -> None:
+    for j in range(target_indices.shape[0]):
+        p_idx = target_indices[j]
+
+        initial_state.has_interacted[p_idx] = True
+
+        idx = initial_state_buffer.cursor[0] % initial_state_buffer.capacity
+
+        initial_state_buffer.particle_ID[idx] = initial_state.ID[p_idx]
+        initial_state_buffer.emission_time[idx] = initial_state.emission_time[p_idx]
+        initial_state_buffer.emission_energy[idx] = initial_state.emission_energy[p_idx]
+
+        initial_state_buffer.emission_position.x[idx] = initial_state.emission_position.x[p_idx]
+        initial_state_buffer.emission_position.y[idx] = initial_state.emission_position.y[p_idx]
+        initial_state_buffer.emission_position.z[idx] = initial_state.emission_position.z[p_idx]
+
+        initial_state_buffer.emission_direction.x[idx] = initial_state.emission_direction.x[p_idx]
+        initial_state_buffer.emission_direction.y[idx] = initial_state.emission_direction.y[p_idx]
+        initial_state_buffer.emission_direction.z[idx] = initial_state.emission_direction.z[p_idx]
+
+        initial_state_buffer.cursor[0] += 1
+
 def make_transport_kernel(mapped_process_ids: NDArray[Index]):
     num_processes = mapped_process_ids.shape[0]
 
@@ -56,7 +85,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
 
     @njit
     def transport_kernel(
-        state: ParticleState,
+        state: KinematicState,
         nav_state: NavigationState,
         target_indices: NDArray[Index],
         physics_buffer: PhysicsBuffer,

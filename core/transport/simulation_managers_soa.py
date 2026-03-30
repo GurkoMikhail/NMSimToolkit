@@ -14,7 +14,7 @@ from core.geometry.volumes import Volume
 from core.other.typing_definitions import Float, Index
 from core.other.utils import datetime_from_seconds
 from core.particles.particles_soa import ParticleBank
-from core.physics.interaction_soa import InteractionBuffer, RNGContext
+from core.physics.interaction_soa import SimulationDataBuffer, RNGContext
 from core.physics.physics_buffer import PhysicsBuffer
 from core.source.sources_soa import SourceSoA
 from core.transport.propagator_soa import ParticlePropagator
@@ -38,7 +38,7 @@ class SimulationManagerSOA(Thread):
     min_energy: Float
     queue: Queue
     bank: ParticleBank
-    interaction_buffer: InteractionBuffer
+    data_buffer: SimulationDataBuffer
     geometry_buffer: NDArray
     physics_buffer: PhysicsBuffer
     rng_ctx: RNGContext
@@ -71,7 +71,7 @@ class SimulationManagerSOA(Thread):
         self.daemon = True
 
         self.bank = ParticleBank.allocate(self.particles_number)
-        self.interaction_buffer = InteractionBuffer.allocate(buffer_capacity)
+        self.data_buffer = SimulationDataBuffer.allocate(buffer_capacity, buffer_capacity)
         self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
 
@@ -92,28 +92,45 @@ class SimulationManagerSOA(Thread):
         Flushes the interaction buffer to the queue if it's full.
         To avoid complex SoA-to-AoS conversion here, we can just trigger a queue put.
         """
-        count = self.interaction_buffer.cursor[0]
-        if count == 0:
+        interaction_count = self.data_buffer.interactions.cursor[0]
+        initial_count = self.data_buffer.initial_states.cursor[0]
+        if interaction_count == 0 and initial_count == 0:
             return
 
-        _logger.debug(f'{self.name} flushing {count} events')
+        _logger.debug(f'{self.name} flushing {interaction_count} interactions and {initial_count} initial states')
 
         chunk = {
-            'process_id': self.interaction_buffer.process_id[:count].copy(),
-            'particle_ID': self.interaction_buffer.particle_ID[:count].copy(),
-            'energy_deposit': self.interaction_buffer.energy_deposit[:count].copy(),
-            'scattering_theta': self.interaction_buffer.scattering_theta[:count].copy(),
-            'scattering_phi': self.interaction_buffer.scattering_phi[:count].copy(),
-            'pos_x': self.interaction_buffer.position.x[:count].copy(),
-            'pos_y': self.interaction_buffer.position.y[:count].copy(),
-            'pos_z': self.interaction_buffer.position.z[:count].copy(),
-            'dir_x': self.interaction_buffer.direction.x[:count].copy(),
-            'dir_y': self.interaction_buffer.direction.y[:count].copy(),
-            'dir_z': self.interaction_buffer.direction.z[:count].copy(),
+            'interactions': {
+                'process_id': self.data_buffer.interactions.process_id[:interaction_count].copy(),
+                'volume_id': self.data_buffer.interactions.volume_id[:interaction_count].copy(),
+                'material_id': self.data_buffer.interactions.material_id[:interaction_count].copy(),
+                'particle_ID': self.data_buffer.interactions.particle_ID[:interaction_count].copy(),
+                'energy_deposit': self.data_buffer.interactions.energy_deposit[:interaction_count].copy(),
+                'scattering_theta': self.data_buffer.interactions.scattering_theta[:interaction_count].copy(),
+                'scattering_phi': self.data_buffer.interactions.scattering_phi[:interaction_count].copy(),
+                'pos_x': self.data_buffer.interactions.position.x[:interaction_count].copy(),
+                'pos_y': self.data_buffer.interactions.position.y[:interaction_count].copy(),
+                'pos_z': self.data_buffer.interactions.position.z[:interaction_count].copy(),
+                'dir_x': self.data_buffer.interactions.direction.x[:interaction_count].copy(),
+                'dir_y': self.data_buffer.interactions.direction.y[:interaction_count].copy(),
+                'dir_z': self.data_buffer.interactions.direction.z[:interaction_count].copy(),
+            },
+            'initial_states': {
+                'particle_ID': self.data_buffer.initial_states.particle_ID[:initial_count].copy(),
+                'emission_time': self.data_buffer.initial_states.emission_time[:initial_count].copy(),
+                'emission_energy': self.data_buffer.initial_states.emission_energy[:initial_count].copy(),
+                'pos_x': self.data_buffer.initial_states.emission_position.x[:initial_count].copy(),
+                'pos_y': self.data_buffer.initial_states.emission_position.y[:initial_count].copy(),
+                'pos_z': self.data_buffer.initial_states.emission_position.z[:initial_count].copy(),
+                'dir_x': self.data_buffer.initial_states.emission_direction.x[:initial_count].copy(),
+                'dir_y': self.data_buffer.initial_states.emission_direction.y[:initial_count].copy(),
+                'dir_z': self.data_buffer.initial_states.emission_direction.z[:initial_count].copy(),
+            }
         }
 
         self.send_data(chunk)
-        self.interaction_buffer.cursor[0] = 0
+        self.data_buffer.interactions.cursor[0] = 0
+        self.data_buffer.initial_states.cursor[0] = 0
 
 
     def _invalidate_by_energy(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
@@ -139,13 +156,14 @@ class SimulationManagerSOA(Thread):
             return
 
         # Pre-flight Check: Ensure buffer has enough space for a worst-case scenario
-        if self.interaction_buffer.cursor[0] + len(active_indices) > self.interaction_buffer.capacity:
+        if self.data_buffer.interactions.cursor[0] + len(active_indices) > self.data_buffer.interactions.capacity or \
+           self.data_buffer.initial_states.cursor[0] + len(active_indices) > self.data_buffer.initial_states.capacity:
             self.flush_buffer()
 
         # Step physics and kinematics
         self.propagator.step(
             self.bank,
-            self.interaction_buffer,
+            self.data_buffer,
             self.geometry_buffer,
             self.physics_buffer,
             self.rng_ctx
