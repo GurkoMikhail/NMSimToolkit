@@ -139,6 +139,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
                 free_path = _generate_free_path(majorant_lac, rng_ctx)
 
             else:
+
                 # Reached boundary
                 shift = nav_state.boundary_distance[p_idx] + 1e-6
                 _move_particle(state, p_idx, shift)
@@ -146,5 +147,6 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
                 nav_state.current_volume[p_idx] = nav_state.next_volume[p_idx]
                 nav_state.boundary_distance[p_idx] = 0.0
                 process_ids[p_idx] = -1
+
 
     return transport_kernel

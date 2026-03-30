@@ -223,6 +223,7 @@ def _trace_single_ray(
         )
 
         # --- Frustum Culling / Boundary Tracking Logic ---
+
         if tmax < 0 or tmax < tmin:
             # MISS: Ray completely misses this volume.
             # Jump over all its children via miss_index.
