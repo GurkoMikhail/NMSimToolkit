@@ -43,6 +43,7 @@ class SimulationManagerSOA(Thread):
     physics_buffer: PhysicsBuffer
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
+    dead_particles_buffer: List[int]
 
     def __init__(
         self,
@@ -74,6 +75,7 @@ class SimulationManagerSOA(Thread):
         self.data_buffer = SimulationDataBuffer.allocate(buffer_capacity, buffer_capacity)
         self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
+        self.dead_particles_buffer = []
 
         signal(SIGINT, self.sigint_handler)
 
@@ -122,6 +124,21 @@ class SimulationManagerSOA(Thread):
         self.data_buffer.interactions.cursor[0] = 0
 
 
+    def flush_dead_particles(self) -> None:
+        """
+        Flushes accumulated dead particle IDs to the queue.
+        """
+        if not self.dead_particles_buffer:
+            return
+
+        _logger.debug(f'{self.name} flushing {len(self.dead_particles_buffer)} dead particles')
+        chunk = {
+            'type': 'dead_particles',
+            'data': np.array(self.dead_particles_buffer, dtype=np.int64)
+        }
+        self.send_data(chunk)
+        self.dead_particles_buffer.clear()
+
     def flush_initial_states(self) -> None:
         """
         Flushes only the initial states buffer to the queue if it's full.
@@ -166,6 +183,16 @@ class SimulationManagerSOA(Thread):
             dead_indices = active_indices[dead_mask]
             self.bank.state.is_active[dead_indices] = False
             self.bank.state.energy[dead_indices] = 0.0
+
+            # Extract Global IDs of dead particles
+            dead_ids = self.bank.initial_state.ID[dead_indices]
+            self.dead_particles_buffer.extend(dead_ids.tolist())
+
+            if len(self.dead_particles_buffer) > 10000:
+                # Flush states to prevent DataManager KeyError out-of-order execution
+                self.flush_interactions()
+                self.flush_initial_states()
+                self.flush_dead_particles()
 
     def next_step(self):
         active_indices = self.bank.active_indices
@@ -226,6 +253,7 @@ class SimulationManagerSOA(Thread):
         # Final flush
         self.flush_interactions()
         self.flush_initial_states()
+        self.flush_dead_particles()
         self.queue.put('stop')
 
         stop_timepoint = datetime.now()

@@ -35,6 +35,30 @@ class DataManagerSoA(threading.Thread):
         self.lock = lock
         self.daemon = True
 
+        self.target_volume_ids = np.array(self._get_hierarchy_indices(sensitive_volumes), dtype=np.int64)
+
+        self.volume_mapping = {}
+        for vol in sensitive_volumes:
+            self._build_volume_mapping(vol, vol)
+
+        self.active_initial_states = {}
+        self.active_interactions = {}
+        self.scored_particles = set()
+
+    def _build_volume_mapping(self, current_vol: Volume, root_vol: Volume) -> None:
+        self.volume_mapping[current_vol.volume_index] = root_vol
+        if hasattr(current_vol, 'children') and current_vol.children:
+            for child in current_vol.children:
+                self._build_volume_mapping(child, root_vol)
+
+    def _get_hierarchy_indices(self, volumes: List[Volume]) -> List[int]:
+        indices = []
+        for vol in volumes:
+            indices.append(vol.volume_index)
+            if hasattr(vol, 'children') and vol.children:
+                indices.extend(self._get_hierarchy_indices(vol.children))
+        return indices
+
     def run(self):
         """
         Consumes chunks from the queue until 'stop' signal.
@@ -79,14 +103,16 @@ class DataManagerSoA(threading.Thread):
         """
         chunk_type = chunk.get('type')
         if chunk_type == 'initial_states':
-            self._write_initial_states(chunk['data'])
+            self._cache_initial_states(chunk['data'])
         elif chunk_type == 'interactions':
-            self._write_interactions(chunk['data'])
+            self._cache_interactions(chunk['data'])
+        elif chunk_type == 'dead_particles':
+            self._flush_dead_particles(chunk['data'])
 
-    def _write_initial_states(self, initial_states: Dict[str, np.ndarray]) -> None:
+    def _cache_initial_states(self, initial_states: Dict[str, np.ndarray]) -> None:
         """
-        Writes initial states to the /initial_states group in HDF5.
-        Combines 3D vectors before writing.
+        Caches initial states into memory dictionaries.
+        Combines 3D vectors before caching.
         """
         pos_x = initial_states.pop('pos_x')
         pos_y = initial_states.pop('pos_y')
@@ -98,6 +124,91 @@ class DataManagerSoA(threading.Thread):
         dir_z = initial_states.pop('dir_z')
         initial_states['emission_direction'] = np.column_stack((dir_x, dir_y, dir_z))
 
+        p_ids = initial_states['particle_ID']
+        for i, p_id in enumerate(p_ids):
+            self.active_initial_states[p_id] = {k: v[i] for k, v in initial_states.items()}
+
+    def _cache_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
+        """
+        Filters the interactions by sensitive volume hierarchy and caches them by ID.
+        """
+        # Find scored IDs
+        volume_ids = interactions['volume_id']
+        mask_sensitive = np.isin(volume_ids, self.target_volume_ids)
+        if np.any(mask_sensitive):
+            sensitive_ids = interactions['particle_ID'][mask_sensitive]
+            self.scored_particles.update(sensitive_ids)
+
+        p_ids = interactions['particle_ID']
+        unique_ids, inverse_indices = np.unique(p_ids, return_inverse=True)
+
+        for i, p_id in enumerate(unique_ids):
+            mask = inverse_indices == i
+            if p_id not in self.active_interactions:
+                self.active_interactions[p_id] = {k: v[mask] for k, v in interactions.items()}
+            else:
+                for k, v in interactions.items():
+                    self.active_interactions[p_id][k] = np.append(self.active_interactions[p_id][k], v[mask])
+
+    def _flush_dead_particles(self, dead_ids: np.ndarray) -> None:
+        """
+        Retrieves scored dead particles and triggers write_to_hdf5. Then discards them from RAM.
+        """
+        scored_dead_ids = [pid for pid in dead_ids if pid in self.scored_particles]
+
+        if not scored_dead_ids:
+            # Clean up cache for dead but unscored particles
+            for pid in dead_ids:
+                self.active_initial_states.pop(pid, None)
+                self.active_interactions.pop(pid, None)
+            return
+
+        # Safely find initial keys
+        initial_keys = None
+        for pid in scored_dead_ids:
+            if pid in self.active_initial_states:
+                initial_keys = self.active_initial_states[pid].keys()
+                break
+
+        if initial_keys is None:
+            # Fallback if no initial states are found for any scored dead particles
+            initial_keys = ['particle_ID', 'emission_time', 'emission_energy', 'emission_position', 'emission_direction']
+
+        initial_states_to_write = {k: [] for k in initial_keys}
+        interactions_to_write = []
+
+        for pid in scored_dead_ids:
+            # Collect initial state
+            if pid in self.active_initial_states:
+                for k, v in self.active_initial_states[pid].items():
+                    initial_states_to_write[k].append(v)
+
+            # Collect interactions
+            if pid in self.active_interactions:
+                interactions_to_write.append(self.active_interactions[pid])
+
+        # Convert initial states lists to numpy arrays
+        for k, v in initial_states_to_write.items():
+            initial_states_to_write[k] = np.array(v)
+
+        # Merge interactions lists of dicts to a single dict of numpy arrays
+        if interactions_to_write:
+            merged_interactions = {k: np.concatenate([d[k] for d in interactions_to_write]) for k in interactions_to_write[0].keys()}
+        else:
+            merged_interactions = None
+
+        # Discard from RAM
+        for pid in dead_ids:
+            self.active_initial_states.pop(pid, None)
+            self.active_interactions.pop(pid, None)
+            self.scored_particles.discard(pid)
+
+        # Proceed to write these collected arrays
+        self._write_initial_states(initial_states_to_write)
+        if merged_interactions:
+            self._write_interactions(merged_interactions)
+
+    def _write_initial_states(self, initial_states: Dict[str, np.ndarray]) -> None:
         def write_func(f: h5py.File):
             if 'initial_states' not in f:
                 group = f.create_group('initial_states')
@@ -129,8 +240,8 @@ class DataManagerSoA(threading.Thread):
 
     def _write_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
         """
-        Filters the interactions by sensitive volumes using check_inside,
-        formats data to legacy representation (without emission fields), and writes to HDF5.
+        Groups the interactions by their top-level sensitive volume (using volume_mapping),
+        translates to local coordinates, formats data, and writes to HDF5.
         """
         pos_x = interactions['pos_x']
         pos_y = interactions['pos_y']
@@ -142,40 +253,36 @@ class DataManagerSoA(threading.Thread):
 
         global_position = np.column_stack((pos_x, pos_y, pos_z))
         global_direction = np.column_stack((dir_x, dir_y, dir_z))
+        volume_ids = interactions['volume_id']
 
         events_saved = 0
-
-        # Create dictionary to hold data to be written
         volume_data_map = {}
 
-        for volume in self.sensitive_volumes:
-            # 1. Check inside for all particles
-            mask = volume.check_inside(global_position)
+        root_vol_names = []
+        for vid in volume_ids:
+            if vid in self.volume_mapping:
+                root_vol_names.append(self.volume_mapping[vid].name)
+            else:
+                root_vol_names.append(None)
 
-            # Since check_inside might return a scalar bool (if empty) or single element,
-            # ensure it's a 1D boolean array.
-            if isinstance(mask, bool):
-                if mask and len(global_position) > 0:
-                    mask = np.ones(len(global_position), dtype=np.bool_)
-                else:
-                    mask = np.zeros(len(global_position), dtype=np.bool_)
+        root_vol_names = np.array(root_vol_names)
+
+        for top_volume in self.sensitive_volumes:
+            mask = root_vol_names == top_volume.name
 
             if not np.any(mask):
                 continue
 
-            # 2. Filter data
             vol_global_pos = global_position[mask]
             vol_global_dir = global_direction[mask]
 
-            # 3. Local coordinates
-            if isinstance(volume, TransformableVolume):
-                local_position = volume.convert_to_local_position(vol_global_pos, as_parent=False)
-                local_direction = volume.convert_to_local_direction(vol_global_dir, as_parent=False)
+            if isinstance(top_volume, TransformableVolume):
+                local_position = top_volume.convert_to_local_position(vol_global_pos, as_parent=False)
+                local_direction = top_volume.convert_to_local_direction(vol_global_dir, as_parent=False)
             else:
                 local_position = vol_global_pos.copy()
                 local_direction = vol_global_dir.copy()
 
-            # 4. Filter scalar arrays
             process_id = interactions['process_id'][mask]
             particle_ID = interactions['particle_ID'][mask]
             energy_deposit = interactions['energy_deposit'][mask]
@@ -185,14 +292,10 @@ class DataManagerSoA(threading.Thread):
             n_events = len(process_id)
             events_saved += n_events
 
-            # Map Process ID to Names
             process_name = np.empty(n_events, dtype='S30')
             for pid, name in self.PROCESS_MAP.items():
                 process_name[process_id == pid] = name
 
-            # Create array for species (particle_type)
-            # interactions['species'] is integer. E.g. 0=Photon. We map it or just save it.
-            # In legacy it was string, but preserving as int or string is fine. We will cast it to str.
             species_int = interactions['species'][mask]
             species_str = np.empty(n_events, dtype='S30')
             species_str[species_int == 0] = b'Photon'
@@ -204,8 +307,7 @@ class DataManagerSoA(threading.Thread):
 
             scattering_angles = np.column_stack((scattering_theta, scattering_phi))
 
-            # Store in map (emission fields excluded!)
-            volume_data_map[volume.name] = {
+            volume_data_map[top_volume.name] = {
                 'global_position': vol_global_pos,
                 'global_direction': vol_global_dir,
                 'local_position': local_position,

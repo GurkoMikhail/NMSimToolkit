@@ -238,8 +238,10 @@ def make_coherent_kernel(process_id: ProcessID):
             particle_ids[p_idx],
             energy_deposit,
             theta, phi,
+            state.distance_traveled[p_idx],
+            state.species[p_idx],
             state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
-            state.direction.x[p_idx], state.direction.y[p_idx], state.distance_traveled[p_idx], state.species[p_idx], state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx], state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
+            state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
         )
 
     @njit(cache=True)
