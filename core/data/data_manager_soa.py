@@ -86,7 +86,18 @@ class DataManagerSoA(threading.Thread):
     def _write_initial_states(self, initial_states: Dict[str, np.ndarray]) -> None:
         """
         Writes initial states to the /initial_states group in HDF5.
+        Combines 3D vectors before writing.
         """
+        pos_x = initial_states.pop('pos_x')
+        pos_y = initial_states.pop('pos_y')
+        pos_z = initial_states.pop('pos_z')
+        initial_states['emission_position'] = np.column_stack((pos_x, pos_y, pos_z))
+
+        dir_x = initial_states.pop('dir_x')
+        dir_y = initial_states.pop('dir_y')
+        dir_z = initial_states.pop('dir_z')
+        initial_states['emission_direction'] = np.column_stack((dir_x, dir_y, dir_z))
+
         def write_func(f: h5py.File):
             if 'initial_states' not in f:
                 group = f.create_group('initial_states')
@@ -179,10 +190,17 @@ class DataManagerSoA(threading.Thread):
             for pid, name in self.PROCESS_MAP.items():
                 process_name[process_id == pid] = name
 
-            # Create dummy arrays for missing legacy fields
-            particle_type = np.full(n_events, b'', dtype='S30')
-            material_density = np.zeros(n_events, dtype=np.float64)
-            distance_traveled = np.zeros(n_events, dtype=np.float64)
+            # Create array for species (particle_type)
+            # interactions['species'] is integer. E.g. 0=Photon. We map it or just save it.
+            # In legacy it was string, but preserving as int or string is fine. We will cast it to str.
+            species_int = interactions['species'][mask]
+            species_str = np.empty(n_events, dtype='S30')
+            species_str[species_int == 0] = b'Photon'
+            species_str[species_int == 1] = b'Electron'
+            species_str[species_int == 2] = b'Positron'
+
+            distance_traveled = interactions['distance_traveled'][mask]
+            volume_id = interactions['volume_id'][mask]
 
             scattering_angles = np.column_stack((scattering_theta, scattering_phi))
 
@@ -193,10 +211,10 @@ class DataManagerSoA(threading.Thread):
                 'local_position': local_position,
                 'local_direction': local_direction,
                 'process_name': process_name,
-                'particle_type': particle_type,
+                'species': species_str,
                 'particle_ID': particle_ID,
                 'energy_deposit': energy_deposit,
-                'material_density': material_density,
+                'volume_id': volume_id,
                 'scattering_angles': scattering_angles,
                 'distance_traveled': distance_traveled
             }

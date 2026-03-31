@@ -107,6 +107,8 @@ class SimulationManagerSOA(Thread):
                 'energy_deposit': self.data_buffer.interactions.energy_deposit[:interaction_count].copy(),
                 'scattering_theta': self.data_buffer.interactions.scattering_theta[:interaction_count].copy(),
                 'scattering_phi': self.data_buffer.interactions.scattering_phi[:interaction_count].copy(),
+                'distance_traveled': self.data_buffer.interactions.distance_traveled[:interaction_count].copy(),
+                'species': self.data_buffer.interactions.species[:interaction_count].copy(),
                 'pos_x': self.data_buffer.interactions.position.x[:interaction_count].copy(),
                 'pos_y': self.data_buffer.interactions.position.y[:interaction_count].copy(),
                 'pos_z': self.data_buffer.interactions.position.z[:interaction_count].copy(),

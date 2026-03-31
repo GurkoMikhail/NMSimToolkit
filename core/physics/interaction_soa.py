@@ -38,6 +38,8 @@ class InteractionBuffer(NamedTuple):
     energy_deposit: NDArray[Energy]
     scattering_theta: NDArray[Float]
     scattering_phi: NDArray[Float]
+    distance_traveled: NDArray[Float]
+    species: NDArray[np.int32]
 
     position: Vector3DSoA
     direction: Vector3DSoA
@@ -60,7 +62,9 @@ class InteractionBuffer(NamedTuple):
             self.particle_ID,
             self.energy_deposit,
             self.scattering_theta,
-            self.scattering_phi
+            self.scattering_phi,
+            self.distance_traveled,
+            self.species
         ]
 
         # All base fields should be 1-dimensional
@@ -93,6 +97,8 @@ class InteractionBuffer(NamedTuple):
             energy_deposit=np.empty(capacity, dtype=Energy),
             scattering_theta=np.empty(capacity, dtype=Float),
             scattering_phi=np.empty(capacity, dtype=Float),
+            distance_traveled=np.empty(capacity, dtype=Float),
+            species=np.empty(capacity, dtype=np.int32),
             position=Vector3DSoA(
                 x=np.empty(capacity, dtype=Float),
                 y=np.empty(capacity, dtype=Float),
