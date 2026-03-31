@@ -3,7 +3,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Index, Charge, ProcessID, ID, Energy, Float
+from core.other.typing_definitions import Index, Charge, ProcessID, ID, Energy, Float, Species
 from core.particles.kinematic_state import KinematicState
 from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.physics.g4compton_soa import _generate_compton_theta_scalar, _calculate_compton_energy_deposit_scalar
@@ -28,7 +28,7 @@ def _push_to_interaction_buffer(
     scattering_theta: Float,
     scattering_phi: Float,
     distance_traveled: Float,
-    species: np.int32,
+    species: Species,
     pos_x: Float, pos_y: Float, pos_z: Float,
     dir_x: Float, dir_y: Float, dir_z: Float
 ) -> None:

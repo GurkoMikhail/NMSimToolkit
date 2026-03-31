@@ -43,7 +43,6 @@ class SimulationManagerSOA(Thread):
     physics_buffer: PhysicsBuffer
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
-    dead_particles_buffer: List[int]
 
     def __init__(
         self,
@@ -72,10 +71,9 @@ class SimulationManagerSOA(Thread):
         self.daemon = True
 
         self.bank = ParticleBank.allocate(self.particles_number)
-        self.data_buffer = SimulationDataBuffer.allocate(buffer_capacity, buffer_capacity)
+        self.data_buffer = SimulationDataBuffer.allocate(buffer_capacity, buffer_capacity, buffer_capacity)
         self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
-        self.dead_particles_buffer = []
 
         signal(SIGINT, self.sigint_handler)
 
@@ -128,16 +126,17 @@ class SimulationManagerSOA(Thread):
         """
         Flushes accumulated dead particle IDs to the queue.
         """
-        if not self.dead_particles_buffer:
+        dead_count = self.data_buffer.dead_particles.cursor[0]
+        if dead_count == 0:
             return
 
-        _logger.debug(f'{self.name} flushing {len(self.dead_particles_buffer)} dead particles')
+        _logger.debug(f'{self.name} flushing {dead_count} dead particles')
         chunk = {
             'type': 'dead_particles',
-            'data': np.array(self.dead_particles_buffer, dtype=np.int64)
+            'data': self.data_buffer.dead_particles.particle_ID[:dead_count].copy()
         }
         self.send_data(chunk)
-        self.dead_particles_buffer.clear()
+        self.data_buffer.dead_particles.cursor[0] = 0
 
     def flush_initial_states(self) -> None:
         """
@@ -174,7 +173,7 @@ class SimulationManagerSOA(Thread):
     def _invalidate_by_volume(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
         return self.bank.navigation_state.current_volume[active_indices] == -1
 
-    def _apply_invalidators(self, active_indices: NDArray[Index]) -> None:
+    def _apply_invalidators(self, active_indices: NDArray[Index]) -> NDArray[Index]:
         dead_mask = np.zeros(len(active_indices), dtype=np.bool_)
         for invalidator in self.invalidators:
             dead_mask |= invalidator(active_indices)
@@ -182,17 +181,9 @@ class SimulationManagerSOA(Thread):
         if np.any(dead_mask):
             dead_indices = active_indices[dead_mask]
             self.bank.state.is_active[dead_indices] = False
-            self.bank.state.energy[dead_indices] = 0.0
-
-            # Extract Global IDs of dead particles
-            dead_ids = self.bank.initial_state.ID[dead_indices]
-            self.dead_particles_buffer.extend(dead_ids.tolist())
-
-            if len(self.dead_particles_buffer) > 10000:
-                # Flush states to prevent DataManager KeyError out-of-order execution
-                self.flush_interactions()
-                self.flush_initial_states()
-                self.flush_dead_particles()
+            # Energy should not be zeroed out.
+            return dead_indices
+        return np.array([], dtype=Index)
 
     def next_step(self):
         active_indices = self.bank.active_indices
@@ -217,7 +208,18 @@ class SimulationManagerSOA(Thread):
         )
 
         # Invalidation
-        self._apply_invalidators(active_indices)
+        dead_indices = self._apply_invalidators(active_indices)
+
+        if dead_indices.size > 0:
+            if self.data_buffer.dead_particles.cursor[0] + len(dead_indices) > self.data_buffer.dead_particles.capacity:
+                self.flush_interactions()
+                self.flush_initial_states()
+                self.flush_dead_particles()
+
+            dead_ids = self.bank.initial_state.ID[dead_indices]
+            cursor = self.data_buffer.dead_particles.cursor[0]
+            self.data_buffer.dead_particles.particle_ID[cursor:cursor + len(dead_ids)] = dead_ids
+            self.data_buffer.dead_particles.cursor[0] += len(dead_ids)
 
         # Continuous Replenishment
         if self.source.timer <= self.stop_time:

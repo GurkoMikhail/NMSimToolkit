@@ -2,7 +2,7 @@ import numpy as np
 from typing import NamedTuple
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID
+from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID, Species
 from core.other.vectors_soa import Vector3DSoA
 
 
@@ -39,7 +39,7 @@ class InteractionBuffer(NamedTuple):
     scattering_theta: NDArray[Float]
     scattering_phi: NDArray[Float]
     distance_traveled: NDArray[Float]
-    species: NDArray[np.int32]
+    species: NDArray[Species]
 
     position: Vector3DSoA
     direction: Vector3DSoA
@@ -98,7 +98,7 @@ class InteractionBuffer(NamedTuple):
             scattering_theta=np.empty(capacity, dtype=Float),
             scattering_phi=np.empty(capacity, dtype=Float),
             distance_traveled=np.empty(capacity, dtype=Float),
-            species=np.empty(capacity, dtype=np.int32),
+            species=np.empty(capacity, dtype=Species),
             position=Vector3DSoA(
                 x=np.empty(capacity, dtype=Float),
                 y=np.empty(capacity, dtype=Float),
@@ -172,19 +172,48 @@ class InitialStateBuffer(NamedTuple):
         return buffer
 
 
+class DeadParticlesBuffer(NamedTuple):
+    """
+    SoA Ring/Flush buffer for in-place logging of dead particle IDs.
+    """
+    particle_ID: NDArray[ID]
+    cursor: NDArray[Index]
+    capacity: int
+
+    def validate(self) -> None:
+        if self.particle_ID.ndim != 1:
+            raise ValueError("particle_ID array in DeadParticlesBuffer must be 1-dimensional.")
+        if self.particle_ID.shape[0] != self.capacity:
+            raise ValueError("particle_ID array in DeadParticlesBuffer must have length equal to capacity.")
+        if self.cursor.shape != (1,):
+            raise ValueError("Cursor must be a 1-dimensional array of length 1.")
+
+    @classmethod
+    def allocate(cls, capacity: int) -> 'DeadParticlesBuffer':
+        buffer = cls(
+            particle_ID=np.empty(capacity, dtype=ID),
+            cursor=np.zeros(1, dtype=Index),
+            capacity=capacity
+        )
+        buffer.validate()
+        return buffer
+
+
 class SimulationDataBuffer(NamedTuple):
     """
     Combined Data-Oriented logging buffer for particle transport.
     """
     interactions: InteractionBuffer
     initial_states: InitialStateBuffer
+    dead_particles: DeadParticlesBuffer
 
     @classmethod
-    def allocate(cls, interaction_capacity: int, initial_state_capacity: int) -> 'SimulationDataBuffer':
+    def allocate(cls, interaction_capacity: int, initial_state_capacity: int, dead_particles_capacity: int) -> 'SimulationDataBuffer':
         """
-        Allocates both interaction and initial state buffers with given capacities.
+        Allocates interaction, initial state, and dead particle buffers with given capacities.
         """
         return cls(
             interactions=InteractionBuffer.allocate(interaction_capacity),
-            initial_states=InitialStateBuffer.allocate(initial_state_capacity)
+            initial_states=InitialStateBuffer.allocate(initial_state_capacity),
+            dead_particles=DeadParticlesBuffer.allocate(dead_particles_capacity)
         )
