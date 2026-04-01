@@ -55,6 +55,9 @@ class InteractionBuffer(NamedTuple):
     def remaining_capacity(self) -> int:
         return self.capacity - self.cursor_value
 
+    def reset_cursor(self) -> None:
+        self.cursor[0] = 0
+
     def validate(self) -> None:
         """
         Validates that all arrays within the InteractionBuffer have
@@ -149,6 +152,9 @@ class InitialStateBuffer(NamedTuple):
     def remaining_capacity(self) -> int:
         return self.capacity - self.cursor_value
 
+    def reset_cursor(self) -> None:
+        self.cursor[0] = 0
+
     def validate(self) -> None:
         self.emission_position.validate()
         self.emission_direction.validate()
@@ -203,6 +209,9 @@ class DeadParticlesBuffer(NamedTuple):
     @property
     def remaining_capacity(self) -> int:
         return self.capacity - self.cursor_value
+
+    def reset_cursor(self) -> None:
+        self.cursor[0] = 0
 
     def validate(self) -> None:
         if self.particle_ID.ndim != 1:

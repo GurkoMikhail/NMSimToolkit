@@ -119,7 +119,7 @@ class SimulationManagerSOA(Thread):
         }
 
         self.send_data(chunk)
-        self.data_buffer.interactions.cursor[0] = 0
+        self.data_buffer.interactions.reset_cursor()
 
 
     def flush_dead_particles(self) -> None:
@@ -136,7 +136,7 @@ class SimulationManagerSOA(Thread):
             'data': self.data_buffer.dead_particles.particle_ID[:dead_count].copy()
         }
         self.send_data(chunk)
-        self.data_buffer.dead_particles.cursor[0] = 0
+        self.data_buffer.dead_particles.reset_cursor()
 
     def flush_initial_states(self) -> None:
         """
@@ -164,7 +164,7 @@ class SimulationManagerSOA(Thread):
         }
 
         self.send_data(chunk)
-        self.data_buffer.initial_states.cursor[0] = 0
+        self.data_buffer.initial_states.reset_cursor()
 
 
     def _invalidate_by_energy(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:

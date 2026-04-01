@@ -306,7 +306,7 @@ class TransformableVolume(Volume):
     def root_volume(self) -> Volume:
         """ Возвращает корневой объём дерева сцены """
         current = self
-        while getattr(current, 'parent', None) is not None:
+        while isinstance(current, TransformableVolume) and current.parent is not None:
             current = current.parent
         return current
 
