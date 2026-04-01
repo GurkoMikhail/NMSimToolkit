@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import h5py
 import numpy as np
 
-from core.geometry.volumes import Volume, TransformableVolume
+from core.geometry.volumes import Volume, TransformableVolume, VolumeWithChilds
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.DEBUG)
@@ -26,7 +26,7 @@ class DataManagerSoA(threading.Thread):
         3: b'PairProduction'
     }
 
-    def __init__(self, filename: str, sensitive_volumes: List[Volume], queue: Any = None, lock: Optional[Any] = None) -> None:
+    def __init__(self, filename: str, sensitive_volumes: List[Volume], simulation_volume: Optional[Volume] = None, queue: Any = None, lock: Optional[Any] = None) -> None:
         super().__init__()
         self.filename = Path(f'output data/{filename}')
         self.filename.parent.mkdir(parents=True, exist_ok=True)
@@ -35,6 +35,7 @@ class DataManagerSoA(threading.Thread):
         self.lock = lock
         self.daemon = True
 
+        self.simulation_volume = simulation_volume
         self.target_volume_ids = np.array(self._get_hierarchy_indices(sensitive_volumes), dtype=np.int64)
 
         self.volume_mapping = {}
@@ -45,28 +46,37 @@ class DataManagerSoA(threading.Thread):
         self.active_interactions = {}
         self.scored_particles = set()
 
+    def _get_root_volume(self, vol: Volume) -> Volume:
+        if self.simulation_volume is not None:
+            return self.simulation_volume
+        if isinstance(vol, TransformableVolume):
+            return vol.root_volume
+        return vol
+
     def _build_volume_mapping(self, current_vol: Volume, root_vol: Volume) -> None:
-        if hasattr(current_vol, 'flattened_scene'):
-            for i, (vol, _, _) in enumerate(root_vol.flattened_scene.flat_list):
-                if vol is current_vol:
-                    self.volume_mapping[i] = root_vol
-        if hasattr(current_vol, 'childs') and current_vol.childs:
+        sim_vol = self._get_root_volume(current_vol)
+        for i, (v, _, _) in enumerate(sim_vol.flattened_scene.flat_list):
+            if v is current_vol:
+                self.volume_mapping[i] = root_vol
+                break
+
+        if isinstance(current_vol, VolumeWithChilds):
             for child in current_vol.childs:
                 self._build_volume_mapping(child, root_vol)
 
     def _get_hierarchy_indices(self, volumes: List[Volume]) -> List[int]:
         indices = []
         for vol in volumes:
-            if hasattr(vol, 'flattened_scene'):
-                for i, (v, _, _) in enumerate(vol.flattened_scene.flat_list):
-                    if self._is_descendant(v, vol):
-                        indices.append(i)
+            sim_vol = self._get_root_volume(vol)
+            for i, (v, _, _) in enumerate(sim_vol.flattened_scene.flat_list):
+                if self._is_descendant(v, vol):
+                    indices.append(i)
         return indices
 
     def _is_descendant(self, query_vol: Volume, root_vol: Volume) -> bool:
         if query_vol is root_vol:
             return True
-        if hasattr(root_vol, 'childs') and root_vol.childs:
+        if isinstance(root_vol, VolumeWithChilds):
             for child in root_vol.childs:
                 if self._is_descendant(query_vol, child):
                     return True

@@ -302,6 +302,14 @@ class TransformableVolume(Volume):
         assert isinstance(parent, VolumeWithChilds), 'Этот объём не может быть родителем'
         parent.add_child(self)
 
+    @property
+    def root_volume(self) -> Volume:
+        """ Возвращает корневой объём дерева сцены """
+        current = self
+        while getattr(current, 'parent', None) is not None:
+            current = current.parent
+        return current
+
 
 class TransformableVolumeWithChild(TransformableVolume, VolumeWithChilds):
     """ Базовый класс трансформируемого объёма с детьми """  

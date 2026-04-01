@@ -47,6 +47,14 @@ class InteractionBuffer(NamedTuple):
     cursor: NDArray[Index]  # Length 1, tracks the number of elements written
     capacity: int
 
+    @property
+    def cursor_value(self) -> int:
+        return int(self.cursor[0])
+
+    @property
+    def remaining_capacity(self) -> int:
+        return self.capacity - self.cursor_value
+
     def validate(self) -> None:
         """
         Validates that all arrays within the InteractionBuffer have
@@ -133,6 +141,14 @@ class InitialStateBuffer(NamedTuple):
     cursor: NDArray[Index]
     capacity: int
 
+    @property
+    def cursor_value(self) -> int:
+        return int(self.cursor[0])
+
+    @property
+    def remaining_capacity(self) -> int:
+        return self.capacity - self.cursor_value
+
     def validate(self) -> None:
         self.emission_position.validate()
         self.emission_direction.validate()
@@ -180,6 +196,14 @@ class DeadParticlesBuffer(NamedTuple):
     cursor: NDArray[Index]
     capacity: int
 
+    @property
+    def cursor_value(self) -> int:
+        return int(self.cursor[0])
+
+    @property
+    def remaining_capacity(self) -> int:
+        return self.capacity - self.cursor_value
+
     def validate(self) -> None:
         if self.particle_ID.ndim != 1:
             raise ValueError("particle_ID array in DeadParticlesBuffer must be 1-dimensional.")
@@ -197,6 +221,17 @@ class DeadParticlesBuffer(NamedTuple):
         )
         buffer.validate()
         return buffer
+
+    def append(self, particle_ids: NDArray[ID]) -> None:
+        """
+        Appends dead particle IDs to the buffer and advances the cursor.
+        """
+        n = len(particle_ids)
+        c = self.cursor_value
+        if c + n > self.capacity:
+            raise ValueError("Insufficient capacity in DeadParticlesBuffer.")
+        self.particle_ID[c:c + n] = particle_ids
+        self.cursor[0] += n
 
 
 class SimulationDataBuffer(NamedTuple):

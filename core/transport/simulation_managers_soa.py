@@ -91,7 +91,7 @@ class SimulationManagerSOA(Thread):
         """
         Flushes only the interaction buffer to the queue if it's full.
         """
-        interaction_count = self.data_buffer.interactions.cursor[0]
+        interaction_count = self.data_buffer.interactions.cursor_value
         if interaction_count == 0:
             return
 
@@ -126,7 +126,7 @@ class SimulationManagerSOA(Thread):
         """
         Flushes accumulated dead particle IDs to the queue.
         """
-        dead_count = self.data_buffer.dead_particles.cursor[0]
+        dead_count = self.data_buffer.dead_particles.cursor_value
         if dead_count == 0:
             return
 
@@ -142,7 +142,7 @@ class SimulationManagerSOA(Thread):
         """
         Flushes only the initial states buffer to the queue if it's full.
         """
-        initial_count = self.data_buffer.initial_states.cursor[0]
+        initial_count = self.data_buffer.initial_states.cursor_value
         if initial_count == 0:
             return
 
@@ -192,10 +192,10 @@ class SimulationManagerSOA(Thread):
             return
 
         # Pre-flight Check: Ensure buffer has enough space for a worst-case scenario
-        if self.data_buffer.interactions.cursor[0] + len(active_indices) > self.data_buffer.interactions.capacity:
+        if len(active_indices) > self.data_buffer.interactions.remaining_capacity:
             self.flush_interactions()
 
-        if self.data_buffer.initial_states.cursor[0] + len(active_indices) > self.data_buffer.initial_states.capacity:
+        if len(active_indices) > self.data_buffer.initial_states.remaining_capacity:
             self.flush_initial_states()
 
         # Step physics and kinematics
@@ -211,15 +211,13 @@ class SimulationManagerSOA(Thread):
         dead_indices = self._apply_invalidators(active_indices)
 
         if dead_indices.size > 0:
-            if self.data_buffer.dead_particles.cursor[0] + len(dead_indices) > self.data_buffer.dead_particles.capacity:
+            if len(dead_indices) > self.data_buffer.dead_particles.remaining_capacity:
                 self.flush_interactions()
                 self.flush_initial_states()
                 self.flush_dead_particles()
 
             dead_ids = self.bank.initial_state.ID[dead_indices]
-            cursor = self.data_buffer.dead_particles.cursor[0]
-            self.data_buffer.dead_particles.particle_ID[cursor:cursor + len(dead_ids)] = dead_ids
-            self.data_buffer.dead_particles.cursor[0] += len(dead_ids)
+            self.data_buffer.dead_particles.append(dead_ids)
 
         # Continuous Replenishment
         if self.source.timer <= self.stop_time:
