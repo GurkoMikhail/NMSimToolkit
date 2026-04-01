@@ -46,18 +46,31 @@ class DataManagerSoA(threading.Thread):
         self.scored_particles = set()
 
     def _build_volume_mapping(self, current_vol: Volume, root_vol: Volume) -> None:
-        self.volume_mapping[current_vol.volume_index] = root_vol
-        if hasattr(current_vol, 'children') and current_vol.children:
-            for child in current_vol.children:
+        if hasattr(current_vol, 'flattened_scene'):
+            for i, (vol, _, _) in enumerate(root_vol.flattened_scene.flat_list):
+                if vol is current_vol:
+                    self.volume_mapping[i] = root_vol
+        if hasattr(current_vol, 'childs') and current_vol.childs:
+            for child in current_vol.childs:
                 self._build_volume_mapping(child, root_vol)
 
     def _get_hierarchy_indices(self, volumes: List[Volume]) -> List[int]:
         indices = []
         for vol in volumes:
-            indices.append(vol.volume_index)
-            if hasattr(vol, 'children') and vol.children:
-                indices.extend(self._get_hierarchy_indices(vol.children))
+            if hasattr(vol, 'flattened_scene'):
+                for i, (v, _, _) in enumerate(vol.flattened_scene.flat_list):
+                    if self._is_descendant(v, vol):
+                        indices.append(i)
         return indices
+
+    def _is_descendant(self, query_vol: Volume, root_vol: Volume) -> bool:
+        if query_vol is root_vol:
+            return True
+        if hasattr(root_vol, 'childs') and root_vol.childs:
+            for child in root_vol.childs:
+                if self._is_descendant(query_vol, child):
+                    return True
+        return False
 
     def run(self):
         """
