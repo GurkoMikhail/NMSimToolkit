@@ -135,18 +135,7 @@ class DataManagerSoA(threading.Thread):
     def _cache_initial_states(self, initial_states: Dict[str, np.ndarray]) -> None:
         """
         Caches initial states into memory dictionaries.
-        Combines 3D vectors before caching.
         """
-        pos_x = initial_states.pop('pos_x')
-        pos_y = initial_states.pop('pos_y')
-        pos_z = initial_states.pop('pos_z')
-        initial_states['emission_position'] = np.column_stack((pos_x, pos_y, pos_z))
-
-        dir_x = initial_states.pop('dir_x')
-        dir_y = initial_states.pop('dir_y')
-        dir_z = initial_states.pop('dir_z')
-        initial_states['emission_direction'] = np.column_stack((dir_x, dir_y, dir_z))
-
         p_ids = initial_states['particle_ID']
         for i, p_id in enumerate(p_ids):
             self.active_initial_states[p_id] = {k: v[i] for k, v in initial_states.items()}
@@ -167,11 +156,11 @@ class DataManagerSoA(threading.Thread):
 
         for i, p_id in enumerate(unique_ids):
             mask = inverse_indices == i
+            chunk_slice = {k: v[mask] for k, v in interactions.items()}
             if p_id not in self.active_interactions:
-                self.active_interactions[p_id] = {k: v[mask] for k, v in interactions.items()}
+                self.active_interactions[p_id] = [chunk_slice]
             else:
-                for k, v in interactions.items():
-                    self.active_interactions[p_id][k] = np.append(self.active_interactions[p_id][k], v[mask])
+                self.active_interactions[p_id].append(chunk_slice)
 
     def _flush_dead_particles(self, dead_ids: np.ndarray) -> None:
         """
@@ -195,7 +184,7 @@ class DataManagerSoA(threading.Thread):
 
         if initial_keys is None:
             # Fallback if no initial states are found for any scored dead particles
-            initial_keys = ['particle_ID', 'emission_time', 'emission_energy', 'emission_position', 'emission_direction']
+            initial_keys = ['particle_ID', 'emission_time', 'emission_energy', 'pos_x', 'pos_y', 'pos_z', 'dir_x', 'dir_y', 'dir_z']
 
         initial_states_to_write = {k: [] for k in initial_keys}
         interactions_to_write = []
@@ -208,11 +197,23 @@ class DataManagerSoA(threading.Thread):
 
             # Collect interactions
             if pid in self.active_interactions:
-                interactions_to_write.append(self.active_interactions[pid])
+                interactions_to_write.extend(self.active_interactions[pid])
 
         # Convert initial states lists to numpy arrays
         for k, v in initial_states_to_write.items():
             initial_states_to_write[k] = np.array(v)
+
+        # Apply column_stack for emission data here lazily before writing
+        if 'pos_x' in initial_states_to_write:
+            pos_x = initial_states_to_write.pop('pos_x')
+            pos_y = initial_states_to_write.pop('pos_y')
+            pos_z = initial_states_to_write.pop('pos_z')
+            initial_states_to_write['emission_position'] = np.column_stack((pos_x, pos_y, pos_z))
+
+            dir_x = initial_states_to_write.pop('dir_x')
+            dir_y = initial_states_to_write.pop('dir_y')
+            dir_z = initial_states_to_write.pop('dir_z')
+            initial_states_to_write['emission_direction'] = np.column_stack((dir_x, dir_y, dir_z))
 
         # Merge interactions lists of dicts to a single dict of numpy arrays
         if interactions_to_write:
