@@ -99,28 +99,9 @@ class SimulationManagerSOA(Thread):
 
         chunk = {
             'type': 'interactions',
-            'data': {
-                'process_id': self.data_buffer.interactions.process_id[:interaction_count].copy(),
-                'volume_id': self.data_buffer.interactions.volume_id[:interaction_count].copy(),
-                'material_id': self.data_buffer.interactions.material_id[:interaction_count].copy(),
-                'particle_ID': self.data_buffer.interactions.particle_ID[:interaction_count].copy(),
-                'energy_deposit': self.data_buffer.interactions.energy_deposit[:interaction_count].copy(),
-                'scattering_theta': self.data_buffer.interactions.scattering_theta[:interaction_count].copy(),
-                'scattering_phi': self.data_buffer.interactions.scattering_phi[:interaction_count].copy(),
-                'distance_traveled': self.data_buffer.interactions.distance_traveled[:interaction_count].copy(),
-                'species': self.data_buffer.interactions.species[:interaction_count].copy(),
-                'pos_x': self.data_buffer.interactions.position.x[:interaction_count].copy(),
-                'pos_y': self.data_buffer.interactions.position.y[:interaction_count].copy(),
-                'pos_z': self.data_buffer.interactions.position.z[:interaction_count].copy(),
-                'dir_x': self.data_buffer.interactions.direction.x[:interaction_count].copy(),
-                'dir_y': self.data_buffer.interactions.direction.y[:interaction_count].copy(),
-                'dir_z': self.data_buffer.interactions.direction.z[:interaction_count].copy(),
-            }
+            'data': self.data_buffer.interactions.shrink_and_reset()
         }
-
         self.send_data(chunk)
-        self.data_buffer.interactions.reset_cursor()
-
 
     def flush_dead_particles(self) -> None:
         """
@@ -133,10 +114,9 @@ class SimulationManagerSOA(Thread):
         _logger.debug(f'{self.name} flushing {dead_count} dead particles')
         chunk = {
             'type': 'dead_particles',
-            'data': self.data_buffer.dead_particles.particle_ID[:dead_count].copy()
+            'data': self.data_buffer.dead_particles.shrink_and_reset()
         }
         self.send_data(chunk)
-        self.data_buffer.dead_particles.reset_cursor()
 
     def flush_initial_states(self) -> None:
         """
@@ -150,21 +130,9 @@ class SimulationManagerSOA(Thread):
 
         chunk = {
             'type': 'initial_states',
-            'data': {
-                'particle_ID': self.data_buffer.initial_states.particle_ID[:initial_count].copy(),
-                'emission_time': self.data_buffer.initial_states.emission_time[:initial_count].copy(),
-                'emission_energy': self.data_buffer.initial_states.emission_energy[:initial_count].copy(),
-                'pos_x': self.data_buffer.initial_states.emission_position.x[:initial_count].copy(),
-                'pos_y': self.data_buffer.initial_states.emission_position.y[:initial_count].copy(),
-                'pos_z': self.data_buffer.initial_states.emission_position.z[:initial_count].copy(),
-                'dir_x': self.data_buffer.initial_states.emission_direction.x[:initial_count].copy(),
-                'dir_y': self.data_buffer.initial_states.emission_direction.y[:initial_count].copy(),
-                'dir_z': self.data_buffer.initial_states.emission_direction.z[:initial_count].copy(),
-            }
+            'data': self.data_buffer.initial_states.shrink_and_reset()
         }
-
         self.send_data(chunk)
-        self.data_buffer.initial_states.reset_cursor()
 
 
     def _invalidate_by_energy(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:

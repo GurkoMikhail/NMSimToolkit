@@ -110,21 +110,35 @@ class InteractionBuffer(NamedTuple):
             scattering_phi=np.empty(capacity, dtype=Float),
             distance_traveled=np.empty(capacity, dtype=Float),
             species=np.empty(capacity, dtype=Species),
-            position=Vector3DSoA(
-                x=np.empty(capacity, dtype=Float),
-                y=np.empty(capacity, dtype=Float),
-                z=np.empty(capacity, dtype=Float)
-            ),
-            direction=Vector3DSoA(
-                x=np.empty(capacity, dtype=Float),
-                y=np.empty(capacity, dtype=Float),
-                z=np.empty(capacity, dtype=Float)
-            ),
+            position=Vector3DSoA.allocate(capacity, dtype=Float),
+            direction=Vector3DSoA.allocate(capacity, dtype=Float),
             cursor=np.zeros(1, dtype=Index),
             capacity=capacity
         )
         buffer.validate()
         return buffer
+
+    def shrink_and_reset(self) -> dict:
+        c = self.cursor_value
+        chunk = {
+            'process_id': self.process_id[:c].copy(),
+            'volume_id': self.volume_id[:c].copy(),
+            'material_id': self.material_id[:c].copy(),
+            'particle_ID': self.particle_ID[:c].copy(),
+            'energy_deposit': self.energy_deposit[:c].copy(),
+            'scattering_theta': self.scattering_theta[:c].copy(),
+            'scattering_phi': self.scattering_phi[:c].copy(),
+            'distance_traveled': self.distance_traveled[:c].copy(),
+            'species': self.species[:c].copy(),
+            'pos_x': self.position.x[:c].copy(),
+            'pos_y': self.position.y[:c].copy(),
+            'pos_z': self.position.z[:c].copy(),
+            'dir_x': self.direction.x[:c].copy(),
+            'dir_y': self.direction.y[:c].copy(),
+            'dir_z': self.direction.z[:c].copy(),
+        }
+        self.reset_cursor()
+        return chunk
 
 
 from core.other.typing_definitions import Time, Length
@@ -193,6 +207,22 @@ class InitialStateBuffer(NamedTuple):
         buffer.validate()
         return buffer
 
+    def shrink_and_reset(self) -> dict:
+        c = self.cursor_value
+        chunk = {
+            'particle_ID': self.particle_ID[:c].copy(),
+            'emission_time': self.emission_time[:c].copy(),
+            'emission_energy': self.emission_energy[:c].copy(),
+            'pos_x': self.emission_position.x[:c].copy(),
+            'pos_y': self.emission_position.y[:c].copy(),
+            'pos_z': self.emission_position.z[:c].copy(),
+            'dir_x': self.emission_direction.x[:c].copy(),
+            'dir_y': self.emission_direction.y[:c].copy(),
+            'dir_z': self.emission_direction.z[:c].copy(),
+        }
+        self.reset_cursor()
+        return chunk
+
 
 class DeadParticlesBuffer(NamedTuple):
     """
@@ -241,6 +271,12 @@ class DeadParticlesBuffer(NamedTuple):
             raise ValueError("Insufficient capacity in DeadParticlesBuffer.")
         self.particle_ID[c:c + n] = particle_ids
         self.cursor[0] += n
+
+    def shrink_and_reset(self) -> NDArray[ID]:
+        c = self.cursor_value
+        chunk = self.particle_ID[:c].copy()
+        self.reset_cursor()
+        return chunk
 
 
 class SimulationDataBuffer(NamedTuple):
