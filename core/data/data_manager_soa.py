@@ -36,24 +36,12 @@ class DataManagerSoA(threading.Thread):
         self.daemon = True
 
         self.simulation_volume = simulation_volume
-
         if self.simulation_volume is None:
-            unique_roots = set()
-            for vol in self.sensitive_volumes:
-                if isinstance(vol, TransformableVolume):
-                    unique_roots.add(vol.root_volume)
-                else:
-                    unique_roots.add(vol)
-
-            if len(unique_roots) > 1:
-                raise ValueError("All sensitive volumes must share the same root simulation volume!")
-            elif len(unique_roots) == 1:
-                self.simulation_volume = unique_roots.pop()
+            self.simulation_volume = self._find_simulation_volume(sensitive_volumes)
 
         self.target_volume_ids = np.array(self._get_hierarchy_indices(sensitive_volumes), dtype=np.int64)
 
         self.volume_mapping = {}
-
         if self.simulation_volume is not None:
             self._build_volume_mapping(self.simulation_volume, self.simulation_volume)
 
@@ -64,32 +52,32 @@ class DataManagerSoA(threading.Thread):
         self.active_interactions = {}
         self.scored_particles = set()
 
-    def _get_root_volume(self, vol: Volume) -> Volume:
-        if self.simulation_volume is not None:
-            return self.simulation_volume
-        if isinstance(vol, TransformableVolume):
-            return vol.root_volume
-        return vol
+    def _find_simulation_volume(self, sensitive_volumes: List[Volume]) -> Optional[Volume]:
+        unique_roots = set()
+        for vol in sensitive_volumes:
+            if isinstance(vol, TransformableVolume):
+                unique_roots.add(vol.root_volume)
+            else:
+                unique_roots.add(vol)
+
+        if len(unique_roots) > 1:
+            raise ValueError("All sensitive volumes must share the same root simulation volume!")
+        elif len(unique_roots) == 1:
+            return unique_roots.pop()
+        return None
 
     def _build_volume_mapping(self, current_vol: Volume, root_vol: Volume) -> None:
-        sim_vol = self._get_root_volume(current_vol)
-        for i, (v, _, _) in enumerate(sim_vol.flattened_scene.flat_list):
-            if v is current_vol:
+        for i, (v, _, _) in enumerate(self.simulation_volume.flattened_scene.flat_list):
+            if self._is_descendant(v, current_vol):
                 self.volume_mapping[i] = root_vol
-                break
-
-        if isinstance(current_vol, VolumeWithChilds):
-            for child in current_vol.childs:
-                self._build_volume_mapping(child, root_vol)
 
     def _get_hierarchy_indices(self, volumes: List[Volume]) -> List[int]:
         indices = []
         for vol in volumes:
-            sim_vol = self._get_root_volume(vol)
-            for i, (v, _, _) in enumerate(sim_vol.flattened_scene.flat_list):
+            for i, (v, _, _) in enumerate(self.simulation_volume.flattened_scene.flat_list):
                 if self._is_descendant(v, vol):
                     indices.append(i)
-        return indices
+        return list(set(indices))
 
     def _is_descendant(self, query_vol: Volume, root_vol: Volume) -> bool:
         if query_vol is root_vol:
