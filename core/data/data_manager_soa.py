@@ -36,9 +36,27 @@ class DataManagerSoA(threading.Thread):
         self.daemon = True
 
         self.simulation_volume = simulation_volume
+
+        if self.simulation_volume is None:
+            unique_roots = set()
+            for vol in self.sensitive_volumes:
+                if isinstance(vol, TransformableVolume):
+                    unique_roots.add(vol.root_volume)
+                else:
+                    unique_roots.add(vol)
+
+            if len(unique_roots) > 1:
+                raise ValueError("All sensitive volumes must share the same root simulation volume!")
+            elif len(unique_roots) == 1:
+                self.simulation_volume = unique_roots.pop()
+
         self.target_volume_ids = np.array(self._get_hierarchy_indices(sensitive_volumes), dtype=np.int64)
 
         self.volume_mapping = {}
+
+        if self.simulation_volume is not None:
+            self._build_volume_mapping(self.simulation_volume, self.simulation_volume)
+
         for vol in sensitive_volumes:
             self._build_volume_mapping(vol, vol)
 
@@ -291,7 +309,11 @@ class DataManagerSoA(threading.Thread):
 
         root_vol_names = np.array(root_vol_names)
 
-        for top_volume in self.sensitive_volumes:
+        volumes_to_write = list(self.sensitive_volumes)
+        if self.simulation_volume is not None and self.simulation_volume not in volumes_to_write:
+            volumes_to_write.append(self.simulation_volume)
+
+        for top_volume in volumes_to_write:
             mask = root_vol_names == top_volume.name
 
             if not np.any(mask):
