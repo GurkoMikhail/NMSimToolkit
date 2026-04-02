@@ -118,7 +118,7 @@ class InteractionBuffer(NamedTuple):
         buffer.validate()
         return buffer
 
-    def shrink_and_reset(self) -> dict:
+    def flush_to_dict(self, clear: bool = True) -> dict:
         c = self.cursor_value
         chunk = {
             'process_id': self.process_id[:c].copy(),
@@ -137,7 +137,8 @@ class InteractionBuffer(NamedTuple):
             'dir_y': self.direction.y[:c].copy(),
             'dir_z': self.direction.z[:c].copy(),
         }
-        self.reset_cursor()
+        if clear:
+            self.reset_cursor()
         return chunk
 
 
@@ -207,7 +208,7 @@ class InitialStateBuffer(NamedTuple):
         buffer.validate()
         return buffer
 
-    def shrink_and_reset(self) -> dict:
+    def flush_to_dict(self, clear: bool = True) -> dict:
         c = self.cursor_value
         chunk = {
             'particle_ID': self.particle_ID[:c].copy(),
@@ -220,7 +221,8 @@ class InitialStateBuffer(NamedTuple):
             'dir_y': self.emission_direction.y[:c].copy(),
             'dir_z': self.emission_direction.z[:c].copy(),
         }
-        self.reset_cursor()
+        if clear:
+            self.reset_cursor()
         return chunk
 
 
@@ -272,10 +274,11 @@ class DeadParticlesBuffer(NamedTuple):
         self.particle_ID[c:c + n] = particle_ids
         self.cursor[0] += n
 
-    def shrink_and_reset(self) -> NDArray[ID]:
+    def flush_to_array(self, clear: bool = True) -> NDArray[ID]:
         c = self.cursor_value
         chunk = self.particle_ID[:c].copy()
-        self.reset_cursor()
+        if clear:
+            self.reset_cursor()
         return chunk
 
 

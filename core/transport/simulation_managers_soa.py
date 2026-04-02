@@ -99,7 +99,7 @@ class SimulationManagerSOA(Thread):
 
         chunk = {
             'type': 'interactions',
-            'data': self.data_buffer.interactions.shrink_and_reset()
+            'data': self.data_buffer.interactions.flush_to_dict(clear=True)
         }
         self.send_data(chunk)
 
@@ -114,7 +114,7 @@ class SimulationManagerSOA(Thread):
         _logger.debug(f'{self.name} flushing {dead_count} dead particles')
         chunk = {
             'type': 'dead_particles',
-            'data': self.data_buffer.dead_particles.shrink_and_reset()
+            'data': self.data_buffer.dead_particles.flush_to_array(clear=True)
         }
         self.send_data(chunk)
 
@@ -130,7 +130,7 @@ class SimulationManagerSOA(Thread):
 
         chunk = {
             'type': 'initial_states',
-            'data': self.data_buffer.initial_states.shrink_and_reset()
+            'data': self.data_buffer.initial_states.flush_to_dict(clear=True)
         }
         self.send_data(chunk)
 
@@ -149,7 +149,6 @@ class SimulationManagerSOA(Thread):
         if np.any(dead_mask):
             dead_indices = active_indices[dead_mask]
             self.bank.state.is_active[dead_indices] = False
-            # Energy should not be zeroed out.
             return dead_indices
         return np.array([], dtype=Index)
 
