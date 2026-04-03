@@ -48,8 +48,8 @@ class DataManagerSoA(threading.Thread):
         for vol in sensitive_volumes:
             self._build_volume_mapping(vol, vol)
 
-        self.active_initial_states = {}
-        self.active_interactions = {}
+        self.initial_states_chunks = []
+        self.interactions_chunks = []
         self.scored_particles = set()
 
     def _find_simulation_volume(self, sensitive_volumes: List[Volume]) -> Optional[Volume]:
@@ -140,15 +140,13 @@ class DataManagerSoA(threading.Thread):
 
     def _cache_initial_states(self, initial_states: Dict[str, np.ndarray]) -> None:
         """
-        Caches initial states into memory dictionaries.
+        Caches initial states into memory chunks sequentially.
         """
-        p_ids = initial_states['particle_ID']
-        for i, p_id in enumerate(p_ids):
-            self.active_initial_states[p_id] = {k: v[i] for k, v in initial_states.items()}
+        self.initial_states_chunks.append(initial_states)
 
     def _cache_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
         """
-        Filters the interactions by sensitive volume hierarchy and caches them by ID.
+        Filters the interactions by sensitive volume hierarchy and caches them into flat chunks.
         """
         # Find scored IDs
         volume_ids = interactions['volume_id']
@@ -157,86 +155,62 @@ class DataManagerSoA(threading.Thread):
             sensitive_ids = interactions['particle_ID'][mask_sensitive]
             self.scored_particles.update(sensitive_ids)
 
-        p_ids = interactions['particle_ID']
-        unique_ids, inverse_indices = np.unique(p_ids, return_inverse=True)
-
-        for i, p_id in enumerate(unique_ids):
-            mask = inverse_indices == i
-            chunk_slice = {k: v[mask] for k, v in interactions.items()}
-            if p_id not in self.active_interactions:
-                self.active_interactions[p_id] = [chunk_slice]
-            else:
-                self.active_interactions[p_id].append(chunk_slice)
+        self.interactions_chunks.append(interactions)
 
     def _flush_dead_particles(self, dead_ids: np.ndarray) -> None:
         """
-        Retrieves scored dead particles and triggers write_to_hdf5. Then discards them from RAM.
+        Retrieves scored dead particles and triggers write_to_hdf5. Then performs garbage collection.
         """
-        scored_dead_ids = [pid for pid in dead_ids if pid in self.scored_particles]
+        scored_dead_ids = np.intersect1d(dead_ids, list(self.scored_particles))
 
-        if not scored_dead_ids:
-            # Clean up cache for dead but unscored particles
-            for pid in dead_ids:
-                self.active_initial_states.pop(pid, None)
-                self.active_interactions.pop(pid, None)
-            return
+        initial_states_to_write = None
+        if self.initial_states_chunks:
+            mega_init = {k: np.concatenate([c[k] for c in self.initial_states_chunks]) for k in self.initial_states_chunks[0].keys()}
 
-        # Safely find initial keys
-        initial_keys = None
-        for pid in scored_dead_ids:
-            if pid in self.active_initial_states:
-                initial_keys = self.active_initial_states[pid].keys()
-                break
+            if len(scored_dead_ids) > 0:
+                scored_mask = np.isin(mega_init['particle_ID'], scored_dead_ids)
+                if np.any(scored_mask):
+                    initial_states_to_write = {k: v[scored_mask] for k, v in mega_init.items()}
 
-        if initial_keys is None:
-            # Fallback if no initial states are found for any scored dead particles
-            initial_keys = ['particle_ID', 'emission_time', 'emission_energy', 'pos_x', 'pos_y', 'pos_z', 'dir_x', 'dir_y', 'dir_z']
+                    pos_x = initial_states_to_write.pop('pos_x')
+                    pos_y = initial_states_to_write.pop('pos_y')
+                    pos_z = initial_states_to_write.pop('pos_z')
+                    initial_states_to_write['emission_position'] = np.column_stack((pos_x, pos_y, pos_z))
 
-        initial_states_to_write = {k: [] for k in initial_keys}
-        interactions_to_write = []
+                    dir_x = initial_states_to_write.pop('dir_x')
+                    dir_y = initial_states_to_write.pop('dir_y')
+                    dir_z = initial_states_to_write.pop('dir_z')
+                    initial_states_to_write['emission_direction'] = np.column_stack((dir_x, dir_y, dir_z))
 
-        for pid in scored_dead_ids:
-            # Collect initial state
-            if pid in self.active_initial_states:
-                for k, v in self.active_initial_states[pid].items():
-                    initial_states_to_write[k].append(v)
+            survivor_mask = ~np.isin(mega_init['particle_ID'], dead_ids)
+            if np.any(survivor_mask):
+                self.initial_states_chunks = [{k: v[survivor_mask] for k, v in mega_init.items()}]
+            else:
+                self.initial_states_chunks.clear()
 
-            # Collect interactions
-            if pid in self.active_interactions:
-                interactions_to_write.extend(self.active_interactions[pid])
+        interactions_to_write = None
+        if self.interactions_chunks:
+            mega_inter = {k: np.concatenate([c[k] for c in self.interactions_chunks]) for k in self.interactions_chunks[0].keys()}
 
-        # Convert initial states lists to numpy arrays
-        for k, v in initial_states_to_write.items():
-            initial_states_to_write[k] = np.array(v)
+            if len(scored_dead_ids) > 0:
+                scored_mask = np.isin(mega_inter['particle_ID'], scored_dead_ids)
+                if np.any(scored_mask):
+                    interactions_to_write = {k: v[scored_mask] for k, v in mega_inter.items()}
+                    sort_idx = np.argsort(interactions_to_write['particle_ID'])
+                    interactions_to_write = {k: v[sort_idx] for k, v in interactions_to_write.items()}
 
-        # Apply column_stack for emission data here lazily before writing
-        if 'pos_x' in initial_states_to_write:
-            pos_x = initial_states_to_write.pop('pos_x')
-            pos_y = initial_states_to_write.pop('pos_y')
-            pos_z = initial_states_to_write.pop('pos_z')
-            initial_states_to_write['emission_position'] = np.column_stack((pos_x, pos_y, pos_z))
+            survivor_mask = ~np.isin(mega_inter['particle_ID'], dead_ids)
+            if np.any(survivor_mask):
+                self.interactions_chunks = [{k: v[survivor_mask] for k, v in mega_inter.items()}]
+            else:
+                self.interactions_chunks.clear()
 
-            dir_x = initial_states_to_write.pop('dir_x')
-            dir_y = initial_states_to_write.pop('dir_y')
-            dir_z = initial_states_to_write.pop('dir_z')
-            initial_states_to_write['emission_direction'] = np.column_stack((dir_x, dir_y, dir_z))
+        self.scored_particles.difference_update(dead_ids)
 
-        # Merge interactions lists of dicts to a single dict of numpy arrays
-        if interactions_to_write:
-            merged_interactions = {k: np.concatenate([d[k] for d in interactions_to_write]) for k in interactions_to_write[0].keys()}
-        else:
-            merged_interactions = None
-
-        # Discard from RAM
-        for pid in dead_ids:
-            self.active_initial_states.pop(pid, None)
-            self.active_interactions.pop(pid, None)
-            self.scored_particles.discard(pid)
-
-        # Proceed to write these collected arrays
-        self._write_initial_states(initial_states_to_write)
-        if merged_interactions:
-            self._write_interactions(merged_interactions)
+        if initial_states_to_write is not None:
+            self._write_initial_states(initial_states_to_write)
+        if interactions_to_write is not None:
+            self._write_interactions(interactions_to_write)
 
     def _write_initial_states(self, initial_states: Dict[str, np.ndarray]) -> None:
         def write_func(f: h5py.File):
