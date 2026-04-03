@@ -19,7 +19,12 @@ class BaseDataHandler(ABC):
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         pass
 
-class HistoryAssemblerHandler(BaseDataHandler):
+class SensitiveVolumeHandler(BaseDataHandler):
+    """
+    Base handler for caching interactions that hit specific sensitive volumes.
+    By default, it drops external interactions from memory and writes only
+    interactions that fall within target_volume_ids.
+    """
     PROCESS_MAP = {
         0: b'PhotoelectricEffect',
         1: b'ComptonScattering',
@@ -137,7 +142,8 @@ class HistoryAssemblerHandler(BaseDataHandler):
             mega_inter = {k: np.concatenate([c[k] for c in self.interactions_chunks]) for k in self.interactions_chunks[0].keys()}
 
             if len(scored_dead_ids) > 0:
-                scored_mask = np.isin(mega_inter['particle_ID'], scored_dead_ids)
+                # ONLY KEEP interactions that hit sensitive volumes for these particles
+                scored_mask = np.isin(mega_inter['particle_ID'], scored_dead_ids) & np.isin(mega_inter['volume_id'], self.target_volume_ids)
                 if np.any(scored_mask):
                     interactions_to_write = {k: v[scored_mask] for k, v in mega_inter.items()}
                     sort_idx = np.argsort(interactions_to_write['particle_ID'])
@@ -300,6 +306,66 @@ class HistoryAssemblerHandler(BaseDataHandler):
         if getattr(self, 'writer_callback', None):
             self.writer_callback(write_func)
             _logger.debug(f'Interactions write task forwarded for {events_saved} events.')
+
+
+class HistoryAssemblerHandler(SensitiveVolumeHandler):
+    """
+    Inherits from SensitiveVolumeHandler but saves the ENTIRE history
+    (including background tracks outside sensitive volumes) for any particle
+    that scored a hit.
+    """
+    def _flush_dead_particles(self, dead_ids: np.ndarray) -> None:
+        scored_dead_ids = np.intersect1d(dead_ids, list(self.scored_particles))
+
+        initial_states_to_write = None
+        if self.initial_states_chunks:
+            mega_init = {k: np.concatenate([c[k] for c in self.initial_states_chunks]) for k in self.initial_states_chunks[0].keys()}
+
+            if len(scored_dead_ids) > 0:
+                scored_mask = np.isin(mega_init['particle_ID'], scored_dead_ids)
+                if np.any(scored_mask):
+                    initial_states_to_write = {k: v[scored_mask] for k, v in mega_init.items()}
+
+                    pos_x = initial_states_to_write.pop('pos_x')
+                    pos_y = initial_states_to_write.pop('pos_y')
+                    pos_z = initial_states_to_write.pop('pos_z')
+                    initial_states_to_write['emission_position'] = np.column_stack((pos_x, pos_y, pos_z))
+
+                    dir_x = initial_states_to_write.pop('dir_x')
+                    dir_y = initial_states_to_write.pop('dir_y')
+                    dir_z = initial_states_to_write.pop('dir_z')
+                    initial_states_to_write['emission_direction'] = np.column_stack((dir_x, dir_y, dir_z))
+
+            survivor_mask = ~np.isin(mega_init['particle_ID'], dead_ids)
+            if np.any(survivor_mask):
+                self.initial_states_chunks = [{k: v[survivor_mask] for k, v in mega_init.items()}]
+            else:
+                self.initial_states_chunks.clear()
+
+        interactions_to_write = None
+        if self.interactions_chunks:
+            mega_inter = {k: np.concatenate([c[k] for c in self.interactions_chunks]) for k in self.interactions_chunks[0].keys()}
+
+            if len(scored_dead_ids) > 0:
+                # HistoryAssembler logic: Keep ALL interactions (entire history) for scored particles
+                scored_mask = np.isin(mega_inter['particle_ID'], scored_dead_ids)
+                if np.any(scored_mask):
+                    interactions_to_write = {k: v[scored_mask] for k, v in mega_inter.items()}
+                    sort_idx = np.argsort(interactions_to_write['particle_ID'])
+                    interactions_to_write = {k: v[sort_idx] for k, v in interactions_to_write.items()}
+
+            survivor_mask = ~np.isin(mega_inter['particle_ID'], dead_ids)
+            if np.any(survivor_mask):
+                self.interactions_chunks = [{k: v[survivor_mask] for k, v in mega_inter.items()}]
+            else:
+                self.interactions_chunks.clear()
+
+        self.scored_particles.difference_update(dead_ids)
+
+        if initial_states_to_write is not None:
+            self._write_initial_states(initial_states_to_write)
+        if interactions_to_write is not None:
+            self._write_interactions(interactions_to_write)
 
 
 class DirectStreamHandler(BaseDataHandler):
