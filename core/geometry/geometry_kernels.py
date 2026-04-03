@@ -155,7 +155,7 @@ def _relocate_bottom_up(
         )
 
         # Check if inside
-        if tmin <= 0 and tmax > 0:
+        if tmin <= 1e-8 and tmax > 1e-8:
             return curr_vol_idx
 
         curr_vol_idx = geom['parent_index']
@@ -223,19 +223,18 @@ def _trace_single_ray(
         )
 
         # --- Frustum Culling / Boundary Tracking Logic ---
-        if tmax < 0 or tmax < tmin:
+        if tmax < 1e-8 or tmax < tmin:
             # MISS: Ray completely misses this volume.
             # Jump over all its children via miss_index.
             g_idx = geom['miss_index']
             continue
 
-        if tmin <= 0 and tmax > 0:
+        if tmin <= 1e-8 and tmax > 1e-8:
             # INSIDE: The particle is currently inside this volume.
             # The next boundary is its exit (tmax).
             if tmax < closest_dist:
                 closest_dist = tmax
-                # We don't know the exact next volume at this level, so reset it.
-                next_vol = -1
+                next_vol = geom['parent_index']
 
             # Record as current volume. Because we traverse parent->child,
             # the deepest child we find ourselves in will overwrite this.
@@ -244,7 +243,7 @@ def _trace_single_ray(
             # Fall through to check children
             g_idx += 1
 
-        elif tmin > 0:
+        elif tmin > 1e-8:
             # OUTSIDE: The particle is outside, but the ray will hit it (tmin).
             # This is a candidate for the next volume boundary.
             if tmin < closest_dist:
