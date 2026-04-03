@@ -234,8 +234,7 @@ def _trace_single_ray(
             # The next boundary is its exit (tmax).
             if tmax < closest_dist:
                 closest_dist = tmax
-                # We don't know the exact next volume at this level, so reset it.
-                next_vol = -1
+                next_vol = geom['parent_index']
 
             # Record as current volume. Because we traverse parent->child,
             # the deepest child we find ourselves in will overwrite this.
