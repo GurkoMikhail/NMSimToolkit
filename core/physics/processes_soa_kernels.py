@@ -3,7 +3,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Index, Charge, ProcessID, ID, Energy, Float
+from core.other.typing_definitions import Index, Charge, ProcessID, ID, Energy, Float, Species
 from core.particles.kinematic_state import KinematicState
 from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.physics.g4compton_soa import _generate_compton_theta_scalar, _calculate_compton_energy_deposit_scalar
@@ -27,6 +27,8 @@ def _push_to_interaction_buffer(
     energy_deposit: Energy,
     scattering_theta: Float,
     scattering_phi: Float,
+    distance_traveled: Float,
+    species: Species,
     pos_x: Float, pos_y: Float, pos_z: Float,
     dir_x: Float, dir_y: Float, dir_z: Float
 ) -> None:
@@ -41,6 +43,9 @@ def _push_to_interaction_buffer(
 
     inter_buffer.scattering_theta[idx] = scattering_theta
     inter_buffer.scattering_phi[idx] = scattering_phi
+
+    inter_buffer.distance_traveled[idx] = distance_traveled
+    inter_buffer.species[idx] = species
 
     inter_buffer.position.x[idx] = pos_x
     inter_buffer.position.y[idx] = pos_y
@@ -101,6 +106,8 @@ def make_photoelectric_kernel(process_id: ProcessID):
             particle_ids[p_idx],
             energy_deposit,
             0.0, 0.0,
+            state.distance_traveled[p_idx],
+            state.species[p_idx],
             state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
             state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
         )
@@ -166,6 +173,8 @@ def make_compton_kernel(process_id: ProcessID):
             particle_ids[p_idx],
             energy_deposit,
             theta, phi,
+            state.distance_traveled[p_idx],
+            state.species[p_idx],
             state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
             state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
         )
@@ -229,6 +238,8 @@ def make_coherent_kernel(process_id: ProcessID):
             particle_ids[p_idx],
             energy_deposit,
             theta, phi,
+            state.distance_traveled[p_idx],
+            state.species[p_idx],
             state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
             state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
         )

@@ -2,7 +2,7 @@ import numpy as np
 from typing import NamedTuple
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID
+from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID, Species
 from core.other.vectors_soa import Vector3DSoA
 
 
@@ -38,12 +38,25 @@ class InteractionBuffer(NamedTuple):
     energy_deposit: NDArray[Energy]
     scattering_theta: NDArray[Float]
     scattering_phi: NDArray[Float]
+    distance_traveled: NDArray[Float]
+    species: NDArray[Species]
 
     position: Vector3DSoA
     direction: Vector3DSoA
 
     cursor: NDArray[Index]  # Length 1, tracks the number of elements written
     capacity: int
+
+    @property
+    def cursor_value(self) -> int:
+        return int(self.cursor[0])
+
+    @property
+    def remaining_capacity(self) -> int:
+        return self.capacity - self.cursor_value
+
+    def reset_cursor(self) -> None:
+        self.cursor[0] = 0
 
     def validate(self) -> None:
         """
@@ -60,7 +73,9 @@ class InteractionBuffer(NamedTuple):
             self.particle_ID,
             self.energy_deposit,
             self.scattering_theta,
-            self.scattering_phi
+            self.scattering_phi,
+            self.distance_traveled,
+            self.species
         ]
 
         # All base fields should be 1-dimensional
@@ -93,39 +108,38 @@ class InteractionBuffer(NamedTuple):
             energy_deposit=np.empty(capacity, dtype=Energy),
             scattering_theta=np.empty(capacity, dtype=Float),
             scattering_phi=np.empty(capacity, dtype=Float),
-            position=Vector3DSoA(
-                x=np.empty(capacity, dtype=Float),
-                y=np.empty(capacity, dtype=Float),
-                z=np.empty(capacity, dtype=Float)
-            ),
-            direction=Vector3DSoA(
-                x=np.empty(capacity, dtype=Float),
-                y=np.empty(capacity, dtype=Float),
-                z=np.empty(capacity, dtype=Float)
-            ),
+            distance_traveled=np.empty(capacity, dtype=Float),
+            species=np.empty(capacity, dtype=Species),
+            position=Vector3DSoA.allocate(capacity, dtype=Float),
+            direction=Vector3DSoA.allocate(capacity, dtype=Float),
             cursor=np.zeros(1, dtype=Index),
             capacity=capacity
         )
         buffer.validate()
         return buffer
 
-
-class SimulationDataBuffer(NamedTuple):
-    """
-    Combined Data-Oriented logging buffer for particle transport.
-    """
-    interactions: InteractionBuffer
-    initial_states: InitialStateBuffer
-
-    @classmethod
-    def allocate(cls, interaction_capacity: int, initial_state_capacity: int) -> 'SimulationDataBuffer':
-        """
-        Allocates both interaction and initial state buffers with given capacities.
-        """
-        return cls(
-            interactions=InteractionBuffer.allocate(interaction_capacity),
-            initial_states=InitialStateBuffer.allocate(initial_state_capacity)
-        )
+    def flush_to_dict(self, clear: bool = True) -> dict:
+        c = self.cursor_value
+        chunk = {
+            'process_id': self.process_id[:c].copy(),
+            'volume_id': self.volume_id[:c].copy(),
+            'material_id': self.material_id[:c].copy(),
+            'particle_ID': self.particle_ID[:c].copy(),
+            'energy_deposit': self.energy_deposit[:c].copy(),
+            'scattering_theta': self.scattering_theta[:c].copy(),
+            'scattering_phi': self.scattering_phi[:c].copy(),
+            'distance_traveled': self.distance_traveled[:c].copy(),
+            'species': self.species[:c].copy(),
+            'pos_x': self.position.x[:c].copy(),
+            'pos_y': self.position.y[:c].copy(),
+            'pos_z': self.position.z[:c].copy(),
+            'dir_x': self.direction.x[:c].copy(),
+            'dir_y': self.direction.y[:c].copy(),
+            'dir_z': self.direction.z[:c].copy(),
+        }
+        if clear:
+            self.reset_cursor()
+        return chunk
 
 
 from core.other.typing_definitions import Time, Length
@@ -144,6 +158,17 @@ class InitialStateBuffer(NamedTuple):
 
     cursor: NDArray[Index]
     capacity: int
+
+    @property
+    def cursor_value(self) -> int:
+        return int(self.cursor[0])
+
+    @property
+    def remaining_capacity(self) -> int:
+        return self.capacity - self.cursor_value
+
+    def reset_cursor(self) -> None:
+        self.cursor[0] = 0
 
     def validate(self) -> None:
         self.emission_position.validate()
@@ -182,3 +207,96 @@ class InitialStateBuffer(NamedTuple):
         )
         buffer.validate()
         return buffer
+
+    def flush_to_dict(self, clear: bool = True) -> dict:
+        c = self.cursor_value
+        chunk = {
+            'particle_ID': self.particle_ID[:c].copy(),
+            'emission_time': self.emission_time[:c].copy(),
+            'emission_energy': self.emission_energy[:c].copy(),
+            'pos_x': self.emission_position.x[:c].copy(),
+            'pos_y': self.emission_position.y[:c].copy(),
+            'pos_z': self.emission_position.z[:c].copy(),
+            'dir_x': self.emission_direction.x[:c].copy(),
+            'dir_y': self.emission_direction.y[:c].copy(),
+            'dir_z': self.emission_direction.z[:c].copy(),
+        }
+        if clear:
+            self.reset_cursor()
+        return chunk
+
+
+class DeadParticlesBuffer(NamedTuple):
+    """
+    SoA Ring/Flush buffer for in-place logging of dead particle IDs.
+    """
+    particle_ID: NDArray[ID]
+    cursor: NDArray[Index]
+    capacity: int
+
+    @property
+    def cursor_value(self) -> int:
+        return int(self.cursor[0])
+
+    @property
+    def remaining_capacity(self) -> int:
+        return self.capacity - self.cursor_value
+
+    def reset_cursor(self) -> None:
+        self.cursor[0] = 0
+
+    def validate(self) -> None:
+        if self.particle_ID.ndim != 1:
+            raise ValueError("particle_ID array in DeadParticlesBuffer must be 1-dimensional.")
+        if self.particle_ID.shape[0] != self.capacity:
+            raise ValueError("particle_ID array in DeadParticlesBuffer must have length equal to capacity.")
+        if self.cursor.shape != (1,):
+            raise ValueError("Cursor must be a 1-dimensional array of length 1.")
+
+    @classmethod
+    def allocate(cls, capacity: int) -> 'DeadParticlesBuffer':
+        buffer = cls(
+            particle_ID=np.empty(capacity, dtype=ID),
+            cursor=np.zeros(1, dtype=Index),
+            capacity=capacity
+        )
+        buffer.validate()
+        return buffer
+
+    def append(self, particle_ids: NDArray[ID]) -> None:
+        """
+        Appends dead particle IDs to the buffer and advances the cursor.
+        """
+        n = len(particle_ids)
+        c = self.cursor_value
+        if c + n > self.capacity:
+            raise ValueError("Insufficient capacity in DeadParticlesBuffer.")
+        self.particle_ID[c:c + n] = particle_ids
+        self.cursor[0] += n
+
+    def flush_to_array(self, clear: bool = True) -> NDArray[ID]:
+        c = self.cursor_value
+        chunk = self.particle_ID[:c].copy()
+        if clear:
+            self.reset_cursor()
+        return chunk
+
+
+class SimulationDataBuffer(NamedTuple):
+    """
+    Combined Data-Oriented logging buffer for particle transport.
+    """
+    interactions: InteractionBuffer
+    initial_states: InitialStateBuffer
+    dead_particles: DeadParticlesBuffer
+
+    @classmethod
+    def allocate(cls, interaction_capacity: int, initial_state_capacity: int, dead_particles_capacity: int) -> 'SimulationDataBuffer':
+        """
+        Allocates interaction, initial state, and dead particle buffers with given capacities.
+        """
+        return cls(
+            interactions=InteractionBuffer.allocate(interaction_capacity),
+            initial_states=InitialStateBuffer.allocate(initial_state_capacity),
+            dead_particles=DeadParticlesBuffer.allocate(dead_particles_capacity)
+        )

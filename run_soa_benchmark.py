@@ -20,6 +20,7 @@ from core.transport.simulation_managers_soa import SimulationManagerSOA
 from core.transport.propagator_soa import ParticlePropagator
 from core.physics.physics_compiler import PhysicsCompiler
 from core.data.data_manager_soa import DataManagerSoA
+from core.data.data_handlers_soa import HistoryAssemblerHandler
 
 def run_benchmark():
     # 1. Geometry Setup
@@ -97,9 +98,10 @@ def run_benchmark():
 
     # 6. Initialize DataManagerSoA
     print("Setting up data manager...")
+    handler = HistoryAssemblerHandler(sensitive_volumes=[detector])
     data_manager = DataManagerSoA(
         filename="benchmark_soa.hdf5",
-        sensitive_volumes=[detector],
+        handlers=[handler],
         queue=manager.queue
     )
     data_manager.start()

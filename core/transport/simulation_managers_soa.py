@@ -71,7 +71,7 @@ class SimulationManagerSOA(Thread):
         self.daemon = True
 
         self.bank = ParticleBank.allocate(self.particles_number)
-        self.data_buffer = SimulationDataBuffer.allocate(buffer_capacity, buffer_capacity)
+        self.data_buffer = SimulationDataBuffer.allocate(buffer_capacity, buffer_capacity, buffer_capacity)
         self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
 
@@ -87,50 +87,52 @@ class SimulationManagerSOA(Thread):
         # but for now we just pass a copy or slice.
         self.queue.put(data)
 
-    def flush_buffer(self) -> None:
+    def flush_interactions(self) -> None:
         """
-        Flushes the interaction buffer to the queue if it's full.
-        To avoid complex SoA-to-AoS conversion here, we can just trigger a queue put.
+        Flushes only the interaction buffer to the queue if it's full.
         """
-        interaction_count = self.data_buffer.interactions.cursor[0]
-        initial_count = self.data_buffer.initial_states.cursor[0]
-        if interaction_count == 0 and initial_count == 0:
+        interaction_count = self.data_buffer.interactions.cursor_value
+        if interaction_count == 0:
             return
 
-        _logger.debug(f'{self.name} flushing {interaction_count} interactions and {initial_count} initial states')
+        _logger.debug(f'{self.name} flushing {interaction_count} interactions')
 
         chunk = {
-            'interactions': {
-                'process_id': self.data_buffer.interactions.process_id[:interaction_count].copy(),
-                'volume_id': self.data_buffer.interactions.volume_id[:interaction_count].copy(),
-                'material_id': self.data_buffer.interactions.material_id[:interaction_count].copy(),
-                'particle_ID': self.data_buffer.interactions.particle_ID[:interaction_count].copy(),
-                'energy_deposit': self.data_buffer.interactions.energy_deposit[:interaction_count].copy(),
-                'scattering_theta': self.data_buffer.interactions.scattering_theta[:interaction_count].copy(),
-                'scattering_phi': self.data_buffer.interactions.scattering_phi[:interaction_count].copy(),
-                'pos_x': self.data_buffer.interactions.position.x[:interaction_count].copy(),
-                'pos_y': self.data_buffer.interactions.position.y[:interaction_count].copy(),
-                'pos_z': self.data_buffer.interactions.position.z[:interaction_count].copy(),
-                'dir_x': self.data_buffer.interactions.direction.x[:interaction_count].copy(),
-                'dir_y': self.data_buffer.interactions.direction.y[:interaction_count].copy(),
-                'dir_z': self.data_buffer.interactions.direction.z[:interaction_count].copy(),
-            },
-            'initial_states': {
-                'particle_ID': self.data_buffer.initial_states.particle_ID[:initial_count].copy(),
-                'emission_time': self.data_buffer.initial_states.emission_time[:initial_count].copy(),
-                'emission_energy': self.data_buffer.initial_states.emission_energy[:initial_count].copy(),
-                'pos_x': self.data_buffer.initial_states.emission_position.x[:initial_count].copy(),
-                'pos_y': self.data_buffer.initial_states.emission_position.y[:initial_count].copy(),
-                'pos_z': self.data_buffer.initial_states.emission_position.z[:initial_count].copy(),
-                'dir_x': self.data_buffer.initial_states.emission_direction.x[:initial_count].copy(),
-                'dir_y': self.data_buffer.initial_states.emission_direction.y[:initial_count].copy(),
-                'dir_z': self.data_buffer.initial_states.emission_direction.z[:initial_count].copy(),
-            }
+            'type': 'interactions',
+            'data': self.data_buffer.interactions.flush_to_dict(clear=True)
         }
-
         self.send_data(chunk)
-        self.data_buffer.interactions.cursor[0] = 0
-        self.data_buffer.initial_states.cursor[0] = 0
+
+    def flush_dead_particles(self) -> None:
+        """
+        Flushes accumulated dead particle IDs to the queue.
+        """
+        dead_count = self.data_buffer.dead_particles.cursor_value
+        if dead_count == 0:
+            return
+
+        _logger.debug(f'{self.name} flushing {dead_count} dead particles')
+        chunk = {
+            'type': 'dead_particles',
+            'data': self.data_buffer.dead_particles.flush_to_array(clear=True)
+        }
+        self.send_data(chunk)
+
+    def flush_initial_states(self) -> None:
+        """
+        Flushes only the initial states buffer to the queue if it's full.
+        """
+        initial_count = self.data_buffer.initial_states.cursor_value
+        if initial_count == 0:
+            return
+
+        _logger.debug(f'{self.name} flushing {initial_count} initial states')
+
+        chunk = {
+            'type': 'initial_states',
+            'data': self.data_buffer.initial_states.flush_to_dict(clear=True)
+        }
+        self.send_data(chunk)
 
 
     def _invalidate_by_energy(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
@@ -139,7 +141,7 @@ class SimulationManagerSOA(Thread):
     def _invalidate_by_volume(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
         return self.bank.navigation_state.current_volume[active_indices] == -1
 
-    def _apply_invalidators(self, active_indices: NDArray[Index]) -> None:
+    def _apply_invalidators(self, active_indices: NDArray[Index]) -> NDArray[Index]:
         dead_mask = np.zeros(len(active_indices), dtype=np.bool_)
         for invalidator in self.invalidators:
             dead_mask |= invalidator(active_indices)
@@ -147,7 +149,8 @@ class SimulationManagerSOA(Thread):
         if np.any(dead_mask):
             dead_indices = active_indices[dead_mask]
             self.bank.state.is_active[dead_indices] = False
-            self.bank.state.energy[dead_indices] = 0.0
+            return dead_indices
+        return np.array([], dtype=Index)
 
     def next_step(self):
         active_indices = self.bank.active_indices
@@ -156,9 +159,11 @@ class SimulationManagerSOA(Thread):
             return
 
         # Pre-flight Check: Ensure buffer has enough space for a worst-case scenario
-        if self.data_buffer.interactions.cursor[0] + len(active_indices) > self.data_buffer.interactions.capacity or \
-           self.data_buffer.initial_states.cursor[0] + len(active_indices) > self.data_buffer.initial_states.capacity:
-            self.flush_buffer()
+        if len(active_indices) > self.data_buffer.interactions.remaining_capacity:
+            self.flush_interactions()
+
+        if len(active_indices) > self.data_buffer.initial_states.remaining_capacity:
+            self.flush_initial_states()
 
         # Step physics and kinematics
         self.propagator.step(
@@ -170,7 +175,16 @@ class SimulationManagerSOA(Thread):
         )
 
         # Invalidation
-        self._apply_invalidators(active_indices)
+        dead_indices = self._apply_invalidators(active_indices)
+
+        if dead_indices.size > 0:
+            if len(dead_indices) > self.data_buffer.dead_particles.remaining_capacity:
+                self.flush_interactions()
+                self.flush_initial_states()
+                self.flush_dead_particles()
+
+            dead_ids = self.bank.initial_state.ID[dead_indices]
+            self.data_buffer.dead_particles.append(dead_ids)
 
         # Continuous Replenishment
         if self.source.timer <= self.stop_time:
@@ -204,7 +218,9 @@ class SimulationManagerSOA(Thread):
             _logger.debug(f'Source timer of {self.name} at {datetime_from_seconds(self.source.timer/units.second)}')
 
         # Final flush
-        self.flush_buffer()
+        self.flush_interactions()
+        self.flush_initial_states()
+        self.flush_dead_particles()
         self.queue.put('stop')
 
         stop_timepoint = datetime.now()

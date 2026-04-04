@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import h5py
 import numpy as np
 
-from core.geometry.volumes import Volume, TransformableVolume
+from core.data.data_handlers_soa import BaseDataHandler
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.DEBUG)
@@ -15,25 +15,24 @@ _logger.setLevel(logging.DEBUG)
 class DataManagerSoA(threading.Thread):
     """
     Consumer Thread for saving InteractionBuffer chunks from SoA engine
-    to HDF5 file in legacy SimulationDataManager format.
-    Computes local coordinates in background to not block physics thread.
+    to HDF5 file using delegated BaseDataHandlers.
     """
 
-    PROCESS_MAP = {
-        0: b'PhotoelectricEffect',
-        1: b'ComptonScattering',
-        2: b'CoherentScattering',
-        3: b'PairProduction'
-    }
-
-    def __init__(self, filename: str, sensitive_volumes: List[Volume], queue: Any = None) -> None:
+    def __init__(self, filename: str, handlers: List[BaseDataHandler], queue: Any = None, lock: Optional[Any] = None) -> None:
         super().__init__()
         self.filename = Path(f'output data/{filename}')
         self.filename.parent.mkdir(parents=True, exist_ok=True)
-        self.sensitive_volumes = sensitive_volumes
+
         self.queue = queue
+        self.lock = lock
         self.daemon = True
-        self.emission_cache = {}
+
+        self.handlers = []
+        for h in handlers:
+            if not isinstance(h, BaseDataHandler):
+                raise TypeError(f"Handler {h} must be an instance of BaseDataHandler.")
+            h.set_writer_callback(self._write_with_retry)
+            self.handlers.append(h)
 
     def run(self):
         """
@@ -47,163 +46,53 @@ class DataManagerSoA(threading.Thread):
             if isinstance(chunk, str) and chunk == 'stop':
                 break
             elif isinstance(chunk, dict):
-                self.append_data(chunk)
+                frozen_chunk = self._freeze_chunk(chunk)
+                for h in self.handlers:
+                    h.process_chunk(frozen_chunk)
 
-    def append_data(self, chunk: Dict[str, Dict[str, np.ndarray]]) -> None:
+    @staticmethod
+    def _freeze_chunk(chunk: dict) -> dict:
         """
-        Filters the chunk by sensitive volumes using check_inside,
-        formats data to legacy representation, and writes to HDF5.
+        Sets all numpy arrays within the chunk data to read-only
+        to prevent accidental modification during multi-handler broadcast.
+        Returns a shallow copy of the data dictionary to protect keys from .pop().
         """
-        interactions = chunk['interactions']
-        initial_states = chunk['initial_states']
+        from types import MappingProxyType
 
-        # Update initial states cache
-        p_ids = initial_states['particle_ID']
-        for i, p_id in enumerate(p_ids):
-            self.emission_cache[p_id] = {
-                'time': initial_states['emission_time'][i],
-                'energy': initial_states['emission_energy'][i],
-                'pos_x': initial_states['pos_x'][i],
-                'pos_y': initial_states['pos_y'][i],
-                'pos_z': initial_states['pos_z'][i],
-                'dir_x': initial_states['dir_x'][i],
-                'dir_y': initial_states['dir_y'][i],
-                'dir_z': initial_states['dir_z'][i],
-            }
+        data = chunk.get('data')
+        if isinstance(data, dict):
+            frozen_data = {}
+            for k, v in data.items():
+                if isinstance(v, np.ndarray):
+                    v.flags.writeable = False
+                frozen_data[k] = v
+            # Return MappingProxyType to prevent adding/removing keys
+            chunk['data'] = MappingProxyType(frozen_data)
+        elif isinstance(data, np.ndarray):
+            data.flags.writeable = False
 
-        pos_x = interactions['pos_x']
-        pos_y = interactions['pos_y']
-        pos_z = interactions['pos_z']
+        return chunk
 
-        dir_x = interactions['dir_x']
-        dir_y = interactions['dir_y']
-        dir_z = interactions['dir_z']
+    def _write_with_retry(self, write_func: Any) -> None:
+        """
+        Executes an HDF5 write function with retry logic and optional mutex locking.
+        """
+        import time
+        retries = 100
 
-        global_position = np.column_stack((pos_x, pos_y, pos_z))
-        global_direction = np.column_stack((dir_x, dir_y, dir_z))
+        def do_write():
+            for i in range(retries):
+                try:
+                    with h5py.File(self.filename, 'a') as f:
+                        write_func(f)
+                    return
+                except (OSError, BlockingIOError):
+                    if i == retries - 1:
+                        raise
+                    time.sleep(0.1)
 
-        events_saved = 0
-
-        # Create dictionary to hold data to be written
-        volume_data_map = {}
-
-        for volume in self.sensitive_volumes:
-            # 1. Check inside for all particles
-            mask = volume.check_inside(global_position)
-
-            # Since check_inside might return a scalar bool (if empty) or single element,
-            # ensure it's a 1D boolean array.
-            if isinstance(mask, bool):
-                if mask and len(global_position) > 0:
-                    mask = np.ones(len(global_position), dtype=np.bool_)
-                else:
-                    mask = np.zeros(len(global_position), dtype=np.bool_)
-
-            if not np.any(mask):
-                continue
-
-            # 2. Filter data
-            vol_global_pos = global_position[mask]
-            vol_global_dir = global_direction[mask]
-
-            # 3. Local coordinates
-            if isinstance(volume, TransformableVolume):
-                local_position = volume.convert_to_local_position(vol_global_pos, as_parent=False)
-                local_direction = volume.convert_to_local_direction(vol_global_dir, as_parent=False)
-            else:
-                local_position = vol_global_pos.copy()
-                local_direction = vol_global_dir.copy()
-
-            # 4. Filter scalar arrays
-            process_id = interactions['process_id'][mask]
-            particle_ID = interactions['particle_ID'][mask]
-            energy_deposit = interactions['energy_deposit'][mask]
-            scattering_theta = interactions['scattering_theta'][mask]
-            scattering_phi = interactions['scattering_phi'][mask]
-
-            n_events = len(process_id)
-            events_saved += n_events
-
-            # Map Process ID to Names
-            process_name = np.empty(n_events, dtype='S30')
-            for pid, name in self.PROCESS_MAP.items():
-                process_name[process_id == pid] = name
-
-            # Create dummy arrays for missing legacy fields
-            particle_type = np.full(n_events, b'', dtype='S30')
-            material_density = np.zeros(n_events, dtype=np.float64)
-            distance_traveled = np.zeros(n_events, dtype=np.float64)
-
-            # Map initial states from cache
-            emission_time = np.zeros(n_events, dtype=np.float64)
-            emission_energy = np.zeros(n_events, dtype=np.float64)
-            emission_position = np.zeros((n_events, 3), dtype=np.float64)
-            emission_direction = np.zeros((n_events, 3), dtype=np.float64)
-
-            for i, p_id in enumerate(particle_ID):
-                initial = self.emission_cache.get(p_id)
-                if initial is not None:
-                    emission_time[i] = initial['time']
-                    emission_energy[i] = initial['energy']
-                    emission_position[i] = [initial['pos_x'], initial['pos_y'], initial['pos_z']]
-                    emission_direction[i] = [initial['dir_x'], initial['dir_y'], initial['dir_z']]
-
-            scattering_angles = np.column_stack((scattering_theta, scattering_phi))
-
-            # Store in map
-            volume_data_map[volume.name] = {
-                'global_position': vol_global_pos,
-                'global_direction': vol_global_dir,
-                'local_position': local_position,
-                'local_direction': local_direction,
-                'process_name': process_name,
-                'particle_type': particle_type,
-                'particle_ID': particle_ID,
-                'energy_deposit': energy_deposit,
-                'material_density': material_density,
-                'scattering_angles': scattering_angles,
-                'emission_time': emission_time,
-                'emission_energy': emission_energy,
-                'emission_position': emission_position,
-                'emission_direction': emission_direction,
-                'distance_traveled': distance_traveled
-            }
-
-        # 5. Write to HDF5
-        if not volume_data_map:
-            return
-
-        try:
-            with h5py.File(self.filename, 'a') as f:
-                if 'interaction_data' not in f:
-                    group = f.create_group('interaction_data')
-                else:
-                    group = f['interaction_data']
-
-                for volume_name, data in volume_data_map.items():
-                    if volume_name not in group:
-                        volume_group = group.create_group(volume_name)
-                        for field, array in data.items():
-                            maxshape = list(array.shape)
-                            maxshape[0] = None
-                            volume_group.create_dataset(
-                                field,
-                                data=array,
-                                compression="gzip",
-                                chunks=True,
-                                maxshape=tuple(maxshape)
-                            )
-                    else:
-                        volume_group = group[volume_name]
-                        for field, array in data.items():
-                            if field in volume_group:
-                                current_size = volume_group[field].shape[0]
-                                new_size = current_size + array.shape[0]
-                                volume_group[field].resize(new_size, axis=0)
-                                volume_group[field][current_size:] = array
-
-        except OSError:
-            _logger.exception(f'Failed to save data to {self.filename}!')
-            return
-
-        _logger.info(f'{events_saved} events saved to {self.filename}')
+        if self.lock is not None:
+            with self.lock:
+                do_write()
+        else:
+            do_write()

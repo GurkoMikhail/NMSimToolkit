@@ -1,3 +1,4 @@
+from core.geometry.geometry_compiler import GeometryBufferDType
 import sys
 import os
 import unittest
@@ -73,7 +74,7 @@ class TestStep5TransportLogic(unittest.TestCase):
             active_indices,
             physics_buffer,
             transport_buffer,
-            rng_ctx
+            np.zeros(1, dtype=GeometryBufferDType), rng_ctx
         )
 
         self.assertTrue(np.all(bank.state.position.x > 0.0))

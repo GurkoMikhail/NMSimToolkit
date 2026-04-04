@@ -70,8 +70,8 @@ def test_particles_soa_equivalence():
         direction=dir_soa,
         energy=energy,
         emission_time=emission_time,
-        emission_position=em_pos_soa,
-        emission_direction=em_dir_soa,
+
+
         distance_traveled=distance_traveled
     )
 
@@ -160,8 +160,8 @@ def test_particles_soa_benchmark():
         direction=dir_soa,
         energy=energy,
         emission_time=emission_time,
-        emission_position=em_pos_soa,
-        emission_direction=em_dir_soa,
+
+
         distance_traveled=distance_traveled
     )
 
