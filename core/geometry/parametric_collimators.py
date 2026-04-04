@@ -48,7 +48,8 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
 
     def _compile_cfunc(self):
         mat_id = self.material.ID
-        vac_id = self._vacuum.ID
+        hole_mat_id = self._vacuum.ID if self.parent is None else self.parent.material.ID
+
         px = Float(self._period[0])
         py = Float(self._period[1])
         cx = Float(self._corner[0])
@@ -71,13 +72,13 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
             ay1 = abs(my - cy)
 
             if is_hexagon(ax1, ay1):
-                return vac_id
+                return hole_mat_id
 
             ax2 = abs(ax1 - cx)
             ay2 = abs(ay1 - cy)
 
             if is_hexagon(ax2, ay2):
-                return vac_id
+                return hole_mat_id
 
             return mat_id
 
@@ -129,7 +130,8 @@ class ParametricParallelSquareCollimator(WoodcockParameticVolume):
 
     def _compile_cfunc(self):
         mat_id = self.material.ID
-        vac_id = self._vacuum.ID
+        hole_mat_id = self._vacuum.ID if self.parent is None else self.parent.material.ID
+
         period = Float(self._period)
         half_period = Float(self._half_period)
         half_hole = Float(self._half_hole)
@@ -139,7 +141,7 @@ class ParametricParallelSquareCollimator(WoodcockParameticVolume):
             ux = (x % period) - half_period
             uy = (y % period) - half_period
             if abs(ux) <= half_hole and abs(uy) <= half_hole:
-                return vac_id
+                return hole_mat_id
             return mat_id
 
         return parametric_func
