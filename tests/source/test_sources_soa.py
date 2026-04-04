@@ -39,14 +39,14 @@ class TestSourcesSoA(unittest.TestCase):
         np.testing.assert_array_equal(self.bank.state.distance_traveled[active_mask], np.zeros(batch_size, dtype=Length))
 
         # Positions and Emission Positions (should be identical)
-        np.testing.assert_array_equal(self.bank.state.position.x[active_mask], self.bank.emission_state.emission_position.x[active_mask])
-        np.testing.assert_array_equal(self.bank.state.position.y[active_mask], self.bank.emission_state.emission_position.y[active_mask])
-        np.testing.assert_array_equal(self.bank.state.position.z[active_mask], self.bank.emission_state.emission_position.z[active_mask])
+        np.testing.assert_array_equal(self.bank.state.position.x[active_mask], self.bank.initial_state.emission_position.x[active_mask])
+        np.testing.assert_array_equal(self.bank.state.position.y[active_mask], self.bank.initial_state.emission_position.y[active_mask])
+        np.testing.assert_array_equal(self.bank.state.position.z[active_mask], self.bank.initial_state.emission_position.z[active_mask])
 
         # Directions and Emission Directions (should be identical)
-        np.testing.assert_array_equal(self.bank.state.direction.x[active_mask], self.bank.emission_state.emission_direction.x[active_mask])
-        np.testing.assert_array_equal(self.bank.state.direction.y[active_mask], self.bank.emission_state.emission_direction.y[active_mask])
-        np.testing.assert_array_equal(self.bank.state.direction.z[active_mask], self.bank.emission_state.emission_direction.z[active_mask])
+        np.testing.assert_array_equal(self.bank.state.direction.x[active_mask], self.bank.initial_state.emission_direction.x[active_mask])
+        np.testing.assert_array_equal(self.bank.state.direction.y[active_mask], self.bank.initial_state.emission_direction.y[active_mask])
+        np.testing.assert_array_equal(self.bank.state.direction.z[active_mask], self.bank.initial_state.emission_direction.z[active_mask])
 
     def test_inject_exceeds_capacity(self):
         # Fill partially

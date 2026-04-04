@@ -1,50 +1,100 @@
+import abc
 import logging
-from abc import ABC, abstractmethod
-from typing import Callable, Dict, Any, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
+
 import h5py
 import numpy as np
 
-from core.geometry.volumes import Volume, TransformableVolume, VolumeWithChilds
+from core.geometry.volume import Volume
+from core.geometry.transformable_volume import TransformableVolume
+from core.geometry.volume_with_childs import VolumeWithChilds
 
 _logger = logging.getLogger(__name__)
-_logger.setLevel(logging.DEBUG)
 
-class BaseDataHandler(ABC):
-    writer_callback: Callable[[Callable[[h5py.File], None]], None]
+class BaseDataHandler(abc.ABC):
+    def __init__(self):
+        self.writer_callback: Optional[Callable] = None
 
-    def set_writer_callback(self, callback: Callable[[Callable[[h5py.File], None]], None]) -> None:
+    def set_writer_callback(self, callback: Callable) -> None:
         self.writer_callback = callback
 
-    @abstractmethod
+    @abc.abstractmethod
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         pass
 
-class SensitiveVolumeHandler(BaseDataHandler):
-    """
-    Base handler for caching interactions that hit specific sensitive volumes.
-    By default, it drops external interactions from memory and writes only
-    interactions that fall within target_volume_ids.
-    """
+class DirectStreamHandler(BaseDataHandler):
+    def process_chunk(self, chunk: Dict[str, Any]) -> None:
+        chunk_type = chunk.get('type')
+        data = chunk.get('data')
+
+        if chunk_type == 'initial_states':
+            self._write_initial_states(data)
+        elif chunk_type == 'interactions':
+            self._write_interactions({'All_Volumes': data})
+
+    def _write_initial_states(self, initial_states: Dict[str, np.ndarray]) -> None:
+        def write_func(f: h5py.File):
+            if 'initial_states' not in f:
+                group = f.create_group('initial_states')
+                for k, v in initial_states.items():
+                    group.create_dataset(k, data=v, maxshape=(None, *v.shape[1:]))
+            else:
+                group = f['initial_states']
+                for k, v in initial_states.items():
+                    if k in group:
+                        curr_size = group[k].shape[0]
+                        group[k].resize(curr_size + v.shape[0], axis=0)
+                        group[k][curr_size:] = v
+        if getattr(self, 'writer_callback', None):
+            self.writer_callback(write_func)
+
+    def _write_interactions(self, volume_data_map: Dict[str, Dict[str, np.ndarray]]) -> None:
+        def write_func(f: h5py.File):
+            if 'interactions' not in f:
+                group = f.create_group('interactions')
+            else:
+                group = f['interactions']
+
+            for volume_name, data in volume_data_map.items():
+                if volume_name not in group:
+                    volume_group = group.create_group(volume_name)
+                    for field, array in data.items():
+                        volume_group.create_dataset(field, data=array, maxshape=(None, *array.shape[1:]))
+                else:
+                    volume_group = group[volume_name]
+                    for field, array in data.items():
+                        if field in volume_group:
+                            current_size = volume_group[field].shape[0]
+                            new_size = current_size + array.shape[0]
+                            volume_group[field].resize(new_size, axis=0)
+                            volume_group[field][current_size:] = array
+
+        if getattr(self, 'writer_callback', None):
+            self.writer_callback(write_func)
+
+class SensitiveVolumeHandler(DirectStreamHandler):
     PROCESS_MAP = {
-        0: b'PhotoelectricEffect',
+        0: b'RayleighScattering',
         1: b'ComptonScattering',
-        2: b'CoherentScattering',
+        2: b'PhotoElectricAbsorption',
         3: b'PairProduction'
     }
 
-    def __init__(self, sensitive_volumes: List[Volume]) -> None:
+    def __init__(self, sensitive_volumes: List[Volume], simulation_volume: Optional[Volume] = None):
+        super().__init__()
         self.sensitive_volumes = sensitive_volumes
-        self.simulation_volume = self._find_simulation_volume(sensitive_volumes)
 
-        self.target_volume_ids = np.array(self._get_hierarchy_indices(sensitive_volumes), dtype=np.int64)
+        if simulation_volume is None:
+            self.simulation_volume = self._find_simulation_volume(sensitive_volumes)
+        else:
+            self.simulation_volume = simulation_volume
 
-        self.volume_mapping = {}
+        self.volume_mapping: Dict[int, Volume] = {}
         if self.simulation_volume is not None:
-            self._build_volume_mapping(self.simulation_volume)
+            for vol in sensitive_volumes:
+                self._build_volume_mapping(vol)
 
-        for vol in sensitive_volumes:
-            self._build_volume_mapping(vol)
-
+        self.target_volume_ids = list(self.volume_mapping.keys())
 
     def _find_simulation_volume(self, sensitive_volumes: List[Volume]) -> Optional[Volume]:
         unique_roots = set()
@@ -64,14 +114,6 @@ class SensitiveVolumeHandler(BaseDataHandler):
         for i, (v, _, _) in enumerate(self.simulation_volume.flattened_scene.flat_list):
             if self._is_descendant(v, root_vol):
                 self.volume_mapping[i] = root_vol
-
-    def _get_hierarchy_indices(self, volumes: List[Volume]) -> List[int]:
-        indices = []
-        for vol in volumes:
-            for i, (v, _, _) in enumerate(self.simulation_volume.flattened_scene.flat_list):
-                if self._is_descendant(v, vol):
-                    indices.append(i)
-        return list(set(indices))
 
     def _is_descendant(self, query_vol: Volume, root_vol: Volume) -> bool:
         if query_vol is root_vol:
@@ -93,9 +135,12 @@ class SensitiveVolumeHandler(BaseDataHandler):
 
         if np.any(mask_sensitive):
             interactions_to_write = {k: v[mask_sensitive] for k, v in interactions.items()}
-            self._write_interactions(interactions_to_write)
+            self._format_and_write_interactions(interactions_to_write)
 
-    def _write_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
+    def _get_volumes_to_write(self) -> List[Volume]:
+        return list(self.sensitive_volumes)
+
+    def _format_and_write_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
         pos_x = interactions['pos_x']
         pos_y = interactions['pos_y']
         pos_z = interactions['pos_z']
@@ -116,15 +161,14 @@ class SensitiveVolumeHandler(BaseDataHandler):
             if vid in self.volume_mapping:
                 root_vol_names.append(self.volume_mapping[vid].name)
             else:
-                root_vol_names.append(None)
+                if self.simulation_volume:
+                    root_vol_names.append(self.simulation_volume.name)
+                else:
+                    root_vol_names.append(None)
 
         root_vol_names = np.array(root_vol_names)
 
-        volumes_to_write = list(self.sensitive_volumes)
-        if self.simulation_volume is not None and self.simulation_volume not in volumes_to_write:
-            volumes_to_write.append(self.simulation_volume)
-
-        for top_volume in volumes_to_write:
+        for top_volume in self._get_volumes_to_write():
             mask = root_vol_names == top_volume.name
 
             if not np.any(mask):
@@ -181,46 +225,36 @@ class SensitiveVolumeHandler(BaseDataHandler):
         if not volume_data_map:
             return
 
-        def write_func(f: h5py.File):
-            if 'interaction_data' not in f:
-                group = f.create_group('interaction_data')
-            else:
-                group = f['interaction_data']
-
-            for volume_name, data in volume_data_map.items():
-                if volume_name not in group:
-                    volume_group = group.create_group(volume_name)
-                    for field, array in data.items():
-                        maxshape = list(array.shape)
-                        maxshape[0] = None
-                        volume_group.create_dataset(
-                            field,
-                            data=array,
-                            compression="gzip",
-                            chunks=True,
-                            maxshape=tuple(maxshape)
-                        )
-                else:
-                    volume_group = group[volume_name]
-                    for field, array in data.items():
-                        if field in volume_group:
-                            current_size = volume_group[field].shape[0]
-                            new_size = current_size + array.shape[0]
-                            volume_group[field].resize(new_size, axis=0)
-                            volume_group[field][current_size:] = array
-
-        if getattr(self, 'writer_callback', None):
-            self.writer_callback(write_func)
-            _logger.debug(f'Interactions write task forwarded for {events_saved} events.')
-
-
+        self._write_interactions(volume_data_map)
+        _logger.debug(f'Interactions write task forwarded for {events_saved} events.')
 
 class HistoryAssemblerHandler(SensitiveVolumeHandler):
-    """
-    Inherits from SensitiveVolumeHandler but saves the ENTIRE history
-    (including background tracks outside sensitive volumes) for any particle
-    that scored a hit, including its initial emission state.
-    """
+    def __init__(self, sensitive_volumes: List[Volume], simulation_volume: Optional[Volume] = None, save_initial_states: bool = True):
+        super().__init__(sensitive_volumes, simulation_volume)
+        self.save_initial_states = save_initial_states
+
+        self.initial_states_chunks: List[Dict[str, np.ndarray]] = []
+        self.interactions_chunks: List[Dict[str, np.ndarray]] = []
+        self.scored_particles: Set[int] = set()
+
+    def process_chunk(self, chunk: Dict[str, Any]) -> None:
+        chunk_type = chunk.get('type')
+        data = chunk.get('data')
+
+        if chunk_type == 'initial_states':
+            if self.save_initial_states:
+                self.initial_states_chunks.append({k: np.array(v, copy=False) for k, v in data.items()})
+        elif chunk_type == 'interactions':
+            vol_ids = data['volume_id']
+            scored_mask = np.isin(vol_ids, self.target_volume_ids)
+            if np.any(scored_mask):
+                self.scored_particles.update(data['particle_ID'][scored_mask])
+            self.interactions_chunks.append({k: np.array(v, copy=False) for k, v in data.items()})
+        elif chunk_type == 'dead_particles':
+            dead_ids = data
+            if len(dead_ids) > 0:
+                self._flush_dead_particles(dead_ids)
+
     def _get_volumes_to_write(self) -> List[Volume]:
         volumes_to_write = list(self.sensitive_volumes)
         if self.simulation_volume is not None and self.simulation_volume not in volumes_to_write:
@@ -260,7 +294,6 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
             mega_inter = {k: np.concatenate([c[k] for c in self.interactions_chunks]) for k in self.interactions_chunks[0].keys()}
 
             if len(scored_dead_ids) > 0:
-                # HistoryAssembler logic: Keep ALL interactions (entire history) for scored particles
                 scored_mask = np.isin(mega_inter['particle_ID'], scored_dead_ids)
                 if np.any(scored_mask):
                     interactions_to_write = {k: v[scored_mask] for k, v in mega_inter.items()}
@@ -278,93 +311,4 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
         if initial_states_to_write is not None:
             self._write_initial_states(initial_states_to_write)
         if interactions_to_write is not None:
-            self._write_interactions(interactions_to_write)
-
-
-class DirectStreamHandler(BaseDataHandler):
-    """
-    Directly streams 'initial_states' and 'interactions' arrays into HDF5
-    without any caching, mapping, or tracking dead particles.
-    """
-    def process_chunk(self, chunk: Dict[str, Any]) -> None:
-        chunk_type = chunk.get('type')
-        if chunk_type == 'initial_states':
-            self._stream_initial_states(chunk['data'])
-        elif chunk_type == 'interactions':
-            self._stream_interactions(chunk['data'])
-        elif chunk_type == 'dead_particles':
-            pass
-
-    def _stream_initial_states(self, initial_states: Dict[str, np.ndarray]) -> None:
-        # Pre-process 3D vectors
-        # Create a new dict to avoid modifying read-only MappingProxyType
-        output_states = {}
-        for k, v in initial_states.items():
-            if k not in ('pos_x', 'pos_y', 'pos_z', 'dir_x', 'dir_y', 'dir_z'):
-                output_states[k] = v
-
-        output_states['emission_position'] = np.column_stack((
-            initial_states['pos_x'], initial_states['pos_y'], initial_states['pos_z']
-        ))
-
-        output_states['emission_direction'] = np.column_stack((
-            initial_states['dir_x'], initial_states['dir_y'], initial_states['dir_z']
-        ))
-
-        def write_func(f: h5py.File):
-            if 'initial_states' not in f:
-                group = f.create_group('initial_states')
-            else:
-                group = f['initial_states']
-
-            for field, array in output_states.items():
-                if field not in group:
-                    maxshape = list(array.shape)
-                    maxshape[0] = None
-                    group.create_dataset(
-                        field,
-                        data=array,
-                        compression="gzip",
-                        chunks=True,
-                        maxshape=tuple(maxshape)
-                    )
-                else:
-                    current_size = group[field].shape[0]
-                    new_size = current_size + array.shape[0]
-                    group[field].resize(new_size, axis=0)
-                    group[field][current_size:] = array
-
-        if getattr(self, 'writer_callback', None):
-            self.writer_callback(write_func)
-
-    def _stream_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
-        def write_func(f: h5py.File):
-            if 'interaction_data' not in f:
-                group = f.create_group('interaction_data')
-            else:
-                group = f['interaction_data']
-
-            if 'raw_stream' not in group:
-                volume_group = group.create_group('raw_stream')
-            else:
-                volume_group = group['raw_stream']
-
-            for field, array in interactions.items():
-                if field not in volume_group:
-                    maxshape = list(array.shape)
-                    maxshape[0] = None
-                    volume_group.create_dataset(
-                        field,
-                        data=array,
-                        compression="gzip",
-                        chunks=True,
-                        maxshape=tuple(maxshape)
-                    )
-                else:
-                    current_size = volume_group[field].shape[0]
-                    new_size = current_size + array.shape[0]
-                    volume_group[field].resize(new_size, axis=0)
-                    volume_group[field][current_size:] = array
-
-        if getattr(self, 'writer_callback', None):
-            self.writer_callback(write_func)
+            self._format_and_write_interactions(interactions_to_write)
