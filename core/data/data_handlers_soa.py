@@ -5,9 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 import h5py
 import numpy as np
 
-from core.geometry.volume import Volume
-from core.geometry.transformable_volume import TransformableVolume
-from core.geometry.volume_with_childs import VolumeWithChilds
+from core.geometry.volumes import Volume, TransformableVolume, VolumeWithChilds
 
 _logger = logging.getLogger(__name__)
 
@@ -45,7 +43,7 @@ class DirectStreamHandler(BaseDataHandler):
                         curr_size = group[k].shape[0]
                         group[k].resize(curr_size + v.shape[0], axis=0)
                         group[k][curr_size:] = v
-        if getattr(self, 'writer_callback', None):
+        if self.writer_callback is not None:
             self.writer_callback(write_func)
 
     def _write_interactions(self, volume_data_map: Dict[str, Dict[str, np.ndarray]]) -> None:
@@ -69,7 +67,7 @@ class DirectStreamHandler(BaseDataHandler):
                             volume_group[field].resize(new_size, axis=0)
                             volume_group[field][current_size:] = array
 
-        if getattr(self, 'writer_callback', None):
+        if self.writer_callback is not None:
             self.writer_callback(write_func)
 
 class SensitiveVolumeHandler(DirectStreamHandler):
