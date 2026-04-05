@@ -104,7 +104,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
             p_idx = target_indices[j]
 
             current_vol = nav_state.current_volume[p_idx]
-            if current_vol == -1:
+            if current_vol < 0:
                 process_ids[p_idx] = -1
                 continue
 
