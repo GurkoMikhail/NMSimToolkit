@@ -59,6 +59,15 @@ def move_kernel(state: KinematicState, target_indices: NDArray[np.int64], distan
 
 from core.geometry.navigation_state import NavigationState
 
+@njit(inline='always')
+def _invalidate_navigation_state(nav_state: NavigationState, p_idx: Index) -> None:
+    """
+    In-place inline kernel that invalidates the navigation state for a single particle,
+    forcing a fresh geometry search on the next step.
+    """
+    nav_state.current_volume[p_idx] = -1
+    nav_state.boundary_distance[p_idx] = 0.0
+
 @njit(cache=True)
 def update_navigation_state_inject_kernel(
     nav_state: NavigationState,
@@ -66,8 +75,7 @@ def update_navigation_state_inject_kernel(
 ) -> None:
     for i in range(target_indices.shape[0]):
         p_idx = target_indices[i]
-        nav_state.current_volume[p_idx] = -1
-        nav_state.boundary_distance[p_idx] = 0.0
+        _invalidate_navigation_state(nav_state, p_idx)
 
 @njit(cache=True)
 def update_navigation_state_rotate_kernel(
@@ -89,8 +97,7 @@ def update_navigation_state_move_kernel(
         nav_state.boundary_distance[p_idx] -= distances[i]
 
         if nav_state.boundary_distance[p_idx] <= 0:
-            nav_state.current_volume[p_idx] = -1
-            nav_state.boundary_distance[p_idx] = 0.0
+            _invalidate_navigation_state(nav_state, p_idx)
 
 @njit(cache=True)
 def rotate_kernel(

@@ -9,7 +9,7 @@ from core.other.typing_definitions import Index, Float, CFuncAddress
 from core.particles.kinematic_state import KinematicState
 from core.particles.initial_state import InitialState
 from core.physics.interaction_soa import InitialStateBuffer
-from core.particles.particles_soa_kernels import _move_particle
+from core.particles.particles_soa_kernels import _move_particle, _invalidate_navigation_state
 from core.geometry.navigation_state import NavigationState
 from core.geometry.geometry_kernels import _transform_to_local
 from core.physics.physics_buffer import PhysicsBuffer
@@ -151,8 +151,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
                 shift = nav_state.boundary_distance[p_idx] + 1e-6
                 _move_particle(state, p_idx, shift)
 
-                nav_state.current_volume[p_idx] = -1
-                nav_state.boundary_distance[p_idx] = 0.0
+                _invalidate_navigation_state(nav_state, p_idx)
                 process_ids[p_idx] = -1
 
     return transport_kernel

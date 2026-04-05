@@ -172,7 +172,7 @@ def _trace_single_ray(
 
         elif tmin <= 0.0:
             # INSIDE: The particle is currently inside this volume.
-            current_vol = g_idx
+            current_vol = geom['volume_index']
             closest_dist = tmax
             # Check children since they have higher priority (Z-order)
             g_idx += 1
