@@ -70,7 +70,7 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
         vox_size_y = Float(self.voxel_size[1])
         vox_size_z = Float(self.voxel_size[2])
 
-        @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat), cache=True)
+        @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat))
         def parametric_func(x, y, z):
             # Compute 3D indices (replicating numpy logic)
             ix = Index((x + (size_x / 2.0 - vox_size_x / 2.0)) / vox_size_x)
