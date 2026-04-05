@@ -151,7 +151,7 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]):
                 shift = nav_state.boundary_distance[p_idx] + 1e-6
                 _move_particle(state, p_idx, shift)
 
-                nav_state.current_volume[p_idx] = nav_state.next_volume[p_idx]
+                nav_state.current_volume[p_idx] = -1
                 nav_state.boundary_distance[p_idx] = 0.0
                 process_ids[p_idx] = -1
 

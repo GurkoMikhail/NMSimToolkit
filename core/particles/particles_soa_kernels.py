@@ -67,7 +67,6 @@ def update_navigation_state_inject_kernel(
     for i in range(target_indices.shape[0]):
         p_idx = target_indices[i]
         nav_state.current_volume[p_idx] = -1
-        nav_state.next_volume[p_idx] = -1
         nav_state.boundary_distance[p_idx] = 0.0
 
 @njit(cache=True)
@@ -78,7 +77,6 @@ def update_navigation_state_rotate_kernel(
     for i in range(target_indices.shape[0]):
         p_idx = target_indices[i]
         nav_state.boundary_distance[p_idx] = 0.0
-        nav_state.next_volume[p_idx] = -1
 
 @njit(cache=True)
 def update_navigation_state_move_kernel(
@@ -91,8 +89,8 @@ def update_navigation_state_move_kernel(
         nav_state.boundary_distance[p_idx] -= distances[i]
 
         if nav_state.boundary_distance[p_idx] <= 0:
-            nav_state.current_volume[p_idx] = nav_state.next_volume[p_idx]
-            nav_state.next_volume[p_idx] = -1
+            nav_state.current_volume[p_idx] = -1
+            nav_state.boundary_distance[p_idx] = 0.0
 
 @njit(cache=True)
 def rotate_kernel(

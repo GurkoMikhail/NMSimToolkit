@@ -6,7 +6,6 @@ from core.other.typing_definitions import Index, Float
 
 class NavigationState(NamedTuple):
     current_volume: NDArray[Index]
-    next_volume: NDArray[Index]
     boundary_distance: NDArray[Float]
 
     def validate(self) -> None: ...
