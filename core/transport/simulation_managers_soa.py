@@ -139,7 +139,8 @@ class SimulationManagerSOA(Thread):
         return self.bank.state.energy[active_indices] < self.min_energy
 
     def _invalidate_by_volume(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
-        return self.bank.navigation_state.current_volume[active_indices] == -1
+        nav = self.bank.navigation_state
+        return (nav.current_volume[active_indices] < 0) & (nav.boundary_distance[active_indices] > 0.0)
 
     def _apply_invalidators(self, active_indices: NDArray[Index]) -> NDArray[Index]:
         dead_mask = np.zeros(len(active_indices), dtype=np.bool_)

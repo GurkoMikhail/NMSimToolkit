@@ -11,13 +11,11 @@ class NavigationState(NamedTuple):
     Used for Stateful Navigation, Relocation, and Ray Distance Caching in Woodcock tracking.
     """
     current_volume: NDArray[Index]
-    next_volume: NDArray[Index]
     boundary_distance: NDArray[Float]
 
     def validate(self) -> None:
         arrays = [
             self.current_volume,
-            self.next_volume,
             self.boundary_distance
         ]
         for arr in arrays:
@@ -39,7 +37,6 @@ class NavigationState(NamedTuple):
         """
         buffer = cls(
             current_volume=np.full(capacity, -1, dtype=Index),
-            next_volume=np.full(capacity, -1, dtype=Index),
             boundary_distance=np.full(capacity, np.inf, dtype=Float)
         )
         buffer.validate()

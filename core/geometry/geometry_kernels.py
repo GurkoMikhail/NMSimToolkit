@@ -129,83 +129,25 @@ def _get_intersection(
         return np.inf, -np.inf
 
 
-@njit(cache=True)
-def _relocate_bottom_up(
-    world_pos_x: Float, world_pos_y: Float, world_pos_z: Float,
-    world_dir_x: Float, world_dir_y: Float, world_dir_z: Float,
-    curr_vol_idx: Index,
-    geom_buffer: NDArray
-) -> Index:
-    """
-    Performs rigorous Bottom-Up geometric validation to resolve Coplanar Boundary Epsilon Overshoot.
-    Traces the parent hierarchy upward until it finds a volume that strictly contains the ray origin.
-    Returns the corrected index of the actual volume containing the point.
-    """
-    while curr_vol_idx >= 0:
-        geom = geom_buffer[curr_vol_idx]
-        local_pos_x, local_pos_y, local_pos_z, local_dir_x, local_dir_y, local_dir_z = _transform_to_local(
-            world_pos_x, world_pos_y, world_pos_z,
-            world_dir_x, world_dir_y, world_dir_z,
-            geom['transform']
-        )
-        tmin, tmax = _get_intersection(
-            local_pos_x, local_pos_y, local_pos_z,
-            local_dir_x, local_dir_y, local_dir_z,
-            geom['shape_data']
-        )
-
-        # Check if inside
-        if tmin <= 0 and tmax > 0:
-            return curr_vol_idx
-
-        curr_vol_idx = geom['parent_index']
-
-    return -1
-
-
 @njit(cache=True, inline='always')
 def _trace_single_ray(
     world_pos_x: Float, world_pos_y: Float, world_pos_z: Float,
     world_dir_x: Float, world_dir_y: Float, world_dir_z: Float,
-    curr_vol_idx: Index,
     geom_buffer: NDArray
-) -> Tuple[Float, Index, Index]:
+) -> Tuple[Float, Index]:
     """
-    Device Function encapsulating the mathematical core of raycasting over the flattened scene graph.
+    Device Function encapsulating the Single-Pass Painter's Algorithm for raycasting.
     Designed to be fully inlined (Zero-Cost Abstraction) into the dispatcher.
-    Returns (closest_dist, current_volume_idx, next_volume_idx).
+    Returns (closest_dist, current_volume_idx).
     """
-
-    # === [1] RELOCATION (BOTTOM-UP) ===
-    # If the particle has a known volume, verify if it's still inside (due to Coplanar Boundary Epsilon Overshoot).
-    if curr_vol_idx >= 0:
-        curr_vol_idx = _relocate_bottom_up(
-            world_pos_x, world_pos_y, world_pos_z,
-            world_dir_x, world_dir_y, world_dir_z,
-            curr_vol_idx,
-            geom_buffer
-        )
-
-    # === [2] INITIALIZATION ===
-    # If the particle exited the root volume (curr_vol_idx == -1 after relocation),
-    # there is no need to search from 0 again because it's completely outside the world.
-    # But if it's freshly injected (initial curr_vol_idx == -1), we must search from root.
-    if curr_vol_idx >= 0:
-        # Search restricted to current volume and its children
-        search_start_idx = curr_vol_idx
-        search_end_idx = geom_buffer[curr_vol_idx]['miss_index']
-    else:
-        # Full scene search (for newly injected particles)
-        search_start_idx = 0
-        search_end_idx = geom_buffer.shape[0]
 
     closest_dist = np.inf
     current_vol = -1
-    next_vol = -1
 
-    # === [3] RAY TRAVERSAL LOOP ===
-    g_idx = search_start_idx
-    while g_idx < search_end_idx:
+    g_idx = 0
+    buffer_len = geom_buffer.shape[0]
+
+    while g_idx < buffer_len:
         geom = geom_buffer[g_idx]
 
         # Transform World -> Local
@@ -222,43 +164,28 @@ def _trace_single_ray(
             geom['shape_data']
         )
 
-        # --- Frustum Culling / Boundary Tracking Logic ---
-        if tmax < 0 or tmax < tmin:
-            # MISS: Ray completely misses this volume.
+        # --- Single-Pass Painter's Algorithm with Frustum Culling ---
+        if tmax <= 0.0 or tmax <= tmin:
+            # MISS: Ray completely misses this volume or it's behind us.
             # Jump over all its children via miss_index.
             g_idx = geom['miss_index']
-            continue
 
-        if tmin <= 0 and tmax > 0:
+        elif tmin <= 0.0:
             # INSIDE: The particle is currently inside this volume.
-            # The next boundary is its exit (tmax).
-            if tmax < closest_dist:
-                closest_dist = tmax
-                next_vol = geom['parent_index']
-
-            # Record as current volume. Because we traverse parent->child,
-            # the deepest child we find ourselves in will overwrite this.
             current_vol = geom['volume_index']
-
-            # Fall through to check children
+            closest_dist = tmax
+            # Check children since they have higher priority (Z-order)
             g_idx += 1
 
-        elif tmin > 0:
-            # OUTSIDE: The particle is outside, but the ray will hit it (tmin).
-            # This is a candidate for the next volume boundary.
+        else:
+            # OUTSIDE: The particle is outside, but the ray will hit it (tmin > 0).
             if tmin < closest_dist:
                 closest_dist = tmin
-                next_vol = geom['volume_index']
 
-            # We hit the outer boundary, but we are not inside.
-            # We do NOT check children because they are further away (inside this volume).
+            # Jump over children since we are not inside this volume yet
             g_idx = geom['miss_index']
 
-        else:
-            # Edge case fallback (e.g. point exactly on surface and pointing away)
-            g_idx = geom['miss_index']
-
-    return closest_dist, current_vol, next_vol
+    return closest_dist, current_vol
 
 
 @njit(cache=True)
@@ -272,7 +199,7 @@ def cast_path_kernel(
     """
     Raycasting Numba kernel over an array of target active particles against a structured GeometryBuffer array (AoS).
     Applies loop unrolling for coordinate transformations and uses miss_index for Boundary Tracking / Frustum Culling.
-    Updates NavigationState directly for Woodcock Tracking (current_volume, next_volume, boundary_distance).
+    Updates NavigationState directly for Woodcock Tracking (current_volume, boundary_distance).
     """
     num_particles = target_indices.shape[0]
 
@@ -286,7 +213,6 @@ def cast_path_kernel(
 
     bound_dist = nav_state.boundary_distance
     nav_curr_vol = nav_state.current_volume
-    nav_next_vol = nav_state.next_volume
 
     for j in prange(num_particles):
         p_idx = target_indices[j]
@@ -294,13 +220,11 @@ def cast_path_kernel(
         if bound_dist[p_idx] > 0.0:
             continue
 
-        closest_dist, current_vol, next_vol = _trace_single_ray(
+        closest_dist, current_vol = _trace_single_ray(
             pos_x[p_idx], pos_y[p_idx], pos_z[p_idx],
             dir_x[p_idx], dir_y[p_idx], dir_z[p_idx],
-            nav_curr_vol[p_idx],
             geom_buffer
         )
 
         bound_dist[p_idx] = closest_dist
         nav_curr_vol[p_idx] = current_vol
-        nav_next_vol[p_idx] = next_vol

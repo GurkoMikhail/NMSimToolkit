@@ -28,7 +28,6 @@ class TestStep5TransportLogic(unittest.TestCase):
         bank.state.direction.z[:] = 0.0
 
         bank.navigation_state.current_volume[:] = 0
-        bank.navigation_state.next_volume[:] = -1
         bank.navigation_state.boundary_distance[:] = 1.0
 
         mat_info = np.zeros(2, dtype=MaterialInfoDType)
