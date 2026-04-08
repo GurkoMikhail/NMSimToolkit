@@ -1,10 +1,12 @@
 from functools import cache
 from typing import Optional, Tuple, cast
+import math
 
 import numpy as np
 
 from core.geometry.geometries import Box
-from numba import cfunc
+from numba import cfunc, types
+from numba.extending import intrinsic
 from core.geometry.woodcoock_volumes import WoodcockParameticVolume
 from core.materials.materials import Material, MaterialArray
 from core.other.typing_definitions import Float, Index, Length, Vector3D, NumbaFloat, NumbaIndex
@@ -55,12 +57,14 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
         return self.material_distribution.material_list
 
     def _compile_cfunc(self):
-        # Flatten the 3D material IDs into a 1D numba array for fast lookup
         mat_dist_3d = self.material_distribution.ID
         shape_x = Index(mat_dist_3d.shape[0])
         shape_y = Index(mat_dist_3d.shape[1])
         shape_z = Index(mat_dist_3d.shape[2])
-        mat_dist_1d = mat_dist_3d.flatten()
+
+        # Save a reference to prevent garbage collection and get a raw pointer
+        self._mat_dist_1d = np.ascontiguousarray(mat_dist_3d.flatten(), dtype=np.int64)
+        mat_dist_ptr = self._mat_dist_1d.ctypes.data
 
         size_x = Float(self.size[0])
         size_y = Float(self.size[1])
@@ -70,12 +74,23 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
         vox_size_y = Float(self.voxel_size[1])
         vox_size_z = Float(self.voxel_size[2])
 
+        @intrinsic
+        def _read_int64_from_ptr(typingctx, ptr_val, idx_val):
+            sig = types.int64(types.int64, types.int64)
+            def codegen(context, builder, signature, args):
+                ptr, idx = args
+                int64_ptr_type = context.get_value_type(types.CPointer(types.int64))
+                ptr_typed = builder.inttoptr(ptr, int64_ptr_type)
+                addr = builder.gep(ptr_typed, [idx], inbounds=True)
+                return builder.load(addr)
+            return sig, codegen
+
         @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat))
         def parametric_func(x, y, z):
-            # Compute 3D indices (replicating numpy logic)
-            ix = Index((x + (size_x / 2.0 - vox_size_x / 2.0)) / vox_size_x)
-            iy = Index((y + (size_y / 2.0 - vox_size_y / 2.0)) / vox_size_y)
-            iz = Index((z + (size_z / 2.0 - vox_size_z / 2.0)) / vox_size_z)
+            # Compute 3D indices
+            ix = Index(math.floor((x + (size_x / 2.0 - vox_size_x / 2.0)) / vox_size_x))
+            iy = Index(math.floor((y + (size_y / 2.0 - vox_size_y / 2.0)) / vox_size_y))
+            iz = Index(math.floor((z + (size_z / 2.0 - vox_size_z / 2.0)) / vox_size_z))
 
             # Bounds checking (clamping to valid voxel indices)
             ix = max(0, min(ix, shape_x - 1))
@@ -84,7 +99,7 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
 
             # Flat 3D lookup: index = ix * (shape_y * shape_z) + iy * shape_z + iz
             flat_idx = ix * shape_y * shape_z + iy * shape_z + iz
-            return mat_dist_1d[flat_idx]
+            return _read_int64_from_ptr(mat_dist_ptr, flat_idx)
 
         return parametric_func
 
