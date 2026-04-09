@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from core.geometry.geometries import Box
-from numba import cfunc, types
+from numba import cfunc, types, carray
 from numba.extending import intrinsic
 from core.geometry.woodcoock_volumes import WoodcockParameticVolume
 from core.materials.materials import Material, MaterialArray
@@ -65,6 +65,7 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
         # Save a reference to prevent garbage collection and get a raw pointer
         self._mat_dist_1d = np.ascontiguousarray(mat_dist_3d.flatten(), dtype=np.int64)
         mat_dist_ptr = self._mat_dist_1d.ctypes.data
+        mat_dist_size = self._mat_dist_1d.size
 
         size_x = Float(self.size[0])
         size_y = Float(self.size[1])
@@ -75,18 +76,18 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
         vox_size_z = Float(self.voxel_size[2])
 
         @intrinsic
-        def _read_int64_from_ptr(typingctx, ptr_val, idx_val):
-            sig = types.int64(types.int64, types.int64)
+        def ptr_from_int(typingctx, ptr_val):
+            sig = types.CPointer(types.int64)(types.int64)
             def codegen(context, builder, signature, args):
-                ptr, idx = args
-                int64_ptr_type = context.get_value_type(types.CPointer(types.int64))
-                ptr_typed = builder.inttoptr(ptr, int64_ptr_type)
-                addr = builder.gep(ptr_typed, [idx], inbounds=True)
-                return builder.load(addr)
+                ptr = args[0]
+                ptr_type = context.get_value_type(signature.return_type)
+                return builder.inttoptr(ptr, ptr_type)
             return sig, codegen
 
         @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat))
         def parametric_func(x, y, z):
+            c_ptr = ptr_from_int(mat_dist_ptr)
+            c_arr = carray(c_ptr, (mat_dist_size,))
             # Compute 3D indices
             ix = Index(math.floor((x + (size_x / 2.0 - vox_size_x / 2.0)) / vox_size_x))
             iy = Index(math.floor((y + (size_y / 2.0 - vox_size_y / 2.0)) / vox_size_y))
@@ -99,7 +100,7 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
 
             # Flat 3D lookup: index = ix * (shape_y * shape_z) + iy * shape_z + iz
             flat_idx = ix * shape_y * shape_z + iy * shape_z + iz
-            return _read_int64_from_ptr(mat_dist_ptr, flat_idx)
+            return c_arr[flat_idx]
 
         return parametric_func
 
