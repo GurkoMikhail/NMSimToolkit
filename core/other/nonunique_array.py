@@ -42,7 +42,7 @@ class NonuniqueArray(np.ndarray):
         return np.array(self.element_list, dtype=object)[indices]
 
     def type_matching(self, target_type: Type[Any]) -> NDArray[np.bool_]:
-        match = np.zeros_like(self, dtype=bool)
+        match = np.zeros(self.shape, dtype=bool)
         indices = np.copy(self)
         for index, element in enumerate(self.element_list):
             if isinstance(element, target_type):

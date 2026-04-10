@@ -83,21 +83,21 @@ class MaterialArray(NonuniqueArray):
     
     @property
     def Zeff(self) -> NDArray[Float]:
-        Zeff = np.zeros_like(self, dtype=Float)
+        Zeff = np.zeros(self.shape, dtype=Float)
         for material, indices in self.inverse_indices.items():
             Zeff[indices] = material.Zeff
         return Zeff
 
     @property
     def density(self) -> NDArray[Float]:
-        density = np.zeros_like(self, dtype=Float)
+        density = np.zeros(self.shape, dtype=Float)
         for material, indices in self.inverse_indices.items():
             density[indices] = material.density
         return density
 
     @property
     def ID(self) -> NDArray[Index]:
-        material_id = np.zeros_like(self, dtype=Index)
+        material_id = np.zeros(self.shape, dtype=Index)
         for material, indices in self.inverse_indices.items():
             material_id[indices] = material.ID
         return material_id
