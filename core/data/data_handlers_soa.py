@@ -187,6 +187,8 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             energy_deposit = interactions['energy_deposit'][mask]
             scattering_theta = interactions['scattering_theta'][mask]
             scattering_phi = interactions['scattering_phi'][mask]
+            material_id = interactions['material_id'][mask]
+            Z = interactions['Z'][mask]
 
             n_events = len(process_id)
             events_saved += n_events
@@ -216,6 +218,8 @@ class SensitiveVolumeHandler(DirectStreamHandler):
                 'particle_ID': particle_ID,
                 'energy_deposit': energy_deposit,
                 'volume_id': volume_id,
+                'material_id': material_id,
+                'Z': Z,
                 'scattering_angles': scattering_angles,
                 'distance_traveled': distance_traveled
             }

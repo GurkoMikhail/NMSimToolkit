@@ -29,6 +29,7 @@ def _push_to_interaction_buffer(
     scattering_phi: Float,
     distance_traveled: Float,
     species: Species,
+    Z: Charge,
     pos_x: Float, pos_y: Float, pos_z: Float,
     dir_x: Float, dir_y: Float, dir_z: Float
 ) -> None:
@@ -46,6 +47,7 @@ def _push_to_interaction_buffer(
 
     inter_buffer.distance_traveled[idx] = distance_traveled
     inter_buffer.species[idx] = species
+    inter_buffer.Z[idx] = Z
 
     inter_buffer.position.x[idx] = pos_x
     inter_buffer.position.y[idx] = pos_y
@@ -92,22 +94,28 @@ def make_photoelectric_kernel(process_id: ProcessID):
         particle_ids: NDArray[ID],
         volume_ids: NDArray[Index],
         material_ids: NDArray[Index],
-        inter_buffer: InteractionBuffer
+        inter_buffer: InteractionBuffer,
+        physics_buffer: PhysicsBuffer,
+        rng_ctx: RNGContext
     ) -> None:
         # The entire energy of the particle is deposited
         energy_deposit = state.energy[p_idx]
         state.energy[p_idx] = 0.0
 
+        mat_id = material_ids[p_idx]
+        Z = _sample_Z_scalar(mat_id, physics_buffer, rng_ctx)
+
         _push_to_interaction_buffer(
             inter_buffer,
             process_id_c,
             volume_ids[p_idx],
-            material_ids[p_idx],
+            mat_id,
             particle_ids[p_idx],
             energy_deposit,
             0.0, 0.0,
             state.distance_traveled[p_idx],
             state.species[p_idx],
+            Z,
             state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
             state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
         )
@@ -128,7 +136,7 @@ def make_photoelectric_kernel(process_id: ProcessID):
         """
         for j in range(len(target_indices)):
             p_idx = target_indices[j]
-            _photoelectric_device_func(p_idx, state, particle_ids, volume_ids, material_ids, inter_buffer)
+            _photoelectric_device_func(p_idx, state, particle_ids, volume_ids, material_ids, inter_buffer, physics_buffer, rng_ctx)
 
     return _photoelectric_kernel
 
@@ -175,6 +183,7 @@ def make_compton_kernel(process_id: ProcessID):
             theta, phi,
             state.distance_traveled[p_idx],
             state.species[p_idx],
+            Z,
             state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
             state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
         )
@@ -240,6 +249,7 @@ def make_coherent_kernel(process_id: ProcessID):
             theta, phi,
             state.distance_traveled[p_idx],
             state.species[p_idx],
+            Z,
             state.position.x[p_idx], state.position.y[p_idx], state.position.z[p_idx],
             state.direction.x[p_idx], state.direction.y[p_idx], state.direction.z[p_idx]
         )

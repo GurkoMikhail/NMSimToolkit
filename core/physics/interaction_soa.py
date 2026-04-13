@@ -2,7 +2,7 @@ import numpy as np
 from typing import NamedTuple
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID, Species
+from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID, Species, Charge
 from core.other.vectors_soa import Vector3DSoA
 
 
@@ -40,6 +40,7 @@ class InteractionBuffer(NamedTuple):
     scattering_phi: NDArray[Float]
     distance_traveled: NDArray[Float]
     species: NDArray[Species]
+    Z: NDArray[Charge]
 
     position: Vector3DSoA
     direction: Vector3DSoA
@@ -75,7 +76,8 @@ class InteractionBuffer(NamedTuple):
             self.scattering_theta,
             self.scattering_phi,
             self.distance_traveled,
-            self.species
+            self.species,
+            self.Z
         ]
 
         # All base fields should be 1-dimensional
@@ -110,6 +112,7 @@ class InteractionBuffer(NamedTuple):
             scattering_phi=np.empty(capacity, dtype=Float),
             distance_traveled=np.empty(capacity, dtype=Float),
             species=np.empty(capacity, dtype=Species),
+            Z=np.empty(capacity, dtype=Charge),
             position=Vector3DSoA.allocate(capacity, dtype=Float),
             direction=Vector3DSoA.allocate(capacity, dtype=Float),
             cursor=np.zeros(1, dtype=Index),
@@ -130,6 +133,7 @@ class InteractionBuffer(NamedTuple):
             'scattering_phi': self.scattering_phi[:c].copy(),
             'distance_traveled': self.distance_traveled[:c].copy(),
             'species': self.species[:c].copy(),
+            'Z': self.Z[:c].copy(),
             'pos_x': self.position.x[:c].copy(),
             'pos_y': self.position.y[:c].copy(),
             'pos_z': self.position.z[:c].copy(),

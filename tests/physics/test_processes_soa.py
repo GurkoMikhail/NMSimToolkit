@@ -62,11 +62,9 @@ class TestProcessesSoA(unittest.TestCase):
         current_volumes = np.zeros(self.capacity, dtype=Index)
 
         # Need a dummy physics buffer just so Numba doesn't crash on type inference for other kernels
-        # even though PE kernel might not use it directly, wait, PE kernel does use it? No, but let's pass None if it works.
-        # Actually in the code:
-        # _photoelectric_kernel(state, particle_ids, target_indices, current_volumes, material_ids, inter_buffer, physics_buffer, rng_ctx)
+        mock_physics = self._create_mock_physics_buffer()
 
-        kernel(self.bank.state, particle_ids, self.target_indices, current_volumes, material_ids, self.buffer, None, self.rng_ctx)
+        kernel(self.bank.state, particle_ids, self.target_indices, current_volumes, material_ids, self.buffer, mock_physics, self.rng_ctx)
 
         self.assertEqual(self.buffer.cursor[0], self.capacity)
 
