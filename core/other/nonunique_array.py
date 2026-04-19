@@ -28,9 +28,12 @@ class NonuniqueArray(np.ndarray):
 
     def __setitem__(self, key: Any, value: Any) -> None:
         if isinstance(value, NonuniqueArray):
+            view = self.view(np.ndarray)[key]
             for element, indices in value.inverse_indices.items():
-                indices = np.arange(self.size, dtype=int)[key][indices]
-                self[indices] = element
+                if element not in self:
+                    self.element_list.append(element)
+                index = self.element_list.index(element)
+                view[indices] = index
             return
         if value not in self:
             self.element_list.append(value)
@@ -55,12 +58,12 @@ class NonuniqueArray(np.ndarray):
         return indices == index
     
     @property
-    def inverse_indices(self) -> Dict[Any, NDArray[np.int64]]:
+    def inverse_indices(self) -> Dict[Any, Tuple[NDArray[np.int64], ...]]:
         inverse_dict = {}
         indices = np.copy(self)
         for index, element in enumerate(self.element_list):
-            match = (indices == index).nonzero()[0]
-            if match.size > 0:
+            match = (indices == index).nonzero()
+            if match[0].size > 0:
                 inverse_dict.update({element: match})
         return inverse_dict
 
