@@ -1,133 +1,132 @@
-from typing import Any, Optional, Union, cast, Tuple
-
 import numpy as np
 from numpy.typing import NDArray
+from typing import NamedTuple
 
-from core.other.typing_definitions import Energy, Float, ID, Length, Time, Vector3D, Species
-
-
-class ParticleCore:
-    """ Базовый класс свойств частицы, обеспечивающий доступ к полям структурированного массива и методы для работы с ним """
-
-    species: Union[Species, NDArray[Species]]
-    position: Vector3D
-    direction: Vector3D
-    energy: Union[Energy, NDArray[Energy]]
-    emission_time: Union[Time, NDArray[Time]]
-    emission_energy: Union[Energy, NDArray[Energy]]
-    emission_position: Vector3D
-    emission_direction: Vector3D
-    distance_traveled: Union[Length, NDArray[Length]]
-    ID: Union[ID, NDArray[ID]]
-
-    def __getattr__(self, name: str) -> Any:
-        try:
-            return cast(Any, self)[name]
-        except ValueError:
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        dtype = getattr(self, 'dtype', None)
-        if dtype is not None and name in dtype.names:
-            cast(Any, self)[name] = value
-        else:
-            super().__setattr__(name, value)
-
-    def move(self, distance: Union[Length, NDArray[Length]]) -> None:
-        """ Переместить частицы (работает для скаляра и массива) """
-        dist_arr = np.asarray(distance)
-        self.distance_traveled += dist_arr
-
-        # Для скаляра: direction [3] * dist_arr [] -> [3]
-        # Для массива: direction [N, 3] * dist_arr [N, 1] -> [N, 3]
-        # [..., np.newaxis] добавит ось только если dist_arr не скаляр:
-        # но если dist_arr - скаляр (shape=()), то dist_arr[..., np.newaxis] будет иметь shape=(1,).
-        # direction [3] * (1,) -> [3].
-        # Это работает корректно в обоих случаях!
-        self.position += self.direction * dist_arr[..., np.newaxis]
-
-    def rotate(self, theta: Union[Float, NDArray[Float]], phi: Union[Float, NDArray[Float]]) -> None:
-        """ Повернуть направления частиц (dimension-agnostic) """
-        direction = cast(NDArray[Float], self.direction)
-        cos_theta = np.cos(theta)
-        sin_theta = np.sin(theta)
-        delta1 = sin_theta * np.cos(phi)
-        delta2 = sin_theta * np.sin(phi)
-
-        # Используем `...` для индексации
-        delta = np.ones_like(cos_theta) - 2 * (direction[..., 2] < 0)
-        b = direction[..., 0] * delta1 + direction[..., 1] * delta2
-        tmp = cos_theta - b / (1 + np.abs(direction[..., 2]))
-
-        direction[..., 0] = direction[..., 0] * tmp + delta1
-        direction[..., 1] = direction[..., 1] * tmp + delta2
-        direction[..., 2] = direction[..., 2] * cos_theta - delta * b
-
-        self.direction = direction
+from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Index
+from core.other.vectors import Vector3D
+from core.geometry.navigation_state import NavigationState
+from core.particles.initial_state import InitialState
+from core.particles.kinematic_state import KinematicState
 
 
-    @classmethod
-    def get_dtype(cls) -> np.dtype:
-        """ Генерирует dtype для частиц """
-        return np.dtype([
-            ('species', Species),
-            ('position', (Length, 3)),
-            ('direction', (Length, 3)),
-            ('energy', Energy),
-            ('emission_time', Time),
-            ('emission_energy', Energy),
-            ('emission_position', (Length, 3)),
-            ('emission_direction', (Length, 3)),
-            ('distance_traveled', Length),
-            ('ID', ID)
-        ])
-
-
-class Particle(np.void, ParticleCore):
-    """ Класс одиночной частицы (элемент структурированного массива) """
-    pass
-
-class ParticleArray(np.ndarray, ParticleCore):
-    """ 
-    Класс массива частиц
+class ParticleBank(NamedTuple):
     """
-
-    count: int = 0
-
-    def __new__(cls, shape: Union[int, Tuple[int, ...]]) -> 'ParticleArray':
-        current_dtype = ParticleCore.get_dtype()
-        obj = super().__new__(cls, shape=shape, dtype=(Particle, current_dtype))
-        return obj
+    Facade for managing the object pool of SoA-based particles.
+    Separates OOP lifecycle management from Numba computational kernels.
+    """
+    state: KinematicState
+    initial_state: InitialState
+    navigation_state: NavigationState
+    count_array: NDArray[Index]
+    capacity: int
 
     @classmethod
-    def create(
-        cls,
+    def allocate(cls, capacity: int) -> 'ParticleBank':
+        """
+        Allocates a complete ParticleBank Object Pool with its internal arrays.
+        """
+        state = KinematicState.allocate(capacity)
+        initial_state = InitialState.allocate(capacity)
+        navigation_state = NavigationState.allocate(capacity)
+        count_array = np.zeros(1, dtype=Index)
+        return cls(
+            state=state,
+            initial_state=initial_state,
+            navigation_state=navigation_state,
+            count_array=count_array,
+            capacity=capacity
+        )
+
+    @property
+    def count(self) -> int:
+        return int(self.count_array[0])
+
+    def inject_particles(
+        self,
         species: NDArray[Species],
         position: Vector3D,
         direction: Vector3D,
         energy: NDArray[Energy],
-        emission_time: Optional[NDArray[Time]] = None,
-        emission_position: Optional[Vector3D] = None,
-        emission_direction: Optional[Vector3D] = None,
-        distance_traveled: Optional[NDArray[Length]] = None
-    ) -> 'ParticleArray':
+        emission_time: NDArray[Time],
+        distance_traveled: NDArray[Length]
+    ) -> NDArray[Index]:
+        """
+        Injects new particles into inactive slots in the object pool.
+        Returns the indices where the particles were successfully injected.
+        Sets emission data automatically based on input state.
+        """
+        num_new = species.shape[0]
 
-        obj = cls(shape=energy.size)
+        # Find available inactive slots (we use where to get array of indices)
+        inactive_indices = np.where(~self.state.is_active)[0]
 
-        obj['species'] = species
-        obj['position'] = position
-        obj['direction'] = direction
-        obj['energy'] = energy
-        obj['emission_time'] = 0 if emission_time is None else emission_time
-        obj['emission_energy'] = energy
-        obj['emission_position'] = position if emission_position is None else emission_position
-        obj['emission_direction'] = direction if emission_direction is None else emission_direction
-        obj['distance_traveled'] = 0 if distance_traveled is None else distance_traveled
-        obj['ID'] = cls.__get_ID(obj.size)
-        return obj
+        if num_new > inactive_indices.shape[0]:
+            raise RuntimeError(
+                f"Particle pool capacity exceeded. Tried to inject {num_new} "
+                f"particles but only {inactive_indices.shape[0]} slots available."
+            )
 
-    @classmethod
-    def __get_ID(cls, n: int) -> NDArray[ID]:
-        ID_vals = np.arange(cls.count, cls.count + n, dtype=ID)
-        cls.count += n
-        return ID_vals
+        # Select slots for injection
+        target_indices = inactive_indices[:num_new]
+
+        # Generate IDs
+        current_count = self.count_array[0]
+        new_ids = np.arange(current_count, current_count + num_new, dtype=ID)
+        self.count_array[0] += num_new
+
+        # Set base arrays in-place
+        self.state.is_active[target_indices] = True
+        self.initial_state.ID[target_indices] = new_ids
+        self.initial_state.has_interacted[target_indices] = False
+        self.state.species[target_indices] = species
+        self.state.energy[target_indices] = energy
+        self.initial_state.emission_time[target_indices] = emission_time
+        self.initial_state.emission_energy[target_indices] = energy
+        self.state.distance_traveled[target_indices] = distance_traveled
+
+        # Set Position
+        self.state.position.x[target_indices] = position.x
+        self.state.position.y[target_indices] = position.y
+        self.state.position.z[target_indices] = position.z
+
+        # Set Direction
+        self.state.direction.x[target_indices] = direction.x
+        self.state.direction.y[target_indices] = direction.y
+        self.state.direction.z[target_indices] = direction.z
+
+        # Set Emission Position
+        self.initial_state.emission_position.x[target_indices] = position.x
+        self.initial_state.emission_position.y[target_indices] = position.y
+        self.initial_state.emission_position.z[target_indices] = position.z
+
+        # Set Emission Direction
+        self.initial_state.emission_direction.x[target_indices] = direction.x
+        self.initial_state.emission_direction.y[target_indices] = direction.y
+        self.initial_state.emission_direction.z[target_indices] = direction.z
+
+        # Invalidate navigation state for reused slots
+        import core.particles.particles_kernels as kernel
+        kernel.update_navigation_state_inject_kernel(self.navigation_state, target_indices)
+
+        return target_indices
+
+    @property
+    def active_indices(self) -> NDArray[Index]:
+        """Returns the indices of currently active particles in the pool."""
+        return np.nonzero(self.state.is_active)[0]
+
+    def move(self, target_indices: NDArray[Index], distances: NDArray[Float]) -> None:
+        """
+        Facade for move_kernel, applying distances across target active particles.
+        """
+        import core.particles.particles_kernels as kernel
+        kernel.move_kernel(self.state, target_indices, distances)
+        kernel.update_navigation_state_move_kernel(self.navigation_state, target_indices, distances)
+
+    def rotate(self, target_indices: NDArray[Index], thetas: NDArray[Float], phis: NDArray[Float]) -> None:
+        """
+        Facade for rotate_kernel, applying thetas and phis across target active particles.
+        """
+        import core.particles.particles_kernels as kernel
+        kernel.rotate_kernel(self.state, target_indices, thetas, phis)
+        kernel.update_navigation_state_rotate_kernel(self.navigation_state, target_indices)
