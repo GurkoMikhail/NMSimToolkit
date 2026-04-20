@@ -6,13 +6,14 @@ from numpy.typing import NDArray
 
 import core.other.utils as utils
 from core.other.typing_definitions import (Activity, Energy, Float, Length,
-                                           Time, Vector3D)
-from core.particles.particles import ParticleArray
+                                           Time, Vector3D, Species, Index)
+from core.particles.particles_soa import ParticleBank
+from core.other.vectors_soa import Vector3DSoA
 
 
-class Source:
+class SourceSoA:
     """
-    Класс источника частиц
+    Класс источника частиц для Data-Oriented Design (SoA)
 
     [activity] = Bq
 
@@ -147,21 +148,48 @@ class Source:
         direction = np.column_stack((cos_alpha, cos_beta, cos_gamma))
         return direction
 
-    def generate_particles(self, n: int) -> ParticleArray:
+    def inject(self, bank: ParticleBank, batch_size: int) -> NDArray[Index]:
+        """
+        Генерирует частицы и инжектирует их напрямую в банк через механизм Direct Injection (SoA).
+        """
+        n = min(batch_size, bank.capacity - len(bank.active_indices))
+        if n <= 0:
+            return np.array([], dtype=Index)
+
         energy = self.generate_energy(n)
-        direction = self.generate_direction(n)
-        position = self.generate_position(n)
+        direction_arr = self.generate_direction(n)
+        position_arr = self.generate_position(n)
         emission_time, dt = self.generate_emission_time(n)
         self.timer += dt
 
-        from core.other.typing_definitions import Species
-        particles = ParticleArray.create(np.zeros_like(energy, dtype=Species), position, direction, energy, emission_time)
-        return particles
+        position = Vector3DSoA(
+            x=position_arr[:, 0].astype(Length),
+            y=position_arr[:, 1].astype(Length),
+            z=position_arr[:, 2].astype(Length)
+        )
+        direction = Vector3DSoA(
+            x=direction_arr[:, 0].astype(Float),
+            y=direction_arr[:, 1].astype(Float),
+            z=direction_arr[:, 2].astype(Float)
+        )
+
+        species = np.zeros(n, dtype=Species)
+        distance_traveled = np.zeros(n, dtype=Length)
+
+        target_indices = bank.inject_particles(
+            species=species,
+            position=position,
+            direction=direction,
+            energy=energy,
+            emission_time=emission_time,
+            distance_traveled=distance_traveled
+        )
+        return target_indices
 
 
-class PointSource(Source):
+class PointSourceSoA(SourceSoA):
     """
-    Точечный источник
+    Точечный источник (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -181,9 +209,9 @@ class PointSource(Source):
             rng=rng
         )
 
-class Tc99m_MIBI(Source):
+class Tc99m_MIBI_SoA(SourceSoA):
     """
-    Источник 99mTc-MIBI
+    Источник 99mTc-MIBI (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -200,9 +228,9 @@ class Tc99m_MIBI(Source):
         half_life = 6.*units.hour
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
-class I123(Source):
+class I123_SoA(SourceSoA):
     """
-    Источник I123
+    Источник I123 (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -227,9 +255,9 @@ class I123(Source):
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
 
-class SourcePhantom(Tc99m_MIBI):
+class SourcePhantomSoA(Tc99m_MIBI_SoA):
     """
-    Источник 99mTc-MIBI
+    Источник 99mTc-MIBI (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -245,9 +273,9 @@ class SourcePhantom(Tc99m_MIBI):
         super().__init__(distribution, activity, voxel_size)
 
 
-class efg3(SourcePhantom):
+class efg3SoA(SourcePhantomSoA):
     """
-    Источник efg3
+    Источник efg3 (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -260,9 +288,9 @@ class efg3(SourcePhantom):
         super().__init__(phantom_name, activity, voxel_size)
 
 
-class efg3cut(SourcePhantom):
+class efg3cutSoA(SourcePhantomSoA):
     """
-    Источник efg3cut
+    Источник efg3cut (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -275,9 +303,9 @@ class efg3cut(SourcePhantom):
         super().__init__(phantom_name, activity, voxel_size)
 
 
-class efg3cutDefect(SourcePhantom):
+class efg3cutDefectSoA(SourcePhantomSoA):
     """
-    Источник efg3cutDefect
+    Источник efg3cutDefect (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -287,4 +315,12 @@ class efg3cutDefect(SourcePhantom):
     def __init__(self, position, activity, rotation_angles=None, rotation_center=None):
         phantom_name = 'efg3cutDefect'
         voxel_size = 4.*units.mm
-        super().__init__(position, activity, phantom_name, voxel_size, rotation_angles, rotation_center)
+        super().__init__(phantom_name, activity, voxel_size)
+
+        # Apply optional position and rotation transformations after initialization
+        if rotation_angles is not None:
+            if rotation_center is None:
+                rotation_center = (0.0, 0.0, 0.0)
+            self.rotate(rotation_angles[0], rotation_angles[1], rotation_angles[2], rotation_center=rotation_center)
+        if position is not None:
+            self.translate(position[0], position[1], position[2])

@@ -8,12 +8,12 @@ from core.other.typing_definitions import Index, Float, CFuncAddress
 
 from core.particles.kinematic_state import KinematicState
 from core.particles.initial_state import InitialState
-from core.physics.interaction_buffers import InitialStateBuffer
-from core.particles.particles_kernels import _move_particle, _invalidate_navigation_state
+from core.physics.interaction_soa import InitialStateBuffer
+from core.particles.particles_soa_kernels import _move_particle, _invalidate_navigation_state
 from core.geometry.navigation_state import NavigationState
 from core.geometry.geometry_kernels import _transform_to_local
 from core.physics.physics_buffer import PhysicsBuffer
-from core.physics.interaction_buffers import RNGContext
+from core.physics.interaction_soa import RNGContext
 from core.physics.physics_kernels import _get_macroscopic_cross_sections
 
 from numba.extending import intrinsic

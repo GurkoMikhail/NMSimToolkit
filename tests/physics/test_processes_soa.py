@@ -11,15 +11,15 @@ import time
 from numba import njit
 import ctypes
 
-from core.particles.particles import ParticleBank
-from core.physics.interaction_buffers import InteractionBuffer, RNGContext
+from core.particles.particles_soa import ParticleBank
+from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.physics.physics_buffer import PhysicsBuffer
-from core.physics.processes_kernels import make_photoelectric_kernel, make_compton_kernel, make_coherent_kernel
+from core.physics.processes_soa_kernels import make_photoelectric_kernel, make_compton_kernel, make_coherent_kernel
 
 # Old implementations for testing math correctness
 import core.physics.g4compton as old_compton
 import core.physics.g4coherent as old_coherent
-from core.particles.particles_kernels import _rotate_particle
+from core.particles.particles_soa_kernels import _rotate_particle
 from core.particles.kinematic_state import KinematicState
 from core.other.typing_definitions import ID, Index
 
@@ -93,7 +93,7 @@ class TestProcessesSoA(unittest.TestCase):
         new_rng_ctx = RNGContext.from_numpy_rng(new_rng)
 
         # Define a wrapper to extract exactly N thetas to avoid shifting RNG via phi
-        from core.physics.g4compton import _generate_compton_theta_scalar
+        from core.physics.g4compton_soa import _generate_compton_theta_scalar
 
         @njit(cache=True)
         def _get_new_thetas(cap, energies, z_vals, ctx):
@@ -119,7 +119,7 @@ class TestProcessesSoA(unittest.TestCase):
         new_rng = np.random.default_rng(777)
         new_rng_ctx = RNGContext.from_numpy_rng(new_rng)
 
-        from core.physics.g4coherent import _generate_coherent_theta_scalar
+        from core.physics.g4coherent_soa import _generate_coherent_theta_scalar
 
         @njit(cache=True)
         def _get_new_thetas_coh(cap, energies, z_vals, ctx):

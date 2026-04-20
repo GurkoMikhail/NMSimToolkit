@@ -3,13 +3,13 @@ from typing import NamedTuple
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Energy, Float, Length, Species
-from core.other.vectors import Vector3D
+from core.other.vectors_soa import Vector3DSoA
 
 class KinematicState(NamedTuple):
     is_active: NDArray[np.bool_]
     species: NDArray[Species]
-    position: Vector3D
-    direction: Vector3D
+    position: Vector3DSoA
+    direction: Vector3DSoA
     energy: NDArray[Energy]
     distance_traveled: NDArray[Length]
 

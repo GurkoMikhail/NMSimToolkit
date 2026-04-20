@@ -6,9 +6,9 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from core.particles.particles import ParticleBank
+from core.particles.particles_soa import ParticleBank
 from core.physics.physics_buffer import PhysicsBuffer, ElementCSR
-from core.physics.interaction_buffers import InteractionBuffer, RNGContext
+from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.materials.material_bank import MaterialBank, MaterialInfoDType, MaterialPointerDType
 from core.other.typing_definitions import Index, Float, Charge, CFuncAddress, CMaterialFunc
 from core.transport.transport_buffer import TransportBuffer

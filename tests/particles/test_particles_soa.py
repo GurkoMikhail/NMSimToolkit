@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from core.particles.particles import ParticleArray
-from core.particles.particles import ParticleBank
+from core.particles.particles_soa import ParticleBank
 from core.other.typing_definitions import Species, Float, Length, Energy, Time
 
 
@@ -37,7 +37,7 @@ def generate_test_data(n: int):
     )
 
 
-def test_particles_equivalence():
+def test_particles_soa_equivalence():
     n = 1000
     (species, position, direction, energy,
      emission_time, emission_position, emission_direction, distance_traveled) = generate_test_data(n)
@@ -57,12 +57,12 @@ def test_particles_equivalence():
     # --- 2. Initialize SoA (New) ---
     bank = ParticleBank.allocate(n)
 
-    from core.other.vectors import Vector3D
+    from core.other.vectors_soa import Vector3DSoA
     # Convert vectors for SoA injection
-    pos_soa = Vector3D(position[:, 0], position[:, 1], position[:, 2])
-    dir_soa = Vector3D(direction[:, 0], direction[:, 1], direction[:, 2])
-    em_pos_soa = Vector3D(emission_position[:, 0], emission_position[:, 1], emission_position[:, 2])
-    em_dir_soa = Vector3D(emission_direction[:, 0], emission_direction[:, 1], emission_direction[:, 2])
+    pos_soa = Vector3DSoA(position[:, 0], position[:, 1], position[:, 2])
+    dir_soa = Vector3DSoA(direction[:, 0], direction[:, 1], direction[:, 2])
+    em_pos_soa = Vector3DSoA(emission_position[:, 0], emission_position[:, 1], emission_position[:, 2])
+    em_dir_soa = Vector3DSoA(emission_direction[:, 0], emission_direction[:, 1], emission_direction[:, 2])
 
     target_indices = bank.inject_particles(
         species=species,
@@ -113,7 +113,7 @@ def test_particles_equivalence():
     np.testing.assert_allclose(old_array.direction[:, 2], bank.state.direction.z[target_indices])
 
 
-def test_particles_benchmark():
+def test_particles_soa_benchmark():
     n = 10**6
     (species, position, direction, energy,
      emission_time, emission_position, emission_direction, distance_traveled) = generate_test_data(n)
@@ -148,11 +148,11 @@ def test_particles_benchmark():
     # ---------------------------------------------
     bank = ParticleBank.allocate(n)
 
-    from core.other.vectors import Vector3D
-    pos_soa = Vector3D(position[:, 0], position[:, 1], position[:, 2])
-    dir_soa = Vector3D(direction[:, 0], direction[:, 1], direction[:, 2])
-    em_pos_soa = Vector3D(emission_position[:, 0], emission_position[:, 1], emission_position[:, 2])
-    em_dir_soa = Vector3D(emission_direction[:, 0], emission_direction[:, 1], emission_direction[:, 2])
+    from core.other.vectors_soa import Vector3DSoA
+    pos_soa = Vector3DSoA(position[:, 0], position[:, 1], position[:, 2])
+    dir_soa = Vector3DSoA(direction[:, 0], direction[:, 1], direction[:, 2])
+    em_pos_soa = Vector3DSoA(emission_position[:, 0], emission_position[:, 1], emission_position[:, 2])
+    em_dir_soa = Vector3DSoA(emission_direction[:, 0], emission_direction[:, 1], emission_direction[:, 2])
 
     target_indices = bank.inject_particles(
         species=species,

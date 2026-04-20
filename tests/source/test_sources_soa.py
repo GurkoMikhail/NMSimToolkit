@@ -6,8 +6,8 @@ import sys
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from core.source.sources import PointSource
-from core.particles.particles import ParticleBank
+from core.source.sources_soa import PointSourceSoA
+from core.particles.particles_soa import ParticleBank
 from core.other.typing_definitions import Index, Length, Float, Energy, Time, Species
 
 
@@ -16,7 +16,7 @@ class TestSourcesSoA(unittest.TestCase):
         self.capacity = 10
         self.bank = ParticleBank.allocate(self.capacity)
         # Point source at origin, small size
-        self.source = PointSource(activity=1000, energy=140.5 * 1000)
+        self.source = PointSourceSoA(activity=1000, energy=140.5 * 1000)
 
     def test_inject_basic(self):
         # Inject fewer particles than capacity

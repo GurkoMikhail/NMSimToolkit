@@ -1,7 +1,7 @@
 from core.physics.physics_buffer import PhysicsBuffer
 
-from core.physics.processes_kernels import make_photoelectric_kernel, make_compton_kernel, make_coherent_kernel
-from core.particles.particles_kernels import update_navigation_state_rotate_kernel
+from core.physics.processes_soa_kernels import make_photoelectric_kernel, make_compton_kernel, make_coherent_kernel
+from core.particles.particles_soa_kernels import update_navigation_state_rotate_kernel
 from abc import ABC
 from typing import Any, Optional, Union
 
@@ -12,11 +12,13 @@ from numpy.typing import NDArray
 import core.physics.g4coherent as g4coherent
 import core.physics.g4compton as g4compton
 import settings.database_setting as settings
+from core.data.interaction_data import InteractionArray
 from core.materials.attenuation_functions import AttenuationFunction
 from core.materials.materials import Material, MaterialArray
 from core.other.typing_definitions import Float, ProcessID
-from core.particles.particles import ParticleBank
-from core.physics.interaction_buffers import InteractionBuffer, RNGContext
+from core.particles.particles import ParticleArray
+from core.particles.particles_soa import ParticleBank
+from core.physics.interaction_soa import InteractionBuffer, RNGContext
 from core.other.typing_definitions import Index
 
 
@@ -53,13 +55,37 @@ class Process(ABC):
         self._energy_range = value
         self._construct_attenuation_function()
 
+    def get_LAC(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]:
+        energy = particle.energy
+        LAC = self.attenuation_function(material, energy)
+        return LAC
 
+    def generate_free_path(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]:
+        LAC = self.get_LAC(particle, material)
+        freePath = self.rng.exponential(1/LAC)
+        return freePath
 
     def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, material_ids: NDArray[Index], rng_ctx: RNGContext) -> None:
         self._kernel(bank.state, bank.initial_state.ID, target_indices, bank.navigation_state.current_volume, material_ids, interaction_buffer, physics_buffer, rng_ctx)
         if self.invalidates_navigation:
             update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 
+    def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
+        """ Применить процесс """
+        size = particle.size
+        interaction_data = InteractionArray(size)
+        interaction_data.position = particle.position
+        interaction_data.direction = particle.direction
+        interaction_data.process_name = self.name
+        interaction_data.particle_ID = particle.ID
+        interaction_data.energy_deposit = Float(0.)
+        interaction_data.scattering_angles = Float(0.)
+        interaction_data.emission_time = particle.emission_time
+        interaction_data.emission_energy = particle.emission_energy
+        interaction_data.emission_position = particle.emission_position
+        interaction_data.emission_direction = particle.emission_direction
+        interaction_data.distance_traveled = particle.distance_traveled
+        return interaction_data
 
 
 class PhotoelectricEffect(Process):
@@ -71,6 +97,14 @@ class PhotoelectricEffect(Process):
         self._kernel = make_photoelectric_kernel(self.process_id)
 
 
+    def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
+        """ Применить фотоэффект """
+        interaction_data = super().__call__(particle, material)
+        energy_deposit = particle.energy
+        particle.energy -= energy_deposit
+        interaction_data.energy_deposit = energy_deposit
+        return interaction_data
+
 
 class CoherentScattering(Process):
     """ Класс когерентного рассеяния """
@@ -79,15 +113,31 @@ class CoherentScattering(Process):
     
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         Process.__init__(self, attenuation_database, rng)                
+        self.theta_generator = g4coherent.initialize(self.rng)
         self._kernel = make_coherent_kernel(self.process_id)
 
 
 
+    def generate_theta(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]:
+        """ Сгенерировать угол рассеяния - theta """
+        energy = particle.energy
+        Z = np.array(material.Zeff, dtype=int)
+        theta = self.theta_generator(energy, Z)
+        return theta
 
     def generate_phi(self, size: int) -> NDArray[Float]:
         """ Сгенерировать угол рассеяния - phi """
         phi = np.pi * (self.rng.random(size) * 2 - 1)
         return phi
+    def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
+        """ Применить когерентное рассеяние """
+        size = particle.size
+        theta = self.generate_theta(particle, material)
+        phi = self.generate_phi(size)
+        particle.rotate(theta, phi)
+        interaction_data = super().__call__(particle, material)
+        interaction_data.scattering_angles = np.column_stack((theta, phi))
+        return interaction_data
 
 
 class ComptonScattering(CoherentScattering):
@@ -97,6 +147,7 @@ class ComptonScattering(CoherentScattering):
 
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         Process.__init__(self, attenuation_database, rng)
+        self.theta_generator = g4compton.initialize(self.rng)
         self._kernel = make_compton_kernel(self.process_id)
 
 
@@ -107,6 +158,14 @@ class ComptonScattering(CoherentScattering):
         k1_cos = k * (1 - np.cos(theta))
         energy_deposit = particle_energy * k1_cos / (1 + k1_cos)
         return energy_deposit
+    def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray:
+        """ Применить эффект Комптона """
+        interaction_data = super().__call__(particle, material)
+        theta = interaction_data.scattering_angles[:, 0]
+        energy_deposit = self.culculate_energy_deposit(theta, particle.energy)
+        particle.energy -= energy_deposit
+        interaction_data.energy_deposit = energy_deposit
+        return interaction_data
 
 
 class PairProduction(Process):

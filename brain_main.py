@@ -32,7 +32,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     from core.geometry.parametric_collimators import ParametricParallelCollimator
     from core.geometry.volumes import TransformableVolume, VolumeWithChilds
     from core.transport.simulation_managers import SimulationManager
-    from core.transport.propagator import ParticlePropagator
+            from core.transport.propagator import ParticlePropagator
     from core.physics.physics_compiler import PhysicsCompiler
     from core.data.data_manager import DataManager
     from core.data.data_handlers import HistoryAssemblerHandler
@@ -120,9 +120,12 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     manager.start()
 
 
+    )
+
+
     handler = HistoryAssemblerHandler(sensitive_volumes=detector_list)
     data_manager = DataManager(
-        filename=f'brain_healthy/{manager.name}.hdf',
+        filename=f'{manager.name}.hdf',
         handlers=[handler],
         queue=manager.queue
     )

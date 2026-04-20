@@ -5,10 +5,10 @@ from numpy.typing import NDArray
 
 from core.other.typing_definitions import Index, Charge, ProcessID, ID, Energy, Float, Species
 from core.particles.kinematic_state import KinematicState
-from core.physics.interaction_buffers import InteractionBuffer, RNGContext
-from core.physics.g4compton import _generate_compton_theta_scalar, _calculate_compton_energy_deposit_scalar
-from core.physics.g4coherent import _generate_coherent_theta_scalar
-from core.particles.particles_kernels import _rotate_particle
+from core.physics.interaction_soa import InteractionBuffer, RNGContext
+from core.physics.g4compton_soa import _generate_compton_theta_scalar, _calculate_compton_energy_deposit_scalar
+from core.physics.g4coherent_soa import _generate_coherent_theta_scalar
+from core.particles.particles_soa_kernels import _rotate_particle
 
 
 @njit(cache=True, inline='always')

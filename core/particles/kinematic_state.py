@@ -3,7 +3,7 @@ from typing import NamedTuple
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Energy, Float, Length, Species
-from core.other.vectors import Vector3D
+from core.other.vectors_soa import Vector3DSoA
 
 class KinematicState(NamedTuple):
     """
@@ -15,10 +15,10 @@ class KinematicState(NamedTuple):
     species: NDArray[Species]
 
     # Position Vector
-    position: Vector3D
+    position: Vector3DSoA
 
     # Direction Vector
-    direction: Vector3D
+    direction: Vector3DSoA
 
     energy: NDArray[Energy]
 
@@ -65,8 +65,8 @@ class KinematicState(NamedTuple):
         buffer = cls(
             is_active=np.zeros(capacity, dtype=np.bool_),
             species=np.empty(capacity, dtype=Species),
-            position=Vector3D.allocate(capacity, dtype=Length),
-            direction=Vector3D.allocate(capacity, dtype=Float),
+            position=Vector3DSoA.allocate(capacity, dtype=Length),
+            direction=Vector3DSoA.allocate(capacity, dtype=Float),
             energy=np.empty(capacity, dtype=Energy),
             distance_traveled=np.empty(capacity, dtype=Length),
         )

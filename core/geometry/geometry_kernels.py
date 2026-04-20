@@ -4,7 +4,7 @@ from typing import Tuple
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, Index
-from core.other.vectors import Vector3D
+from core.other.vectors_soa import Vector3DSoA
 from core.geometry.navigation_state import NavigationState
 
 @njit(cache=True)
@@ -190,8 +190,8 @@ def _trace_single_ray(
 
 @njit(cache=True)
 def cast_path_kernel(
-    positions: Vector3D,
-    directions: Vector3D,
+    positions: Vector3DSoA,
+    directions: Vector3DSoA,
     target_indices: NDArray[Index],
     geom_buffer: NDArray,
     nav_state: NavigationState
