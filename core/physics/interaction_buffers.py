@@ -3,7 +3,7 @@ from typing import NamedTuple
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID, Species, Charge
-from core.other.vectors_soa import Vector3DSoA
+from core.other.vectors import Vector3D
 
 
 from typing import Any
@@ -42,8 +42,8 @@ class InteractionBuffer(NamedTuple):
     species: NDArray[Species]
     Z: NDArray[Charge]
 
-    position: Vector3DSoA
-    direction: Vector3DSoA
+    position: Vector3D
+    direction: Vector3D
 
     cursor: NDArray[Index]  # Length 1, tracks the number of elements written
     capacity: int
@@ -113,8 +113,8 @@ class InteractionBuffer(NamedTuple):
             distance_traveled=np.empty(capacity, dtype=Float),
             species=np.empty(capacity, dtype=Species),
             Z=np.empty(capacity, dtype=Charge),
-            position=Vector3DSoA.allocate(capacity, dtype=Float),
-            direction=Vector3DSoA.allocate(capacity, dtype=Float),
+            position=Vector3D.allocate(capacity, dtype=Float),
+            direction=Vector3D.allocate(capacity, dtype=Float),
             cursor=np.zeros(1, dtype=Index),
             capacity=capacity
         )
@@ -157,8 +157,8 @@ class InitialStateBuffer(NamedTuple):
     emission_time: NDArray[Time]
     emission_energy: NDArray[Energy]
 
-    emission_position: Vector3DSoA
-    emission_direction: Vector3DSoA
+    emission_position: Vector3D
+    emission_direction: Vector3D
 
     cursor: NDArray[Index]
     capacity: int
@@ -204,8 +204,8 @@ class InitialStateBuffer(NamedTuple):
             particle_ID=np.empty(capacity, dtype=ID),
             emission_time=np.empty(capacity, dtype=Time),
             emission_energy=np.empty(capacity, dtype=Energy),
-            emission_position=Vector3DSoA.allocate(capacity, dtype=Length),
-            emission_direction=Vector3DSoA.allocate(capacity, dtype=Float),
+            emission_position=Vector3D.allocate(capacity, dtype=Length),
+            emission_direction=Vector3D.allocate(capacity, dtype=Float),
             cursor=np.zeros(1, dtype=Index),
             capacity=capacity
         )

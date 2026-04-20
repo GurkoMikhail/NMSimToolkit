@@ -1,156 +1,98 @@
 import logging
+import threading
 from pathlib import Path
-from typing import Any, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional
 
 import h5py
 import numpy as np
-import hepunits as units
 
-from core.data.interaction_data import InteractionArray
-from core.geometry.volumes import Volume, TransformableVolume
-from core.other.typing_definitions import Float
+from core.data.data_handlers import BaseDataHandler
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.DEBUG)
 
 
-class SimulationDataManager:
+class DataManager(threading.Thread):
     """
-    Основной класс менеджера данных получаемых при моделировании
+    Consumer Thread for saving InteractionBuffer chunks from SoA engine
+    to HDF5 file using delegated BaseDataHandlers.
     """
-    filename: Path
-    sensitive_volumes: List[Volume]
-    lock: Optional[Any]
-    save_emission_distribution: bool
-    save_dose_distribution: bool
-    distribution_voxel_size: Float
-    interaction_buffer_size: int
-    _buffered_interaction_number: int
-    interaction_data: Dict[str, List[InteractionArray]]
 
-    def __init__(self, filename: str, sensitive_volumes: List[Volume] = [], lock: Optional[Any] = None, **kwds: Any) -> None:
+    def __init__(self, filename: str, handlers: List[BaseDataHandler], queue: Any = None, lock: Optional[Any] = None) -> None:
+        super().__init__()
         self.filename = Path(f'output data/{filename}')
         self.filename.parent.mkdir(parents=True, exist_ok=True)
-        self.sensitive_volumes = sensitive_volumes
+
+        self.queue = queue
         self.lock = lock
-        self.save_emission_distribution = True
-        self.save_dose_distribution = True
-        self.distribution_voxel_size = Float(4. * units.mm)
-        self.clear_interaction_data()
-        self.interaction_buffer_size = int(10**3)
-        self._buffered_interaction_number = 0
-        self.args = [
-            'save_emission_distribution',
-            'save_dose_distribution',
-            'distribution_voxel_size',
-            'interaction_buffer_size'
-            ]
+        self.daemon = True
 
-        for arg in self.args:
-            if arg in kwds:
-                setattr(self, arg, kwds[arg])
+        self.handlers = []
+        for h in handlers:
+            if not isinstance(h, BaseDataHandler):
+                raise TypeError(f"Handler {h} must be an instance of BaseDataHandler.")
+            h.set_writer_callback(self._write_with_retry)
+            self.handlers.append(h)
 
-    def check_progress_in_file(self) -> Tuple[Optional[Float], Optional[Any]]:
-        try:
-            file = h5py.File(self.filename, 'r')
-        except Exception:
-            last_time = None
-            state = None
-        else:
-            try:
-                last_time = file['Source timer']
-                # state = file['Source state']
-                state = None
-                last_time = Float(np.array(last_time))
-            except Exception:
-                print('\tНе удалось восстановить прогресс')
-                last_time = None
-                state = None
-            finally:
-                print('\tПрогресс восстановлен')
-                file.close()
-        finally:
-            print(f'\tSource timer: {last_time}')
-            return last_time, state
+    def run(self):
+        """
+        Consumes chunks from the queue until 'stop' signal.
+        """
+        if self.queue is None:
+            return
 
-    def add_interaction_data(self, interaction_data: InteractionArray) -> None:
-        for volume in self.sensitive_volumes:
-            in_volume = volume.check_inside(interaction_data.position)
-            interaction_data_in_volume = cast(InteractionArray, interaction_data[in_volume])
-            if interaction_data_in_volume.size > 0:
-                interaction_data_for_save = InteractionArray(interaction_data_in_volume.shape)
+        while True:
+            chunk = self.queue.get()
+            if isinstance(chunk, str) and chunk == 'stop':
+                break
+            elif isinstance(chunk, dict):
+                frozen_chunk = self._freeze_chunk(chunk)
+                for h in self.handlers:
+                    h.process_chunk(frozen_chunk)
 
-                interaction_data_for_save.global_position = interaction_data_in_volume.position
-                interaction_data_for_save.global_direction = interaction_data_in_volume.direction
-                if isinstance(volume, TransformableVolume):
-                    interaction_data_for_save.local_position = volume.convert_to_local_position(interaction_data_in_volume.position, as_parent=False)
-                    interaction_data_for_save.local_direction = volume.convert_to_local_direction(interaction_data_in_volume.direction, as_parent=False)
+    @staticmethod
+    def _freeze_chunk(chunk: dict) -> dict:
+        """
+        Sets all numpy arrays within the chunk data to read-only
+        to prevent accidental modification during multi-handler broadcast.
+        Returns a shallow copy of the data dictionary to protect keys from .pop().
+        """
+        from types import MappingProxyType
 
-                if interaction_data_in_volume.dtype.names is not None and interaction_data_for_save.dtype.names is not None:
-                    for field in interaction_data_in_volume.dtype.names:
-                        if field in interaction_data_for_save.dtype.names and field not in ['global_position', 'global_direction', 'local_position', 'local_direction']:
-                            interaction_data_for_save[field] = interaction_data_in_volume[field]
+        data = chunk.get('data')
+        if isinstance(data, dict):
+            frozen_data = {}
+            for k, v in data.items():
+                if isinstance(v, np.ndarray):
+                    v.flags.writeable = False
+                frozen_data[k] = v
+            # Return MappingProxyType to prevent adding/removing keys
+            chunk['data'] = MappingProxyType(frozen_data)
+        elif isinstance(data, np.ndarray):
+            data.flags.writeable = False
 
-                self.interaction_data[volume.name].append(interaction_data_for_save)
-                self._buffered_interaction_number += interaction_data_for_save.size
-        if self._buffered_interaction_number > self.interaction_buffer_size:
-            self.save_interaction_data()
-            self._buffered_interaction_number = 0
+        return chunk
 
-    def concatenate_interaction_data(self) -> None:
-        for volume in self.sensitive_volumes:
-            volume_name = volume.name
-            if self.interaction_data[volume_name]:
-                self.interaction_data[volume_name] = [cast(InteractionArray, np.concatenate(self.interaction_data[volume_name]).view(InteractionArray))]
+    def _write_with_retry(self, write_func: Any) -> None:
+        """
+        Executes an HDF5 write function with retry logic and optional mutex locking.
+        """
+        import time
+        retries = 100
 
-    def clear_interaction_data(self) -> None:
-        self.interaction_data = {volume.name: [] for volume in self.sensitive_volumes}
+        def do_write():
+            for i in range(retries):
+                try:
+                    with h5py.File(self.filename, 'a') as f:
+                        write_func(f)
+                    return
+                except (OSError, BlockingIOError):
+                    if i == retries - 1:
+                        raise
+                    time.sleep(0.1)
 
-    def save_interaction_data(self) -> None:
-        if self.lock is None:
-            self._save_interaction_data()
-        else:
+        if self.lock is not None:
             with self.lock:
-                self._save_interaction_data()
-
-    def _save_interaction_data(self) -> None:
-        self.concatenate_interaction_data()
-        try:
-            file = h5py.File(self.filename, 'a')
-        except Exception:
-            _logger.exception(f'Не удалось сохранить данные в {self.filename}!')
+                do_write()
         else:
-            if 'interaction_data' not in file:
-                group = file.create_group('interaction_data')
-                for volume_name, interaction_data_list in self.interaction_data.items():
-                    if not interaction_data_list:
-                        continue
-                    interaction_data = interaction_data_list[0]
-                    volume_group = group.create_group(volume_name)
-                    if interaction_data.dtype.fields is not None:
-                        for field in interaction_data.dtype.fields:
-                            maxshape = list(interaction_data[field].shape)
-                            maxshape[0] = None
-                            volume_group.create_dataset(
-                                field,
-                                data=interaction_data[field],
-                                compression="gzip",
-                                chunks=True,
-                                maxshape=maxshape
-                                )
-            else:
-                group = file['interaction_data']
-                for volume_name, interaction_data_list in self.interaction_data.items():
-                    if not interaction_data_list:
-                        continue
-                    interaction_data = interaction_data_list[0]
-                    volume_group = group[volume_name]
-                    for key in volume_group.keys():
-                        volume_group[key].resize(
-                            (volume_group[key].shape[0] + interaction_data[key].shape[0]),
-                            axis=0
-                            )
-                        volume_group[key][-interaction_data[key].shape[0]:] = interaction_data[key]
-            _logger.info(f'{self._buffered_interaction_number} events saved to {self.filename}')
-            file.close()
-        self.clear_interaction_data()
+            do_write()

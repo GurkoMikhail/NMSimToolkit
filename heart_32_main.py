@@ -28,7 +28,7 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
     from core.geometry.parametric_collimators import ParametricParallelCollimator
     from core.geometry.volumes import TransformableVolume, VolumeWithChilds
     from core.transport.simulation_managers import SimulationManager
-            from core.transport.propagator import ParticlePropagator
+    from core.transport.propagator import ParticlePropagator
     from core.physics.physics_compiler import PhysicsCompiler
     from core.data.data_manager import DataManager
     from core.data.data_handlers import HistoryAssemblerHandler
@@ -128,12 +128,9 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
     manager.start()
 
 
-    )
-
-
     handler = HistoryAssemblerHandler(sensitive_volumes=detector_list)
     data_manager = DataManager(
-        filename=f'{manager.name}.hdf',
+        filename=f'{filename}/{manager.name}.hdf',
         handlers=[handler],
         queue=manager.queue
     )

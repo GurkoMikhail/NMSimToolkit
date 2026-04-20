@@ -7,12 +7,14 @@ from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, Length, Vector3D, ShapeID
 
+
 ShapeDataDType = np.dtype([
     ('shape', ShapeID),
     ('param_0', Float),
     ('param_1', Float),
     ('param_2', Float)
 ])
+
 
 class Geometry(ABC):
     size: Vector3D
@@ -25,9 +27,7 @@ class Geometry(ABC):
         return self.size/2
 
     @property
-    @property
     def quarter_size(self) -> Vector3D:
-        return self.size/4
         return self.size/4
 
     @abstractmethod
@@ -45,6 +45,7 @@ class Geometry(ABC):
     @abstractmethod
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
         pass
+
 
 class Box(Geometry):
     distance_method: str

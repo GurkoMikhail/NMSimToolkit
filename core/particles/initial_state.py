@@ -3,7 +3,7 @@ from typing import NamedTuple
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Energy, Time, Length, Float, ID
-from core.other.vectors_soa import Vector3DSoA
+from core.other.vectors import Vector3D
 
 
 class InitialState(NamedTuple):
@@ -19,10 +19,10 @@ class InitialState(NamedTuple):
     emission_energy: NDArray[Energy]
 
     # Emission Position Vector
-    emission_position: Vector3DSoA
+    emission_position: Vector3D
 
     # Emission Direction Vector
-    emission_direction: Vector3DSoA
+    emission_direction: Vector3D
 
     @property
     def capacity(self) -> int:
@@ -67,8 +67,8 @@ class InitialState(NamedTuple):
             has_interacted=np.zeros(capacity, dtype=np.bool_),
             emission_time=np.empty(capacity, dtype=Time),
             emission_energy=np.empty(capacity, dtype=Energy),
-            emission_position=Vector3DSoA.allocate(capacity, dtype=Length),
-            emission_direction=Vector3DSoA.allocate(capacity, dtype=Float)
+            emission_position=Vector3D.allocate(capacity, dtype=Length),
+            emission_direction=Vector3D.allocate(capacity, dtype=Float)
         )
         buffer.validate()
         return buffer
