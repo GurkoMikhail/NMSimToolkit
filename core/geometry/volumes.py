@@ -14,7 +14,6 @@ from core.other.transform import TransformDType
 from core.geometry.geometries import ShapeDataDType
 from core.geometry.flattened_scene import FlattenedScene
 
-
 GeometryBufferDType = np.dtype([
     ('shape_data', ShapeDataDType),
     ('transform', TransformDType),
@@ -96,27 +95,8 @@ class Volume:
         result.name = f'{self.name}.{next(self._dublicate_counter)}'
         return result
 
-    def check_inside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
-        """ Проверка на попадание в объём """
-        return self.geometry.check_inside(position)
 
-    def check_outside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
-        """ Проверка на непопадание в объём """
-        return self.geometry.check_outside(position)
 
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], 'VolumeArray']:
-        """ Определение объекта местонахождения и длины пути частицы """
-        current_volume = VolumeArray(position.shape[0])
-        distance, inside = self.geometry.cast_path(position, direction)
-        current_volume[inside] = self
-        return distance, current_volume
-
-    def get_material_by_position(self, position: Vector3D) -> MaterialArray:
-        """ Получить материал по координаты """
-        material = MaterialArray(position.shape[0])
-        inside = self.geometry.check_inside(position)
-        material[inside] = self.material
-        return material
 
 
 class VolumeWithChilds(Volume):
@@ -142,37 +122,7 @@ class VolumeWithChilds(Volume):
             child.dublicate()
         return result
 
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], 'VolumeArray']:
-        distance, current_volume = super().cast_path(position, direction)
-        if len(self.childs) > 0:
-            inside = current_volume != 0
-            position_inside = position[inside]
-            direction_inside = direction[inside]
-            distance_inside = distance[inside]
-            current_volume_inside = current_volume[inside]
-            distance_to_child = np.full((len(self.childs), position_inside.shape[0]), np.inf)
-            for i, child in enumerate(self.childs):
-                _distance_to_child, child_volume = child.cast_path(position_inside, direction_inside)
-                inside_child = child_volume != 0
-                current_volume_inside[inside_child] = child_volume[inside_child]
-                distance_to_child[i] = _distance_to_child
-            distance_to_child_min = distance_to_child.min(axis=0)
-            current_volume[inside] = current_volume_inside
-            distance[inside] = np.where(distance_inside < distance_to_child_min, distance_inside, distance_to_child_min)
-        return distance, current_volume
 
-    def get_material_by_position(self, position: Vector3D) -> MaterialArray:
-        material = super().get_material_by_position(position)
-        if len(self.childs) > 0:
-            inside = material != 0
-            position_inside = position[inside]
-            material_inside = material[inside]
-            for child in self.childs:
-                child_material = child.get_material_by_position(position_inside)
-                inside_child = child_material != 0
-                material_inside[inside_child] = child_material[inside_child]
-            material[inside] = material_inside
-        return material
 
     def invalidate_scene(self) -> None:
         if self._geometry_buffer is not None or self._flattened_scene is not None:
@@ -196,7 +146,6 @@ class VolumeWithChilds(Volume):
         child.parent = self
         self.invalidate_scene()
         child.invalidate_scene()
-
 
 class TransformableVolume(Volume):
     """ Базовый класс трансформируемого объёма """
@@ -248,15 +197,7 @@ class TransformableVolume(Volume):
         np.matmul(direction, transformation_matrix[:3, :3].T.astype(direction.dtype), out=direction)
         return direction
 
-    def check_inside(self, position: Vector3D, local: bool = False, as_parent: bool = False) -> Union[bool, NDArray[np.bool_]]:
-        if not local:
-            position = self.convert_to_local_position(position, as_parent)
-        return super().check_inside(position)
 
-    def check_outside(self, position: Vector3D, local: bool = False, as_parent: bool = False) -> Union[bool, NDArray[np.bool_]]:
-        if not local:
-            position = self.convert_to_local_position(position, as_parent)
-        return super().check_outside(position)
 
     def translate(self, x: Float = Float(0.), y: Float = Float(0.), z: Float = Float(0.), inLocal: bool = False) -> None:
         """ Переместить объём """
@@ -281,17 +222,7 @@ class TransformableVolume(Volume):
             self.transformation_matrix = self.transformation_matrix@rotation_matrix
         self.invalidate_scene()
 
-    def cast_path(self, position: Vector3D, direction: Vector3D, local: bool = False, as_parent: bool = True) -> Tuple[NDArray[Float], 'VolumeArray']:
-        if not local:
-            position = self.convert_to_local_position(position, as_parent)
-            direction = self.convert_to_local_direction(direction, as_parent)
-        return super().cast_path(position, direction)
 
-    def get_material_by_position(self, position: Vector3D, local: bool = False, as_parent: bool = True) -> MaterialArray:
-        if not local:
-            position = self.convert_to_local_position(position, as_parent)
-        material = super().get_material_by_position(position)
-        return material
 
     def invalidate_scene(self) -> None:
         super().invalidate_scene()
@@ -310,10 +241,8 @@ class TransformableVolume(Volume):
             current = current.parent
         return current
 
-
 class TransformableVolumeWithChild(TransformableVolume, VolumeWithChilds):
     """ Базовый класс трансформируемого объёма с детьми """  
-
 
 class VolumeArray(NonuniqueArray):
     """ Класс списка объёмов """

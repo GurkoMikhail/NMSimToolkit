@@ -134,7 +134,6 @@ class SimulationManager(Thread):
         }
         self.send_data(chunk)
 
-
     def _invalidate_by_energy(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
         return self.bank.state.energy[active_indices] < self.min_energy
 

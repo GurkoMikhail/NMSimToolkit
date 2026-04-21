@@ -9,17 +9,12 @@ import numpy as np
 import hepunits as units
 from numpy.typing import NDArray
 
-import core.physics.g4coherent as g4coherent
-import core.physics.g4compton as g4compton
 import settings.database_setting as settings
 from core.materials.attenuation_functions import AttenuationFunction
-from core.materials.materials import Material, MaterialArray
 from core.other.typing_definitions import Float, ProcessID
 from core.particles.particles import ParticleBank
 from core.physics.interaction_buffers import InteractionBuffer, RNGContext
 from core.other.typing_definitions import Index
-
-
 
 class Process(ABC):
     """ Класс процесса """
@@ -53,14 +48,10 @@ class Process(ABC):
         self._energy_range = value
         self._construct_attenuation_function()
 
-
-
     def apply(self, bank: ParticleBank, target_indices: NDArray[Index], interaction_buffer: InteractionBuffer, physics_buffer: PhysicsBuffer, material_ids: NDArray[Index], rng_ctx: RNGContext) -> None:
         self._kernel(bank.state, bank.initial_state.ID, target_indices, bank.navigation_state.current_volume, material_ids, interaction_buffer, physics_buffer, rng_ctx)
         if self.invalidates_navigation:
             update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
-
-
 
 class PhotoelectricEffect(Process):
     """ Класс фотоэффекта """
@@ -69,8 +60,6 @@ class PhotoelectricEffect(Process):
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         super().__init__(attenuation_database, rng)
         self._kernel = make_photoelectric_kernel(self.process_id)
-
-
 
 class CoherentScattering(Process):
     """ Класс когерентного рассеяния """
@@ -81,14 +70,10 @@ class CoherentScattering(Process):
         Process.__init__(self, attenuation_database, rng)                
         self._kernel = make_coherent_kernel(self.process_id)
 
-
-
-
     def generate_phi(self, size: int) -> NDArray[Float]:
         """ Сгенерировать угол рассеяния - phi """
         phi = np.pi * (self.rng.random(size) * 2 - 1)
         return phi
-
 
 class ComptonScattering(CoherentScattering):
     """ Класс эффекта Комптона """
@@ -99,15 +84,12 @@ class ComptonScattering(CoherentScattering):
         Process.__init__(self, attenuation_database, rng)
         self._kernel = make_compton_kernel(self.process_id)
 
-
-
     def culculate_energy_deposit(self, theta: NDArray[Float], particle_energy: NDArray[Float]) -> NDArray[Float]:
         """ Вычислить изменения энергий """
         k = particle_energy / (0.510998910 * units.MeV)
         k1_cos = k * (1 - np.cos(theta))
         energy_deposit = particle_energy * k1_cos / (1 + k1_cos)
         return energy_deposit
-
 
 class PairProduction(Process):
     """ Класс эффекта образования электрон-позитронных пар """

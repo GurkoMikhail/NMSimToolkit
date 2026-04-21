@@ -7,7 +7,7 @@ import settings.processes_settings as processes_settings
 import settings.database_setting as database_setting
 from core.physics.processes import Process
 from core.particles.particles import ParticleBank
-from core.physics.interaction_buffers import InteractionBuffer, RNGContext, InitialStateBuffer, SimulationDataBuffer
+from core.physics.interaction_buffers import RNGContext, SimulationDataBuffer
 from core.physics.physics_buffer import PhysicsBuffer
 from core.other.typing_definitions import Index
 from core.transport.transport_kernels import make_transport_kernel, _push_to_initial_state_kernel
