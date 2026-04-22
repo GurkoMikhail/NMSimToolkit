@@ -95,6 +95,10 @@ class Volume:
         result.name = f'{self.name}.{next(self._dublicate_counter)}'
         return result
 
+
+
+
+
 class VolumeWithChilds(Volume):
     """ Базовый класс объёма с детьми """    
     childs: List['TransformableVolume']
@@ -117,6 +121,8 @@ class VolumeWithChilds(Volume):
         for child in childs:
             child.dublicate()
         return result
+
+
 
     def invalidate_scene(self) -> None:
         if self._geometry_buffer is not None or self._flattened_scene is not None:
@@ -191,6 +197,8 @@ class TransformableVolume(Volume):
         np.matmul(direction, transformation_matrix[:3, :3].T.astype(direction.dtype), out=direction)
         return direction
 
+
+
     def translate(self, x: Float = Float(0.), y: Float = Float(0.), z: Float = Float(0.), inLocal: bool = False) -> None:
         """ Переместить объём """
         translation = np.asarray([x, y, z])
@@ -213,6 +221,8 @@ class TransformableVolume(Volume):
         else:
             self.transformation_matrix = self.transformation_matrix@rotation_matrix
         self.invalidate_scene()
+
+
 
     def invalidate_scene(self) -> None:
         super().invalidate_scene()

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Sequence, Union
+from typing import Any, Sequence, Tuple, Union
 
 import numpy as np
 import hepunits as units
@@ -28,13 +28,35 @@ class Geometry(ABC):
     def quarter_size(self) -> Vector3D:
         return self.size/4
 
+    @abstractmethod
+
+    @abstractmethod
+
+    @abstractmethod
+
+    @abstractmethod
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
         pass
 
 class Box(Geometry):
+    distance_method: str
+    distance_epsilon: Length
 
     def __init__(self, x: Length, y: Length, z: Length, **kwds: Any) -> None:
         super().__init__([x, y, z])
+        self.distance_method = 'ray_casting'
+        self.distance_epsilon = Float(1. * units.micron)
+        args = [
+            'distance_method',
+            'distance_epsilon'
+        ]
+
+        for arg in args:
+            if arg in kwds:
+                setattr(self, arg, kwds[arg])
+
+
+
 
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
         shape_data_array[index]['shape'] = 0
