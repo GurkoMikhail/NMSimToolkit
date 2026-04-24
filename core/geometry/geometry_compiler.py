@@ -1,8 +1,7 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Float
-from core.geometry.volumes import Volume, VolumeWithChilds, TransformableVolume, GeometryBufferDType
+from core.geometry.volumes import Volume, VolumeWithChilds, GeometryBufferDType
 
 
 class GeometryCompiler:

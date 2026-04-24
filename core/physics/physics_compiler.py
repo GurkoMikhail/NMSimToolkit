@@ -1,6 +1,5 @@
 import numpy as np
 from typing import List
-from numpy.typing import NDArray
 
 from core.geometry.volumes import Volume
 from core.physics.processes import Process
@@ -53,7 +52,7 @@ class PhysicsCompiler:
 
             lac_matrix = np.zeros((length, len(processes_list)), dtype=Float)
             for p_idx, process in enumerate(processes_list):
-                lacs = process.get_LAC(type('ParticleDummy', (object,), {'energy': energy_grid})(), material) # type: ignore
+                lacs = process.attenuation_function(material, energy_grid) # type: ignore
                 lac_matrix[:, p_idx] = lacs
 
             all_lacs.append(lac_matrix)

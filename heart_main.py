@@ -28,9 +28,10 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     from core.geometry.parametric_collimators import ParametricParallelCollimator
     from core.geometry.volumes import TransformableVolume, VolumeWithChilds
     from core.transport.simulation_managers import SimulationManager
-    from core.data.data_manager import SimulationDataManager
-    from core.geometry.voxel_volumes import WoodcockVoxelVolume
-    from core.transport.propagation_managers import PropagationWithInteraction
+    from core.transport.propagator import ParticlePropagator
+    from core.physics.physics_compiler import PhysicsCompiler
+    from core.data.data_manager import DataManager
+    from core.data.data_handlers import HistoryAssemblerHandler
     from core.source.sources import Tc99m_MIBI
     from settings.database_setting import material_database, attenuation_database
 
@@ -108,38 +109,35 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     source.rng = rng
     source.set_state(start_time)
 
-    propagation_manager = PropagationWithInteraction(
-        attenuation_database=attenuation_database,
-        rng=rng
-    )
+    propagator = ParticlePropagator()
+    physics_compiler = PhysicsCompiler()
+    physics_buffer = physics_compiler.compile_scene(simulation_volume, propagator.processes)
+    geometry_buffer = simulation_volume.geometry_buffer
 
-    simulation_manager = SimulationManager(
+    manager = SimulationManager(
         source=source,
         simulation_volume=simulation_volume,
-        propagation_manager=propagation_manager,
+        geometry_buffer=geometry_buffer,
+        physics_buffer=physics_buffer,
+        propagator=propagator,
+        stop_time=stop_time,
         particles_number=10**6,
-        stop_time=stop_time
+        buffer_capacity=100000
     )
-    simulation_manager.name = f'{round(angle/degree, 1)} deg'
-    simulation_manager.start()
+    manager.name = f'{round(angle/degree, 1)} deg'
+    manager.start()
 
-    simulation_data_manager = SimulationDataManager(
-        filename=f'heart/{simulation_manager.name}.hdf',
-        sensitive_volumes=detector_list,
-        lock=lock,
-        iteraction_buffer_size=int(10**4)
+
+    handler = HistoryAssemblerHandler(sensitive_volumes=detector_list)
+    data_manager = DataManager(
+        filename=f'heart/{manager.name}.hdf',
+        handlers=[handler],
+        queue=manager.queue
     )
-    
-    while True:
-        data = simulation_manager.queue.get()
-        if isinstance(data, np.ndarray):
-            simulation_data_manager.add_interaction_data(data)
-        elif data == 'stop':
-            simulation_manager.join()
-            simulation_data_manager.save_interaction_data()
-            break
-        else:
-            raise ValueError("Неверное значение Propagation Manager")
+    data_manager.start()
+
+    manager.join()
+    data_manager.join()
 
 
 if __name__ == '__main__':

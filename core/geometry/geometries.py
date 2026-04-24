@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Sequence, Tuple, Union
+from typing import Any, Sequence, Union
 
 import numpy as np
 import hepunits as units
@@ -7,14 +7,12 @@ from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, Length, Vector3D, ShapeID
 
-
 ShapeDataDType = np.dtype([
     ('shape', ShapeID),
     ('param_0', Float),
     ('param_1', Float),
     ('param_2', Float)
 ])
-
 
 class Geometry(ABC):
     size: Vector3D
@@ -31,21 +29,8 @@ class Geometry(ABC):
         return self.size/4
 
     @abstractmethod
-    def check_outside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
-        pass
-
-    @abstractmethod
-    def check_inside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
-        pass
-
-    @abstractmethod
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
-        pass
-
-    @abstractmethod
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
         pass
-
 
 class Box(Geometry):
     distance_method: str
@@ -64,38 +49,9 @@ class Box(Geometry):
             if arg in kwds:
                 setattr(self, arg, kwds[arg])
 
-    def check_outside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
-        return np.max(np.abs(position) - self.half_size, axis=1) > 0
-
-    def check_inside(self, position: Vector3D) -> Union[bool, NDArray[np.bool_]]:
-        return np.max(np.abs(position) - self.half_size, axis=1) <= 0
-
-    def cast_path(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
-        return getattr(self, self.distance_method)(position, direction)
-
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
         shape_data_array[index]['shape'] = 0
         shape_data_array[index]['param_0'] = self.half_size[0]
         shape_data_array[index]['param_1'] = self.half_size[1]
         shape_data_array[index]['param_2'] = self.half_size[2]
 
-    def ray_marching(self, position: Vector3D, *args: Any) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
-        q = np.abs(position) - self.half_size
-        maxXYZ = q.max(axis=1)
-        lengthq = np.linalg.norm(np.where(q > 0, q, 0.), axis=1)
-        distance = lengthq + np.where(maxXYZ < 0, maxXYZ, 0.)
-        inside = distance < 0
-        distance = np.abs(distance) + self.distance_epsilon
-        return distance, inside
-
-    def ray_casting(self, position: Vector3D, direction: Vector3D) -> Tuple[NDArray[Float], Union[bool, NDArray[np.bool_]]]:
-        inside = self.check_inside(position)
-        norm_pos = -position / direction
-        norm_size = np.abs(self.half_size / direction)
-        tmin = np.max(norm_pos - norm_size, axis=1)
-        tmax = np.min(norm_pos + norm_size, axis=1)
-        distance = np.where(tmax > tmin, tmin, np.inf)
-        distance[inside] = tmax[inside]
-        distance[distance < 0] = np.inf
-        distance += self.distance_epsilon
-        return distance, inside

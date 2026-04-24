@@ -1,6 +1,5 @@
-import numpy as np
 from dataclasses import dataclass
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple
 from numpy.typing import NDArray
 from core.other.nonunique_array import NonuniqueArray
 from core.other.typing_definitions import Float, Index
