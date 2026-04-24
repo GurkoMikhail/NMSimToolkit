@@ -3,7 +3,7 @@ from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.processes_kernels import make_photoelectric_kernel, make_compton_kernel, make_coherent_kernel
 from core.particles.particles_kernels import update_navigation_state_rotate_kernel
 from abc import ABC
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 import numpy as np
 import hepunits as units
@@ -15,6 +15,7 @@ from core.other.typing_definitions import Float, ProcessID
 from core.particles.particles import ParticleBank
 from core.physics.interaction_buffers import InteractionBuffer, RNGContext
 from core.other.typing_definitions import Index
+
 
 class Process(ABC):
     """ Класс процесса """
@@ -53,6 +54,7 @@ class Process(ABC):
         if self.invalidates_navigation:
             update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
 
+
 class PhotoelectricEffect(Process):
     """ Класс фотоэффекта """
     process_id = ProcessID(0)
@@ -60,6 +62,7 @@ class PhotoelectricEffect(Process):
     def __init__(self, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
         super().__init__(attenuation_database, rng)
         self._kernel = make_photoelectric_kernel(self.process_id)
+
 
 class CoherentScattering(Process):
     """ Класс когерентного рассеяния """
@@ -74,6 +77,7 @@ class CoherentScattering(Process):
         """ Сгенерировать угол рассеяния - phi """
         phi = np.pi * (self.rng.random(size) * 2 - 1)
         return phi
+
 
 class ComptonScattering(CoherentScattering):
     """ Класс эффекта Комптона """
@@ -90,6 +94,7 @@ class ComptonScattering(CoherentScattering):
         k1_cos = k * (1 - np.cos(theta))
         energy_deposit = particle_energy * k1_cos / (1 + k1_cos)
         return energy_deposit
+
 
 class PairProduction(Process):
     """ Класс эффекта образования электрон-позитронных пар """

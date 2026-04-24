@@ -2,7 +2,7 @@ import numpy as np
 from typing import NamedTuple
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Energy, Time, Length, Float, ID
+from core.other.typing_definitions import Energy, Time, ID
 from core.other.vectors import Vector3D
 
 

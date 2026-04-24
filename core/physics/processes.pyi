@@ -1,11 +1,9 @@
 import numpy as np
-from abc import ABC, abstractmethod
-from typing import Optional, Any, Tuple, Union
+from abc import ABC
+from typing import Optional, Any
 from numpy.typing import NDArray
 from core.materials.attenuation_functions import AttenuationFunction
-from core.particles.particles import Particle, ParticleArray
-from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Energy, Vector3D, Float
+from core.other.typing_definitions import Float
 
 class Process(ABC):
     rng: np.random.Generator

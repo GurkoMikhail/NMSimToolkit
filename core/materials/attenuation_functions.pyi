@@ -1,7 +1,6 @@
-import numpy as np
 from typing import Dict, Any, Union, overload
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Energy, Float
+from core.other.typing_definitions import Float
 from numpy.typing import NDArray
 
 class AttenuationFunction(Dict[Material, Any]):

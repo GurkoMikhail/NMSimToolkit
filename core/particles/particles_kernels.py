@@ -4,6 +4,7 @@ from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, Index
 from core.particles.kinematic_state import KinematicState
+from core.geometry.navigation_state import NavigationState
 
 
 @njit(inline='always')
@@ -56,8 +57,6 @@ def move_kernel(state: KinematicState, target_indices: NDArray[np.int64], distan
         i = target_indices[j]
         _move_particle(state, i, distances[j])
 
-
-from core.geometry.navigation_state import NavigationState
 
 @njit(inline='always')
 def _invalidate_navigation_state(nav_state: NavigationState, p_idx: Index) -> None:

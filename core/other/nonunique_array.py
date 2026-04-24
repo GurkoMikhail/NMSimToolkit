@@ -1,5 +1,5 @@
 from copy import copy
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Tuple, Type, Union
 
 import numpy as np
 from numpy.typing import NDArray

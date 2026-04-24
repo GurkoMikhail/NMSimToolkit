@@ -13,6 +13,7 @@ from core.other.typing_definitions import Index
 from core.transport.transport_kernels import make_transport_kernel, _push_to_initial_state_kernel
 from core.transport.transport_buffer import TransportBuffer
 
+
 class ParticlePropagator:
     """ Python class for managing particle propagation per-step (DOD style). """
     processes: List[Process]

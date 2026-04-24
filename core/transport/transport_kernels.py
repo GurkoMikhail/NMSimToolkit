@@ -4,7 +4,7 @@ from numba import njit
 import numpy as np
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Index, Float, CFuncAddress
+from core.other.typing_definitions import Index, Float
 
 from core.particles.kinematic_state import KinematicState
 from core.particles.initial_state import InitialState
@@ -18,6 +18,7 @@ from core.physics.physics_kernels import _get_macroscopic_cross_sections
 
 from numba.extending import intrinsic
 from numba.core import types
+
 
 @intrinsic
 def call_cfunc_ptr(typingctx, ptr, x, y, z):
@@ -36,11 +37,13 @@ def call_cfunc_ptr(typingctx, ptr, x, y, z):
 def _get_random_double(rng_ctx: RNGContext) -> Float:
     return rng_ctx.next_double(rng_ctx.state_addr)
 
+
 @njit(cache=True, inline='always')
 def _generate_free_path(majorant_lac: Float, rng_ctx: RNGContext) -> Float:
     if majorant_lac <= 0.0:
         return np.inf
     return -np.log(_get_random_double(rng_ctx)) / majorant_lac
+
 
 @njit(cache=True)
 def _push_to_initial_state_kernel(
@@ -68,6 +71,7 @@ def _push_to_initial_state_kernel(
         initial_state_buffer.emission_direction.z[idx] = initial_state.emission_direction.z[p_idx]
 
         initial_state_buffer.cursor[0] += 1
+
 
 def make_transport_kernel(mapped_process_ids: NDArray[Index]):
     num_processes = mapped_process_ids.shape[0]

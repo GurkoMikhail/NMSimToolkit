@@ -1,7 +1,7 @@
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 import h5py
 import numpy as np

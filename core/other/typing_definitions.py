@@ -1,4 +1,5 @@
-from typing import TypeAlias, Final
+from typing import TypeAlias
+import ctypes
 import numpy as np
 from numpy.typing import NDArray
 from numba import from_dtype
@@ -15,8 +16,6 @@ Vector3D: TypeAlias = NDArray[Float]
 ID: TypeAlias = np.uint64
 Species: TypeAlias = np.uint8
 Index: TypeAlias = np.int64
-from typing import Any
-import ctypes
 
 ShapeID: TypeAlias = np.int32
 

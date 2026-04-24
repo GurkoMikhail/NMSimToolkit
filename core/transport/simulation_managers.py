@@ -4,7 +4,7 @@ import threading as mt
 from cProfile import runctx
 from datetime import datetime
 from signal import SIGINT, signal
-from typing import Any, Callable, List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import numpy as np
 import hepunits as units
@@ -24,6 +24,7 @@ _logger.setLevel(logging.DEBUG)
 
 Queue = queue.Queue
 Thread = mt.Thread
+
 
 class SimulationManager(Thread):
     """

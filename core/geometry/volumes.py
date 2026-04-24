@@ -1,6 +1,6 @@
 from copy import deepcopy
 from itertools import count
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Optional, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
@@ -94,9 +94,6 @@ class Volume:
         result = deepcopy(self)
         result.name = f'{self.name}.{next(self._dublicate_counter)}'
         return result
-
-
-
 
 
 class VolumeWithChilds(Volume):

@@ -1,6 +1,5 @@
 import numpy as np
 from typing import List
-from numpy.typing import NDArray
 
 from core.geometry.volumes import Volume
 from core.physics.processes import Process

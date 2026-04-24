@@ -5,9 +5,9 @@ from numpy.typing import NDArray
 
 from core.geometry.volumes import TransformableVolume
 from core.materials.materials import Material, MaterialArray
-from numba import cfunc, types
+from numba import cfunc
 
-from core.other.typing_definitions import Float, Vector3D, CMaterialFunc, NumbaFloat, NumbaIndex
+from core.other.typing_definitions import Vector3D, CMaterialFunc, NumbaFloat, NumbaIndex
 
 
 class WoodcockVolume(TransformableVolume):

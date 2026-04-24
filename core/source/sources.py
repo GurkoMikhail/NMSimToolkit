@@ -5,8 +5,7 @@ import hepunits as units
 from numpy.typing import NDArray
 
 import core.other.utils as utils
-from core.other.typing_definitions import (Activity, Energy, Float, Length,
-                                           Time, Vector3D, Species, Index)
+from core.other.typing_definitions import Float, Length, Time, Vector3D, Species, Index
 from core.particles.particles import ParticleBank
 from core.other.vectors import Vector3D
 
@@ -209,6 +208,7 @@ class PointSource(Source):
             rng=rng
         )
 
+
 class Tc99m_MIBI(Source):
     """
     Источник 99mTc-MIBI (SoA)
@@ -227,6 +227,7 @@ class Tc99m_MIBI(Source):
         energy = Float(140.5 * units.keV)
         half_life = 6.*units.hour
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
+
 
 class I123(Source):
     """

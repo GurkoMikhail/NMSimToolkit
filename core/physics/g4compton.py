@@ -1,11 +1,8 @@
 import numpy as np
 import hepunits as units
 from numba import njit
-import core.physics.g4compton as g4compton
 from core.other.typing_definitions import Float, Charge
 from core.physics.interaction_buffers import RNGContext
-
-# Extract the constants from the old g4compton module
 from core.physics.scat_func_fit_param_array import scat_func_fit_param
 
 ln10 = np.log(10.)

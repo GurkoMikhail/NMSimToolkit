@@ -1,5 +1,5 @@
 from functools import cache
-from typing import Optional, Tuple, cast
+from typing import Optional, Tuple
 
 import numpy as np
 

@@ -1,6 +1,6 @@
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Union, Sequence, Tuple, Any
+from typing import Union, Sequence, Any
 from numpy.typing import NDArray
 from core.other.typing_definitions import Length, Vector3D, Float
 
@@ -11,9 +11,6 @@ class Geometry(ABC):
     def half_size(self) -> Vector3D: ...
     @property
     def quarter_size(self) -> Vector3D: ...
-    @abstractmethod
-    @abstractmethod
-    @abstractmethod
     @abstractmethod
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None: ...
 

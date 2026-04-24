@@ -2,6 +2,7 @@ import numpy as np
 from typing import NamedTuple
 from numpy.typing import NDArray
 
+from core.other.typing_definitions import Time, Length
 from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID, Species, Charge
 from core.other.vectors import Vector3D
 
@@ -144,9 +145,7 @@ class InteractionBuffer(NamedTuple):
         if clear:
             self.reset_cursor()
         return chunk
-
-
-from core.other.typing_definitions import Time, Length
+    
 
 class InitialStateBuffer(NamedTuple):
     """

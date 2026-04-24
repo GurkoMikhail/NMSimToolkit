@@ -1,8 +1,7 @@
-import numpy as np
 from typing import NamedTuple
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Index
+from core.other.typing_definitions import Energy, Float, Length, Time, Species, Index
 from core.other.vectors import Vector3D
 from core.geometry.navigation_state import NavigationState
 from core.particles.initial_state import InitialState

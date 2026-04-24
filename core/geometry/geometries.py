@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Sequence, Tuple, Union
+from typing import Any, Sequence, Union
 
 import numpy as np
 import hepunits as units
@@ -29,12 +29,6 @@ class Geometry(ABC):
         return self.size/4
 
     @abstractmethod
-
-    @abstractmethod
-
-    @abstractmethod
-
-    @abstractmethod
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
         pass
 
@@ -54,9 +48,6 @@ class Box(Geometry):
         for arg in args:
             if arg in kwds:
                 setattr(self, arg, kwds[arg])
-
-
-
 
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
         shape_data_array[index]['shape'] = 0
