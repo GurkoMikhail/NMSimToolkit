@@ -2,6 +2,7 @@ import numpy as np
 from typing import List
 
 from core.geometry.volumes import Volume
+from core.scene.nodes import CompositeNode
 from core.physics.processes import Process
 from core.materials.material_bank import MaterialBank, MaterialInfoDType, MaterialPointerDType
 from core.physics.physics_buffer import PhysicsBuffer, ElementCSR
@@ -99,13 +100,22 @@ class PhysicsCompiler:
             element_fraction=element_fraction
         )
 
-    def compile_scene(self, root_volume: Volume, processes_list: List[Process]) -> PhysicsBuffer:
+    def compile_scene(self, root_node: 'CompositeNode', processes_list: List[Process]) -> PhysicsBuffer:
         """
         Builds the complete PhysicsBuffer from the root volume and active processes.
         """
-        # Ensure we have a unique list of materials used in the entire scene hierarchy
-        all_materials = root_volume.material_list
-        unique_materials = list(set(all_materials))
+        from core.geometry.flattened_scene import FlattenedScene
+        flat_list = FlattenedScene(root_node).flat_list
+
+        all_materials = []
+        for vol, _, _ in flat_list:
+            all_materials.extend(vol.material_list)
+        unique_materials = []
+        seen_ids = set()
+        for mat in all_materials:
+            if mat.ID not in seen_ids:
+                seen_ids.add(mat.ID)
+                unique_materials.append(mat)
 
         # Build dynamic material bank (Zero Memory Waste)
         material_bank = self._build_material_bank(unique_materials, processes_list)
@@ -113,9 +123,6 @@ class PhysicsCompiler:
         # Build element CSR for sampling elements
         capacity_mat_info = len(material_bank.mat_info_buffer)
         element_csr = self._build_element_csr(unique_materials, capacity_mat_info)
-
-        # Get the flattened scene to ensure indexes match the GeometryBuffer
-        flat_list = root_volume.flattened_scene.flat_list
         capacity = len(flat_list)
 
         majorant_material_map = np.zeros(capacity, dtype=Index)

@@ -92,3 +92,9 @@ class WoodcockVoxelVolume(WoodcockParameticVolume):
         indices = ((position + (self.size / 2 - self.voxel_size / 2)) / self.voxel_size).astype(int)
         material = self.material_distribution[indices[:, 0], indices[:, 1], indices[:, 2]]
         return np.ones_like(material, dtype=bool), material
+
+    def add_child(self, child: 'CompositeNode') -> None:
+        from core.geometry.volumes import Volume
+        if isinstance(child, Volume):
+            raise TypeError("WoodcockVoxelVolume is a monolithic tracking grid and cannot contain other geometry Volumes. Use CompositeNode or another Volume as the parent.")
+        super().add_child(child)

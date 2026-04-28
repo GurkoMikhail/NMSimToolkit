@@ -14,9 +14,9 @@ class FlattenedScene:
     Ensures that both GeometryCompiler and PhysicsCompiler process volumes in the exact same order.
     """
 
-    def __init__(self, root_volume: 'Volume'):
+    def __init__(self, root_node: 'CompositeNode'):
         self._flat_list: List[Tuple['Volume', NDArray[Float], Index]] = []
-        self._flatten_scene_graph(root_volume)
+        self._flatten_scene_graph(root_node)
 
     @property
     def flat_list(self) -> List[Tuple['Volume', NDArray[Float], Index]]:
@@ -26,24 +26,23 @@ class FlattenedScene:
         """
         return self._flat_list
 
-    def _flatten_scene_graph(self, root_volume: 'Volume') -> None:
-        from core.geometry.volumes import TransformableVolume, VolumeWithChilds
+    def _flatten_scene_graph(self, root_node: 'CompositeNode') -> None:
+        from core.geometry.volumes import Volume
+        from core.scene.nodes import CompositeNode
 
-        def dfs(volume: 'Volume', parent_matrix: NDArray[Float], parent_index: Index) -> Index:
-            if isinstance(volume, TransformableVolume):
-                total_matrix = volume.total_transformation_matrix
-            else:
-                total_matrix = parent_matrix
-
-            current_index = len(self._flat_list)
-            self._flat_list.append((volume, total_matrix, parent_index))
-
+        def dfs(node: 'CompositeNode', parent_index: Index) -> Index:
             child_count = 0
-            if isinstance(volume, VolumeWithChilds):
-                for child in volume.childs:
-                    child_count += dfs(child, total_matrix, current_index)
+            current_index = parent_index
 
-            return child_count + 1
+            # We only add Volumes to the geometry buffer flat_list
+            if isinstance(node, Volume):
+                current_index = len(self._flat_list)
+                self._flat_list.append((node, node.inverse_global_matrix, parent_index))
 
-        identity_matrix = np.eye(4, dtype=Float)
-        dfs(root_volume, identity_matrix, -1)
+            for child in node.childs:
+                # Traverse down, passing the current_index to link deeper Volumes to the closest Volume ancestor
+                child_count += dfs(child, current_index)
+
+            return child_count + (1 if isinstance(node, Volume) else 0)
+
+        dfs(root_node, -1)

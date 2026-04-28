@@ -5,7 +5,7 @@ from typing import Any, List, Optional, Sequence
 import numpy as np
 from numpy.typing import NDArray
 
-import core.other.utils as utils
+from core.scene.nodes import CompositeNode
 from core.geometry.geometries import Geometry
 from core.materials.materials import Material, MaterialArray
 from core.other.nonunique_array import NonuniqueArray
@@ -22,8 +22,8 @@ GeometryBufferDType = np.dtype([
     ('volume_index', Index)
 ])
 
-class Volume:
-    """ Базовый класс элементарного объёма """
+class Volume(CompositeNode):
+    """ Base class for an elementary volume, inheriting from CompositeNode for scene graph hierarchy. """
 
     _counter = count(1)
 
@@ -32,7 +32,7 @@ class Volume:
     name: str
 
     def __init__(self, geometry: Geometry, material: Material, name: Optional[str] = None) -> None:
-        """ Конструктор объёма """
+        super().__init__()
         self.geometry = geometry
         self.material = material
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name
@@ -66,7 +66,17 @@ class Volume:
     @property
     def material_list(self) -> List[Material]:
         """ Returns a list of all materials used in this volume (and its children). """
-        return [self.material]
+        materials = [self.material]
+        for child in self.childs:
+            if isinstance(child, Volume):
+                materials.extend(child.material_list)
+        unique_materials = []
+        seen_ids = set()
+        for mat in materials:
+            if mat.ID not in seen_ids:
+                seen_ids.add(mat.ID)
+                unique_materials.append(mat)
+        return unique_materials
 
     @property
     def size(self) -> Vector3D:
@@ -89,157 +99,50 @@ class Volume:
         """ Инвалидация кэша геометрии у этого объекта и его родителей/детей. """
         self._geometry_buffer = None
         self._flattened_scene = None
+        # We need to invalidate matrix cache as well
+        self.invalidate_matrix_cache()
 
     def dublicate(self):
         result = deepcopy(self)
         result.name = f'{self.name}.{next(self._dublicate_counter)}'
-        return result
-
-
-class VolumeWithChilds(Volume):
-    """ Базовый класс объёма с детьми """    
-    childs: List['TransformableVolume']
-
-    def __init__(self, geometry: Geometry, material: Material, name: Optional[str] = None) -> None:
-        super().__init__(geometry, material, name)
-        self.childs = []
-
-    @property
-    def material_list(self) -> List[Material]:
-        materials = [self.material]
-        for child in self.childs:
-            materials.extend(child.material_list)
-        return list(set(materials))
-
-    def dublicate(self):
-        result = super().dublicate()
+        result.parent = None
+        # Dublicate children
         childs = result.childs
         result.childs = []
         for child in childs:
-            child.dublicate()
+            if hasattr(child, 'dublicate'):
+                child_copy = child.dublicate()
+                result.add_child(child_copy)
         return result
-
-
-
-    def invalidate_scene(self) -> None:
-        if self._geometry_buffer is not None or self._flattened_scene is not None:
-            self._geometry_buffer = None
-            self._flattened_scene = None
-            for child in self.childs:
-                child.invalidate_scene()
-        # Если есть родитель (для TransformableVolumeWithChild), он тоже должен быть инвалидирован,
-        # но это будет решаться в TransformableVolume
-
-    def add_child(self, child: 'TransformableVolume') -> None:
-        """ Добавить дочерний объём """
-        assert isinstance(child, TransformableVolume), 'Только трансформируемый объём может быть дочерним'
-        if child.parent is None:
-            self.childs.append(child)
-        elif child in self.childs:
-            print('Добавляемый объём уже является дочерним данному объёму')
-        else:
-            print('Внимение! Добавляемый объём уже является дочерним. Новый родитель установлен')
-            child.parent.childs.remove(child)
-        child.parent = self
-        self.invalidate_scene()
-        child.invalidate_scene()
-
-class TransformableVolume(Volume):
-    """ Базовый класс трансформируемого объёма """
-    transformation_matrix: NDArray[Float]
-    parent: Optional[VolumeWithChilds]
-
-    def __init__(self, geometry: Geometry, material: Material, name: Optional[str] = None) -> None:
-        super().__init__(geometry, material, name)
-        self.transformation_matrix = np.array([
-            [1., 0., 0., 0.],
-            [0., 1., 0., 0.],
-            [0., 0., 1., 0.],
-            [0., 0., 0., 1.]
-        ], dtype=Float)
-        self.parent = None
-
-    def dublicate(self):
-        result = super().dublicate()
-        result.parent = None
-        if self.parent is not None:
-            result.set_parent(self.parent)
-        return result
-
-    @property
-    def total_transformation_matrix(self) -> NDArray[Float]:
-        if isinstance(self.parent, TransformableVolume):
-            return self.transformation_matrix@self.parent.total_transformation_matrix
-        return self.transformation_matrix
 
     def convert_to_local_position(self, position: Vector3D, as_parent: bool = True) -> Vector3D:
-        """ Преобразовать в локальные координаты """
-        # transformation_matrix = self.transformation_matrix if as_parent else self.total_transformation_matrix
-        if not as_parent and isinstance(self.parent, TransformableVolume):
-            position = self.parent.convert_to_local_position(position, as_parent)
-        transformation_matrix = self.transformation_matrix
+        """ Преобразовать в локальные координаты. Use inverse_global_matrix. """
+        # We use inverse of the matrix
+        matrix = self.inverse_global_matrix if not as_parent else np.linalg.inv(self.local_matrix)
         local_position = np.ones((position.shape[0], 4), dtype=position.dtype)
         local_position[:, :3] = position
-        np.matmul(local_position, transformation_matrix.T.astype(position.dtype), out=local_position)
-        position = local_position[:, :3]
-        return position
+        np.matmul(local_position, matrix.T.astype(position.dtype), out=local_position)
+        return local_position[:, :3]
 
     def convert_to_local_direction(self, direction: Vector3D, as_parent: bool = True) -> Vector3D:
-        """ Преобразовать в локальное направление """
-        # transformation_matrix = self.transformation_matrix if as_parent else self.total_transformation_matrix
-        if not as_parent and isinstance(self.parent, TransformableVolume):
-            direction = self.parent.convert_to_local_direction(direction, as_parent)
-        transformation_matrix = self.transformation_matrix
-        direction = np.copy(direction)
-        np.matmul(direction, transformation_matrix[:3, :3].T.astype(direction.dtype), out=direction)
-        return direction
+        """ Преобразовать в локальное направление. Use inverse_global_matrix rotation part. """
+        matrix = self.inverse_global_matrix if not as_parent else np.linalg.inv(self.local_matrix)
+        direction_copy = np.copy(direction)
+        np.matmul(direction_copy, matrix[:3, :3].T.astype(direction_copy.dtype), out=direction_copy)
+        return direction_copy
 
-
-
-    def translate(self, x: Float = Float(0.), y: Float = Float(0.), z: Float = Float(0.), inLocal: bool = False) -> None:
-        """ Переместить объём """
-        translation = np.asarray([x, y, z])
-        translation_matrix = utils.compute_translation_matrix(-translation)
-        if inLocal:
-            self.transformation_matrix = translation_matrix@self.transformation_matrix
-        else:
-            self.transformation_matrix = self.transformation_matrix@translation_matrix
-        self.invalidate_scene()
-
-    def rotate(self, alpha: Float = Float(0.), beta: Float = Float(0.), gamma: Float = Float(0.), rotation_center: Sequence[Float] = (Float(0), Float(0), Float(0)), inLocal: bool = False) -> None:
-        """ Повернуть объём вокруг координатных осей """
-        rotation_angles = np.asarray([alpha, beta, gamma])
-        rot_center = np.asarray(rotation_center)
-        rotation_matrix = utils.compute_translation_matrix(-rot_center)
-        rotation_matrix = rotation_matrix@utils.compute_rotation_matrix(-rotation_angles)
-        rotation_matrix = rotation_matrix@utils.compute_translation_matrix(rot_center)
-        if inLocal:
-            self.transformation_matrix = rotation_matrix@self.transformation_matrix
-        else:
-            self.transformation_matrix = self.transformation_matrix@rotation_matrix
-        self.invalidate_scene()
-
-
-
-    def invalidate_scene(self) -> None:
-        super().invalidate_scene()
-        if self.parent is not None:
-            self.parent.invalidate_scene()
-
-    def set_parent(self, parent: VolumeWithChilds) -> None:
-        assert isinstance(parent, VolumeWithChilds), 'Этот объём не может быть родителем'
+    def set_parent(self, parent: 'CompositeNode') -> None:
         parent.add_child(self)
+        self.invalidate_scene()
 
     @property
-    def root_volume(self) -> Volume:
+    def root_volume(self) -> 'Volume':
         """ Возвращает корневой объём дерева сцены """
         current = self
-        while isinstance(current, TransformableVolume) and current.parent is not None:
+        while current.parent is not None and isinstance(current.parent, Volume):
             current = current.parent
         return current
 
-class TransformableVolumeWithChild(TransformableVolume, VolumeWithChilds):
-    """ Базовый класс трансформируемого объёма с детьми """  
 
 class VolumeArray(NonuniqueArray):
     """ Класс списка объёмов """
@@ -254,3 +157,9 @@ class VolumeArray(NonuniqueArray):
                 continue
             material[indices] = volume.material
         return material
+
+# We map deprecated classes to Volume to avoid breaking existing code in other places during this PR,
+# but they are effectively removed as an OOP hierarchy.
+VolumeWithChilds = Volume
+TransformableVolume = Volume
+TransformableVolumeWithChild = Volume

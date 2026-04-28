@@ -1,7 +1,8 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from core.geometry.volumes import Volume, VolumeWithChilds, GeometryBufferDType
+from core.geometry.volumes import Volume, GeometryBufferDType
+from core.scene.nodes import CompositeNode
 
 
 class GeometryCompiler:
@@ -10,12 +11,13 @@ class GeometryCompiler:
     optimized for fast Numba raycasting.
     """
 
-    def compile_scene(self, root_volume: Volume) -> NDArray[np.void]:
+    def compile_scene(self, root_node: CompositeNode) -> NDArray[np.void]:
         """
         Main entry point for scene compilation.
         Converts the OOP hierarchy into a flat numpy AoS structure.
         """
-        flat_list = root_volume.flattened_scene.flat_list
+        from core.geometry.flattened_scene import FlattenedScene
+        flat_list = FlattenedScene(root_node).flat_list
         capacity = len(flat_list)
         buffer = np.zeros(capacity, dtype=GeometryBufferDType)
 
@@ -35,12 +37,24 @@ class GeometryCompiler:
         def calc_miss(node_idx: int) -> int:
             vol, _, _ = flat_list[node_idx]
             count = 1
-            if isinstance(vol, VolumeWithChilds):
-                for child in vol.childs:
+            # Volume inherently inherits from CompositeNode and has childs
+            for child in vol.childs:
+                def find_volume_descendants(node):
+                    descendants = []
+                    for c in node.childs:
+                        if isinstance(c, Volume):
+                            descendants.append(c)
+                        else:
+                            descendants.extend(find_volume_descendants(c))
+                    return descendants
+
+                volume_descendants = find_volume_descendants(vol)
+                for child_vol in volume_descendants:
                     for c_idx in range(node_idx + 1, capacity):
-                        if flat_list[c_idx][0] is child:
+                        if flat_list[c_idx][0] is child_vol:
                             count += calc_miss(c_idx)
                             break
+                break # We just process all descendants at once, so break loop over childs
             buffer[node_idx]['miss_index'] = node_idx + count
             return count
 
