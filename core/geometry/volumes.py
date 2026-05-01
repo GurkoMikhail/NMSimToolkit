@@ -67,7 +67,7 @@ class Volume(CompositeNode):
     def material_list(self) -> List[Material]:
         """ Returns a list of all materials used in this volume (and its children). """
         def recursive_generator(node):
-            if hasattr(node, 'material'):
+            if isinstance(node, Volume):
                 yield node.material
             for child in node.childs:
                 if isinstance(child, Volume):

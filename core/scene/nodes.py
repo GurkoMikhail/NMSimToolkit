@@ -12,7 +12,7 @@ class SpatialNode:
     """
     def __init__(self):
         self.local_matrix = np.eye(4, dtype=Float)
-        self.parent: Optional['SpatialNode'] = None
+        self.parent: Optional['CompositeNode'] = None
         self._global_matrix_cache: Optional[NDArray[Float]] = None
         self._inverse_global_matrix_cache: Optional[NDArray[Float]] = None
 
