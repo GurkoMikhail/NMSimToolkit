@@ -33,32 +33,31 @@ class GeometryCompiler:
         The miss_index points to the node directly after the current node's subtree.
         """
         capacity = len(flat_list)
+        if capacity == 0:
+            return
 
-        def calc_miss(node_idx: int) -> int:
-            vol, _, _ = flat_list[node_idx]
+        # Шаг 1: O(N) построение списка смежности
+        from collections import defaultdict
+        children_map = defaultdict(list)
+        for i in range(capacity):
+            _, _, p_idx = flat_list[i]
+            if p_idx != -1:
+                children_map[p_idx].append(i)
+
+        # Шаг 2: O(N) вычисление размера поддерева через DFS
+        def subtree_size(node_idx: int) -> int:
             count = 1
-            # Volume inherently inherits from CompositeNode and has childs
-            for child in vol.childs:
-                def find_volume_descendants(node):
-                    descendants = []
-                    for c in node.childs:
-                        if isinstance(c, Volume):
-                            descendants.append(c)
-                        else:
-                            descendants.extend(find_volume_descendants(c))
-                    return descendants
-
-                volume_descendants = find_volume_descendants(vol)
-                for child_vol in volume_descendants:
-                    for c_idx in range(node_idx + 1, capacity):
-                        if flat_list[c_idx][0] is child_vol:
-                            count += calc_miss(c_idx)
-                            break
-                break # We just process all descendants at once, so break loop over childs
+            for child_idx in children_map[node_idx]:
+                count += subtree_size(child_idx)
             buffer[node_idx]['miss_index'] = node_idx + count
             return count
 
-        calc_miss(0)
+        # Вызываем DFS для корней леса (узлов с parent_index == -1)
+        # Обычно это только нулевой индекс
+        for i in range(capacity):
+            _, _, p_idx = flat_list[i]
+            if p_idx == -1:
+                subtree_size(i)
 
     def _populate_buffer(self, flat_list: list, buffer: NDArray[np.void]) -> None:
         """

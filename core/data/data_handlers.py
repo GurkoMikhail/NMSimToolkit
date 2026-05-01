@@ -176,8 +176,8 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             vol_global_dir = global_direction[mask]
 
             if isinstance(top_volume, TransformableVolume):
-                local_position = top_volume.convert_to_local_position(vol_global_pos, as_parent=False)
-                local_direction = top_volume.convert_to_local_direction(vol_global_dir, as_parent=False)
+                local_position = top_volume.convert_to_local_position(vol_global_pos)
+                local_direction = top_volume.convert_to_local_direction(vol_global_dir)
             else:
                 local_position = vol_global_pos.copy()
                 local_direction = vol_global_dir.copy()

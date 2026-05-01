@@ -12,7 +12,7 @@ class SpatialNode:
     """
     def __init__(self):
         self.local_matrix = np.eye(4, dtype=Float)
-        self.parent: Optional['CompositeNode'] = None
+        self.parent: Optional['SpatialNode'] = None
         self._global_matrix_cache: Optional[NDArray[Float]] = None
         self._inverse_global_matrix_cache: Optional[NDArray[Float]] = None
 
@@ -68,7 +68,7 @@ class CompositeNode(SpatialNode):
     """
     def __init__(self):
         super().__init__()
-        self.childs: List['CompositeNode'] = []
+        self.childs: List['SpatialNode'] = []
 
     def invalidate_matrix_cache(self) -> None:
         """Invalidates matrix cache recursively down the tree."""
@@ -76,7 +76,7 @@ class CompositeNode(SpatialNode):
         for child in self.childs:
             child.invalidate_matrix_cache()
 
-    def add_child(self, child: 'CompositeNode') -> None:
+    def add_child(self, child: 'SpatialNode') -> None:
         """Adds a child node and correctly handles parent reassignment."""
         if child.parent is not None:
             if child in child.parent.childs:

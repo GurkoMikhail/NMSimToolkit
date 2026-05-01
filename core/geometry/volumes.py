@@ -66,17 +66,14 @@ class Volume(CompositeNode):
     @property
     def material_list(self) -> List[Material]:
         """ Returns a list of all materials used in this volume (and its children). """
-        materials = [self.material]
-        for child in self.childs:
-            if isinstance(child, Volume):
-                materials.extend(child.material_list)
-        unique_materials = []
-        seen_ids = set()
-        for mat in materials:
-            if mat.ID not in seen_ids:
-                seen_ids.add(mat.ID)
-                unique_materials.append(mat)
-        return unique_materials
+        def recursive_generator(node):
+            if hasattr(node, 'material'):
+                yield node.material
+            for child in node.childs:
+                if isinstance(child, Volume):
+                    yield from recursive_generator(child)
+
+        return list(dict.fromkeys(recursive_generator(self)))
 
     @property
     def size(self) -> Vector3D:
@@ -115,20 +112,17 @@ class Volume(CompositeNode):
                 result.add_child(child_copy)
         return result
 
-    def convert_to_local_position(self, position: Vector3D, as_parent: bool = True) -> Vector3D:
+    def convert_to_local_position(self, position: Vector3D) -> Vector3D:
         """ Преобразовать в локальные координаты. Use inverse_global_matrix. """
-        # We use inverse of the matrix
-        matrix = self.inverse_global_matrix if not as_parent else np.linalg.inv(self.local_matrix)
         local_position = np.ones((position.shape[0], 4), dtype=position.dtype)
         local_position[:, :3] = position
-        np.matmul(local_position, matrix.T.astype(position.dtype), out=local_position)
+        np.matmul(local_position, self.inverse_global_matrix.T.astype(position.dtype), out=local_position)
         return local_position[:, :3]
 
-    def convert_to_local_direction(self, direction: Vector3D, as_parent: bool = True) -> Vector3D:
+    def convert_to_local_direction(self, direction: Vector3D) -> Vector3D:
         """ Преобразовать в локальное направление. Use inverse_global_matrix rotation part. """
-        matrix = self.inverse_global_matrix if not as_parent else np.linalg.inv(self.local_matrix)
         direction_copy = np.copy(direction)
-        np.matmul(direction_copy, matrix[:3, :3].T.astype(direction_copy.dtype), out=direction_copy)
+        np.matmul(direction_copy, self.inverse_global_matrix[:3, :3].T.astype(direction_copy.dtype), out=direction_copy)
         return direction_copy
 
     def set_parent(self, parent: 'CompositeNode') -> None:
