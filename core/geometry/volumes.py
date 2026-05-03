@@ -99,6 +99,18 @@ class Volume(CompositeNode):
         # We need to invalidate matrix cache as well
         self.invalidate_matrix_cache()
 
+
+    @property
+    def top_volume(self) -> 'Volume':
+        """ Returns the top-most Volume in the current branch. """
+        current = self
+        top_vol = self
+        while current.parent is not None:
+            current = current.parent
+            if isinstance(current, Volume):
+                top_vol = current
+        return top_vol
+
     def dublicate(self):
         result = deepcopy(self)
         result.name = f'{self.name}.{next(self._dublicate_counter)}'

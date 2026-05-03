@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 import h5py
 import numpy as np
 
-from core.geometry.volumes import Volume, TransformableVolume, VolumeWithChilds
+from core.geometry.volumes import Volume
 
 _logger = logging.getLogger(__name__)
 
@@ -79,29 +79,30 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         3: b'PairProduction'
     }
 
-    def __init__(self, sensitive_volumes: List[Volume], simulation_volume: Optional[Volume] = None):
+    def __init__(self, sensitive_volumes: List[Volume]):
         super().__init__()
         self.sensitive_volumes = sensitive_volumes
 
-        if simulation_volume is None:
-            self.simulation_volume = self._find_simulation_volume(sensitive_volumes)
+        unique_roots = set()
+        self.unique_top_volumes = set()
+        for vol in sensitive_volumes:
+            unique_roots.add(vol.root)
+            self.unique_top_volumes.add(vol.top_volume)
+
+        if len(unique_roots) > 1:
+            raise ValueError("All sensitive volumes must share the same root simulation volume!")
+        elif len(unique_roots) == 1:
+            self.scene_root = unique_roots.pop()
         else:
-            self.simulation_volume = simulation_volume
+            self.scene_root = None
 
         self.volume_mapping: Dict[int, Volume] = {}
-        if self.simulation_volume is not None:
+        if self.scene_root is not None:
             for vol in sensitive_volumes:
                 self._build_volume_mapping(vol)
 
         self.target_volume_ids = list(self.volume_mapping.keys())
 
-    def _find_simulation_volume(self, sensitive_volumes: List[Volume]) -> Optional[Volume]:
-        unique_roots = set()
-        for vol in sensitive_volumes:
-            if isinstance(vol, Volume):
-                unique_roots.add(vol.root)
-            else:
-                unique_roots.add(vol)
 
         if len(unique_roots) > 1:
             raise ValueError("All sensitive volumes must share the same root simulation volume!")
@@ -110,17 +111,16 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         return None
 
     def _build_volume_mapping(self, root_vol: Volume) -> None:
-        for i, (v, _, _) in enumerate(FlattenedScene(self.simulation_volume).flat_list):
+        for i, (v, _, _) in enumerate(FlattenedScene(self.scene_root).flat_list):
             if self._is_descendant(v, root_vol):
-                self.volume_mapping[i] = root_vol
+                self.volume_mapping[i] = v.top_volume
 
     def _is_descendant(self, query_vol: Volume, root_vol: Volume) -> bool:
         if query_vol is root_vol:
             return True
-        if isinstance(root_vol, VolumeWithChilds):
-            for child in root_vol.childs:
-                if self._is_descendant(query_vol, child):
-                    return True
+        for child in root_vol.childs:
+            if isinstance(child, Volume) and self._is_descendant(query_vol, child):
+                return True
         return False
 
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
@@ -160,10 +160,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             if vid in self.volume_mapping:
                 root_vol_names.append(self.volume_mapping[vid].name)
             else:
-                if self.simulation_volume:
-                    root_vol_names.append(self.simulation_volume.name)
-                else:
-                    root_vol_names.append(None)
+                root_vol_names.append(None)
 
         root_vol_names = np.array(root_vol_names)
 
@@ -176,12 +173,8 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             vol_global_pos = global_position[mask]
             vol_global_dir = global_direction[mask]
 
-            if isinstance(top_volume, TransformableVolume):
-                local_position = top_volume.convert_to_local_position(vol_global_pos)
-                local_direction = top_volume.convert_to_local_direction(vol_global_dir)
-            else:
-                local_position = vol_global_pos.copy()
-                local_direction = vol_global_dir.copy()
+            local_position = top_volume.convert_to_local_position(vol_global_pos)
+            local_direction = top_volume.convert_to_local_direction(vol_global_dir)
 
             process_id = interactions['process_id'][mask]
             particle_ID = interactions['particle_ID'][mask]
@@ -233,7 +226,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
 
 class HistoryAssemblerHandler(SensitiveVolumeHandler):
     def __init__(self, sensitive_volumes: List[Volume], simulation_volume: Optional[Volume] = None, save_initial_states: bool = True):
-        super().__init__(sensitive_volumes, simulation_volume)
+        super().__init__(sensitive_volumes)
         self.save_initial_states = save_initial_states
 
         self.initial_states_chunks: List[Dict[str, np.ndarray]] = []

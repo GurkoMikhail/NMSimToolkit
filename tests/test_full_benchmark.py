@@ -26,9 +26,7 @@ class TestFullBenchmark(unittest.TestCase):
     def test_run_benchmark(self):
         # 1. Geometry Setup
         print("Setting up geometry...")
-        root_scene = CompositeNode()
-
-        simulation_volume = Volume(
+        root_scene = Volume(
             geometry=Box(120*units.cm, 120*units.cm, 80*units.cm),
             material=material_database['Air, Dry (near sea level)'],
             name='Simulation_volume'
@@ -61,7 +59,7 @@ class TestFullBenchmark(unittest.TestCase):
         spect_head.rotate(gamma=units.pi/2)
         spect_head.translate(y=radius + spect_head.size[2]/2)
 
-        simulation_volume.add_child(spect_head)
+        root_scene.add_child(spect_head)
 
         # 2. Source Setup
         print("Setting up source...")
@@ -72,7 +70,6 @@ class TestFullBenchmark(unittest.TestCase):
             energy=energy
         )
 
-        root_scene.add_child(simulation_volume)
         root_scene.add_child(source)
 
         # 3. Simulation Manager Setup

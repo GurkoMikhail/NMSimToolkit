@@ -106,21 +106,6 @@ class CompositeNode(SpatialNode):
         super().__init__()
         self.childs: List['SpatialNode'] = []
 
-    @property
-    def parent(self) -> Optional['CompositeNode']:
-        return self._parent
-
-    @parent.setter
-    def parent(self, value: Optional['CompositeNode']) -> None:
-        self._parent = value
-        self.invalidate_matrix_cache()
-
-    @property
-    def root(self) -> 'SpatialNode':
-        current = self
-        while current.parent is not None:
-            current = current.parent
-        return current
 
     def invalidate_matrix_cache(self) -> None:
         """Invalidates matrix cache recursively down the tree."""
