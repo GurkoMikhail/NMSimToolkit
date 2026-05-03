@@ -225,7 +225,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         _logger.debug(f'Interactions write task forwarded for {events_saved} events.')
 
 class HistoryAssemblerHandler(SensitiveVolumeHandler):
-    def __init__(self, sensitive_volumes: List[Volume], simulation_volume: Optional[Volume] = None, save_initial_states: bool = True):
+    def __init__(self, sensitive_volumes: List[Volume], save_initial_states: bool = True):
         super().__init__(sensitive_volumes)
         self.save_initial_states = save_initial_states
 
@@ -253,8 +253,9 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
 
     def _get_volumes_to_write(self) -> List[Volume]:
         volumes_to_write = list(self.sensitive_volumes)
-        if self.simulation_volume is not None and self.simulation_volume not in volumes_to_write:
-            volumes_to_write.append(self.simulation_volume)
+        for tv in self.unique_top_volumes:
+            if tv not in volumes_to_write:
+                volumes_to_write.append(tv)
         return volumes_to_write
 
     def _flush_dead_particles(self, dead_ids: np.ndarray) -> None:

@@ -3,14 +3,14 @@ from typing import Any, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from core.geometry.volumes import TransformableVolume
+from core.geometry.volumes import Volume
 from core.materials.materials import Material, MaterialArray
 from numba import cfunc
 
 from core.other.typing_definitions import Vector3D, CMaterialFunc, NumbaFloat, NumbaIndex
 
 
-class WoodcockVolume(TransformableVolume):
+class WoodcockVolume(Volume):
     """
     Базовый класс Woodcock объёма
     """

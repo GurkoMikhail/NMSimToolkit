@@ -1,12 +1,12 @@
 import numpy as np
 from typing import Tuple, Any, Union
 from numpy.typing import NDArray
-from core.geometry.volumes import TransformableVolume
+from core.geometry.volumes import Volume
 from core.materials.materials import MaterialArray, Material
 from core.other.typing_definitions import Vector3D, Float, CMaterialFunc
 from typing import List
 
-class WoodcockVolume(TransformableVolume): ...
+class WoodcockVolume(Volume): ...
 
 class WoodcockParameticVolume(WoodcockVolume):
     def __init__(self, *args: Any, **kwargs: Any) -> None: ...

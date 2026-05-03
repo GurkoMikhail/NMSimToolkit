@@ -145,9 +145,3 @@ class VolumeArray(NonuniqueArray):
                 continue
             material[indices] = volume.material
         return material
-
-# We map deprecated classes to Volume to avoid breaking existing code in other places during this PR,
-# but they are effectively removed as an OOP hierarchy.
-VolumeWithChilds = Volume
-TransformableVolume = Volume
-TransformableVolumeWithChild = Volume

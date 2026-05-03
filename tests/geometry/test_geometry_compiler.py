@@ -9,7 +9,7 @@ import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 from core.geometry.geometries import Box
-from core.geometry.volumes import TransformableVolumeWithChild
+from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.geometry.geometry_kernels import cast_path_kernel
 from core.particles.particles import ParticleBank
