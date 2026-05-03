@@ -97,6 +97,12 @@ class SpatialNode:
         np.matmul(global_position, self.global_matrix.T.astype(position.dtype), out=global_position)
         return global_position[:, :3]
 
+    def convert_to_global_direction(self, direction: NDArray[Float]) -> NDArray[Float]:
+        """ Преобразовать в глобальное направление. Use global_matrix rotation part. """
+        direction_copy = np.copy(direction)
+        np.matmul(direction_copy, self.global_matrix[:3, :3].T.astype(direction_copy.dtype), out=direction_copy)
+        return direction_copy
+
 
 class CompositeNode(SpatialNode):
     """

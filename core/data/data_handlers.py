@@ -104,11 +104,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         self.target_volume_ids = list(self.volume_mapping.keys())
 
 
-        if len(unique_roots) > 1:
-            raise ValueError("All sensitive volumes must share the same root simulation volume!")
-        elif len(unique_roots) == 1:
-            return unique_roots.pop()
-        return None
+
 
     def _build_volume_mapping(self, root_vol: Volume) -> None:
         for i, (v, _, _) in enumerate(FlattenedScene(self.scene_root).flat_list):
