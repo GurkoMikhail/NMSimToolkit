@@ -112,30 +112,12 @@ class Volume(CompositeNode):
                 result.add_child(child_copy)
         return result
 
-    def convert_to_local_position(self, position: Vector3D) -> Vector3D:
-        """ Преобразовать в локальные координаты. Use inverse_global_matrix. """
-        local_position = np.ones((position.shape[0], 4), dtype=position.dtype)
-        local_position[:, :3] = position
-        np.matmul(local_position, self.inverse_global_matrix.T.astype(position.dtype), out=local_position)
-        return local_position[:, :3]
 
-    def convert_to_local_direction(self, direction: Vector3D) -> Vector3D:
-        """ Преобразовать в локальное направление. Use inverse_global_matrix rotation part. """
-        direction_copy = np.copy(direction)
-        np.matmul(direction_copy, self.inverse_global_matrix[:3, :3].T.astype(direction_copy.dtype), out=direction_copy)
-        return direction_copy
 
     def set_parent(self, parent: 'CompositeNode') -> None:
         parent.add_child(self)
         self.invalidate_scene()
 
-    @property
-    def root_volume(self) -> 'Volume':
-        """ Возвращает корневой объём дерева сцены """
-        current = self
-        while current.parent is not None and isinstance(current.parent, Volume):
-            current = current.parent
-        return current
 
 
 class VolumeArray(NonuniqueArray):

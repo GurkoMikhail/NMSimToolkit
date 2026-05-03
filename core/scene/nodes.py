@@ -12,9 +12,25 @@ class SpatialNode:
     """
     def __init__(self):
         self.local_matrix = np.eye(4, dtype=Float)
-        self.parent: Optional['CompositeNode'] = None
+        self._parent: Optional['CompositeNode'] = None
         self._global_matrix_cache: Optional[NDArray[Float]] = None
         self._inverse_global_matrix_cache: Optional[NDArray[Float]] = None
+
+    @property
+    def parent(self) -> Optional['CompositeNode']:
+        return self._parent
+
+    @parent.setter
+    def parent(self, value: Optional['CompositeNode']) -> None:
+        self._parent = value
+        self.invalidate_matrix_cache()
+
+    @property
+    def root(self) -> 'SpatialNode':
+        current = self
+        while current.parent is not None:
+            current = current.parent
+        return current
 
     def invalidate_matrix_cache(self) -> None:
         """Invalidates the matrix cache for this node and all of its descendants."""
@@ -61,6 +77,26 @@ class SpatialNode:
             self.local_matrix = rotation_matrix @ self.local_matrix
         self.invalidate_matrix_cache()
 
+    def convert_to_local_position(self, position: NDArray[Float]) -> NDArray[Float]:
+        """ Преобразовать в локальные координаты. Use inverse_global_matrix. """
+        local_position = np.ones((position.shape[0], 4), dtype=position.dtype)
+        local_position[:, :3] = position
+        np.matmul(local_position, self.inverse_global_matrix.T.astype(position.dtype), out=local_position)
+        return local_position[:, :3]
+
+    def convert_to_local_direction(self, direction: NDArray[Float]) -> NDArray[Float]:
+        """ Преобразовать в локальное направление. Use inverse_global_matrix rotation part. """
+        direction_copy = np.copy(direction)
+        np.matmul(direction_copy, self.inverse_global_matrix[:3, :3].T.astype(direction_copy.dtype), out=direction_copy)
+        return direction_copy
+
+    def convert_to_global_position(self, position: NDArray[Float]) -> NDArray[Float]:
+        """ Преобразовать в глобальные координаты. Use global_matrix. """
+        global_position = np.ones((position.shape[0], 4), dtype=position.dtype)
+        global_position[:, :3] = position
+        np.matmul(global_position, self.global_matrix.T.astype(position.dtype), out=global_position)
+        return global_position[:, :3]
+
 
 class CompositeNode(SpatialNode):
     """
@@ -69,6 +105,22 @@ class CompositeNode(SpatialNode):
     def __init__(self):
         super().__init__()
         self.childs: List['SpatialNode'] = []
+
+    @property
+    def parent(self) -> Optional['CompositeNode']:
+        return self._parent
+
+    @parent.setter
+    def parent(self, value: Optional['CompositeNode']) -> None:
+        self._parent = value
+        self.invalidate_matrix_cache()
+
+    @property
+    def root(self) -> 'SpatialNode':
+        current = self
+        while current.parent is not None:
+            current = current.parent
+        return current
 
     def invalidate_matrix_cache(self) -> None:
         """Invalidates matrix cache recursively down the tree."""

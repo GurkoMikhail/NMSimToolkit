@@ -59,11 +59,6 @@ class Source(CompositeNode):
         self._generate_emission_table()
         self.rng = np.random.default_rng() if rng is None else rng
 
-    def convert_to_global_position(self, position: NDArray[Float]) -> NDArray[Float]:
-        global_position = np.ones((position.shape[0], 4), dtype=position.dtype)
-        global_position[:, :3] = position
-        np.matmul(global_position, self.global_matrix.T.astype(position.dtype), out=global_position)
-        return global_position[:, :3]
 
     def _generate_emission_table(self):
         xs, ys, zs = np.meshgrid(

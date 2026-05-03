@@ -1,3 +1,4 @@
+from core.geometry.flattened_scene import FlattenedScene
 import abc
 import logging
 from typing import Any, Callable, Dict, List, Optional, Set
@@ -97,8 +98,8 @@ class SensitiveVolumeHandler(DirectStreamHandler):
     def _find_simulation_volume(self, sensitive_volumes: List[Volume]) -> Optional[Volume]:
         unique_roots = set()
         for vol in sensitive_volumes:
-            if isinstance(vol, TransformableVolume):
-                unique_roots.add(vol.root_volume)
+            if isinstance(vol, Volume):
+                unique_roots.add(vol.root)
             else:
                 unique_roots.add(vol)
 
@@ -109,7 +110,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         return None
 
     def _build_volume_mapping(self, root_vol: Volume) -> None:
-        for i, (v, _, _) in enumerate(self.simulation_volume.flattened_scene.flat_list):
+        for i, (v, _, _) in enumerate(FlattenedScene(self.simulation_volume).flat_list):
             if self._is_descendant(v, root_vol):
                 self.volume_mapping[i] = root_vol
 
