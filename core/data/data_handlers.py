@@ -98,26 +98,16 @@ class SensitiveVolumeHandler(DirectStreamHandler):
 
         self.volume_mapping: Dict[int, Volume] = {}
         if self.scene_root is not None:
-            for vol in sensitive_volumes:
-                self._build_volume_mapping(vol)
+            for i, (v, _, _) in enumerate(FlattenedScene(self.scene_root).flat_list):
+                top_vol = v.top_volume
+                if top_vol in self.unique_top_volumes:
+                    self.volume_mapping[i] = top_vol
 
         self.target_volume_ids = list(self.volume_mapping.keys())
 
 
 
 
-    def _build_volume_mapping(self, root_vol: Volume) -> None:
-        for i, (v, _, _) in enumerate(FlattenedScene(self.scene_root).flat_list):
-            if self._is_descendant(v, root_vol):
-                self.volume_mapping[i] = v.top_volume
-
-    def _is_descendant(self, query_vol: Volume, root_vol: Volume) -> bool:
-        if query_vol is root_vol:
-            return True
-        for child in root_vol.childs:
-            if isinstance(child, Volume) and self._is_descendant(query_vol, child):
-                return True
-        return False
 
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')

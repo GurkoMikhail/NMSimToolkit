@@ -26,7 +26,8 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
     from core.geometry.gamma_cameras import GammaCamera
     from core.geometry.geometries import Box
     from core.geometry.parametric_collimators import ParametricParallelCollimator
-    from core.geometry.volumes import TransformableVolume, VolumeWithChilds
+    from core.geometry.volumes import Volume
+    from core.scene.nodes import CompositeNode
     from core.transport.simulation_managers import SimulationManager
     from core.transport.propagator import ParticlePropagator
     from core.physics.physics_compiler import PhysicsCompiler
@@ -39,7 +40,7 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
 
     start_time, stop_time = time_interval
 
-    simulation_volume = VolumeWithChilds(
+    simulation_volume = Volume(
         geometry=Box(120*cm, 120*cm, 80*cm),
         material=material_database['Air, Dry (near sea level)'],
         name='Simulation_volume'
@@ -63,7 +64,7 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
     detector_list = []
 
     for i in range(gamma_cameras):
-        detector = TransformableVolume(
+        detector = Volume(
             geometry=Box(54.*cm, 40*cm, 0.95*cm),
             material=material_database['Sodium Iodide'],
             name=f'Detector at {round((angle + delta_angle*i)/degree, 1)} deg'
