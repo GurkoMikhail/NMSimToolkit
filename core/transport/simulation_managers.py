@@ -158,6 +158,10 @@ class SimulationManager(Thread):
             return dead_indices
         return np.array([], dtype=Index)
 
+    MAX_NEWTON_ITERATIONS = 5
+    NEWTON_TARGET_PRECISION = 1e-3
+    MIN_TIME_STEP = Float(1e-9)
+
     def _calculate_time_step(self, num_to_inject: int) -> Float:
         total_act = sum(src.get_activity(self.global_timer) for src in self.active_sources)
         if total_act <= 0:
@@ -173,24 +177,19 @@ class SimulationManager(Thread):
             return sum(src.get_activity(self.global_timer + dt) for src in self.active_sources)
 
         # Newton-Raphson
-        for _ in range(5):
+        for _ in range(self.MAX_NEWTON_ITERATIONS):
             f_val = f(dt)
             df_val = df(dt)
             if df_val == 0:
                 break
             dt = dt - Float(f_val / df_val)
-            if abs(f_val) < 1e-3:
+            if abs(f_val) < self.NEWTON_TARGET_PRECISION:
                 break
 
-        if dt <= 0:
-            dt = Float(1e-9)
+        dt = max(dt, self.MIN_TIME_STEP)
 
         # Clamp dt to not exceed simulation stop_time
-        max_dt = self.stop_time - self.global_timer
-        if dt > max_dt:
-            dt = max_dt
-
-        return dt
+        return min(dt, Float(self.stop_time - self.global_timer))
 
     def _distribute_quotas(self, target_time: Float, num_to_inject: int):
         expected = np.array([src.get_expected_particles(self.global_timer, target_time) for src in self.active_sources])
