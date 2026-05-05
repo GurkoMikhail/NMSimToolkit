@@ -51,8 +51,8 @@ class TestSourcesSoA(unittest.TestCase):
         np.testing.assert_array_equal(self.bank.state.direction.z[active_mask], self.bank.initial_state.emission_direction.z[active_mask])
 
         # Emission time should be within [t1, t2]
-        self.assertTrue(np.all(self.bank.state.emission_time[active_mask] >= t1))
-        self.assertTrue(np.all(self.bank.state.emission_time[active_mask] <= t2))
+        self.assertTrue(np.all(self.bank.initial_state.emission_time[active_mask] >= t1))
+        self.assertTrue(np.all(self.bank.initial_state.emission_time[active_mask] <= t2))
 
     def test_inject_exceeds_capacity(self):
         # Fill partially

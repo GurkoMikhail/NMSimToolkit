@@ -71,8 +71,22 @@ class Source(CompositeNode):
         indices = probability.nonzero()[0]
         self.emission_table = [position[indices], probability[indices]]
 
+    @property
+    def decay_constant(self) -> Float:
+        if np.isinf(self.half_life):
+            return Float(0.0)
+        return Float(np.log(2) / self.half_life)
+
+    def _get_effective_dt(self, dt: Float) -> Float:
+        lambd = self.decay_constant
+        if lambd == 0.0 or lambd * dt < 1e-6:
+            return dt
+        return Float((1.0 - np.exp(-lambd * dt)) / lambd)
+
     def get_activity(self, t: Float) -> Float:
         """Мгновенная активность источника в момент времени t."""
+        if self.decay_constant == 0.0:
+            return Float(self.initial_activity)
         return Float(self.initial_activity * (2.0 ** (-t / self.half_life)))
 
     def get_expected_particles(self, t1: Float, t2: Float) -> Float:
@@ -80,13 +94,7 @@ class Source(CompositeNode):
         dt = t2 - t1
         if dt <= 0:
             return Float(0.0)
-
-        lambd = np.log(2) / self.half_life
-        if np.isinf(self.half_life) or lambd * dt < 1e-6:
-            # Линейная аппроксимация для стабильных источников
-            return Float(self.get_activity(t1) * dt)
-
-        return Float((self.get_activity(t1) / lambd) * (1 - np.exp(-lambd * dt)))
+        return Float(self.get_activity(t1) * self._get_effective_dt(dt))
 
     def set_state(self, rng_state: Optional[Any] = None) -> None:
         if rng_state is None:
@@ -128,16 +136,17 @@ class Source(CompositeNode):
         position_arr = self.generate_position(n)
 
         # Inverse Transform Sampling for emission time
-        dt = t2 - t1
+        dt = Float(t2 - t1)
         u = self.rng.uniform(0.0, 1.0, n)
-        lambd = np.log(2) / self.half_life
+        lambd = self.decay_constant
 
-        if np.isinf(self.half_life) or lambd * dt < 1e-6:
+        if lambd == 0.0 or lambd * dt < 1e-6:
             # Linear approximation for stable sources
             emission_time = t1 + u * dt
         else:
             # Exact inverse CDF
-            emission_time = t1 - (1.0 / lambd) * np.log(1.0 - u * (1.0 - np.exp(-lambd * dt)))
+            effective_dt = self._get_effective_dt(dt)
+            emission_time = t1 - (1.0 / lambd) * np.log(1.0 - u * lambd * effective_dt)
 
         position = Vector3D(
             x=position_arr[:, 0].astype(Length),

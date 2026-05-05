@@ -158,26 +158,21 @@ class SimulationManager(Thread):
             return dead_indices
         return np.array([], dtype=Index)
 
-    def _replenish_bank(self):
-        num_active = np.count_nonzero(self.bank.state.is_active)
-        num_to_inject = self.bank.capacity - num_active
+    def _calculate_time_step(self, num_to_inject: int) -> Float:
+        total_act = sum(src.get_activity(self.global_timer) for src in self.active_sources)
+        if total_act <= 0:
+            return Float(self.stop_time - self.global_timer)
 
-        if num_to_inject <= 0 or not self.active_sources or self.global_timer > self.stop_time:
-            return
+        # Initial guess: linear approximation
+        dt = Float(num_to_inject / total_act)
 
         def f(dt):
-            return sum(src.get_expected_particles(self.global_timer, self.global_timer + dt) for src in self.active_sources) - num_to_inject
+            return sum(src.get_activity(self.global_timer) * src._get_effective_dt(dt) for src in self.active_sources) - num_to_inject
 
         def df(dt):
             return sum(src.get_activity(self.global_timer + dt) for src in self.active_sources)
 
-        # Newton-Raphson to find dt
-        dt = Float(0.0)
-        # Initial guess: linear approximation based on current total activity
-        total_act = sum(src.get_activity(self.global_timer) for src in self.active_sources)
-        if total_act > 0:
-            dt = Float(num_to_inject / total_act)
-
+        # Newton-Raphson
         for _ in range(5):
             f_val = f(dt)
             df_val = df(dt)
@@ -190,15 +185,21 @@ class SimulationManager(Thread):
         if dt <= 0:
             dt = Float(1e-9)
 
-        target_time = self.global_timer + dt
+        # Clamp dt to not exceed simulation stop_time
+        max_dt = self.stop_time - self.global_timer
+        if dt > max_dt:
+            dt = max_dt
 
-        # Calculate quotas
-        expected = [src.get_expected_particles(self.global_timer, target_time) for src in self.active_sources]
+        return dt
+
+    def _distribute_quotas(self, target_time: Float, num_to_inject: int):
+        expected = np.array([src.get_expected_particles(self.global_timer, target_time) for src in self.active_sources])
+        target_total = min(num_to_inject, int(np.round(np.sum(expected))))
+
         quotas = np.floor(expected).astype(int)
         remainders = expected - quotas
 
-        # Adjust quotas to match exact num_to_inject
-        shortfall = num_to_inject - np.sum(quotas)
+        shortfall = target_total - np.sum(quotas)
         if shortfall > 0:
             indices = np.argsort(remainders)[::-1]
             for i in range(int(shortfall)):
@@ -207,6 +208,18 @@ class SimulationManager(Thread):
         for src, n in zip(self.active_sources, quotas):
             if n > 0:
                 src.inject(self.bank, n, self.global_timer, target_time)
+
+    def _replenish_bank(self):
+        num_active = np.count_nonzero(self.bank.state.is_active)
+        num_to_inject = self.bank.capacity - num_active
+
+        if num_to_inject <= 0 or not self.active_sources or self.global_timer >= self.stop_time:
+            return
+
+        dt = self._calculate_time_step(num_to_inject)
+        target_time = self.global_timer + dt
+
+        self._distribute_quotas(target_time, num_to_inject)
 
         self.global_timer = target_time
 
