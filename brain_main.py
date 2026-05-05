@@ -30,7 +30,9 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     from core.geometry.gamma_cameras import GammaCamera
     from core.geometry.geometries import Box
     from core.geometry.parametric_collimators import ParametricParallelCollimator
-    from core.geometry.volumes import TransformableVolume, VolumeWithChilds
+    from core.geometry.volumes import Volume
+    from core.scene.nodes import CompositeNode
+    from core.geometry.voxel_volumes import WoodcockVoxelVolume
     from core.transport.simulation_managers import SimulationManager
     from core.transport.propagator import ParticlePropagator
     from core.physics.physics_compiler import PhysicsCompiler
@@ -43,7 +45,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
 
     start_time, stop_time = time_interval
 
-    simulation_volume = VolumeWithChilds(
+    root_scene = Volume(
         geometry=Box(120*cm, 120*cm, 80*cm),
         material=material_database['Air, Dry (near sea level)'],
         name='Simulation_volume'
@@ -59,12 +61,12 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
         material_distribution=material_distribution,
         name='Phantom'
     )
-    phantom.set_parent(simulation_volume)
+    phantom.set_parent(root_scene)
     
     detector_list = []
 
     for i in range(gamma_cameras):
-        detector = TransformableVolume(
+        detector = Volume(
             geometry=Box(54.*cm, 40*cm, 0.95*cm),
             material=material_database['Sodium Iodide'],
             name=f'Detector at {round((angle + delta_angle*i)/degree, 1)} deg'
@@ -89,7 +91,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
         spect_head.translate(y=radius + spect_head.size[2]/2)
         spect_head.rotate(alpha=angle + delta_angle*i)
     
-        simulation_volume.add_child(spect_head)
+        root_scene.add_child(spect_head)
         detector_list.append(detector)
 
     distribution = np.load(f'phantoms/hoffman_activity.npy')
@@ -100,17 +102,11 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     )
     source.rng = rng
     source.set_state(start_time)
+    phantom.add_child(source)
 
     propagator = ParticlePropagator()
-    physics_compiler = PhysicsCompiler()
-    physics_buffer = physics_compiler.compile_scene(simulation_volume, propagator.processes)
-    geometry_buffer = simulation_volume.geometry_buffer
-
     manager = SimulationManager(
-        source=source,
-        simulation_volume=simulation_volume,
-        geometry_buffer=geometry_buffer,
-        physics_buffer=physics_buffer,
+        scene=root_scene,
         propagator=propagator,
         stop_time=stop_time,
         particles_number=10**6,

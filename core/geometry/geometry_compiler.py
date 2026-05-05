@@ -1,7 +1,8 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from core.geometry.volumes import Volume, VolumeWithChilds, GeometryBufferDType
+from core.geometry.volumes import Volume, GeometryBufferDType
+from core.scene.nodes import CompositeNode
 
 
 class GeometryCompiler:
@@ -10,12 +11,13 @@ class GeometryCompiler:
     optimized for fast Numba raycasting.
     """
 
-    def compile_scene(self, root_volume: Volume) -> NDArray[np.void]:
+    def compile_scene(self, root_node: CompositeNode) -> NDArray[np.void]:
         """
         Main entry point for scene compilation.
         Converts the OOP hierarchy into a flat numpy AoS structure.
         """
-        flat_list = root_volume.flattened_scene.flat_list
+        from core.geometry.flattened_scene import FlattenedScene
+        flat_list = FlattenedScene(root_node).flat_list
         capacity = len(flat_list)
         buffer = np.zeros(capacity, dtype=GeometryBufferDType)
 
@@ -31,20 +33,31 @@ class GeometryCompiler:
         The miss_index points to the node directly after the current node's subtree.
         """
         capacity = len(flat_list)
+        if capacity == 0:
+            return
 
-        def calc_miss(node_idx: int) -> int:
-            vol, _, _ = flat_list[node_idx]
+        # Шаг 1: O(N) построение списка смежности
+        from collections import defaultdict
+        children_map = defaultdict(list)
+        for i in range(capacity):
+            _, _, p_idx = flat_list[i]
+            if p_idx != -1:
+                children_map[p_idx].append(i)
+
+        # Шаг 2: O(N) вычисление размера поддерева через DFS
+        def subtree_size(node_idx: int) -> int:
             count = 1
-            if isinstance(vol, VolumeWithChilds):
-                for child in vol.childs:
-                    for c_idx in range(node_idx + 1, capacity):
-                        if flat_list[c_idx][0] is child:
-                            count += calc_miss(c_idx)
-                            break
+            for child_idx in children_map[node_idx]:
+                count += subtree_size(child_idx)
             buffer[node_idx]['miss_index'] = node_idx + count
             return count
 
-        calc_miss(0)
+        # Вызываем DFS для корней леса (узлов с parent_index == -1)
+        # Обычно это только нулевой индекс
+        for i in range(capacity):
+            _, _, p_idx = flat_list[i]
+            if p_idx == -1:
+                subtree_size(i)
 
     def _populate_buffer(self, flat_list: list, buffer: NDArray[np.void]) -> None:
         """

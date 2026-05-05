@@ -9,7 +9,8 @@ os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['NUMEXPR_NUM_THREADS'] = '1'
 os.environ['OMP_NUM_THREADS'] = '1'
 
-from core.geometry.volumes import VolumeWithChilds, TransformableVolume
+from core.geometry.volumes import Volume
+from core.scene.nodes import CompositeNode
 from core.geometry.geometries import Box
 from core.geometry.gamma_cameras import GammaCamera
 from core.geometry.parametric_collimators import ParametricParallelCollimator
@@ -25,13 +26,13 @@ class TestFullBenchmark(unittest.TestCase):
     def test_run_benchmark(self):
         # 1. Geometry Setup
         print("Setting up geometry...")
-        simulation_volume = VolumeWithChilds(
+        root_scene = Volume(
             geometry=Box(120*units.cm, 120*units.cm, 80*units.cm),
             material=material_database['Air, Dry (near sea level)'],
             name='Simulation_volume'
         )
 
-        detector = TransformableVolume(
+        detector = Volume(
             geometry=Box(54.0*units.cm, 40*units.cm, 0.95*units.cm),
             material=material_database['Sodium Iodide'],
             name='Detector'
@@ -58,7 +59,7 @@ class TestFullBenchmark(unittest.TestCase):
         spect_head.rotate(gamma=units.pi/2)
         spect_head.translate(y=radius + spect_head.size[2]/2)
 
-        simulation_volume.add_child(spect_head)
+        root_scene.add_child(spect_head)
 
         # 2. Source Setup
         print("Setting up source...")
@@ -69,27 +70,16 @@ class TestFullBenchmark(unittest.TestCase):
             energy=energy
         )
 
-        # 3. Compile Geometry
-        print("Compiling geometry...")
-        flat_scene = simulation_volume.flattened_scene
-        geometry_buffer = simulation_volume.geometry_buffer
+        root_scene.add_child(source)
 
-        # 4. Compile Physics
-        print("Compiling physics...")
-        propagator = ParticlePropagator()
-        physics_compiler = PhysicsCompiler()
-        physics_buffer = physics_compiler.compile_scene(simulation_volume, propagator.processes)
-
-        # 5. Simulation Manager Setup
+        # 3. Simulation Manager Setup
         print("Setting up simulation manager...")
+        propagator = ParticlePropagator()
         stop_time = 0.1 * units.second
         particles_number = 10000
 
         manager = SimulationManager(
-            source=source,
-            simulation_volume=simulation_volume,
-            geometry_buffer=geometry_buffer,
-            physics_buffer=physics_buffer,
+            scene=root_scene,
             propagator=propagator,
             stop_time=stop_time,
             particles_number=particles_number,

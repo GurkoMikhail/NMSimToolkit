@@ -26,20 +26,20 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
     from core.geometry.gamma_cameras import GammaCamera
     from core.geometry.geometries import Box
     from core.geometry.parametric_collimators import ParametricParallelCollimator
-    from core.geometry.volumes import TransformableVolume, VolumeWithChilds
+    from core.geometry.volumes import Volume
+    from core.geometry.voxel_volumes import WoodcockVoxelVolume
     from core.transport.simulation_managers import SimulationManager
     from core.transport.propagator import ParticlePropagator
-    from core.physics.physics_compiler import PhysicsCompiler
     from core.data.data_manager import DataManager
     from core.data.data_handlers import HistoryAssemblerHandler
     from core.source.sources import Tc99m_MIBI
-    from settings.database_setting import material_database, attenuation_database
+    from settings.database_setting import material_database
 
     rng = np.random.default_rng(seed)
 
     start_time, stop_time = time_interval
 
-    simulation_volume = VolumeWithChilds(
+    simulation_volume = Volume(
         geometry=Box(120*cm, 120*cm, 80*cm),
         material=material_database['Air, Dry (near sea level)'],
         name='Simulation_volume'
@@ -63,7 +63,7 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
     detector_list = []
 
     for i in range(gamma_cameras):
-        detector = TransformableVolume(
+        detector = Volume(
             geometry=Box(54.*cm, 40*cm, 0.95*cm),
             material=material_database['Sodium Iodide'],
             name=f'Detector at {round((angle + delta_angle*i)/degree, 1)} deg'
@@ -108,17 +108,11 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
     )
     source.rng = rng
     source.set_state(start_time)
+    phantom.add_child(source)
 
     propagator = ParticlePropagator()
-    physics_compiler = PhysicsCompiler()
-    physics_buffer = physics_compiler.compile_scene(simulation_volume, propagator.processes)
-    geometry_buffer = simulation_volume.geometry_buffer
-
     manager = SimulationManager(
-        source=source,
-        simulation_volume=simulation_volume,
-        geometry_buffer=geometry_buffer,
-        physics_buffer=physics_buffer,
+        scene=simulation_volume,
         propagator=propagator,
         stop_time=stop_time,
         particles_number=10**6,

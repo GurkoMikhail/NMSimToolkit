@@ -8,9 +8,10 @@ import core.other.utils as utils
 from core.other.typing_definitions import Float, Length, Time, Vector3D, Species, Index
 from core.particles.particles import ParticleBank
 from core.other.vectors import Vector3D
+from core.scene.nodes import CompositeNode
 
 
-class Source:
+class Source(CompositeNode):
     """
     Класс источника частиц для Data-Oriented Design (SoA)
 
@@ -38,6 +39,7 @@ class Source:
     emission_table: List[NDArray[Any]]
 
     def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = Float(4 * units.mm), radiation_type: str = 'Gamma', energy: Union[Float, List[List[Float]]] = Float(140.5 * units.keV), half_life: Time = Float(6 * units.hour), rng: Optional[np.random.Generator] = None) -> None:
+        super().__init__()
         self.distribution = np.asarray(distribution, dtype=Float)
         self.distribution /= np.sum(self.distribution)
         self.initial_activity = np.sum(distribution) if activity is None else np.asarray(activity, dtype=Float)
@@ -55,40 +57,8 @@ class Source:
         self.half_life = half_life
         self.timer = Float(0.)
         self._generate_emission_table()
-        self.transformation_matrix = np.array([
-            [1., 0., 0., 0.],
-            [0., 1., 0., 0.],
-            [0., 0., 1., 0.],
-            [0., 0., 0., 1.]
-        ])
         self.rng = np.random.default_rng() if rng is None else rng
 
-    def translate(self, x: Float = Float(0.), y: Float = Float(0.), z: Float = Float(0.), in_local: bool = False) -> None:
-        """ Переместить объём """
-        translation = np.asarray([x, y, z])
-        translation_matrix = utils.compute_translation_matrix(translation)
-        if in_local:
-            self.transformation_matrix = self.transformation_matrix @ translation_matrix
-        else:
-            self.transformation_matrix = translation_matrix @ self.transformation_matrix
-
-    def rotate(self, alpha: Float = Float(0.), beta: Float = Float(0.), gamma: Float = Float(0.), rotation_center: Sequence[Float] = (Float(0.), Float(0.), Float(0.)), in_local: bool = False) -> None:
-        """ Повернуть объём вокруг координатных осей """
-        rotation_angles = np.asarray([alpha, beta, gamma])
-        rotation_center_arr = np.asarray(rotation_center)
-        rotation_matrix = utils.compute_translation_matrix(rotation_center_arr)
-        rotation_matrix = rotation_matrix @ utils.compute_rotation_matrix(rotation_angles)
-        rotation_matrix = rotation_matrix @ utils.compute_translation_matrix(-rotation_center_arr)
-        if in_local:
-            self.transformation_matrix = self.transformation_matrix @ rotation_matrix
-        else:
-            self.transformation_matrix = rotation_matrix @ self.transformation_matrix
-
-    def convert_to_global_position(self, position: NDArray[Float]) -> NDArray[Float]:
-        global_position = np.ones((position.shape[0], 4), dtype=position.dtype)
-        global_position[:, :3] = position
-        np.matmul(global_position, self.transformation_matrix.T.astype(position.dtype), out=global_position)
-        return global_position[:, :3]
 
     def _generate_emission_table(self):
         xs, ys, zs = np.meshgrid(

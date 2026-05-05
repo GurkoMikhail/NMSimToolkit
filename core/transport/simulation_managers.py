@@ -11,6 +11,8 @@ import hepunits as units
 from numpy.typing import NDArray
 
 from core.geometry.volumes import Volume
+from core.scene.nodes import CompositeNode
+from core.source.source_compiler import SourceCompiler
 from core.other.typing_definitions import Float, Index
 from core.other.utils import datetime_from_seconds
 from core.particles.particles import ParticleBank
@@ -31,8 +33,8 @@ class SimulationManager(Thread):
     DOD-optimized Simulation Manager with Continuous Injection
     and in-place Stream Compaction handling.
     """
-    source: Source
-    simulation_volume: Volume
+    active_sources: List[Source]
+    scene: CompositeNode
     propagator: ParticlePropagator
     stop_time: Float
     particles_number: int
@@ -47,10 +49,7 @@ class SimulationManager(Thread):
 
     def __init__(
         self,
-        source: Source,
-        simulation_volume: Volume,
-        geometry_buffer: NDArray,
-        physics_buffer: PhysicsBuffer,
+        scene: CompositeNode,
         propagator: Optional[ParticlePropagator] = None,
         stop_time: Float = 1*units.s,
         particles_number: Union[int, Float] = 10**3,
@@ -58,11 +57,15 @@ class SimulationManager(Thread):
         buffer_capacity: int = 100000
     ) -> None:
         super().__init__()
-        self.source = source
-        self.simulation_volume = simulation_volume
-        self.geometry_buffer = geometry_buffer
-        self.physics_buffer = physics_buffer
+        self.scene = scene
+        self.active_sources = SourceCompiler().compile_scene(scene)
         self.propagator = ParticlePropagator() if propagator is None else propagator
+
+        from core.geometry.geometry_compiler import GeometryCompiler
+        from core.physics.physics_compiler import PhysicsCompiler
+
+        self.geometry_buffer = GeometryCompiler().compile_scene(scene)
+        self.physics_buffer = PhysicsCompiler().compile_scene(scene, self.propagator.processes)
         self.stop_time = stop_time
         self.particles_number = int(particles_number)
         self.min_energy = 1*units.keV
@@ -79,7 +82,7 @@ class SimulationManager(Thread):
         signal(SIGINT, self.sigint_handler)
 
     def sigint_handler(self, signal, frame):
-        _logger.error(f'{self.name} interrupted at {datetime_from_seconds(self.source.timer/units.second)}')
+        _logger.error(f'{self.name} interrupted at {datetime_from_seconds((self.active_sources[0].timer if self.active_sources else 0.0)/units.second)}')
         self.stop_time = 0
 
     def send_data(self, data):
@@ -188,13 +191,17 @@ class SimulationManager(Thread):
             self.data_buffer.dead_particles.append(dead_ids)
 
         # Continuous Replenishment
-        if self.source.timer <= self.stop_time:
-            # We recalculate active_indices explicitly to see how many slots are free
+        if self.active_sources and self.active_sources[0].timer <= self.stop_time:
             num_active = np.count_nonzero(self.bank.state.is_active)
             num_to_inject = self.bank.capacity - num_active
 
             if num_to_inject > 0:
-                self.source.inject(self.bank, num_to_inject)
+                total_activity = sum(src.activity for src in self.active_sources)
+                if total_activity > 0:
+                    for src in self.active_sources:
+                        n = int(num_to_inject * (src.activity / total_activity))
+                        if n > 0:
+                            src.inject(self.bank, n)
 
         self.step += 1
 
@@ -208,15 +215,20 @@ class SimulationManager(Thread):
         runctx('self._run()', globals(), locals(), f'stats/{self.name}.txt')
 
     def _run(self):
-        _logger.warning(f'{self.name} started from {datetime_from_seconds(self.source.timer/units.second)} to {datetime_from_seconds(self.stop_time/units.second)}')
+        _logger.warning(f'{self.name} started from {datetime_from_seconds((self.active_sources[0].timer if self.active_sources else 0.0)/units.second)} to {datetime_from_seconds(self.stop_time/units.second)}')
         start_timepoint = datetime.now()
 
         # Initial injection
-        self.source.inject(self.bank, self.particles_number)
+        total_activity = sum(src.activity for src in self.active_sources)
+        if total_activity > 0:
+            for src in self.active_sources:
+                n = int(self.particles_number * (src.activity / total_activity))
+                if n > 0:
+                    src.inject(self.bank, n)
 
-        while np.count_nonzero(self.bank.state.is_active) > 0 or self.source.timer <= self.stop_time:
+        while np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.active_sources[0].timer <= self.stop_time):
             self.next_step()
-            _logger.debug(f'Source timer of {self.name} at {datetime_from_seconds(self.source.timer/units.second)}')
+            _logger.debug(f'Source timer of {self.name} at {datetime_from_seconds((self.active_sources[0].timer if self.active_sources else 0.0)/units.second)}')
 
         # Final flush
         self.flush_interactions()
@@ -225,5 +237,5 @@ class SimulationManager(Thread):
         self.queue.put('stop')
 
         stop_timepoint = datetime.now()
-        _logger.warning(f'{self.name} finished at {datetime_from_seconds(self.source.timer/units.second)}')
+        _logger.warning(f'{self.name} finished at {datetime_from_seconds((self.active_sources[0].timer if self.active_sources else 0.0)/units.second)}')
         _logger.info(f'The simulation of {self.name} took {stop_timepoint - start_timepoint}')
