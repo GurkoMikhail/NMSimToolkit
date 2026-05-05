@@ -46,6 +46,7 @@ class SimulationManager(Thread):
     physics_buffer: PhysicsBuffer
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
+    global_timer: Float
 
     def __init__(
         self,
@@ -78,11 +79,12 @@ class SimulationManager(Thread):
         self.data_buffer = SimulationDataBuffer.allocate(buffer_capacity, buffer_capacity, buffer_capacity)
         self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
+        self.global_timer = Float(0.0)
 
         signal(SIGINT, self.sigint_handler)
 
     def sigint_handler(self, signal, frame):
-        _logger.error(f'{self.name} interrupted at {datetime_from_seconds((self.active_sources[0].timer if self.active_sources else 0.0)/units.second)}')
+        _logger.error(f'{self.name} interrupted at {datetime_from_seconds(self.global_timer/units.second)}')
         self.stop_time = 0
 
     def send_data(self, data):
@@ -156,7 +158,61 @@ class SimulationManager(Thread):
             return dead_indices
         return np.array([], dtype=Index)
 
+    def _replenish_bank(self):
+        num_active = np.count_nonzero(self.bank.state.is_active)
+        num_to_inject = self.bank.capacity - num_active
+
+        if num_to_inject <= 0 or not self.active_sources or self.global_timer > self.stop_time:
+            return
+
+        def f(dt):
+            return sum(src.get_expected_particles(self.global_timer, self.global_timer + dt) for src in self.active_sources) - num_to_inject
+
+        def df(dt):
+            return sum(src.get_activity(self.global_timer + dt) for src in self.active_sources)
+
+        # Newton-Raphson to find dt
+        dt = Float(0.0)
+        # Initial guess: linear approximation based on current total activity
+        total_act = sum(src.get_activity(self.global_timer) for src in self.active_sources)
+        if total_act > 0:
+            dt = Float(num_to_inject / total_act)
+
+        for _ in range(5):
+            f_val = f(dt)
+            df_val = df(dt)
+            if df_val == 0:
+                break
+            dt = dt - Float(f_val / df_val)
+            if abs(f_val) < 1e-3:
+                break
+
+        if dt <= 0:
+            dt = Float(1e-9)
+
+        target_time = self.global_timer + dt
+
+        # Calculate quotas
+        expected = [src.get_expected_particles(self.global_timer, target_time) for src in self.active_sources]
+        quotas = np.floor(expected).astype(int)
+        remainders = expected - quotas
+
+        # Adjust quotas to match exact num_to_inject
+        shortfall = num_to_inject - np.sum(quotas)
+        if shortfall > 0:
+            indices = np.argsort(remainders)[::-1]
+            for i in range(int(shortfall)):
+                quotas[indices[i % len(indices)]] += 1
+
+        for src, n in zip(self.active_sources, quotas):
+            if n > 0:
+                src.inject(self.bank, n, self.global_timer, target_time)
+
+        self.global_timer = target_time
+
     def next_step(self):
+        self._replenish_bank()
+
         active_indices = self.bank.active_indices
 
         if active_indices.size == 0:
@@ -190,19 +246,6 @@ class SimulationManager(Thread):
             dead_ids = self.bank.initial_state.ID[dead_indices]
             self.data_buffer.dead_particles.append(dead_ids)
 
-        # Continuous Replenishment
-        if self.active_sources and self.active_sources[0].timer <= self.stop_time:
-            num_active = np.count_nonzero(self.bank.state.is_active)
-            num_to_inject = self.bank.capacity - num_active
-
-            if num_to_inject > 0:
-                total_activity = sum(src.activity for src in self.active_sources)
-                if total_activity > 0:
-                    for src in self.active_sources:
-                        n = int(num_to_inject * (src.activity / total_activity))
-                        if n > 0:
-                            src.inject(self.bank, n)
-
         self.step += 1
 
     def run(self):
@@ -215,20 +258,12 @@ class SimulationManager(Thread):
         runctx('self._run()', globals(), locals(), f'stats/{self.name}.txt')
 
     def _run(self):
-        _logger.warning(f'{self.name} started from {datetime_from_seconds((self.active_sources[0].timer if self.active_sources else 0.0)/units.second)} to {datetime_from_seconds(self.stop_time/units.second)}')
+        _logger.warning(f'{self.name} started from {datetime_from_seconds(self.global_timer/units.second)} to {datetime_from_seconds(self.stop_time/units.second)}')
         start_timepoint = datetime.now()
 
-        # Initial injection
-        total_activity = sum(src.activity for src in self.active_sources)
-        if total_activity > 0:
-            for src in self.active_sources:
-                n = int(self.particles_number * (src.activity / total_activity))
-                if n > 0:
-                    src.inject(self.bank, n)
-
-        while np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.active_sources[0].timer <= self.stop_time):
+        while np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.global_timer <= self.stop_time):
             self.next_step()
-            _logger.debug(f'Source timer of {self.name} at {datetime_from_seconds((self.active_sources[0].timer if self.active_sources else 0.0)/units.second)}')
+            _logger.debug(f'Global timer of {self.name} at {datetime_from_seconds(self.global_timer/units.second)}')
 
         # Final flush
         self.flush_interactions()
@@ -237,5 +272,5 @@ class SimulationManager(Thread):
         self.queue.put('stop')
 
         stop_timepoint = datetime.now()
-        _logger.warning(f'{self.name} finished at {datetime_from_seconds((self.active_sources[0].timer if self.active_sources else 0.0)/units.second)}')
+        _logger.warning(f'{self.name} finished at {datetime_from_seconds(self.global_timer/units.second)}')
         _logger.info(f'The simulation of {self.name} took {stop_timepoint - start_timepoint}')
