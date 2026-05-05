@@ -27,21 +27,19 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
     from core.geometry.geometries import Box
     from core.geometry.parametric_collimators import ParametricParallelCollimator
     from core.geometry.volumes import Volume
-    from core.scene.nodes import CompositeNode
     from core.geometry.voxel_volumes import WoodcockVoxelVolume
     from core.transport.simulation_managers import SimulationManager
     from core.transport.propagator import ParticlePropagator
-    from core.physics.physics_compiler import PhysicsCompiler
     from core.data.data_manager import DataManager
     from core.data.data_handlers import HistoryAssemblerHandler
     from core.source.sources import Tc99m_MIBI
-    from settings.database_setting import material_database, attenuation_database
+    from settings.database_setting import material_database
 
     rng = np.random.default_rng(seed)
 
     start_time, stop_time = time_interval
 
-    root_scene = Volume(
+    simulation_volume = Volume(
         geometry=Box(120*cm, 120*cm, 80*cm),
         material=material_database['Air, Dry (near sea level)'],
         name='Simulation_volume'
@@ -60,7 +58,7 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
         material_distribution=material_distribution,
         name='Phantom'
     )
-    phantom.set_parent(root_scene)
+    phantom.set_parent(simulation_volume)
     
     detector_list = []
 
@@ -90,7 +88,7 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
         spect_head.translate(y=radius + spect_head.size[2]/2)
         spect_head.rotate(alpha=angle + delta_angle*i)
     
-        root_scene.add_child(spect_head)
+        simulation_volume.add_child(spect_head)
         detector_list.append(detector)
 
     distribution = np.load(f'phantoms/source_function.npy')
@@ -114,7 +112,7 @@ def modeling(filename, angle, radius, gamma_cameras, delta_angle, time_interval,
 
     propagator = ParticlePropagator()
     manager = SimulationManager(
-        scene=root_scene,
+        scene=simulation_volume,
         propagator=propagator,
         stop_time=stop_time,
         particles_number=10**6,
