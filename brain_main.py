@@ -101,7 +101,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
         voxel_size=4*mm
     )
     source.rng = rng
-    source.set_state(start_time)
+    source.set_state(rng_state=rng.bit_generator.state)
     phantom.add_child(source)
 
     propagator = ParticlePropagator()
@@ -112,6 +112,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
         particles_number=10**6,
         buffer_capacity=100000
     )
+    manager.global_timer = start_time
     manager.name = f'{round(angle/degree, 1)} deg'
     manager.start()
 

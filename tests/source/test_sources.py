@@ -21,7 +21,9 @@ class TestSourcesSoA(unittest.TestCase):
     def test_inject_basic(self):
         # Inject fewer particles than capacity
         batch_size = 5
-        indices = self.source.inject(self.bank, batch_size)
+        t1 = Float(0.0)
+        t2 = Float(1.0)
+        indices = self.source.inject(self.bank, batch_size, t1, t2)
 
         self.assertEqual(len(indices), batch_size)
         self.assertEqual(self.bank.count, batch_size)
@@ -48,15 +50,19 @@ class TestSourcesSoA(unittest.TestCase):
         np.testing.assert_array_equal(self.bank.state.direction.y[active_mask], self.bank.initial_state.emission_direction.y[active_mask])
         np.testing.assert_array_equal(self.bank.state.direction.z[active_mask], self.bank.initial_state.emission_direction.z[active_mask])
 
+        # Emission time should be within [t1, t2]
+        self.assertTrue(np.all(self.bank.initial_state.emission_time[active_mask] >= t1))
+        self.assertTrue(np.all(self.bank.initial_state.emission_time[active_mask] <= t2))
+
     def test_inject_exceeds_capacity(self):
         # Fill partially
-        self.source.inject(self.bank, 7)
+        self.source.inject(self.bank, 7, Float(0.0), Float(1.0))
         self.assertEqual(self.bank.count, 7)
         self.assertEqual(len(self.bank.active_indices), 7)
 
         # Try to inject more than remaining capacity
         batch_size = 5
-        indices = self.source.inject(self.bank, batch_size)
+        indices = self.source.inject(self.bank, batch_size, Float(1.0), Float(2.0))
 
         # Should only inject what fits (10 - 7 = 3)
         self.assertEqual(len(indices), 3)
@@ -65,12 +71,12 @@ class TestSourcesSoA(unittest.TestCase):
 
     def test_inject_no_capacity(self):
         # Fill completely
-        self.source.inject(self.bank, self.capacity)
+        self.source.inject(self.bank, self.capacity, Float(0.0), Float(1.0))
         self.assertEqual(self.bank.count, self.capacity)
 
         # Try to inject more
         batch_size = 5
-        indices = self.source.inject(self.bank, batch_size)
+        indices = self.source.inject(self.bank, batch_size, Float(1.0), Float(2.0))
 
         self.assertEqual(len(indices), 0)
         self.assertEqual(self.bank.count, self.capacity)

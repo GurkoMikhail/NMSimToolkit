@@ -55,7 +55,6 @@ class Source(CompositeNode):
         self.energy["probability"] /= np.sum(self.energy["probability"])
 
         self.half_life = half_life
-        self.timer = Float(0.)
         self._generate_emission_table()
         self.rng = np.random.default_rng() if rng is None else rng
 
@@ -73,16 +72,31 @@ class Source(CompositeNode):
         self.emission_table = [position[indices], probability[indices]]
 
     @property
-    def activity(self) -> NDArray[Float]:
-        return self.initial_activity * 2 ** (-self.timer / self.half_life)
+    def decay_constant(self) -> Float:
+        if np.isinf(self.half_life):
+            return Float(0.0)
+        return Float(np.log(2) / self.half_life)
 
-    @property
-    def nuclei_number(self) -> NDArray[Float]:
-        return self.activity * self.half_life / np.log(2)
+    def _get_effective_dt(self, dt: Float) -> Float:
+        lambd = self.decay_constant
+        if lambd == 0.0 or lambd * dt < 1e-6:
+            return dt
+        return Float((1.0 - np.exp(-lambd * dt)) / lambd)
 
-    def set_state(self, timer: Optional[Time], rng_state: Optional[Any] = None) -> None:
-        if timer is not None:
-            self.timer = timer
+    def get_activity(self, t: Float) -> Float:
+        """Мгновенная активность источника в момент времени t."""
+        if self.decay_constant == 0.0:
+            return Float(self.initial_activity)
+        return Float(self.initial_activity * (2.0 ** (-t / self.half_life)))
+
+    def get_expected_particles(self, t1: Float, t2: Float) -> Float:
+        """Точный интеграл распада на интервале [t1, t2]."""
+        dt = t2 - t1
+        if dt <= 0:
+            return Float(0.0)
+        return Float(self.get_activity(t1) * self._get_effective_dt(dt))
+
+    def set_state(self, rng_state: Optional[Any] = None) -> None:
         if rng_state is None:
             return
         self.rng.bit_generator.state['state'] = rng_state# type: ignore
@@ -99,13 +113,19 @@ class Source(CompositeNode):
         position = self.convert_to_global_position(position)
         return position
 
-    def generate_emission_time(self, n: int) -> Tuple[NDArray[Float], Float]:
-        dt = np.log((self.nuclei_number + n) / self.nuclei_number) * self.half_life / np.log(2)
-        a = 2 ** (-self.timer / self.half_life)
-        b = 2 ** (-(self.timer + dt) / self.half_life)
-        alpha = self.rng.uniform(b, a, n)
-        emission_time = -np.log(alpha) * self.half_life / np.log(2)
-        return emission_time, Float(dt)
+    def generate_emission_time(self, n: int, t1: Float, t2: Float) -> NDArray[Float]:
+        dt = Float(t2 - t1)
+        u = self.rng.uniform(0.0, 1.0, n)
+        lambd = self.decay_constant
+
+        if lambd == 0.0 or lambd * dt < 1e-6:
+            # Linear approximation for stable sources
+            emission_time = t1 + u * dt
+        else:
+            # Exact inverse CDF
+            effective_dt = self._get_effective_dt(dt)
+            emission_time = t1 - (1.0 / lambd) * np.log(1.0 - u * lambd * effective_dt)
+        return emission_time
 
     def generate_direction(self, n: int) -> Vector3D:
         a1 = self.rng.random(n)
@@ -117,7 +137,7 @@ class Source(CompositeNode):
         direction = np.column_stack((cos_alpha, cos_beta, cos_gamma))
         return direction
 
-    def inject(self, bank: ParticleBank, batch_size: int) -> NDArray[Index]:
+    def inject(self, bank: ParticleBank, batch_size: int, t1: Float, t2: Float) -> NDArray[Index]:
         """
         Генерирует частицы и инжектирует их напрямую в банк через механизм Direct Injection (SoA).
         """
@@ -128,8 +148,7 @@ class Source(CompositeNode):
         energy = self.generate_energy(n)
         direction_arr = self.generate_direction(n)
         position_arr = self.generate_position(n)
-        emission_time, dt = self.generate_emission_time(n)
-        self.timer += dt
+        emission_time = self.generate_emission_time(n, t1, t2)
 
         position = Vector3D(
             x=position_arr[:, 0].astype(Length),
