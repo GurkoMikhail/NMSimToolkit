@@ -40,7 +40,8 @@ class VolumeConfig(CompositeNodeConfig):
 
 class BaseDistributionConfig(BaseModel):
     path: str
-    mapping: dict[float, str]
+    mapping: Optional[dict[float, Union[float, str]]] = None
+    fill_value: Optional[Union[float, str]] = None
 
 class NumpyDistributionConfig(BaseDistributionConfig):
     format: Literal['numpy'] = 'numpy'
@@ -61,7 +62,7 @@ AnyDistributionConfig = Annotated[
 class WoodcockVoxelVolumeConfig(CompositeNodeConfig):
     type: Literal['WoodcockVoxelVolume'] = 'WoodcockVoxelVolume'
     voxel_size: float
-    material_distribution: AnyDistributionConfig
+    distribution: AnyDistributionConfig
 
 class GammaCameraConfig(CompositeNodeConfig):
     type: Literal['GammaCamera'] = 'GammaCamera'
@@ -88,7 +89,7 @@ class ParametricParallelSquareCollimatorConfig(CompositeNodeConfig):
 class SourceConfig(CompositeNodeConfig):
     type: Literal['Source'] = 'Source'
     activity: Optional[float] = None
-    distribution_path: str
+    distribution: AnyDistributionConfig
     voxel_size: float = 0.4
     radiation_type: str = 'Gamma'
     energy: Union[float, List[List[float]]] = 140.5e3

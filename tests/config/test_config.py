@@ -47,13 +47,29 @@ class TestConfig(unittest.TestCase):
                         "type": "WoodcockVoxelVolume",
                         "name": "Phantom",
                         "voxel_size": 0.5,
-                        "material_distribution": {
+                        "distribution": {
                             "format": "numpy",
                             "path": "dummy_dist.npy",
+                            "fill_value": "Air, Dry (near sea level)",
                             "mapping": {
-                                0.0: "Air, Dry (near sea level)",
                                 1.0: "Water, Liquid",
                                 2.0: "Pb"
+                            }
+                        }
+                    },
+                    {
+                        "type": "Source",
+                        "name": "Source",
+                        "voxel_size": 0.1,
+                        "distribution": {
+                            "format": "raw",
+                            "path": "source.dat",
+                            "shape": [1, 2, 2],
+                            "order": "C",
+                            "fill_value": 0.0,
+                            "mapping": {
+                                1.0: 100.0,
+                                2.0: 200.0
                             }
                         }
                     }
@@ -66,6 +82,8 @@ class TestConfig(unittest.TestCase):
         dummy_dist = np.array([[[0.0, 1.0], [2.0, 0.0]]], dtype=float)
         np.save("dummy_dist.npy", dummy_dist)
 
+        np.savetxt("source.dat", dummy_dist.flatten())
+
     def tearDown(self):
         if os.path.exists(self.test_yaml):
             os.remove(self.test_yaml)
@@ -73,6 +91,8 @@ class TestConfig(unittest.TestCase):
             os.remove("dumped_test_config.yaml")
         if os.path.exists("dummy_dist.npy"):
             os.remove("dummy_dist.npy")
+        if os.path.exists("source.dat"):
+            os.remove("source.dat")
 
     def test_pydantic_validation(self):
         config = SimulationConfig.model_validate(self.config_dict)
@@ -81,12 +101,19 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(len(config.scene.transformations), 1)
         self.assertEqual(config.scene.transformations[0].type, "translate")
         self.assertEqual(config.scene.transformations[0].x, 1.0)
-        self.assertEqual(len(config.scene.children), 1)
+        self.assertEqual(len(config.scene.children), 2)
 
         child = config.scene.children[0]
         self.assertEqual(child.type, "WoodcockVoxelVolume")
-        self.assertEqual(child.material_distribution.format, "numpy")
-        self.assertEqual(child.material_distribution.mapping[1.0], "Water, Liquid")
+        self.assertEqual(child.distribution.format, "numpy")
+        self.assertEqual(child.distribution.mapping[1.0], "Water, Liquid")
+        self.assertEqual(child.distribution.fill_value, "Air, Dry (near sea level)")
+
+        child2 = config.scene.children[1]
+        self.assertEqual(child2.type, "Source")
+        self.assertEqual(child2.distribution.format, "raw")
+        self.assertEqual(child2.distribution.mapping[1.0], 100.0)
+        self.assertEqual(child2.distribution.fill_value, 0.0)
 
     def test_yaml_loader(self):
         config = load_simulation_config(self.test_yaml)
@@ -116,6 +143,7 @@ class TestConfig(unittest.TestCase):
         config = load_simulation_config(self.test_yaml)
         builder = SceneBuilder()
         from core.geometry.voxel_volumes import WoodcockVoxelVolume
+        from core.source.sources import Source
         root_node = builder.build_scene(config.scene)
 
         self.assertIsInstance(root_node, Volume)
@@ -123,7 +151,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(root_node.geometry.size[0], 10.0)
         self.assertEqual(root_node.material.name, "Air, Dry (near sea level)")
 
-        self.assertEqual(len(root_node.childs), 1)
+        self.assertEqual(len(root_node.childs), 2)
         child = root_node.childs[0]
         self.assertIsInstance(child, WoodcockVoxelVolume)
         self.assertEqual(child.name, "Phantom")
@@ -131,9 +159,17 @@ class TestConfig(unittest.TestCase):
 
         # Ensure mapping correctly applied
         ids = child.material_distribution.ID
-        # 0.0 -> Air (ID 0 inside dummy_dist map, but material DB ID may vary)
+        # 0.0 -> Air (from fill value)
         mat_db = builder._get_material("Air, Dry (near sea level)")
         self.assertEqual(ids[0, 0, 0], mat_db.ID)
+
+        child2 = root_node.childs[1]
+        self.assertIsInstance(child2, Source)
+        self.assertEqual(child2.distribution.shape, (1, 2, 2))
+        self.assertEqual(child2.distribution[0, 0, 0], 0.0)
+        # 100 is converted to probability since the source object normalizes the distribution upon init
+        self.assertTrue(np.isclose(child2.distribution[0, 0, 1], 100.0 / 300.0))
+        self.assertEqual(child2.initial_activity, 300.0) # The total activity defaults to sum of distribution before normalization
 
 if __name__ == '__main__':
     unittest.main()

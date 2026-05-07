@@ -5,7 +5,8 @@ import settings.database_setting as database_setting
 from core.config.models import (
     AnyNodeConfig, VolumeConfig, GammaCameraConfig, WoodcockVoxelVolumeConfig,
     ParametricParallelCollimatorConfig, ParametricParallelSquareCollimatorConfig,
-    SourceConfig, BoxConfig, SimulationConfig, TranslateConfig, RotateConfig
+    SourceConfig, BoxConfig, SimulationConfig, TranslateConfig, RotateConfig,
+    NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig
 )
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
@@ -65,27 +66,36 @@ class SceneBuilder:
         material = self._get_material(config.material)
         return Volume(geometry=geometry, material=material, name=config.name)
 
-    def _build_woodcock_voxel_volume(self, config: WoodcockVoxelVolumeConfig) -> WoodcockVoxelVolume:
-        from core.config.models import NumpyDistributionConfig, RawDistributionConfig
-
-        dist_config = config.material_distribution
+    def _load_raw_distribution(self, dist_config: AnyDistributionConfig) -> np.ndarray:
         if isinstance(dist_config, NumpyDistributionConfig):
-            raw_distribution = np.load(dist_config.path)
+            return np.load(dist_config.path)
         elif isinstance(dist_config, RawDistributionConfig):
-            raw_distribution = np.loadtxt(dist_config.path).reshape(dist_config.shape, order=dist_config.order)
-        else:
-            raise ValueError(f"Unknown distribution format: {type(dist_config)}")
+            return np.loadtxt(dist_config.path).reshape(dist_config.shape, order=dist_config.order)
+        raise ValueError(f"Unknown distribution format: {type(dist_config)}")
+
+    def _build_woodcock_voxel_volume(self, config: WoodcockVoxelVolumeConfig) -> WoodcockVoxelVolume:
+        dist_config = config.distribution
+        raw_distribution = self._load_raw_distribution(dist_config)
 
         from core.materials.materials import MaterialArray
-        mat_arr = MaterialArray(raw_distribution.shape)
 
-        for map_val, mat_name in dist_config.mapping.items():
-            mask = np.isclose(raw_distribution, map_val)
-            mat = self._get_material(mat_name)
-            # The indices for nonzero must be a tuple of arrays as per numpy standard for ND indexing.
-            # NonuniqueArray.magic_indexing accepts this.
-            indices = np.nonzero(mask)
-            mat_arr[indices] = mat
+        if dist_config.mapping is None and dist_config.fill_value is None:
+            mat_arr = MaterialArray(raw_distribution.shape)
+            mat_arr.ID = raw_distribution
+        else:
+            mat_arr = MaterialArray(raw_distribution.shape)
+            if dist_config.fill_value is not None:
+                mat = self._get_material(str(dist_config.fill_value))
+                mat_arr[:] = mat
+            else:
+                mat_arr.ID[:] = 0
+
+            if dist_config.mapping is not None:
+                for map_val, mat_name in dist_config.mapping.items():
+                    mask = np.isclose(raw_distribution, map_val)
+                    mat = self._get_material(str(mat_name))
+                    indices = np.nonzero(mask)
+                    mat_arr[indices] = mat
 
         return WoodcockVoxelVolume(voxel_size=config.voxel_size, material_distribution=mat_arr, name=config.name)
 
@@ -122,7 +132,21 @@ class SceneBuilder:
         )
 
     def _build_source(self, config: SourceConfig) -> Source:
-        distribution = np.load(config.distribution_path)
+        dist_config = config.distribution
+        raw_distribution = self._load_raw_distribution(dist_config)
+
+        if dist_config.mapping is None and dist_config.fill_value is None:
+            distribution = raw_distribution
+        else:
+            distribution = np.zeros_like(raw_distribution, dtype=float)
+            if dist_config.fill_value is not None:
+                distribution.fill(float(dist_config.fill_value))
+
+            if dist_config.mapping is not None:
+                for map_val, act_val in dist_config.mapping.items():
+                    mask = np.isclose(raw_distribution, map_val)
+                    distribution[mask] = float(act_val)
+
         return Source(
             distribution=distribution,
             activity=config.activity,

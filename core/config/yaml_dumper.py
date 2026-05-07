@@ -1,4 +1,5 @@
 import yaml
+import hashlib
 from pathlib import Path
 from core.config.models import SimulationConfig
 
@@ -13,7 +14,10 @@ class AnchorStr(str):
 
 def represent_anchor_str(dumper, data):
     node = yaml.representer.SafeRepresenter.represent_str(dumper, data)
+    # We use a deterministic hash to guarantee no collisions while avoiding noisy git diffs
     safe_anchor_name = data.split(',')[0].replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_').lower()
+    deterministic_hash = hashlib.md5(data.encode('utf-8')).hexdigest()[:4]
+    safe_anchor_name = f"{safe_anchor_name}_{deterministic_hash}"
     dumper.anchors[node] = safe_anchor_name
     return node
 
@@ -34,9 +38,15 @@ def dump_simulation_config(config: SimulationConfig, filepath: str | Path):
             extract_materials(node['collimator'])
         if 'detector' in node:
             extract_materials(node['detector'])
-        if 'material_distribution' in node and 'mapping' in node['material_distribution']:
-            for mat in node['material_distribution']['mapping'].values():
-                unique_materials.add(mat)
+        if 'distribution' in node:
+            dist = node['distribution']
+            if dist.get('mapping') is not None:
+                for mat in dist['mapping'].values():
+                    if isinstance(mat, str):
+                        unique_materials.add(mat)
+            if dist.get('fill_value') is not None:
+                if isinstance(dist['fill_value'], str):
+                    unique_materials.add(dist['fill_value'])
 
     extract_materials(raw_dict['scene'])
 
@@ -60,10 +70,16 @@ def dump_simulation_config(config: SimulationConfig, filepath: str | Path):
             inject_anchors(node['collimator'])
         if 'detector' in node:
             inject_anchors(node['detector'])
-        if 'material_distribution' in node and 'mapping' in node['material_distribution']:
-            for val, mat in node['material_distribution']['mapping'].items():
-                if mat in anchored_materials_map:
-                    node['material_distribution']['mapping'][val] = anchored_materials_map[mat]
+        if 'distribution' in node:
+            dist = node['distribution']
+            if dist.get('mapping') is not None:
+                for val, mat in dist['mapping'].items():
+                    if isinstance(mat, str) and mat in anchored_materials_map:
+                        dist['mapping'][val] = anchored_materials_map[mat]
+            if dist.get('fill_value') is not None:
+                fv = dist['fill_value']
+                if isinstance(fv, str) and fv in anchored_materials_map:
+                    dist['fill_value'] = anchored_materials_map[fv]
 
     inject_anchors(raw_dict['scene'])
 

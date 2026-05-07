@@ -41,8 +41,8 @@ class Source(CompositeNode):
     def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = Float(4 * units.mm), radiation_type: str = 'Gamma', energy: Union[Float, List[List[Float]]] = Float(140.5 * units.keV), half_life: Time = Float(6 * units.hour), rng: Optional[np.random.Generator] = None) -> None:
         super().__init__()
         self.distribution = np.asarray(distribution, dtype=Float)
+        self.initial_activity = np.sum(self.distribution) if activity is None else np.asarray(activity, dtype=Float)
         self.distribution /= np.sum(self.distribution)
-        self.initial_activity = np.sum(distribution) if activity is None else np.asarray(activity, dtype=Float)
         self.voxel_size = voxel_size
         self.size = np.asarray(self.distribution.shape)*self.voxel_size
         self.radiation_type = radiation_type
