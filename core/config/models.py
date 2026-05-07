@@ -26,48 +26,46 @@ class BoxConfig(BaseModel):
 
 GeometryConfig = Annotated[Union[BoxConfig], Field(discriminator='type')]
 
-class BaseNodeConfig(BaseModel):
+class SpatialNodeConfig(BaseModel):
     name: Optional[str] = None
     transformations: List[TransformConfig] = Field(default_factory=list)
 
-class VolumeConfig(BaseNodeConfig):
+class CompositeNodeConfig(SpatialNodeConfig):
+    children: List['AnyNodeConfig'] = Field(default_factory=list)
+
+class VolumeConfig(CompositeNodeConfig):
     type: Literal['Volume'] = 'Volume'
     geometry: GeometryConfig
     material: str
-    children: List['AnyNodeConfig'] = Field(default_factory=list)
 
-class WoodcockVoxelVolumeConfig(BaseNodeConfig):
+class WoodcockVoxelVolumeConfig(CompositeNodeConfig):
     type: Literal['WoodcockVoxelVolume'] = 'WoodcockVoxelVolume'
     voxel_size: float
     material_distribution_path: str
-    children: List['AnyNodeConfig'] = Field(default_factory=list)
 
-class GammaCameraConfig(BaseNodeConfig):
+class GammaCameraConfig(CompositeNodeConfig):
     type: Literal['GammaCamera'] = 'GammaCamera'
     collimator: 'AnyNodeConfig'
     detector: 'AnyNodeConfig'
     gap: float = 0.1
     shielding_thickness: float = 2.0
     glass_backend_thickness: float = 5.0
-    children: List['AnyNodeConfig'] = Field(default_factory=list)
 
-class ParametricParallelCollimatorConfig(BaseNodeConfig):
+class ParametricParallelCollimatorConfig(CompositeNodeConfig):
     type: Literal['ParametricParallelCollimator'] = 'ParametricParallelCollimator'
     size: Tuple[float, float, float]
     hole_diameter: float
     septa_thickness: float
     material: str
-    children: List['AnyNodeConfig'] = Field(default_factory=list)
 
-class ParametricParallelSquareCollimatorConfig(BaseNodeConfig):
+class ParametricParallelSquareCollimatorConfig(CompositeNodeConfig):
     type: Literal['ParametricParallelSquareCollimator'] = 'ParametricParallelSquareCollimator'
     size: Tuple[float, float, float]
     hole_size: float
     septa_thickness: float
     material: str
-    children: List['AnyNodeConfig'] = Field(default_factory=list)
 
-class SourceConfig(BaseNodeConfig):
+class SourceConfig(CompositeNodeConfig):
     type: Literal['Source'] = 'Source'
     activity: Optional[float] = None
     distribution_path: str
@@ -75,7 +73,6 @@ class SourceConfig(BaseNodeConfig):
     radiation_type: str = 'Gamma'
     energy: Union[float, List[List[float]]] = 140.5e3
     half_life: float = 21600.0
-    children: List['AnyNodeConfig'] = Field(default_factory=list)
 
 AnyNodeConfig = Annotated[
     Union[
