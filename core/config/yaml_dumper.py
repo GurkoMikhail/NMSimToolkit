@@ -34,6 +34,9 @@ def dump_simulation_config(config: SimulationConfig, filepath: str | Path):
             extract_materials(node['collimator'])
         if 'detector' in node:
             extract_materials(node['detector'])
+        if 'material_distribution' in node and 'mapping' in node['material_distribution']:
+            for mat in node['material_distribution']['mapping'].values():
+                unique_materials.add(mat)
 
     extract_materials(raw_dict['scene'])
 
@@ -57,6 +60,10 @@ def dump_simulation_config(config: SimulationConfig, filepath: str | Path):
             inject_anchors(node['collimator'])
         if 'detector' in node:
             inject_anchors(node['detector'])
+        if 'material_distribution' in node and 'mapping' in node['material_distribution']:
+            for val, mat in node['material_distribution']['mapping'].items():
+                if mat in anchored_materials_map:
+                    node['material_distribution']['mapping'][val] = anchored_materials_map[mat]
 
     inject_anchors(raw_dict['scene'])
 

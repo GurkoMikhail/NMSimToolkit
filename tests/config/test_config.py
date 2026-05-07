@@ -44,15 +44,18 @@ class TestConfig(unittest.TestCase):
                 ],
                 "children": [
                     {
-                        "type": "Volume",
-                        "name": "Detector",
-                        "geometry": {
-                            "type": "Box",
-                            "x": 2.0,
-                            "y": 2.0,
-                            "z": 2.0
-                        },
-                        "material": "Pb"
+                        "type": "WoodcockVoxelVolume",
+                        "name": "Phantom",
+                        "voxel_size": 0.5,
+                        "material_distribution": {
+                            "format": "numpy",
+                            "path": "dummy_dist.npy",
+                            "mapping": {
+                                0.0: "Air, Dry (near sea level)",
+                                1.0: "Water, Liquid",
+                                2.0: "Pb"
+                            }
+                        }
                     }
                 ]
             }
@@ -60,11 +63,16 @@ class TestConfig(unittest.TestCase):
         with open(self.test_yaml, "w") as f:
             yaml.dump(self.config_dict, f)
 
+        dummy_dist = np.array([[[0.0, 1.0], [2.0, 0.0]]], dtype=float)
+        np.save("dummy_dist.npy", dummy_dist)
+
     def tearDown(self):
         if os.path.exists(self.test_yaml):
             os.remove(self.test_yaml)
         if os.path.exists("dumped_test_config.yaml"):
             os.remove("dumped_test_config.yaml")
+        if os.path.exists("dummy_dist.npy"):
+            os.remove("dummy_dist.npy")
 
     def test_pydantic_validation(self):
         config = SimulationConfig.model_validate(self.config_dict)
@@ -74,7 +82,11 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.scene.transformations[0].type, "translate")
         self.assertEqual(config.scene.transformations[0].x, 1.0)
         self.assertEqual(len(config.scene.children), 1)
-        self.assertEqual(config.scene.children[0].type, "Volume")
+
+        child = config.scene.children[0]
+        self.assertEqual(child.type, "WoodcockVoxelVolume")
+        self.assertEqual(child.material_distribution.format, "numpy")
+        self.assertEqual(child.material_distribution.mapping[1.0], "Water, Liquid")
 
     def test_yaml_loader(self):
         config = load_simulation_config(self.test_yaml)
@@ -88,11 +100,12 @@ class TestConfig(unittest.TestCase):
         with open("dumped_test_config.yaml", "r") as f:
             content = f.read()
 
-        # Verify materials block is generated and anchored
+        # Verify materials block is generated and anchored.
+        # We are asserting that Water, Air, and Pb are handled
         self.assertIn("Materials:", content)
         self.assertIn("&air", content)
+        self.assertIn("&water", content)
         self.assertIn("&pb", content)
-        self.assertIn("*air", content)
         self.assertIn("*pb", content)
 
         # Reloading should yield identical model
@@ -102,6 +115,7 @@ class TestConfig(unittest.TestCase):
     def test_scene_builder(self):
         config = load_simulation_config(self.test_yaml)
         builder = SceneBuilder()
+        from core.geometry.voxel_volumes import WoodcockVoxelVolume
         root_node = builder.build_scene(config.scene)
 
         self.assertIsInstance(root_node, Volume)
@@ -111,9 +125,15 @@ class TestConfig(unittest.TestCase):
 
         self.assertEqual(len(root_node.childs), 1)
         child = root_node.childs[0]
-        self.assertIsInstance(child, Volume)
-        self.assertEqual(child.name, "Detector")
-        self.assertEqual(child.material.name, "Pb")
+        self.assertIsInstance(child, WoodcockVoxelVolume)
+        self.assertEqual(child.name, "Phantom")
+        self.assertEqual(child.material_distribution.shape, (1, 2, 2))
+
+        # Ensure mapping correctly applied
+        ids = child.material_distribution.ID
+        # 0.0 -> Air (ID 0 inside dummy_dist map, but material DB ID may vary)
+        mat_db = builder._get_material("Air, Dry (near sea level)")
+        self.assertEqual(ids[0, 0, 0], mat_db.ID)
 
 if __name__ == '__main__':
     unittest.main()

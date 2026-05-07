@@ -38,10 +38,30 @@ class VolumeConfig(CompositeNodeConfig):
     geometry: GeometryConfig
     material: str
 
+class BaseDistributionConfig(BaseModel):
+    path: str
+    mapping: dict[float, str]
+
+class NumpyDistributionConfig(BaseDistributionConfig):
+    format: Literal['numpy'] = 'numpy'
+
+class RawDistributionConfig(BaseDistributionConfig):
+    format: Literal['raw'] = 'raw'
+    shape: Tuple[int, int, int]
+    order: Literal['C', 'F'] = 'C'
+
+AnyDistributionConfig = Annotated[
+    Union[
+        NumpyDistributionConfig,
+        RawDistributionConfig
+    ],
+    Field(discriminator='format')
+]
+
 class WoodcockVoxelVolumeConfig(CompositeNodeConfig):
     type: Literal['WoodcockVoxelVolume'] = 'WoodcockVoxelVolume'
     voxel_size: float
-    material_distribution_path: str
+    material_distribution: AnyDistributionConfig
 
 class GammaCameraConfig(CompositeNodeConfig):
     type: Literal['GammaCamera'] = 'GammaCamera'

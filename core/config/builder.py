@@ -66,11 +66,27 @@ class SceneBuilder:
         return Volume(geometry=geometry, material=material, name=config.name)
 
     def _build_woodcock_voxel_volume(self, config: WoodcockVoxelVolumeConfig) -> WoodcockVoxelVolume:
-        material_distribution = np.load(config.material_distribution_path)
-        # Note: Depending on how MaterialArray is initialized from numpy array, this might need adaptation
+        from core.config.models import NumpyDistributionConfig, RawDistributionConfig
+
+        dist_config = config.material_distribution
+        if isinstance(dist_config, NumpyDistributionConfig):
+            raw_distribution = np.load(dist_config.path)
+        elif isinstance(dist_config, RawDistributionConfig):
+            raw_distribution = np.loadtxt(dist_config.path).reshape(dist_config.shape, order=dist_config.order)
+        else:
+            raise ValueError(f"Unknown distribution format: {type(dist_config)}")
+
         from core.materials.materials import MaterialArray
-        mat_arr = MaterialArray(material_distribution.shape)
-        mat_arr.ID = material_distribution # Simplified assuming distribution is IDs
+        mat_arr = MaterialArray(raw_distribution.shape)
+
+        for map_val, mat_name in dist_config.mapping.items():
+            mask = np.isclose(raw_distribution, map_val)
+            mat = self._get_material(mat_name)
+            # The indices for nonzero must be a tuple of arrays as per numpy standard for ND indexing.
+            # NonuniqueArray.magic_indexing accepts this.
+            indices = np.nonzero(mask)
+            mat_arr[indices] = mat
+
         return WoodcockVoxelVolume(voxel_size=config.voxel_size, material_distribution=mat_arr, name=config.name)
 
     def _build_gamma_camera(self, config: GammaCameraConfig) -> GammaCamera:
