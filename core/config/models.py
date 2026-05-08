@@ -98,8 +98,16 @@ class SourceConfig(CompositeNodeConfig):
     energy: Union[EnergyConfig, List[List[float]]] = 0.1405 # 140.5 keV in MeV
     half_life: TimeConfig = 2.16e13 # 6 hours in ns
 
+class BaseSpatialNodeConfig(SpatialNodeConfig):
+    type: Literal['SpatialNode'] = 'SpatialNode'
+
+class BaseCompositeNodeConfig(CompositeNodeConfig):
+    type: Literal['CompositeNode'] = 'CompositeNode'
+
 AnyNodeConfig = Annotated[
     Union[
+        BaseSpatialNodeConfig,
+        BaseCompositeNodeConfig,
         VolumeConfig,
         WoodcockVoxelVolumeConfig,
         GammaCameraConfig,
@@ -118,19 +126,36 @@ ParametricParallelCollimatorConfig.model_rebuild()
 ParametricParallelSquareCollimatorConfig.model_rebuild()
 SourceConfig.model_rebuild()
 
-class DataHandlerConfig(BaseModel):
-    type: Literal['DirectStreamHandler', 'SensitiveVolumeHandler', 'HistoryAssemblerHandler']
+class DirectStreamHandlerConfig(BaseModel):
+    type: Literal['DirectStreamHandler'] = 'DirectStreamHandler'
+
+class SensitiveVolumeHandlerConfig(BaseModel):
+    type: Literal['SensitiveVolumeHandler'] = 'SensitiveVolumeHandler'
     sensitive_volumes: List[str] = Field(default_factory=list)
+
+class HistoryAssemblerHandlerConfig(BaseModel):
+    type: Literal['HistoryAssemblerHandler'] = 'HistoryAssemblerHandler'
+    sensitive_volumes: List[str] = Field(default_factory=list)
+
+AnyDataHandlerConfig = Annotated[
+    Union[
+        DirectStreamHandlerConfig,
+        SensitiveVolumeHandlerConfig,
+        HistoryAssemblerHandlerConfig
+    ],
+    Field(discriminator='type')
+]
 
 class DataManagerConfig(BaseModel):
     filename: str
-    handlers: List[DataHandlerConfig] = Field(default_factory=list)
+    handlers: List[AnyDataHandlerConfig] = Field(default_factory=list)
     buffer_capacity: int = 100000
 
 class SimulationManagerConfig(BaseModel):
     stop_time: TimeConfig = 1.0
     particles_number: int = 1000
     min_energy: EnergyConfig = 1000.0
+    start_time: TimeConfig = 0.0
 
 class BaseProtocolConfig(BaseModel):
     pass
@@ -166,6 +191,6 @@ AnyProtocolConfig = Annotated[
 
 class SimulationConfig(BaseModel):
     protocol: Optional[AnyProtocolConfig] = None
-    settings: SimulationManagerConfig
+    simulation_manager: SimulationManagerConfig
     data_manager: DataManagerConfig
     scene: AnyNodeConfig

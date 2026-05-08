@@ -86,7 +86,7 @@ def dump_simulation_config(config: SimulationConfig, filepath: str | Path):
     if anchored_materials_list:
         final_dict = {
             'Materials': anchored_materials_list,
-            'settings': raw_dict['settings'],
+            'simulation_manager': raw_dict['simulation_manager'],
             'data_manager': raw_dict['data_manager'],
             'scene': raw_dict['scene']
         }

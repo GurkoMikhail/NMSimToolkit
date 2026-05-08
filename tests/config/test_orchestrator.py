@@ -14,7 +14,7 @@ class TestOrchestrator(unittest.TestCase):
                 "end_angle": "180 deg",
                 "time_per_view": "10 s"
             },
-            "settings": {
+            "simulation_manager": {
                 "stop_time": "${current_time}",
                 "particles_number": 5000,
                 "min_energy": "0.5 MeV"
@@ -112,7 +112,7 @@ class TestOrchestrator(unittest.TestCase):
         context, final_config = results[1]
         self.assertTrue(np.isclose(context["current_angle"], np.pi / 2))
         self.assertTrue(np.isclose(final_config.scene.transformations[0].alpha, np.pi / 2))
-        self.assertTrue(np.isclose(final_config.settings.stop_time, 1e10))
+        self.assertTrue(np.isclose(final_config.simulation_manager.stop_time, 1e10))
 
 if __name__ == '__main__':
     unittest.main()

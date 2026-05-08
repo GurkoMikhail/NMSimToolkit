@@ -19,6 +19,8 @@ from core.scene.nodes import SpatialNode
 class SceneBuilder:
     def __init__(self):
         self.factory_map: Dict[str, Callable[[AnyNodeConfig], SpatialNode]] = {
+            'SpatialNode': self._build_spatial_node,
+            'CompositeNode': self._build_composite_node,
             'Volume': self._build_volume,
             'GammaCamera': self._build_gamma_camera,
             'WoodcockVoxelVolume': self._build_woodcock_voxel_volume,
@@ -27,6 +29,15 @@ class SceneBuilder:
             'Source': self._build_source
         }
         self.node_cache: Dict[str, SpatialNode] = {}
+
+    def _build_spatial_node(self, config) -> SpatialNode:
+        node = SpatialNode()
+        return node
+
+    def _build_composite_node(self, config) -> SpatialNode:
+        from core.scene.nodes import CompositeNode
+        node = CompositeNode()
+        return node
 
     def build_scene(self, config: AnyNodeConfig) -> SpatialNode:
         root_node = self._build_node(config)

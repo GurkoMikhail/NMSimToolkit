@@ -14,7 +14,7 @@ class TestConfig(unittest.TestCase):
     def setUp(self):
         self.test_yaml = "test_config.yaml"
         self.config_dict = {
-            "settings": {
+            "simulation_manager": {
                 "stop_time": "2.0 s",
                 "particles_number": 5000,
                 "min_energy": "0.5 MeV"
@@ -104,8 +104,8 @@ class TestConfig(unittest.TestCase):
 
     def test_pydantic_validation(self):
         config = SimulationConfig.model_validate(self.config_dict)
-        self.assertTrue(np.isclose(config.settings.stop_time, 2e9)) # 2.0 s in ns
-        self.assertEqual(config.settings.min_energy, 0.5) # 0.5 MeV in MeV
+        self.assertTrue(np.isclose(config.simulation_manager.stop_time, 2e9)) # 2.0 s in ns
+        self.assertEqual(config.simulation_manager.min_energy, 0.5) # 0.5 MeV in MeV
         self.assertEqual(config.scene.type, "Volume")
         self.assertEqual(config.scene.geometry.x, 100.0) # 10 cm in mm
         self.assertEqual(len(config.scene.transformations), 2)
