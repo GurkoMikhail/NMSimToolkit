@@ -132,7 +132,31 @@ class SimulationManagerConfig(BaseModel):
     particles_number: int = 1000
     min_energy: EnergyConfig = 1000.0
 
+class BaseProtocolConfig(BaseModel):
+    pass
+
+class CustomSweepProtocolConfig(BaseProtocolConfig):
+    type: Literal['CustomSweep'] = 'CustomSweep'
+    variables: dict[str, List[float]]
+
+class StepAndShootProtocolConfig(BaseProtocolConfig):
+    type: Literal['StepAndShoot'] = 'StepAndShoot'
+    views: int
+    gamma_cameras: int = 1
+    start_angle: AngleConfig
+    end_angle: AngleConfig
+    time_per_view: TimeConfig
+
+AnyProtocolConfig = Annotated[
+    Union[
+        CustomSweepProtocolConfig,
+        StepAndShootProtocolConfig
+    ],
+    Field(discriminator='type')
+]
+
 class SimulationConfig(BaseModel):
+    protocol: Optional[AnyProtocolConfig] = None
     settings: SimulationManagerConfig
     data_manager: DataManagerConfig
     scene: AnyNodeConfig
