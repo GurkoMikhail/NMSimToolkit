@@ -1,11 +1,12 @@
 from typing import List, Literal, Optional, Union, Annotated, Tuple
 from pydantic import BaseModel, Field
+from core.config.units import LengthConfig, EnergyConfig, TimeConfig, ActivityConfig
 
 class TranslateConfig(BaseModel):
     type: Literal['translate'] = 'translate'
-    x: float = 0.0
-    y: float = 0.0
-    z: float = 0.0
+    x: LengthConfig = 0.0
+    y: LengthConfig = 0.0
+    z: LengthConfig = 0.0
     in_local: bool = False
 
 class RotateConfig(BaseModel):
@@ -13,16 +14,16 @@ class RotateConfig(BaseModel):
     alpha: float = 0.0
     beta: float = 0.0
     gamma: float = 0.0
-    rotation_center: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation_center: Tuple[LengthConfig, LengthConfig, LengthConfig] = (0.0, 0.0, 0.0)
     in_local: bool = False
 
 TransformConfig = Annotated[Union[TranslateConfig, RotateConfig], Field(discriminator='type')]
 
 class BoxConfig(BaseModel):
     type: Literal['Box'] = 'Box'
-    x: float
-    y: float
-    z: float
+    x: LengthConfig
+    y: LengthConfig
+    z: LengthConfig
 
 GeometryConfig = Annotated[Union[BoxConfig], Field(discriminator='type')]
 
@@ -61,39 +62,41 @@ AnyDistributionConfig = Annotated[
 
 class WoodcockVoxelVolumeConfig(CompositeNodeConfig):
     type: Literal['WoodcockVoxelVolume'] = 'WoodcockVoxelVolume'
-    voxel_size: float
+    voxel_size: LengthConfig
     distribution: AnyDistributionConfig
 
 class GammaCameraConfig(CompositeNodeConfig):
     type: Literal['GammaCamera'] = 'GammaCamera'
     collimator: 'AnyNodeConfig'
     detector: 'AnyNodeConfig'
-    gap: float = 0.1
-    shielding_thickness: float = 2.0
-    glass_backend_thickness: float = 5.0
+    gap: LengthConfig = 0.1
+    shielding_thickness: LengthConfig = 2.0
+    glass_backend_thickness: LengthConfig = 5.0
 
 class ParametricParallelCollimatorConfig(CompositeNodeConfig):
     type: Literal['ParametricParallelCollimator'] = 'ParametricParallelCollimator'
-    size: Tuple[float, float, float]
-    hole_diameter: float
-    septa_thickness: float
+    size: Tuple[LengthConfig, LengthConfig, LengthConfig]
+    hole_diameter: LengthConfig
+    septa_thickness: LengthConfig
     material: str
 
 class ParametricParallelSquareCollimatorConfig(CompositeNodeConfig):
     type: Literal['ParametricParallelSquareCollimator'] = 'ParametricParallelSquareCollimator'
-    size: Tuple[float, float, float]
-    hole_size: float
-    septa_thickness: float
+    size: Tuple[LengthConfig, LengthConfig, LengthConfig]
+    hole_size: LengthConfig
+    septa_thickness: LengthConfig
     material: str
 
 class SourceConfig(CompositeNodeConfig):
     type: Literal['Source'] = 'Source'
-    activity: Optional[float] = None
+    activity: Optional[ActivityConfig] = None
     distribution: AnyDistributionConfig
-    voxel_size: float = 0.4
+    voxel_size: LengthConfig = 4.0 # mm
     radiation_type: str = 'Gamma'
-    energy: Union[float, List[List[float]]] = 140.5e3
-    half_life: float = 21600.0
+    # TODO: Pydantic union discrimination with deeply nested pint validators might be complex
+    # but for simple types we can redefine it. Let's see if Union[EnergyConfig, List[List[float]]] works.
+    energy: Union[EnergyConfig, List[List[float]]] = 0.1405 # 140.5 keV in MeV
+    half_life: TimeConfig = 2.16e13 # 6 hours in ns
 
 AnyNodeConfig = Annotated[
     Union[
@@ -125,9 +128,9 @@ class DataManagerConfig(BaseModel):
     buffer_capacity: int = 100000
 
 class SimulationManagerConfig(BaseModel):
-    stop_time: float = 1.0
+    stop_time: TimeConfig = 1.0
     particles_number: int = 1000
-    min_energy: float = 1000.0
+    min_energy: EnergyConfig = 1000.0
 
 class SimulationConfig(BaseModel):
     settings: SimulationManagerConfig

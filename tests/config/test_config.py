@@ -15,9 +15,9 @@ class TestConfig(unittest.TestCase):
         self.test_yaml = "test_config.yaml"
         self.config_dict = {
             "settings": {
-                "stop_time": 2.0,
+                "stop_time": "2.0 s",
                 "particles_number": 5000,
-                "min_energy": 500.0
+                "min_energy": "0.5 MeV"
             },
             "data_manager": {
                 "filename": "output.h5",
@@ -29,15 +29,15 @@ class TestConfig(unittest.TestCase):
                 "name": "World",
                 "geometry": {
                     "type": "Box",
-                    "x": 10.0,
-                    "y": 10.0,
-                    "z": 10.0
+                    "x": "10.0 cm",
+                    "y": "10.0 cm",
+                    "z": "10.0 cm"
                 },
                 "material": "Air, Dry (near sea level)",
                 "transformations": [
                     {
                         "type": "translate",
-                        "x": 1.0,
+                        "x": "10.0 mm",
                         "y": 2.0,
                         "z": 3.0
                     }
@@ -46,7 +46,7 @@ class TestConfig(unittest.TestCase):
                     {
                         "type": "WoodcockVoxelVolume",
                         "name": "Phantom",
-                        "voxel_size": 0.5,
+                        "voxel_size": "5.0 mm",
                         "distribution": {
                             "format": "numpy",
                             "path": "dummy_dist.npy",
@@ -60,7 +60,9 @@ class TestConfig(unittest.TestCase):
                     {
                         "type": "Source",
                         "name": "Source",
-                        "voxel_size": 0.1,
+                        "voxel_size": "10.0 mm",
+                        "energy": "140.5 keV",
+                        "activity": "300.0 MBq",
                         "distribution": {
                             "format": "raw",
                             "path": "source.dat",
@@ -96,21 +98,26 @@ class TestConfig(unittest.TestCase):
 
     def test_pydantic_validation(self):
         config = SimulationConfig.model_validate(self.config_dict)
-        self.assertEqual(config.settings.stop_time, 2.0)
+        self.assertTrue(np.isclose(config.settings.stop_time, 2e9)) # 2.0 s in ns
+        self.assertEqual(config.settings.min_energy, 0.5) # 0.5 MeV in MeV
         self.assertEqual(config.scene.type, "Volume")
+        self.assertEqual(config.scene.geometry.x, 100.0) # 10 cm in mm
         self.assertEqual(len(config.scene.transformations), 1)
         self.assertEqual(config.scene.transformations[0].type, "translate")
-        self.assertEqual(config.scene.transformations[0].x, 1.0)
+        self.assertEqual(config.scene.transformations[0].x, 10.0) # 10 mm in mm
         self.assertEqual(len(config.scene.children), 2)
 
         child = config.scene.children[0]
         self.assertEqual(child.type, "WoodcockVoxelVolume")
+        self.assertEqual(child.voxel_size, 5.0) # 5 mm in mm
         self.assertEqual(child.distribution.format, "numpy")
         self.assertEqual(child.distribution.mapping[1.0], "Water, Liquid")
         self.assertEqual(child.distribution.fill_value, "Air, Dry (near sea level)")
 
         child2 = config.scene.children[1]
         self.assertEqual(child2.type, "Source")
+        self.assertEqual(child2.energy, 0.1405) # 140.5 keV in MeV
+        self.assertTrue(np.isclose(child2.activity, 300e6)) # 300 MBq in Bq
         self.assertEqual(child2.distribution.format, "raw")
         self.assertEqual(child2.distribution.mapping[1.0], 100.0)
         self.assertEqual(child2.distribution.fill_value, 0.0)
@@ -148,7 +155,7 @@ class TestConfig(unittest.TestCase):
 
         self.assertIsInstance(root_node, Volume)
         self.assertEqual(root_node.name, "World")
-        self.assertEqual(root_node.geometry.size[0], 10.0)
+        self.assertEqual(root_node.geometry.size[0], 100.0)
         self.assertEqual(root_node.material.name, "Air, Dry (near sea level)")
 
         self.assertEqual(len(root_node.childs), 2)
@@ -169,7 +176,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(child2.distribution[0, 0, 0], 0.0)
         # 100 is converted to probability since the source object normalizes the distribution upon init
         self.assertTrue(np.isclose(child2.distribution[0, 0, 1], 100.0 / 300.0))
-        self.assertEqual(child2.initial_activity, 300.0) # The total activity defaults to sum of distribution before normalization
+        self.assertTrue(np.isclose(child2.initial_activity, 300e6)) # The total activity defaults to sum of distribution before normalization
 
 if __name__ == '__main__':
     unittest.main()
