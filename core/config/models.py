@@ -1,6 +1,6 @@
 from typing import List, Literal, Optional, Union, Annotated, Tuple
 from pydantic import BaseModel, Field
-from core.config.units import LengthConfig, EnergyConfig, TimeConfig, ActivityConfig
+from core.config.units import LengthConfig, EnergyConfig, TimeConfig, ActivityConfig, AngleConfig
 
 class TranslateConfig(BaseModel):
     type: Literal['translate'] = 'translate'
@@ -11,9 +11,9 @@ class TranslateConfig(BaseModel):
 
 class RotateConfig(BaseModel):
     type: Literal['rotate'] = 'rotate'
-    alpha: float = 0.0
-    beta: float = 0.0
-    gamma: float = 0.0
+    alpha: AngleConfig = 0.0
+    beta: AngleConfig = 0.0
+    gamma: AngleConfig = 0.0
     rotation_center: Tuple[LengthConfig, LengthConfig, LengthConfig] = (0.0, 0.0, 0.0)
     in_local: bool = False
 

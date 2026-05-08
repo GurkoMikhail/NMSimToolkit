@@ -40,6 +40,12 @@ class TestConfig(unittest.TestCase):
                         "x": "10.0 mm",
                         "y": 2.0,
                         "z": 3.0
+                    },
+                    {
+                        "type": "rotate",
+                        "alpha": "90 deg",
+                        "beta": "180.0 deg",
+                        "gamma": 0.0
                     }
                 ],
                 "children": [
@@ -102,9 +108,12 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.settings.min_energy, 0.5) # 0.5 MeV in MeV
         self.assertEqual(config.scene.type, "Volume")
         self.assertEqual(config.scene.geometry.x, 100.0) # 10 cm in mm
-        self.assertEqual(len(config.scene.transformations), 1)
+        self.assertEqual(len(config.scene.transformations), 2)
         self.assertEqual(config.scene.transformations[0].type, "translate")
         self.assertEqual(config.scene.transformations[0].x, 10.0) # 10 mm in mm
+        self.assertEqual(config.scene.transformations[1].type, "rotate")
+        self.assertTrue(np.isclose(config.scene.transformations[1].alpha, np.pi/2)) # 90 deg in rad
+        self.assertTrue(np.isclose(config.scene.transformations[1].beta, np.pi)) # 180 deg in rad
         self.assertEqual(len(config.scene.children), 2)
 
         child = config.scene.children[0]
