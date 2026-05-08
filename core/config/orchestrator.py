@@ -28,48 +28,43 @@ class Orchestrator:
         protocol = self.parsed_config.protocol
 
         if protocol is None:
-            return CustomSweepProtocolConfig(variables={})
+            return CustomSweepProtocolConfig(grid_variables={}, zipped_variables={})
 
         if isinstance(protocol, CustomSweepProtocolConfig):
             return protocol
 
         if isinstance(protocol, StepAndShootProtocolConfig):
             angles = np.linspace(protocol.start_angle, protocol.end_angle, protocol.views).tolist()
-            # If multiple cameras, we might want to interleave or just rotate them via templating.
-            # But the primary sweep is over views.
-            variables = {
+            # In Step and Shoot, time steps and rotation steps are tied synchronously.
+            zipped_vars = {
                 "current_angle": angles,
                 "current_time": [float(protocol.time_per_view)] * protocol.views
             }
-            return CustomSweepProtocolConfig(variables=variables)
+            return CustomSweepProtocolConfig(grid_variables={}, zipped_variables=zipped_vars)
 
         raise ValueError(f"Unknown protocol type: {type(protocol)}")
 
-    def build_task_matrix(self, sweep_config: CustomSweepProtocolConfig) -> List[Dict[str, float]]:
+    def _generate_job_list(self, sweep_config: CustomSweepProtocolConfig) -> List[Dict[str, float]]:
         """
-        Returns a flat list of dictionaries, where each dict represents
-        a single permutation of variables for a simulation task.
-        In StepAndShoot or synchronous sweeps, variables iterate together (zip).
-        If true combinatorial sweeps are needed, we can expand this later.
-        For now, we assume all lists in variables have the same length and we zip them.
+        Returns a flat list of dictionaries representing every simulation task.
+        Performs a Cartesian product over `grid_variables` and concurrent iteration over `zipped_variables`.
         """
-        if not sweep_config.variables:
-            return [{}]
+        # 1. Grid Sweep Space
+        if sweep_config.grid_variables:
+            grid_keys = list(sweep_config.grid_variables.keys())
+            grid_combos = [dict(zip(grid_keys, combo)) for combo in itertools.product(*sweep_config.grid_variables.values())]
+        else:
+            grid_combos = [{}]
 
-        keys = list(sweep_config.variables.keys())
-        # Make sure all lists are the same length
-        lengths = [len(v) for v in sweep_config.variables.values()]
-        if not all(l == lengths[0] for l in lengths):
-            raise ValueError("All variables in the protocol sweep must have the same number of steps.")
+        # 2. Zipped Sweep Space
+        if sweep_config.zipped_variables:
+            zip_keys = list(sweep_config.zipped_variables.keys())
+            zip_combos = [dict(zip(zip_keys, combo)) for combo in zip(*sweep_config.zipped_variables.values())]
+        else:
+            zip_combos = [{}]
 
-        values_lists = [sweep_config.variables[k] for k in keys]
-
-        tasks = []
-        for combo in zip(*values_lists):
-            task_context = dict(zip(keys, combo))
-            tasks.append(task_context)
-
-        return tasks
+        # 3. Final Merge (The Cross)
+        return [{**g, **z} for g in grid_combos for z in zip_combos]
 
     def inject_variables(self, node: Any, context: Dict[str, float]) -> Any:
         """
@@ -100,7 +95,7 @@ class Orchestrator:
         In a real scenario, this would use multiprocessing.
         """
         sweep_config = self.compile_protocol()
-        tasks = self.build_task_matrix(sweep_config)
+        tasks = self._generate_job_list(sweep_config)
 
         results = []
         for i, context in enumerate(tasks):

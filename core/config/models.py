@@ -1,5 +1,5 @@
 from typing import List, Literal, Optional, Union, Annotated, Tuple
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from core.config.units import LengthConfig, EnergyConfig, TimeConfig, ActivityConfig, AngleConfig
 
 class TranslateConfig(BaseModel):
@@ -137,7 +137,16 @@ class BaseProtocolConfig(BaseModel):
 
 class CustomSweepProtocolConfig(BaseProtocolConfig):
     type: Literal['CustomSweep'] = 'CustomSweep'
-    variables: dict[str, List[float]]
+    grid_variables: dict[str, List[float]] = Field(default_factory=dict)
+    zipped_variables: dict[str, List[float]] = Field(default_factory=dict)
+
+    @model_validator(mode='after')
+    def check_zipped_lengths(self) -> 'CustomSweepProtocolConfig':
+        if self.zipped_variables:
+            lengths = {len(v) for v in self.zipped_variables.values()}
+            if len(lengths) > 1:
+                raise ValueError("All arrays in 'zipped_variables' must have the exact same length.")
+        return self
 
 class StepAndShootProtocolConfig(BaseProtocolConfig):
     type: Literal['StepAndShoot'] = 'StepAndShoot'
