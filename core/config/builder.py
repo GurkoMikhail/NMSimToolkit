@@ -90,23 +90,29 @@ class SceneBuilder:
 
         from core.materials.materials import MaterialArray
 
+        mat_arr = MaterialArray(raw_distribution.shape)
+
         if dist_config.mapping is None and dist_config.fill_value is None:
-            mat_arr = MaterialArray(raw_distribution.shape)
-            mat_arr.ID = raw_distribution
+            mat_arr[:] = None # Fill with empty material references by default if nothing provided
+            mat_arr.ID[:] = raw_distribution
         else:
-            mat_arr = MaterialArray(raw_distribution.shape)
             if dist_config.fill_value is not None:
                 mat = self._get_material(str(dist_config.fill_value))
                 mat_arr[:] = mat
             else:
+                mat_arr[:] = None
                 mat_arr.ID[:] = 0
 
             if dist_config.mapping is not None:
+                if not dist_config.mapping:
+                    raise ValueError("WoodcockVoxelVolumeConfig mapping cannot be empty if specified.")
                 for map_val, mat_name in dist_config.mapping.items():
                     mask = np.isclose(raw_distribution, map_val)
                     mat = self._get_material(str(mat_name))
                     indices = np.nonzero(mask)
                     mat_arr[indices] = mat
+            else:
+                raise ValueError("WoodcockVoxelVolumeConfig requires a mapping to be specified when using fill_value.")
 
         return WoodcockVoxelVolume(voxel_size=config.voxel_size, material_distribution=mat_arr, name=config.name)
 
@@ -146,9 +152,9 @@ class SceneBuilder:
         dist_config = config.distribution
         raw_distribution = self._load_raw_distribution(dist_config)
 
-        if dist_config.mapping is None and dist_config.fill_value is None:
-            distribution = raw_distribution
-        else:
+        distribution = raw_distribution
+
+        if dist_config.fill_value is not None or dist_config.mapping is not None:
             distribution = np.zeros_like(raw_distribution, dtype=float)
             if dist_config.fill_value is not None:
                 distribution.fill(float(dist_config.fill_value))
