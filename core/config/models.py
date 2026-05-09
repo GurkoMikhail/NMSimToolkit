@@ -41,7 +41,7 @@ class VolumeConfig(CompositeNodeConfig):
 
 class BaseDistributionConfig(BaseModel):
     path: str
-    mapping: Optional[dict[float, Union[float, str]]] = None
+    mapping: dict[float, Union[float, str]] = {}
     fill_value: Optional[Union[float, str]] = None
 
 class NumpyDistributionConfig(BaseDistributionConfig):
@@ -152,10 +152,10 @@ class DataManagerConfig(BaseModel):
     buffer_capacity: int = 100000
 
 class SimulationManagerConfig(BaseModel):
+    start_time: TimeConfig = 0.0
     stop_time: TimeConfig = 1.0
     particles_number: int = 1000
     min_energy: EnergyConfig = 1000.0
-    start_time: TimeConfig = 0.0
 
 class BaseProtocolConfig(BaseModel):
     pass

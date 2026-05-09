@@ -92,27 +92,18 @@ class SceneBuilder:
 
         mat_arr = MaterialArray(raw_distribution.shape)
 
-        if dist_config.mapping is None and dist_config.fill_value is None:
-            mat_arr[:] = None # Fill with empty material references by default if nothing provided
-            mat_arr.ID[:] = raw_distribution
-        else:
-            if dist_config.fill_value is not None:
-                mat = self._get_material(str(dist_config.fill_value))
-                mat_arr[:] = mat
-            else:
-                mat_arr[:] = None
-                mat_arr.ID[:] = 0
+        if dist_config.fill_value is not None:
+            mat = self._get_material(str(dist_config.fill_value))
+            mat_arr[:] = mat
 
-            if dist_config.mapping is not None:
-                if not dist_config.mapping:
-                    raise ValueError("WoodcockVoxelVolumeConfig mapping cannot be empty if specified.")
-                for map_val, mat_name in dist_config.mapping.items():
-                    mask = np.isclose(raw_distribution, map_val)
-                    mat = self._get_material(str(mat_name))
-                    indices = np.nonzero(mask)
-                    mat_arr[indices] = mat
-            else:
-                raise ValueError("WoodcockVoxelVolumeConfig requires a mapping to be specified when using fill_value.")
+        if not dist_config.mapping:
+            for map_val, mat_name in dist_config.mapping.items():
+                mask = np.isclose(raw_distribution, map_val)
+                mat = self._get_material(str(mat_name))
+                indices = np.nonzero(mask)
+                mat_arr[indices] = mat
+        else:
+            raise ValueError("WoodcockVoxelVolumeConfig mapping cannot be empty.")
 
         return WoodcockVoxelVolume(voxel_size=config.voxel_size, material_distribution=mat_arr, name=config.name)
 
@@ -154,15 +145,12 @@ class SceneBuilder:
 
         distribution = raw_distribution
 
-        if dist_config.fill_value is not None or dist_config.mapping is not None:
-            distribution = np.zeros_like(raw_distribution, dtype=float)
-            if dist_config.fill_value is not None:
-                distribution.fill(float(dist_config.fill_value))
+        if dist_config.fill_value is not None:
+            distribution.fill(float(dist_config.fill_value))
 
-            if dist_config.mapping is not None:
-                for map_val, act_val in dist_config.mapping.items():
-                    mask = np.isclose(raw_distribution, map_val)
-                    distribution[mask] = float(act_val)
+        for map_val, act_val in dist_config.mapping.items():
+            mask = np.isclose(raw_distribution, map_val)
+            distribution[mask] = float(act_val)
 
         return Source(
             distribution=distribution,
