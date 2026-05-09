@@ -96,14 +96,16 @@ class SceneBuilder:
             mat = self._get_material(str(dist_config.fill_value))
             mat_arr[:] = mat
 
-        if not dist_config.mapping:
+        if dist_config.mapping is not None:
+            if not dist_config.mapping:
+                raise ValueError("WoodcockVoxelVolumeConfig mapping cannot be empty if specified.")
             for map_val, mat_name in dist_config.mapping.items():
                 mask = np.isclose(raw_distribution, map_val)
                 mat = self._get_material(str(mat_name))
                 indices = np.nonzero(mask)
                 mat_arr[indices] = mat
         else:
-            raise ValueError("WoodcockVoxelVolumeConfig mapping cannot be empty.")
+            raise ValueError("WoodcockVoxelVolumeConfig mapping requires an explicit mapping, raw IDs are not currently supported by MaterialArray.")
 
         return WoodcockVoxelVolume(voxel_size=config.voxel_size, material_distribution=mat_arr, name=config.name)
 
@@ -145,12 +147,15 @@ class SceneBuilder:
 
         distribution = raw_distribution
 
-        if dist_config.fill_value is not None:
-            distribution.fill(float(dist_config.fill_value))
+        if dist_config.fill_value is not None or dist_config.mapping is not None:
+            distribution = np.zeros_like(raw_distribution, dtype=float)
+            if dist_config.fill_value is not None:
+                distribution.fill(float(dist_config.fill_value))
 
-        for map_val, act_val in dist_config.mapping.items():
-            mask = np.isclose(raw_distribution, map_val)
-            distribution[mask] = float(act_val)
+            if dist_config.mapping is not None:
+                for map_val, act_val in dist_config.mapping.items():
+                    mask = np.isclose(raw_distribution, map_val)
+                    distribution[mask] = float(act_val)
 
         return Source(
             distribution=distribution,

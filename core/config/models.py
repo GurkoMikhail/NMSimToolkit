@@ -41,7 +41,7 @@ class VolumeConfig(CompositeNodeConfig):
 
 class BaseDistributionConfig(BaseModel):
     path: str
-    mapping: dict[float, Union[float, str]] = {}
+    mapping: Optional[dict[float, Union[float, str]]] = None
     fill_value: Optional[Union[float, str]] = None
 
 class NumpyDistributionConfig(BaseDistributionConfig):
@@ -136,6 +136,7 @@ class SensitiveVolumeHandlerConfig(BaseModel):
 class HistoryAssemblerHandlerConfig(BaseModel):
     type: Literal['HistoryAssemblerHandler'] = 'HistoryAssemblerHandler'
     sensitive_volumes: List[str] = Field(default_factory=list)
+    save_initial_states: bool = True
 
 AnyDataHandlerConfig = Annotated[
     Union[
