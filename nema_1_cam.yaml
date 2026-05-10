@@ -49,7 +49,7 @@ scene:
         - type: rotate
           gamma: 90 deg # pi/2
         - type: translate
-          y: 273.55 mm # 268.8 + 9.5/2
+          y: 329.05 mm # 268.8 + 60.25 (half head thickness)
         - type: rotate
           alpha: ${current_angle} deg
       collimator:
