@@ -126,7 +126,7 @@ class SceneBuilder:
         return ParametricParallelCollimator(
             size=config.size,
             hole_diameter=config.hole_diameter,
-            septa_thickness=config.septa_thickness,
+            septa=config.septa_thickness,
             material=material,
             name=config.name
         )
@@ -136,7 +136,7 @@ class SceneBuilder:
         return ParametricParallelSquareCollimator(
             size=config.size,
             hole_size=config.hole_size,
-            septa_thickness=config.septa_thickness,
+            septa=config.septa_thickness,
             material=material,
             name=config.name
         )
@@ -145,17 +145,15 @@ class SceneBuilder:
         dist_config = config.distribution
         raw_distribution = self._load_raw_distribution(dist_config)
 
-        distribution = raw_distribution
+        distribution = np.asarray(raw_distribution, dtype=float)
 
-        if dist_config.fill_value is not None or dist_config.mapping is not None:
-            distribution = np.zeros_like(raw_distribution, dtype=float)
-            if dist_config.fill_value is not None:
-                distribution.fill(float(dist_config.fill_value))
+        if dist_config.fill_value is not None:
+            distribution.fill(float(dist_config.fill_value))
 
-            if dist_config.mapping is not None:
-                for map_val, act_val in dist_config.mapping.items():
-                    mask = np.isclose(raw_distribution, map_val)
-                    distribution[mask] = float(act_val)
+        if dist_config.mapping is not None:
+            for map_val, act_val in dist_config.mapping.items():
+                mask = np.isclose(raw_distribution, map_val)
+                distribution[mask] = float(act_val)
 
         return Source(
             distribution=distribution,

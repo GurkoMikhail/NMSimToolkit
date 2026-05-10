@@ -1,0 +1,82 @@
+pool_size: 24
+protocol:
+  type: CustomSweep
+  grid_variables:
+    current_angle: [0.0, 90.0, 180.0, 270.0] # 4 views
+  zipped_variables:
+    start_time: [0.0, 0.1, 0.2, 0.3, 0.4]
+    stop_time: [0.1, 0.2, 0.3, 0.4, 0.5]
+scene:
+  type: Volume
+  name: Simulation_volume
+  geometry:
+    type: Box
+    x: 120.0 cm
+    y: 120.0 cm
+    z: 80.0 cm
+  material: 'Air, Dry (near sea level)'
+  children:
+    - type: WoodcockVoxelVolume
+      name: Phantom
+      voxel_size: 4.2 mm
+      distribution:
+        format: raw
+        path: phantoms/nema/anema_voxel_size_4.2_mm.dat
+        shape: [128, 128, 92]
+        order: 'F'
+        mapping:
+          0.04: 'Air, Dry (near sea level)'
+          0.15: 'Water, Liquid'
+      children:
+        - type: Source
+          name: Source
+          radiation_type: Gamma
+          energy: 159 keV
+          activity: 100 MBq
+          voxel_size: 4.2 mm
+          half_life: 13.2 hour
+          distribution:
+            format: raw
+            path: phantoms/nema/nema_voxel_size_4.2_mm.dat
+            shape: [128, 128, 92]
+            order: 'F'
+    - type: GammaCamera
+      name: Gamma_camera
+      gap: 0.1 mm
+      shielding_thickness: 2.0 cm
+      glass_backend_thickness: 7.6 cm
+      transformations:
+        - type: rotate
+          gamma: 90 deg # pi/2
+        - type: translate
+          y: 273.55 mm # 268.8 + 9.5/2
+        - type: rotate
+          alpha: ${current_angle} deg
+      collimator:
+        type: ParametricParallelCollimator
+        name: Collimator
+        size: [54.0 cm, 40.0 cm, 3.5 cm]
+        hole_diameter: 1.5 mm
+        septa_thickness: 0.2 mm
+        material: 'Pb'
+      detector:
+        type: Volume
+        name: Detector
+        geometry:
+          type: Box
+          x: 54.0 cm
+          y: 40.0 cm
+          z: 9.5 mm
+        material: 'Sodium Iodide'
+data_manager:
+  filename: "nema_4.2/${current_angle}_deg.hdf"
+  buffer_capacity: 100000
+  handlers:
+    - type: HistoryAssemblerHandler
+      sensitive_volumes:
+        - Detector
+      save_initial_states: true
+simulation_manager:
+  start_time: ${start_time} s
+  stop_time: ${stop_time} s
+  particles_number: 1000

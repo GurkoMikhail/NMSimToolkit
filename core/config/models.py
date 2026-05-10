@@ -191,6 +191,7 @@ AnyProtocolConfig = Annotated[
 ]
 
 class SimulationConfig(BaseModel):
+    pool_size: int = Field(default=1, ge=1)
     protocol: Optional[AnyProtocolConfig] = None
     simulation_manager: SimulationManagerConfig
     data_manager: DataManagerConfig
