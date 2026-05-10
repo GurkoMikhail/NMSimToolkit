@@ -97,15 +97,32 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             self.scene_root = None
 
         self.volume_mapping: Dict[int, Volume] = {}
+        self.target_volumes: List[int] = []
         self._build_volume_mapping()
-        self.target_volume_ids = list(self.volume_mapping.keys())
 
     def _build_volume_mapping(self) -> None:
         if self.scene_root is not None:
-            for i, (v, _, _) in enumerate(FlattenedScene(self.scene_root).flat_list):
+            flat_list = FlattenedScene(self.scene_root).flat_list
+            
+            sensitive_indices = set()
+            for i, (v, _, _) in enumerate(flat_list):
+                if v in self.sensitive_volumes:
+                    sensitive_indices.add(i)
+            
+            target_ids = set(sensitive_indices)
+            for i, (v, _, parent_idx) in enumerate(flat_list):
                 top_vol = v.top_volume
                 if top_vol in self.unique_top_volumes:
                     self.volume_mapping[i] = top_vol
+                
+                curr_idx = parent_idx
+                while curr_idx != -1:
+                    if curr_idx in sensitive_indices:
+                        target_ids.add(i)
+                        break
+                    curr_idx = flat_list[curr_idx][2]
+            
+            self.target_volumes = list(target_ids)
 
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')
@@ -114,7 +131,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
 
     def _process_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
         volume_ids = interactions['volume_id']
-        mask_sensitive = np.isin(volume_ids, self.target_volume_ids)
+        mask_sensitive = np.isin(volume_ids, self.target_volumes)
 
         if np.any(mask_sensitive):
             interactions_to_write = {k: v[mask_sensitive] for k, v in interactions.items()}
@@ -226,7 +243,7 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
                 self.initial_states_chunks.append({k: np.array(v, copy=False) for k, v in data.items()})
         elif chunk_type == 'interactions':
             vol_ids = data['volume_id']
-            scored_mask = np.isin(vol_ids, self.target_volume_ids)
+            scored_mask = np.isin(vol_ids, self.target_volumes)
             if np.any(scored_mask):
                 self.scored_particles.update(data['particle_ID'][scored_mask])
             self.interactions_chunks.append({k: np.array(v, copy=False) for k, v in data.items()})
