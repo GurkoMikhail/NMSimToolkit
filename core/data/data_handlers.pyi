@@ -43,13 +43,14 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
     def _get_volumes_to_write(self) -> List[Volume]: ...
     def _flush_dead_particles(self, dead_ids: np.ndarray) -> None: ...
 
+import socket
+
 class LiveTrajectoryHandler(BaseDataHandler):
     max_trajectories: int
     metadata: NDArray[Index]
     step: int
-    context: Any
-    socket: Any
-    _sndmore: int
+    server_socket: socket.socket
+    client_socket: Optional[socket.socket]
     _pos_x: NDArray[Float]
     _pos_y: NDArray[Float]
     _pos_z: NDArray[Float]
@@ -57,4 +58,5 @@ class LiveTrajectoryHandler(BaseDataHandler):
     _cursor: int
 
     def __init__(self, port: int, debug_mode: bool, max_trajectories: int = 10000) -> None: ...
+    def _accept_client(self) -> None: ...
     def process_chunk(self, chunk: Dict[str, Any]) -> None: ...

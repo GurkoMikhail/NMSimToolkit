@@ -17,27 +17,32 @@ class TestLiveTrajectoryHandler(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "LiveTrajectoryHandler requires a strictly positive port number"):
             LiveTrajectoryHandler(port=0, debug_mode=True)
 
-    @patch('zmq.Context')
-    def test_init_success(self, mock_context):
-        mock_socket = MagicMock()
-        mock_context.return_value.socket.return_value = mock_socket
+    @patch('socket.socket')
+    def test_init_success(self, mock_socket_cls):
+        mock_server = MagicMock()
+        mock_socket_cls.return_value = mock_server
 
         handler = LiveTrajectoryHandler(port=5555, debug_mode=True)
 
-        # Verify ZMQ setup
-        mock_context.return_value.socket.assert_called_once()
-        import zmq
-        mock_socket.setsockopt.assert_called_once_with(zmq.SNDHWM, 10)
-        mock_socket.bind.assert_called_once_with("tcp://*:5555")
+        # Verify socket setup
+        mock_socket_cls.assert_called_once()
+        import socket
+        mock_server.setsockopt.assert_called_once_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        mock_server.bind.assert_called_once_with(('', 5555))
+        mock_server.listen.assert_called_once_with(1)
+        mock_server.setblocking.assert_called_once_with(False)
 
         self.assertEqual(handler.max_trajectories, 10000)
         self.assertEqual(handler.metadata.shape, (2,))
         self.assertEqual(handler.metadata.dtype, np.int64)
+        self.assertIsNone(handler.client_socket)
 
-    @patch('zmq.Context')
-    def test_process_trajectories_zero_copy(self, mock_context):
-        mock_socket = MagicMock()
-        mock_context.return_value.socket.return_value = mock_socket
+    @patch('socket.socket')
+    def test_process_trajectories_zero_copy(self, mock_socket_cls):
+        mock_server = MagicMock()
+        mock_client = MagicMock()
+        mock_server.accept.return_value = (mock_client, ('127.0.0.1', 12345))
+        mock_socket_cls.return_value = mock_server
 
         handler = LiveTrajectoryHandler(port=5555, debug_mode=True, max_trajectories=5)
         handler.step = 42
@@ -59,64 +64,57 @@ class TestLiveTrajectoryHandler(unittest.TestCase):
 
         handler.process_chunk(chunk)
 
-        # Trigger sending by passing a dead_particles chunk with no dead IDs
+        # Trigger sending by passing a dead_particles chunk
         dead_chunk = {
             'type': 'dead_particles',
             'data': np.array([], dtype=np.uint64)
         }
         handler.process_chunk(dead_chunk)
 
+        # Verify accept
+        mock_server.accept.assert_called_once()
+        mock_client.settimeout.assert_called_once_with(0.05)
+
         # Metadata check
         self.assertEqual(handler.metadata[0], 42)
         self.assertEqual(handler.metadata[1], 5) # active_count is len(pos_x) -> 5
         self.assertEqual(handler.step, 43)
 
-        self.assertEqual(mock_socket.send.call_count, 5)
+        self.assertEqual(mock_client.sendall.call_count, 5)
 
-        # We need to verify that what's being sent is a memoryview without copies.
-        # MagicMock records arguments.
-        calls = mock_socket.send.call_args_list
-        import zmq
+        calls = mock_client.sendall.call_args_list
 
         # 1. Metadata
-        args, kwargs = calls[0]
+        args, _ = calls[0]
         self.assertIsInstance(args[0], memoryview)
-        self.assertEqual(kwargs['flags'], zmq.SNDMORE)
-        self.assertFalse(kwargs['copy'])
         self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.int64), [42, 5]))
 
         # 2. X
-        args, kwargs = calls[1]
+        args, _ = calls[1]
         self.assertIsInstance(args[0], memoryview)
-        self.assertEqual(kwargs['flags'], zmq.SNDMORE)
-        self.assertFalse(kwargs['copy'])
         self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.float64), [1.0, 2.0, 3.0, 4.0, 5.0]))
 
         # 3. Y
-        args, kwargs = calls[2]
+        args, _ = calls[2]
         self.assertIsInstance(args[0], memoryview)
-        self.assertEqual(kwargs['flags'], zmq.SNDMORE)
-        self.assertFalse(kwargs['copy'])
         self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.float64), [1.1, 2.1, 3.1, 4.1, 5.1]))
 
         # 4. Z
-        args, kwargs = calls[3]
+        args, _ = calls[3]
         self.assertIsInstance(args[0], memoryview)
-        self.assertEqual(kwargs['flags'], zmq.SNDMORE)
-        self.assertFalse(kwargs['copy'])
         self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.float64), [1.2, 2.2, 3.2, 4.2, 5.2]))
 
         # 5. track_ids
-        args, kwargs = calls[4]
+        args, _ = calls[4]
         self.assertIsInstance(args[0], memoryview)
-        self.assertNotIn('flags', kwargs)
-        self.assertFalse(kwargs['copy'])
         self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.uint64), [10, 20, 30, 40, 50]))
 
-    @patch('zmq.Context')
-    def test_process_trajectories_culling(self, mock_context):
-        mock_socket = MagicMock()
-        mock_context.return_value.socket.return_value = mock_socket
+    @patch('socket.socket')
+    def test_process_trajectories_culling(self, mock_socket_cls):
+        mock_server = MagicMock()
+        mock_client = MagicMock()
+        mock_server.accept.return_value = (mock_client, ('127.0.0.1', 12345))
+        mock_socket_cls.return_value = mock_server
 
         # Limit to 2 trajectories
         handler = LiveTrajectoryHandler(port=5555, debug_mode=True, max_trajectories=2)
@@ -150,16 +148,17 @@ class TestLiveTrajectoryHandler(unittest.TestCase):
         # It should cap at 2 due to cursor space limitation.
         self.assertEqual(handler.metadata[1], 2) # Should be culled to 2
         self.assertEqual(handler.step, 11)
-        calls = mock_socket.send.call_args_list
 
-        # check that only 2 elements were passed
+        calls = mock_client.sendall.call_args_list
         args, _ = calls[1]
         self.assertEqual(len(np.frombuffer(args[0], dtype=np.float64)), 2)
 
-    @patch('zmq.Context')
-    def test_process_trajectories_no_active(self, mock_context):
-        mock_socket = MagicMock()
-        mock_context.return_value.socket.return_value = mock_socket
+    @patch('socket.socket')
+    def test_process_trajectories_no_active(self, mock_socket_cls):
+        mock_server = MagicMock()
+        mock_client = MagicMock()
+        mock_server.accept.return_value = (mock_client, ('127.0.0.1', 12345))
+        mock_socket_cls.return_value = mock_server
 
         handler = LiveTrajectoryHandler(port=5555, debug_mode=True)
 
@@ -175,8 +174,46 @@ class TestLiveTrajectoryHandler(unittest.TestCase):
         }
         handler.process_chunk(chunk)
 
-        # send should not be called
-        mock_socket.send.assert_not_called()
+        dead_chunk = {
+            'type': 'dead_particles',
+            'data': np.array([], dtype=np.uint64)
+        }
+        handler.process_chunk(dead_chunk)
+
+        # sendall should not be called because cursor is 0
+        mock_client.sendall.assert_not_called()
+
+    @patch('socket.socket')
+    def test_client_drop_on_error(self, mock_socket_cls):
+        mock_server = MagicMock()
+        mock_client = MagicMock()
+        mock_server.accept.return_value = (mock_client, ('127.0.0.1', 12345))
+        mock_socket_cls.return_value = mock_server
+
+        handler = LiveTrajectoryHandler(port=5555, debug_mode=True, max_trajectories=5)
+
+        pos_x = np.array([1.0], dtype=np.float64)
+        chunk = {
+            'type': 'interactions',
+            'data': {
+                'pos_x': pos_x,
+                'pos_y': pos_x,
+                'pos_z': pos_x,
+                'particle_ID': np.array([10], dtype=np.uint64)
+            }
+        }
+        handler.process_chunk(chunk)
+
+        # Simulate connection error
+        mock_client.sendall.side_effect = ConnectionError("Connection dropped")
+
+        dead_chunk = {'type': 'dead_particles', 'data': np.array([], dtype=np.uint64)}
+        handler.process_chunk(dead_chunk)
+
+        # Client should be closed and removed
+        mock_client.close.assert_called_once()
+        self.assertIsNone(handler.client_socket)
+
 
 if __name__ == '__main__':
     unittest.main()

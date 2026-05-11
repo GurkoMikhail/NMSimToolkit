@@ -320,12 +320,13 @@ class LiveTrajectoryHandler(BaseDataHandler):
         if port <= 0:
             raise ValueError("LiveTrajectoryHandler requires a strictly positive port number")
 
-        import zmq
-        self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.PUB)
-        self.socket.setsockopt(zmq.SNDHWM, 10)
-        self.socket.bind(f"tcp://*:{port}")
-        self._sndmore = zmq.SNDMORE
+        import socket
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind(('', port))
+        self.server_socket.listen(1)
+        self.server_socket.setblocking(False)
+        self.client_socket = None
 
         self.max_trajectories = max_trajectories
         self.metadata = np.empty(2, dtype=np.int64)
@@ -337,6 +338,16 @@ class LiveTrajectoryHandler(BaseDataHandler):
         self._pos_z = np.empty(max_trajectories, dtype=np.float64)
         self._particle_ids = np.empty(max_trajectories, dtype=np.uint64)
         self._cursor = 0
+
+    def _accept_client(self) -> None:
+        if self.client_socket is None:
+            try:
+                client, addr = self.server_socket.accept()
+                client.settimeout(0.05)  # Short timeout to avoid blocking the simulation loop
+                self.client_socket = client
+                _logger.info(f"LiveTrajectoryHandler accepted client from {addr}")
+            except BlockingIOError:
+                pass
 
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')
@@ -371,17 +382,25 @@ class LiveTrajectoryHandler(BaseDataHandler):
                 self._cursor += take
 
         elif chunk_type == 'dead_particles':
-            if self._cursor > 0:
+            self._accept_client()
+
+            if self._cursor > 0 and self.client_socket is not None:
                 self.metadata[0] = self.step
                 self.metadata[1] = self._cursor
 
-                # multipart-message ZMQ (SNDMORE): metadata -> X -> Y -> Z -> track_ids
-                self.socket.send(memoryview(self.metadata), flags=self._sndmore, copy=False)
-                self.socket.send(memoryview(self._pos_x[:self._cursor]), flags=self._sndmore, copy=False)
-                self.socket.send(memoryview(self._pos_y[:self._cursor]), flags=self._sndmore, copy=False)
-                self.socket.send(memoryview(self._pos_z[:self._cursor]), flags=self._sndmore, copy=False)
-                self.socket.send(memoryview(self._particle_ids[:self._cursor]), copy=False)
+                try:
+                    # Send metadata and buffers directly via memoryview to preserve Zero-Allocation
+                    self.client_socket.sendall(memoryview(self.metadata))
+                    self.client_socket.sendall(memoryview(self._pos_x[:self._cursor]))
+                    self.client_socket.sendall(memoryview(self._pos_y[:self._cursor]))
+                    self.client_socket.sendall(memoryview(self._pos_z[:self._cursor]))
+                    self.client_socket.sendall(memoryview(self._particle_ids[:self._cursor]))
+                except (BlockingIOError, ConnectionError, TimeoutError, OSError):
+                    # Drop the client if sending fails
+                    self.client_socket.close()
+                    self.client_socket = None
 
+            if self._cursor > 0:
                 self.step += 1
 
             # Reset cursor for the next simulation step, discarding accumulated states
