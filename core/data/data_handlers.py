@@ -329,24 +329,61 @@ class LiveTrajectoryHandler(BaseDataHandler):
 
         self.max_trajectories = max_trajectories
         self.metadata = np.empty(2, dtype=np.int64)
+        self.step = 0
+
+        # Pre-allocate static buffers for zero-allocation runtime
+        self._pos_x = np.empty(max_trajectories, dtype=np.float64)
+        self._pos_y = np.empty(max_trajectories, dtype=np.float64)
+        self._pos_z = np.empty(max_trajectories, dtype=np.float64)
+        self._particle_ids = np.empty(max_trajectories, dtype=np.uint64)
+        self._cursor = 0
 
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
-        pass
+        chunk_type = chunk.get('type')
+        data = chunk.get('data')
 
-    def process_trajectories(self, step: int, active_count: int,
-                             pos_x: np.ndarray, pos_y: np.ndarray, pos_z: np.ndarray,
-                             track_ids: np.ndarray) -> None:
-        send_count = min(active_count, self.max_trajectories)
-        if send_count <= 0:
-            return
+        if chunk_type == 'interactions':
+            if data is not None:
+                pos_x = data.get('pos_x')
+                pos_y = data.get('pos_y')
+                pos_z = data.get('pos_z')
+                particle_id = data.get('particle_ID')
 
-        self.metadata[0] = step
-        self.metadata[1] = send_count
+                if pos_x is None or particle_id is None:
+                    return
 
-        # multipart-message ZMQ (SNDMORE): metadata -> X -> Y -> Z -> track_ids
-        # Use copy=False to guarantee zero-copy transfer
-        self.socket.send(memoryview(self.metadata), flags=self._sndmore, copy=False)
-        self.socket.send(memoryview(pos_x[:send_count]), flags=self._sndmore, copy=False)
-        self.socket.send(memoryview(pos_y[:send_count]), flags=self._sndmore, copy=False)
-        self.socket.send(memoryview(pos_z[:send_count]), flags=self._sndmore, copy=False)
-        self.socket.send(memoryview(track_ids[:send_count]), copy=False)
+                n = len(pos_x)
+                if n == 0:
+                    return
+
+                space_left = self.max_trajectories - self._cursor
+                if space_left <= 0:
+                    return
+
+                take = min(n, space_left)
+
+                # In-place copy into pre-allocated static buffers
+                self._pos_x[self._cursor:self._cursor+take] = pos_x[:take]
+                self._pos_y[self._cursor:self._cursor+take] = pos_y[:take]
+                self._pos_z[self._cursor:self._cursor+take] = pos_z[:take]
+                self._particle_ids[self._cursor:self._cursor+take] = particle_id[:take]
+
+                self._cursor += take
+
+        elif chunk_type == 'dead_particles':
+            if self._cursor > 0:
+                self.metadata[0] = self.step
+                self.metadata[1] = self._cursor
+
+                # multipart-message ZMQ (SNDMORE): metadata -> X -> Y -> Z -> track_ids
+                self.socket.send(memoryview(self.metadata), flags=self._sndmore, copy=False)
+                self.socket.send(memoryview(self._pos_x[:self._cursor]), flags=self._sndmore, copy=False)
+                self.socket.send(memoryview(self._pos_y[:self._cursor]), flags=self._sndmore, copy=False)
+                self.socket.send(memoryview(self._pos_z[:self._cursor]), flags=self._sndmore, copy=False)
+                self.socket.send(memoryview(self._particle_ids[:self._cursor]), copy=False)
+
+                self.step += 1
+
+            # Reset cursor for the next simulation step, discarding accumulated states
+            # ParaView expects exactly one point per ID per step, so we clear the buffer.
+            self._cursor = 0

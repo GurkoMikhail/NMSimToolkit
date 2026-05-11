@@ -46,11 +46,15 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
 class LiveTrajectoryHandler(BaseDataHandler):
     max_trajectories: int
     metadata: NDArray[Index]
+    step: int
     context: Any
     socket: Any
+    _sndmore: int
+    _pos_x: NDArray[Float]
+    _pos_y: NDArray[Float]
+    _pos_z: NDArray[Float]
+    _particle_ids: NDArray[ID]
+    _cursor: int
 
     def __init__(self, port: int, debug_mode: bool, max_trajectories: int = 10000) -> None: ...
     def process_chunk(self, chunk: Dict[str, Any]) -> None: ...
-    def process_trajectories(self, step: int, active_count: int,
-                             pos_x: NDArray[Float], pos_y: NDArray[Float], pos_z: NDArray[Float],
-                             track_ids: NDArray[ID]) -> None: ...

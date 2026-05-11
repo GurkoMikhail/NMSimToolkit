@@ -40,19 +40,36 @@ class TestLiveTrajectoryHandler(unittest.TestCase):
         mock_context.return_value.socket.return_value = mock_socket
 
         handler = LiveTrajectoryHandler(port=5555, debug_mode=True, max_trajectories=5)
+        handler.step = 42
 
-        step = 42
-        active_count = 3
         pos_x = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
         pos_y = np.array([1.1, 2.1, 3.1, 4.1, 5.1], dtype=np.float64)
         pos_z = np.array([1.2, 2.2, 3.2, 4.2, 5.2], dtype=np.float64)
         track_ids = np.array([10, 20, 30, 40, 50], dtype=np.uint64)
 
-        handler.process_trajectories(step, active_count, pos_x, pos_y, pos_z, track_ids)
+        chunk = {
+            'type': 'interactions',
+            'data': {
+                'pos_x': pos_x,
+                'pos_y': pos_y,
+                'pos_z': pos_z,
+                'particle_ID': track_ids
+            }
+        }
+
+        handler.process_chunk(chunk)
+
+        # Trigger sending by passing a dead_particles chunk with no dead IDs
+        dead_chunk = {
+            'type': 'dead_particles',
+            'data': np.array([], dtype=np.uint64)
+        }
+        handler.process_chunk(dead_chunk)
 
         # Metadata check
         self.assertEqual(handler.metadata[0], 42)
-        self.assertEqual(handler.metadata[1], 3)
+        self.assertEqual(handler.metadata[1], 5) # active_count is len(pos_x) -> 5
+        self.assertEqual(handler.step, 43)
 
         self.assertEqual(mock_socket.send.call_count, 5)
 
@@ -66,35 +83,35 @@ class TestLiveTrajectoryHandler(unittest.TestCase):
         self.assertIsInstance(args[0], memoryview)
         self.assertEqual(kwargs['flags'], zmq.SNDMORE)
         self.assertFalse(kwargs['copy'])
-        self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.int64), [42, 3]))
+        self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.int64), [42, 5]))
 
         # 2. X
         args, kwargs = calls[1]
         self.assertIsInstance(args[0], memoryview)
         self.assertEqual(kwargs['flags'], zmq.SNDMORE)
         self.assertFalse(kwargs['copy'])
-        self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.float64), [1.0, 2.0, 3.0]))
+        self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.float64), [1.0, 2.0, 3.0, 4.0, 5.0]))
 
         # 3. Y
         args, kwargs = calls[2]
         self.assertIsInstance(args[0], memoryview)
         self.assertEqual(kwargs['flags'], zmq.SNDMORE)
         self.assertFalse(kwargs['copy'])
-        self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.float64), [1.1, 2.1, 3.1]))
+        self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.float64), [1.1, 2.1, 3.1, 4.1, 5.1]))
 
         # 4. Z
         args, kwargs = calls[3]
         self.assertIsInstance(args[0], memoryview)
         self.assertEqual(kwargs['flags'], zmq.SNDMORE)
         self.assertFalse(kwargs['copy'])
-        self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.float64), [1.2, 2.2, 3.2]))
+        self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.float64), [1.2, 2.2, 3.2, 4.2, 5.2]))
 
         # 5. track_ids
         args, kwargs = calls[4]
         self.assertIsInstance(args[0], memoryview)
         self.assertNotIn('flags', kwargs)
         self.assertFalse(kwargs['copy'])
-        self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.uint64), [10, 20, 30]))
+        self.assertTrue(np.array_equal(np.frombuffer(args[0], dtype=np.uint64), [10, 20, 30, 40, 50]))
 
     @patch('zmq.Context')
     def test_process_trajectories_culling(self, mock_context):
@@ -103,17 +120,36 @@ class TestLiveTrajectoryHandler(unittest.TestCase):
 
         # Limit to 2 trajectories
         handler = LiveTrajectoryHandler(port=5555, debug_mode=True, max_trajectories=2)
+        handler.step = 10
 
-        step = 10
-        active_count = 5 # more than max_trajectories
         pos_x = np.arange(10, dtype=np.float64)
         pos_y = np.arange(10, dtype=np.float64)
         pos_z = np.arange(10, dtype=np.float64)
         track_ids = np.arange(10, dtype=np.uint64)
 
-        handler.process_trajectories(step, active_count, pos_x, pos_y, pos_z, track_ids)
+        chunk = {
+            'type': 'interactions',
+            'data': {
+                'pos_x': pos_x,
+                'pos_y': pos_y,
+                'pos_z': pos_z,
+                'particle_ID': track_ids
+            }
+        }
 
+        handler.process_chunk(chunk)
+
+        # Send dead particles chunk
+        dead_chunk = {
+            'type': 'dead_particles',
+            'data': np.arange(5, 10, dtype=np.uint64)
+        }
+        handler.process_chunk(dead_chunk)
+
+        # The first chunk had 10 points. We only had space for 2 points total.
+        # It should cap at 2 due to cursor space limitation.
         self.assertEqual(handler.metadata[1], 2) # Should be culled to 2
+        self.assertEqual(handler.step, 11)
         calls = mock_socket.send.call_args_list
 
         # check that only 2 elements were passed
@@ -128,7 +164,16 @@ class TestLiveTrajectoryHandler(unittest.TestCase):
         handler = LiveTrajectoryHandler(port=5555, debug_mode=True)
 
         # 0 active particles
-        handler.process_trajectories(0, 0, np.array([]), np.array([]), np.array([]), np.array([]))
+        chunk = {
+            'type': 'interactions',
+            'data': {
+                'pos_x': np.array([], dtype=np.float64),
+                'pos_y': np.array([], dtype=np.float64),
+                'pos_z': np.array([], dtype=np.float64),
+                'particle_ID': np.array([], dtype=np.uint64)
+            }
+        }
+        handler.process_chunk(chunk)
 
         # send should not be called
         mock_socket.send.assert_not_called()
