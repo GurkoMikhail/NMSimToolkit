@@ -108,15 +108,15 @@ class GlobalSettingsWidget(qt.QWidget):
 
         # We'll just put simple text edits for custom sweep dicts as json/yaml string inputs for simplicity
         # or just hardcode if needed. For a proper UI, we might need a complex dynamic table,
-        # but for this base implementation, QPlainTextEdit is adequate to input a simple dict.
+        # but for this base implementation, QLineEdit is adequate to input a simple dict.
         self.customSweepWidget = qt.QWidget()
         customSweepLayout = qt.QFormLayout(self.customSweepWidget)
 
-        self.gridVarsEdit = qt.QPlainTextEdit()
+        self.gridVarsEdit = qt.QLineEdit()
         self.gridVarsEdit.setPlaceholderText("e.g. {'angle': [0, 90, 180]}")
         customSweepLayout.addRow("Grid Variables:", self.gridVarsEdit)
 
-        self.zipVarsEdit = qt.QPlainTextEdit()
+        self.zipVarsEdit = qt.QLineEdit()
         self.zipVarsEdit.setPlaceholderText("e.g. {'x': [1,2], 'y': [3,4]}")
         customSweepLayout.addRow("Zipped Variables:", self.zipVarsEdit)
 
@@ -129,7 +129,7 @@ class GlobalSettingsWidget(qt.QWidget):
         self.customSweepWidget.setVisible(text == "CustomSweep")
 
     def onAddHandler(self):
-        hType = self.handlerTypeCombo.currentText()
+        hType = self.handlerTypeCombo.currentText
         item = qt.QListWidgetItem(hType)
 
         # We need to store parameters for the handler. We can attach a custom widget
@@ -165,33 +165,33 @@ class GlobalSettingsWidget(qt.QWidget):
         self.handlersListWidget.setItemWidget(item, widget)
 
     def onRemoveHandler(self):
-        row = self.handlersListWidget.currentRow()
+        row = self.handlersListWidget.currentRow
         if row >= 0:
             self.handlersListWidget.takeItem(row)
 
     # --- Data Getters ---
 
     def get_pool_size(self):
-        return self.poolSizeSpin.value()
+        return self.poolSizeSpin.value
 
     def get_simulation_manager_settings(self):
         return {
-            'start_time': f"{self.startTimeSpin.value()} {self.startTimeUnit.currentText()}",
-            'stop_time': f"{self.stopTimeSpin.value()} {self.stopTimeUnit.currentText()}",
-            'particles_number': self.particlesSpin.value(),
-            'min_energy': f"{self.minEnergySpin.value()} {self.minEnergyUnit.currentText()}"
+            'start_time': f"{self.startTimeSpin.value} {self.startTimeUnit.currentText}",
+            'stop_time': f"{self.stopTimeSpin.value} {self.stopTimeUnit.currentText}",
+            'particles_number': self.particlesSpin.value,
+            'min_energy': f"{self.minEnergySpin.value} {self.minEnergyUnit.currentText}"
         }
 
     def get_data_manager_settings(self):
         handlers = []
-        for i in range(self.handlersListWidget.count()):
+        for i in range(self.handlersListWidget.count):
             item = self.handlersListWidget.item(i)
             config_ref = item.data(qt.Qt.UserRole)
 
             h_dict = {'type': config_ref['type']}
 
             if '__sv_edit' in config_ref:
-                text = config_ref['__sv_edit'].text().strip()
+                text = config_ref['__sv_edit'].text.strip()
                 h_dict['sensitive_volumes'] = [x.strip() for x in text.split(',')] if text else []
 
             if '__si_cb' in config_ref:
@@ -200,20 +200,20 @@ class GlobalSettingsWidget(qt.QWidget):
             handlers.append(h_dict)
 
         return {
-            'filename': self.filenameEdit.text(),
-            'buffer_capacity': self.bufferCapacitySpin.value(),
+            'filename': self.filenameEdit.text,
+            'buffer_capacity': self.bufferCapacitySpin.value,
             'handlers': handlers
         }
 
     def get_protocol_settings(self):
-        pType = self.protocolTypeCombo.currentText()
+        pType = self.protocolTypeCombo.currentText
         if pType == "None":
             return None
         elif pType == "CustomSweep":
             import ast
             import slicer
 
-            grid_text = self.gridVarsEdit.toPlainText().strip()
+            grid_text = self.gridVarsEdit.text.strip()
             grid_vars = {}
             if grid_text:
                 try:
@@ -221,7 +221,7 @@ class GlobalSettingsWidget(qt.QWidget):
                 except Exception as e:
                     slicer.util.errorDisplay(f"Failed to parse Grid Variables: {e}")
 
-            zip_text = self.zipVarsEdit.toPlainText().strip()
+            zip_text = self.zipVarsEdit.text.strip()
             zip_vars = {}
             if zip_text:
                 try:

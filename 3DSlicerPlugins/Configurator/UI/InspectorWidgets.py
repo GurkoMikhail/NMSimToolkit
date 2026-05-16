@@ -28,13 +28,13 @@ class SpatialInspectorWidget(BaseInspectorWidget):
         super().setup()
 
         self.transformCombo = slicer.qMRMLNodeComboBox()
-        self.transformCombo.nodeTypes = ["vtkMRMLTransformNode"]
+        self.transformCombo.nodeTypes = ["vtkMRMLTransformNode", "vtkMRMLLinearTransformNode"]
         self.transformCombo.selectNodeUponCreation = True
-        self.transformCombo.addEnabled = False
+        self.transformCombo.addEnabled = True
         self.transformCombo.removeEnabled = False
         self.transformCombo.noneEnabled = True
         self.transformCombo.showHidden = False
-        self.transformCombo.showChildNodeTypes = False
+        self.transformCombo.showChildNodeTypes = True
         self.transformCombo.setMRMLScene(slicer.mrmlScene)
 
         # Restore selection
@@ -101,12 +101,12 @@ class VolumeInspectorWidget(SpatialInspectorWidget):
 
     def update_data(self):
         super().update_data()
-        self.node_data['material'] = self.materialEdit.text()
-        unit = self.sizeUnit.currentText()
+        self.node_data['material'] = self.materialEdit.text
+        unit = self.sizeUnit.currentText
         self.node_data['size'] = [
-            f"{self.sizeSpinX.value()} {unit}",
-            f"{self.sizeSpinY.value()} {unit}",
-            f"{self.sizeSpinZ.value()} {unit}"
+            f"{self.sizeSpinX.value} {unit}",
+            f"{self.sizeSpinY.value} {unit}",
+            f"{self.sizeSpinZ.value} {unit}"
         ]
 
 class WoodcockVoxelVolumeInspectorWidget(SpatialInspectorWidget):
@@ -134,9 +134,9 @@ class WoodcockVoxelVolumeInspectorWidget(SpatialInspectorWidget):
 
     def update_data(self, *args):
         super().update_data()
-        self.node_data['material'] = self.materialEdit.text()
+        self.node_data['material'] = self.materialEdit.text
 
-        node = self.volumeCombo.currentNode()
+        node = self.volumeCombo.currentNode
         if node:
             self.node_data['__volume_node_id'] = node.GetID()
         else:
@@ -222,11 +222,11 @@ class SourceInspectorWidget(SpatialInspectorWidget):
 
     def update_data(self, *args):
         super().update_data()
-        self.node_data['energy'] = f"{self.energySpin.value()} {self.energyUnit.currentText()}"
-        self.node_data['activity'] = f"{self.activitySpin.value()} {self.activityUnit.currentText()}"
-        self.node_data['half_life'] = f"{self.hlSpin.value()} {self.hlUnit.currentText()}"
+        self.node_data['energy'] = f"{self.energySpin.value} {self.energyUnit.currentText}"
+        self.node_data['activity'] = f"{self.activitySpin.value} {self.activityUnit.currentText}"
+        self.node_data['half_life'] = f"{self.hlSpin.value} {self.hlUnit.currentText}"
 
-        node = self.volumeCombo.currentNode()
+        node = self.volumeCombo.currentNode
         if node:
             self.node_data['__activity_node_id'] = node.GetID()
         else:
@@ -282,14 +282,14 @@ class GammaCameraInspectorWidget(SpatialInspectorWidget):
 
     def update_data(self, *args):
         super().update_data()
-        unit = self.sizeUnit.currentText()
+        unit = self.sizeUnit.currentText
         self.node_data['size'] = [
-            f"{self.sizeSpinX.value()} {unit}",
-            f"{self.sizeSpinY.value()} {unit}",
+            f"{self.sizeSpinX.value} {unit}",
+            f"{self.sizeSpinY.value} {unit}",
             "1.0 cm" # dummy Z for flat detector
         ]
-        self.node_data['pixels'] = [self.pxSpinX.value(), self.pxSpinY.value()]
-        self.node_data['material'] = self.materialEdit.text()
+        self.node_data['pixels'] = [self.pxSpinX.value, self.pxSpinY.value]
+        self.node_data['material'] = self.materialEdit.text
 
 # A simple map to get the correct widget
 INSPECTOR_MAP = {

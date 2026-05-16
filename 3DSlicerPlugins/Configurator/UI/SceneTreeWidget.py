@@ -7,42 +7,45 @@ class SceneTreeWidget(qt.QWidget):
         self.setup()
 
     def setup(self):
-        self.mainLayout = qt.QHBoxLayout(self)
+        self.mainLayout = qt.QVBoxLayout(self)
+
+        self.splitter = qt.QSplitter(qt.Qt.Vertical)
+        self.mainLayout.addWidget(self.splitter)
 
         # Left side: Tree and Toolbar
         leftWidget = qt.QWidget()
         leftLayout = qt.QVBoxLayout(leftWidget)
 
         # Toolbar for adding nodes
-        self.toolbar = qt.QToolBar("Scene Nodes")
+        toolbarLayout = qt.QHBoxLayout()
 
-        node_types = [
+        self.nodeTypeCombo = qt.QComboBox()
+        self.nodeTypeCombo.addItems([
             "CompositeNode", "SpatialNode", "Volume",
             "WoodcockVoxelVolume", "GammaCamera",
             "ParametricParallelCollimator", "Source"
-        ]
+        ])
 
-        for ntype in node_types:
-            action = qt.QAction(f"Add {ntype}", self)
-            action.setData(ntype)
-            action.triggered.connect(lambda checked, a=action: self.onAddNode(a.data()))
-            self.toolbar.addAction(action)
+        self.addNodeBtn = qt.QPushButton("Add Node")
+        self.addNodeBtn.clicked.connect(self.onAddNode)
 
-        leftLayout.addWidget(self.toolbar)
+        toolbarLayout.addWidget(self.nodeTypeCombo)
+        toolbarLayout.addWidget(self.addNodeBtn)
+        leftLayout.addLayout(toolbarLayout)
 
         # Tree Widget
         self.tree = qt.QTreeWidget()
         self.tree.setHeaderLabels(["Scene Hierarchy"])
         leftLayout.addWidget(self.tree)
 
-        self.mainLayout.addWidget(leftWidget, 1) # stretch 1
+        self.splitter.addWidget(leftWidget)
 
         # Right side: Inspector
         self.inspectorGroup = qt.QGroupBox("Property Inspector")
         self.inspectorLayout = qt.QVBoxLayout(self.inspectorGroup)
         self.currentInspector = None
 
-        self.mainLayout.addWidget(self.inspectorGroup, 1) # stretch 1
+        self.splitter.addWidget(self.inspectorGroup)
 
         # Initialize Root
         self.root_item = qt.QTreeWidgetItem(self.tree, ["Main Scene"])
@@ -56,7 +59,8 @@ class SceneTreeWidget(qt.QWidget):
         self.tree.itemSelectionChanged.connect(self.onSelectionChanged)
         self.tree.setCurrentItem(self.root_item)
 
-    def onAddNode(self, node_type):
+    def onAddNode(self):
+        node_type = self.nodeTypeCombo.currentText
         selected = self.tree.currentItem()
         if not selected:
             selected = self.root_item

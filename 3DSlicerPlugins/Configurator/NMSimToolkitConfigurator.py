@@ -95,7 +95,7 @@ class NMSimToolkitConfiguratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
             slicer.util.errorDisplay("Please select an export directory.")
             return
 
-        filename = self.exportFilenameEdit.text()
+        filename = self.exportFilenameEdit.text
         if not filename.endswith('.yaml'):
             filename += '.yaml'
 

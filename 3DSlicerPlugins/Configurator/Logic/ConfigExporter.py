@@ -60,6 +60,9 @@ class ConfigExporter:
             pass # Name isn't strictly in AnyNodeConfig unless it's an alias? Let's keep it clean
             # We don't add name unless required by Pydantic, but let's assume it's mostly structural
 
+        # Remove internal Slicer UI state from config
+        config_dict.pop('__transform_node_id', None)
+
         # Handle NumPy Extractions for specific types
         if config_dict.get('type') == 'WoodcockVoxelVolume':
             volume_node_id = config_dict.pop('__volume_node_id', None)
