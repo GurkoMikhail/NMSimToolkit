@@ -1,5 +1,5 @@
 import qt
-from .InspectorWidgets import INSPECTOR_MAP
+from UI.InspectorWidgets import INSPECTOR_MAP
 
 class SceneTreeWidget(qt.QWidget):
     def __init__(self, parent=None):

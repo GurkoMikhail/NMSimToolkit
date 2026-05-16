@@ -1,6 +1,6 @@
 import os
 import yaml
-from ..Utils.VolumeHelpers import VolumeHelpers
+from Utils.VolumeHelpers import VolumeHelpers
 import qt
 
 class ConfigExporter:

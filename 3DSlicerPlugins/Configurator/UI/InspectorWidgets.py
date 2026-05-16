@@ -1,6 +1,6 @@
 import qt
 import slicer
-from ..Utils.TransformHelpers import TransformHelpers
+from Utils.TransformHelpers import TransformHelpers
 
 class BaseInspectorWidget(qt.QWidget):
     """

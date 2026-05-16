@@ -1,9 +1,17 @@
 import os
+import sys
 import vtk
 import qt
 import slicer
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
+import ctk
+
+# Ensure our local packages (Logic, UI, Utils) can be imported
+# when Slicer runs this file.
+module_dir = os.path.dirname(__file__)
+if module_dir not in sys.path:
+    sys.path.append(module_dir)
 
 class NMSimToolkitConfigurator(ScriptedLoadableModule):
     """Uses ScriptedLoadableModule base class, available at:
@@ -41,29 +49,13 @@ class NMSimToolkitConfiguratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
         # For this we will build programmatically based on the plan.
 
         # UI layout
-        mainLayout = qt.QVBoxLayout(self.parent)
-
         self.tabs = qt.QTabWidget()
-        mainLayout.addWidget(self.tabs)
+        self.layout.addWidget(self.tabs)
 
         # Import our custom UI classes
-        import os
-        import sys
-        # Add the current directory to path to import local modules if needed,
-        # but relative imports should work if structured as a python package.
-        # Slicer extensions usually rely on absolute imports from the module path.
-        try:
-            from .UI.GlobalSettingsWidget import GlobalSettingsWidget
-            from .UI.SceneTreeWidget import SceneTreeWidget
-            from .Logic.ConfigExporter import ConfigExporter
-        except ImportError:
-            # Fallback if run directly or packaging issues
-            module_dir = os.path.dirname(__file__)
-            if module_dir not in sys.path:
-                sys.path.append(module_dir)
-            from UI.GlobalSettingsWidget import GlobalSettingsWidget
-            from UI.SceneTreeWidget import SceneTreeWidget
-            from Logic.ConfigExporter import ConfigExporter
+        from UI.GlobalSettingsWidget import GlobalSettingsWidget
+        from UI.SceneTreeWidget import SceneTreeWidget
+        from Logic.ConfigExporter import ConfigExporter
 
         # 1. Global Settings Tab
         self.globalSettingsTab = GlobalSettingsWidget()
@@ -92,7 +84,7 @@ class NMSimToolkitConfiguratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
         self.exportLayout.addWidget(self.exportButton)
         self.exportLayout.addStretch(1)
 
-        mainLayout.addStretch(1)
+        self.layout.addStretch(1)
 
         # Logic setup
         self.exporter = ConfigExporter(self.globalSettingsTab, self.sceneEditorTab)
