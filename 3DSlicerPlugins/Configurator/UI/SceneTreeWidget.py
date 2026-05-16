@@ -7,7 +7,7 @@ class SceneTreeWidget(qt.QWidget):
         self.setup()
 
     def setup(self):
-        self.layout = qt.QHBoxLayout(self)
+        self.mainLayout = qt.QHBoxLayout(self)
 
         # Left side: Tree and Toolbar
         leftWidget = qt.QWidget()
@@ -35,14 +35,14 @@ class SceneTreeWidget(qt.QWidget):
         self.tree.setHeaderLabels(["Scene Hierarchy"])
         leftLayout.addWidget(self.tree)
 
-        self.layout.addWidget(leftWidget, 1) # stretch 1
+        self.mainLayout.addWidget(leftWidget, 1) # stretch 1
 
         # Right side: Inspector
         self.inspectorGroup = qt.QGroupBox("Property Inspector")
         self.inspectorLayout = qt.QVBoxLayout(self.inspectorGroup)
         self.currentInspector = None
 
-        self.layout.addWidget(self.inspectorGroup, 1) # stretch 1
+        self.mainLayout.addWidget(self.inspectorGroup, 1) # stretch 1
 
         # Initialize Root
         self.root_item = qt.QTreeWidgetItem(self.tree, ["Main Scene"])

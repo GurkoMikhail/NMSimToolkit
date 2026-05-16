@@ -30,8 +30,7 @@ class ConfigExporter:
 
         # 4. Protocol
         protocol = self.global_settings.get_protocol_settings()
-        if protocol is not None:
-            config['protocol'] = protocol
+        config['protocol'] = protocol
 
         # 5. Scene Editor (Traverse the tree)
         root_node = self.scene_tree.get_root_item()

@@ -7,7 +7,7 @@ class GlobalSettingsWidget(qt.QWidget):
         self.setup()
 
     def setup(self):
-        self.layout = qt.QVBoxLayout(self)
+        self.mainLayout = qt.QVBoxLayout(self)
 
         # 1. Pool Size
         poolLayout = qt.QHBoxLayout()
@@ -16,12 +16,12 @@ class GlobalSettingsWidget(qt.QWidget):
         self.poolSizeSpin.setRange(1, 128)
         self.poolSizeSpin.setValue(4)
         poolLayout.addWidget(self.poolSizeSpin)
-        self.layout.addLayout(poolLayout)
+        self.mainLayout.addLayout(poolLayout)
 
         # 2. Simulation Manager
         self.simManagerCollapsible = ctk.ctkCollapsibleButton()
         self.simManagerCollapsible.text = "Simulation Manager"
-        self.layout.addWidget(self.simManagerCollapsible)
+        self.mainLayout.addWidget(self.simManagerCollapsible)
         simLayout = qt.QFormLayout(self.simManagerCollapsible)
 
         self.startTimeSpin = qt.QDoubleSpinBox()
@@ -64,7 +64,7 @@ class GlobalSettingsWidget(qt.QWidget):
         # 3. Data Manager
         self.dataManagerCollapsible = ctk.ctkCollapsibleButton()
         self.dataManagerCollapsible.text = "Data Manager"
-        self.layout.addWidget(self.dataManagerCollapsible)
+        self.mainLayout.addWidget(self.dataManagerCollapsible)
         dataLayout = qt.QFormLayout(self.dataManagerCollapsible)
 
         self.filenameEdit = qt.QLineEdit("simulation_output")
@@ -96,7 +96,7 @@ class GlobalSettingsWidget(qt.QWidget):
         # 4. Protocol
         self.protocolCollapsible = ctk.ctkCollapsibleButton()
         self.protocolCollapsible.text = "Protocol"
-        self.layout.addWidget(self.protocolCollapsible)
+        self.mainLayout.addWidget(self.protocolCollapsible)
         protoLayout = qt.QFormLayout(self.protocolCollapsible)
 
         self.protocolTypeCombo = qt.QComboBox()
@@ -123,7 +123,7 @@ class GlobalSettingsWidget(qt.QWidget):
         protoLayout.addRow(self.customSweepWidget)
         self.customSweepWidget.setVisible(False)
 
-        self.layout.addStretch(1)
+        self.mainLayout.addStretch(1)
 
     def onProtocolTypeChanged(self, text):
         self.customSweepWidget.setVisible(text == "CustomSweep")
