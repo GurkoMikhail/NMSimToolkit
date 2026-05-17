@@ -56,6 +56,7 @@ class NMSimToolkitConfiguratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
         from UI.GlobalSettingsWidget import GlobalSettingsWidget
         from UI.SceneTreeWidget import SceneTreeWidget
         from Logic.ConfigExporter import ConfigExporter
+        from Logic.ScenePreviewLogic import ScenePreviewLogic
 
         # 1. Global Settings Tab
         self.globalSettingsTab = GlobalSettingsWidget()
@@ -88,6 +89,15 @@ class NMSimToolkitConfiguratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
 
         # Logic setup
         self.exporter = ConfigExporter(self.globalSettingsTab, self.sceneEditorTab)
+        self.previewer = ScenePreviewLogic(self.sceneEditorTab)
+
+        # Add a Preview Button to the Scene Editor layout or Export layout
+        # The prompt asked for "под Tree/Inspector в Scene Editor tab" or similar.
+        self.previewBtn = qt.QPushButton("Update 3D Preview")
+        self.previewBtn.clicked.connect(self.previewer.update_preview)
+
+        # We can add this to the scene editor's main layout
+        self.sceneEditorTab.mainLayout.addWidget(self.previewBtn)
 
     def onExportClicked(self):
         export_dir = self.exportDirSelector.currentPath

@@ -161,7 +161,7 @@ class GlobalSettingsWidget(qt.QWidget):
 
         layout.addStretch(1)
         item.setData(qt.Qt.UserRole, config)
-        item.setSizeHint(widget.sizeHint())
+        item.setSizeHint(widget.sizeHint)
         self.handlersListWidget.setItemWidget(item, widget)
 
     def onRemoveHandler(self):

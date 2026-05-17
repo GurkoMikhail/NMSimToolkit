@@ -29,13 +29,20 @@ class SceneTreeWidget(qt.QWidget):
         self.addNodeBtn = qt.QPushButton("Add Node")
         self.addNodeBtn.clicked.connect(self.onAddNode)
 
+        self.deleteNodeBtn = qt.QPushButton("Delete Node")
+        self.deleteNodeBtn.clicked.connect(self.onDeleteNode)
+
         toolbarLayout.addWidget(self.nodeTypeCombo)
         toolbarLayout.addWidget(self.addNodeBtn)
+        toolbarLayout.addWidget(self.deleteNodeBtn)
         leftLayout.addLayout(toolbarLayout)
 
         # Tree Widget
         self.tree = qt.QTreeWidget()
         self.tree.setHeaderLabels(["Scene Hierarchy"])
+        self.tree.setDragEnabled(True)
+        self.tree.setAcceptDrops(True)
+        self.tree.setDragDropMode(qt.QAbstractItemView.InternalMove)
         leftLayout.addWidget(self.tree)
 
         self.splitter.addWidget(leftWidget)
@@ -52,7 +59,10 @@ class SceneTreeWidget(qt.QWidget):
         # Root is a CompositeNode that cannot be deleted
         root_data = {'type': 'CompositeNode'}
         self.root_item.setData(0, qt.Qt.UserRole, root_data)
-        self.root_item.setFlags(self.root_item.flags() & ~qt.Qt.ItemIsUserCheckable)
+        # Remove Drag/Drop flags from Root so it stays fixed
+        flags = self.root_item.flags() & ~qt.Qt.ItemIsUserCheckable & ~qt.Qt.ItemIsDragEnabled & ~qt.Qt.ItemIsDropEnabled
+        self.root_item.setFlags(flags)
+
         self.tree.addTopLevelItem(self.root_item)
         self.root_item.setExpanded(True)
 
@@ -71,11 +81,26 @@ class SceneTreeWidget(qt.QWidget):
         # In reality WoodcockVoxelVolume raises error if another Volume is added, but we skip complex validation here
 
         new_item = qt.QTreeWidgetItem(selected, [f"New {node_type}"])
+        new_item.setFlags(new_item.flags() | qt.Qt.ItemIsEditable | qt.Qt.ItemIsDragEnabled | qt.Qt.ItemIsDropEnabled)
         new_data = {'type': node_type}
         new_item.setData(0, qt.Qt.UserRole, new_data)
         selected.addChild(new_item)
         selected.setExpanded(True)
         self.tree.setCurrentItem(new_item)
+
+    def onDeleteNode(self):
+        selected = self.tree.currentItem()
+        if not selected or selected == self.root_item:
+            return
+
+        parent = selected.parent()
+        if parent:
+            parent.removeChild(selected)
+        else:
+            # Fallback for top-level items, though we only have one root.
+            idx = self.tree.indexOfTopLevelItem(selected)
+            if idx >= 0:
+                self.tree.takeTopLevelItem(idx)
 
     def onSelectionChanged(self):
         selected = self.tree.currentItem()
