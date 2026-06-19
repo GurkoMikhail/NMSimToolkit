@@ -310,3 +310,99 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
             self._write_initial_states(initial_states_to_write)
         if interactions_to_write is not None:
             self._format_and_write_interactions(interactions_to_write)
+
+
+class LiveTrajectoryHandler(BaseDataHandler):
+    def __init__(self, port: int, debug_mode: bool, max_trajectories: int = 10000):
+        super().__init__()
+        if not debug_mode:
+            raise ValueError("LiveTrajectoryHandler requires debug_mode=True")
+        if port <= 0:
+            raise ValueError("LiveTrajectoryHandler requires a strictly positive port number")
+
+        import socket
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind(('', port))
+        self.server_socket.listen(1)
+        self.server_socket.setblocking(False)
+        self.client_socket = None
+
+        self.max_trajectories = max_trajectories
+        self.metadata = np.empty(2, dtype=np.int64)
+        self.step = 0
+
+        # Pre-allocate static buffers for zero-allocation runtime
+        self._pos_x = np.empty(max_trajectories, dtype=np.float64)
+        self._pos_y = np.empty(max_trajectories, dtype=np.float64)
+        self._pos_z = np.empty(max_trajectories, dtype=np.float64)
+        self._particle_ids = np.empty(max_trajectories, dtype=np.uint64)
+        self._cursor = 0
+
+    def _accept_client(self) -> None:
+        if self.client_socket is None:
+            try:
+                client, addr = self.server_socket.accept()
+                client.settimeout(0.05)  # Short timeout to avoid blocking the simulation loop
+                self.client_socket = client
+                _logger.info(f"LiveTrajectoryHandler accepted client from {addr}")
+            except BlockingIOError:
+                pass
+
+    def process_chunk(self, chunk: Dict[str, Any]) -> None:
+        chunk_type = chunk.get('type')
+        data = chunk.get('data')
+
+        if chunk_type == 'interactions':
+            if data is not None:
+                pos_x = data.get('pos_x')
+                pos_y = data.get('pos_y')
+                pos_z = data.get('pos_z')
+                particle_id = data.get('particle_ID')
+
+                if pos_x is None or particle_id is None:
+                    return
+
+                n = len(pos_x)
+                if n == 0:
+                    return
+
+                space_left = self.max_trajectories - self._cursor
+                if space_left <= 0:
+                    return
+
+                take = min(n, space_left)
+
+                # In-place copy into pre-allocated static buffers
+                self._pos_x[self._cursor:self._cursor+take] = pos_x[:take]
+                self._pos_y[self._cursor:self._cursor+take] = pos_y[:take]
+                self._pos_z[self._cursor:self._cursor+take] = pos_z[:take]
+                self._particle_ids[self._cursor:self._cursor+take] = particle_id[:take]
+
+                self._cursor += take
+
+        elif chunk_type == 'dead_particles':
+            self._accept_client()
+
+            if self._cursor > 0 and self.client_socket is not None:
+                self.metadata[0] = self.step
+                self.metadata[1] = self._cursor
+
+                try:
+                    # Send metadata and buffers directly via memoryview to preserve Zero-Allocation
+                    self.client_socket.sendall(memoryview(self.metadata))
+                    self.client_socket.sendall(memoryview(self._pos_x[:self._cursor]))
+                    self.client_socket.sendall(memoryview(self._pos_y[:self._cursor]))
+                    self.client_socket.sendall(memoryview(self._pos_z[:self._cursor]))
+                    self.client_socket.sendall(memoryview(self._particle_ids[:self._cursor]))
+                except (BlockingIOError, ConnectionError, TimeoutError, OSError):
+                    # Drop the client if sending fails
+                    self.client_socket.close()
+                    self.client_socket = None
+
+            if self._cursor > 0:
+                self.step += 1
+
+            # Reset cursor for the next simulation step, discarding accumulated states
+            # ParaView expects exactly one point per ID per step, so we clear the buffer.
+            self._cursor = 0
