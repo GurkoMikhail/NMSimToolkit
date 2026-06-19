@@ -124,8 +124,6 @@ class Volume(CompositeNode):
                 result.add_child(child_copy)
         return result
 
-
-
     def set_parent(self, parent: 'CompositeNode') -> None:
         parent.add_child(self)
         self.invalidate_scene()
