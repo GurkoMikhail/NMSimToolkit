@@ -7,7 +7,7 @@ name = "NMSimToolkit"
 version = "0.1.0"
 description = "Nuclear Medicine Simulation Toolkit"
 authors = [
-  { name="Author Name" },
+  { name="Mikhail Gurko" },
 ]
 readme = "README.md"
 requires-python = ">=3.8"
