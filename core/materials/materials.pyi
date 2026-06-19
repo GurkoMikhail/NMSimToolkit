@@ -1,9 +1,8 @@
-import numpy as np
 from dataclasses import dataclass
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple
 from numpy.typing import NDArray
 from core.other.nonunique_array import NonuniqueArray
-from core.other.typing_definitions import Float
+from core.other.typing_definitions import Float, Index
 
 class Composition(Tuple[Float, ...]):
     def _asdict(self) -> Dict[str, Float]: ...
@@ -35,3 +34,5 @@ class MaterialArray(NonuniqueArray):
     def Zeff(self) -> NDArray[Float]: ...
     @property
     def density(self) -> NDArray[Float]: ...
+    @property
+    def ID(self) -> NDArray[Index]: ...

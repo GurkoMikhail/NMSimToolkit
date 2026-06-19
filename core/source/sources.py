@@ -5,14 +5,15 @@ import hepunits as units
 from numpy.typing import NDArray
 
 import core.other.utils as utils
-from core.other.typing_definitions import (Activity, Energy, Float, Length,
-                                           Time, Vector3D)
-from core.particles.particles import ParticleArray
+from core.other.typing_definitions import Float, Length, Time, Vector3D, Species, Index
+from core.particles.particles import ParticleBank
+from core.other.vectors import Vector3D
+from core.scene.nodes import CompositeNode
 
 
-class Source:
+class Source(CompositeNode):
     """
-    Класс источника частиц
+    Класс источника частиц для Data-Oriented Design (SoA)
 
     [activity] = Bq
 
@@ -38,57 +39,25 @@ class Source:
     emission_table: List[NDArray[Any]]
 
     def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = Float(4 * units.mm), radiation_type: str = 'Gamma', energy: Union[Float, List[List[Float]]] = Float(140.5 * units.keV), half_life: Time = Float(6 * units.hour), rng: Optional[np.random.Generator] = None) -> None:
+        super().__init__()
         self.distribution = np.asarray(distribution, dtype=Float)
+        self.initial_activity = np.sum(self.distribution) if activity is None else np.asarray(activity, dtype=Float)
         self.distribution /= np.sum(self.distribution)
-        self.initial_activity = np.sum(distribution) if activity is None else np.asarray(activity, dtype=Float)
         self.voxel_size = voxel_size
         self.size = np.asarray(self.distribution.shape)*self.voxel_size
         self.radiation_type = radiation_type
-        
+
         energy = [[energy, Float(1.0)], ] if not isinstance(energy, list) else energy
         energy_arr = np.array(energy)
         self.energy = np.zeros(energy_arr.shape[0], dtype=[("energy", Float), ("probability", Float)])
         self.energy["energy"] = cast(NDArray[Float], energy_arr[:, 0])
         self.energy["probability"] = energy_arr[:, 1]
         self.energy["probability"] /= np.sum(self.energy["probability"])
-        
+
         self.half_life = half_life
-        self.timer = Float(0.)
         self._generate_emission_table()
-        self.transformation_matrix = np.array([
-            [1., 0., 0., 0.],
-            [0., 1., 0., 0.],
-            [0., 0., 1., 0.],
-            [0., 0., 0., 1.]
-        ])
         self.rng = np.random.default_rng() if rng is None else rng
 
-    def translate(self, x: Float = Float(0.), y: Float = Float(0.), z: Float = Float(0.), in_local: bool = False) -> None:
-        """ Переместить объём """
-        translation = np.asarray([x, y, z])
-        translation_matrix = utils.compute_translation_matrix(translation)
-        if in_local:
-            self.transformation_matrix = self.transformation_matrix @ translation_matrix
-        else:
-            self.transformation_matrix = translation_matrix @ self.transformation_matrix
-
-    def rotate(self, alpha: Float = Float(0.), beta: Float = Float(0.), gamma: Float = Float(0.), rotation_center: Sequence[Float] = (Float(0.), Float(0.), Float(0.)), in_local: bool = False) -> None:
-        """ Повернуть объём вокруг координатных осей """
-        rotation_angles = np.asarray([alpha, beta, gamma])
-        rotation_center_arr = np.asarray(rotation_center)
-        rotation_matrix = utils.compute_translation_matrix(rotation_center_arr)
-        rotation_matrix = rotation_matrix @ utils.compute_rotation_matrix(rotation_angles)
-        rotation_matrix = rotation_matrix @ utils.compute_translation_matrix(-rotation_center_arr)
-        if in_local:
-            self.transformation_matrix = self.transformation_matrix @ rotation_matrix
-        else:
-            self.transformation_matrix = rotation_matrix @ self.transformation_matrix
-
-    def convert_to_global_position(self, position: NDArray[Float]) -> NDArray[Float]:
-        global_position = np.ones((position.shape[0], 4), dtype=position.dtype)
-        global_position[:, :3] = position
-        np.matmul(global_position, self.transformation_matrix.T.astype(position.dtype), out=global_position)
-        return global_position[:, :3]
 
     def _generate_emission_table(self):
         xs, ys, zs = np.meshgrid(
@@ -103,19 +72,34 @@ class Source:
         self.emission_table = [position[indices], probability[indices]]
 
     @property
-    def activity(self) -> NDArray[Float]:
-        return self.initial_activity * 2 ** (-self.timer / self.half_life)
-    
-    @property
-    def nuclei_number(self) -> NDArray[Float]:
-        return self.activity * self.half_life / np.log(2)
+    def decay_constant(self) -> Float:
+        if np.isinf(self.half_life):
+            return Float(0.0)
+        return Float(np.log(2) / self.half_life)
 
-    def set_state(self, timer: Optional[Time], rng_state: Optional[Any] = None) -> None:
-        if timer is not None:
-            self.timer = timer
+    def _get_effective_dt(self, dt: Float) -> Float:
+        lambd = self.decay_constant
+        if lambd == 0.0 or lambd * dt < 1e-6:
+            return dt
+        return Float((1.0 - np.exp(-lambd * dt)) / lambd)
+
+    def get_activity(self, t: Float) -> Float:
+        """Мгновенная активность источника в момент времени t."""
+        if self.decay_constant == 0.0:
+            return Float(self.initial_activity)
+        return Float(self.initial_activity * (2.0 ** (-t / self.half_life)))
+
+    def get_expected_particles(self, t1: Float, t2: Float) -> Float:
+        """Точный интеграл распада на интервале [t1, t2]."""
+        dt = t2 - t1
+        if dt <= 0:
+            return Float(0.0)
+        return Float(self.get_activity(t1) * self._get_effective_dt(dt))
+
+    def set_state(self, rng_state: Optional[Any] = None) -> None:
         if rng_state is None:
             return
-        self.rng.bit_generator.state['state'] = rng_state# type: ignore 
+        self.rng.bit_generator.state['state'] = rng_state# type: ignore
 
     def generate_energy(self, n: int) -> NDArray[Float]:
         energy = self.rng.choice(self.energy["energy"], n, p=self.energy["probability"])
@@ -129,13 +113,19 @@ class Source:
         position = self.convert_to_global_position(position)
         return position
 
-    def generate_emission_time(self, n: int) -> Tuple[NDArray[Float], Float]:
-        dt = np.log((self.nuclei_number + n) / self.nuclei_number) * self.half_life / np.log(2)
-        a = 2 ** (-self.timer / self.half_life)
-        b = 2 ** (-(self.timer + dt) / self.half_life)
-        alpha = self.rng.uniform(b, a, n)
-        emission_time = -np.log(alpha) * self.half_life / np.log(2)
-        return emission_time, Float(dt)
+    def generate_emission_time(self, n: int, t1: Float, t2: Float) -> NDArray[Float]:
+        dt = Float(t2 - t1)
+        u = self.rng.uniform(0.0, 1.0, n)
+        lambd = self.decay_constant
+
+        if lambd == 0.0 or lambd * dt < 1e-6:
+            # Linear approximation for stable sources
+            emission_time = t1 + u * dt
+        else:
+            # Exact inverse CDF
+            effective_dt = self._get_effective_dt(dt)
+            emission_time = t1 - (1.0 / lambd) * np.log(1.0 - u * lambd * effective_dt)
+        return emission_time
 
     def generate_direction(self, n: int) -> Vector3D:
         a1 = self.rng.random(n)
@@ -147,26 +137,52 @@ class Source:
         direction = np.column_stack((cos_alpha, cos_beta, cos_gamma))
         return direction
 
-    def generate_particles(self, n: int) -> ParticleArray:
-        energy = self.generate_energy(n)
-        direction = self.generate_direction(n)
-        position = self.generate_position(n)
-        emission_time, dt = self.generate_emission_time(n)
-        self.timer += dt
+    def inject(self, bank: ParticleBank, batch_size: int, t1: Float, t2: Float) -> NDArray[Index]:
+        """
+        Генерирует частицы и инжектирует их напрямую в банк через механизм Direct Injection (SoA).
+        """
+        n = min(batch_size, bank.capacity - len(bank.active_indices))
+        if n <= 0:
+            return np.array([], dtype=Index)
 
-        from core.other.typing_definitions import Species
-        particles = ParticleArray.create(np.zeros_like(energy, dtype=Species), position, direction, energy, emission_time)
-        return particles
+        energy = self.generate_energy(n)
+        direction_arr = self.generate_direction(n)
+        position_arr = self.generate_position(n)
+        emission_time = self.generate_emission_time(n, t1, t2)
+
+        position = Vector3D(
+            x=position_arr[:, 0].astype(Length),
+            y=position_arr[:, 1].astype(Length),
+            z=position_arr[:, 2].astype(Length)
+        )
+        direction = Vector3D(
+            x=direction_arr[:, 0].astype(Float),
+            y=direction_arr[:, 1].astype(Float),
+            z=direction_arr[:, 2].astype(Float)
+        )
+
+        species = np.zeros(n, dtype=Species)
+        distance_traveled = np.zeros(n, dtype=Length)
+
+        target_indices = bank.inject_particles(
+            species=species,
+            position=position,
+            direction=direction,
+            energy=energy,
+            emission_time=emission_time,
+            distance_traveled=distance_traveled
+        )
+        return target_indices
 
 
 class PointSource(Source):
     """
-    Точечный источник
+    Точечный источник (SoA)
 
     [position = (x, y, z)] = units.cm
 
     [activity] = Bq
-    
+
     [energy] = units.eV
     """
 
@@ -181,9 +197,10 @@ class PointSource(Source):
             rng=rng
         )
 
+
 class Tc99m_MIBI(Source):
     """
-    Источник 99mTc-MIBI
+    Источник 99mTc-MIBI (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -200,9 +217,10 @@ class Tc99m_MIBI(Source):
         half_life = 6.*units.hour
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
+
 class I123(Source):
     """
-    Источник I123
+    Источник I123 (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -229,7 +247,7 @@ class I123(Source):
 
 class SourcePhantom(Tc99m_MIBI):
     """
-    Источник 99mTc-MIBI
+    Источник 99mTc-MIBI (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -247,7 +265,7 @@ class SourcePhantom(Tc99m_MIBI):
 
 class efg3(SourcePhantom):
     """
-    Источник efg3
+    Источник efg3 (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -258,11 +276,11 @@ class efg3(SourcePhantom):
         phantom_name = 'efg3'
         voxel_size = 4.*units.mm
         super().__init__(phantom_name, activity, voxel_size)
-        
+
 
 class efg3cut(SourcePhantom):
     """
-    Источник efg3cut
+    Источник efg3cut (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -277,7 +295,7 @@ class efg3cut(SourcePhantom):
 
 class efg3cutDefect(SourcePhantom):
     """
-    Источник efg3cutDefect
+    Источник efg3cutDefect (SoA)
 
     [position = (x, y, z)] = units.cm
 
@@ -287,4 +305,12 @@ class efg3cutDefect(SourcePhantom):
     def __init__(self, position, activity, rotation_angles=None, rotation_center=None):
         phantom_name = 'efg3cutDefect'
         voxel_size = 4.*units.mm
-        super().__init__(position, activity, phantom_name, voxel_size, rotation_angles, rotation_center)
+        super().__init__(phantom_name, activity, voxel_size)
+
+        # Apply optional position and rotation transformations after initialization
+        if rotation_angles is not None:
+            if rotation_center is None:
+                rotation_center = (0.0, 0.0, 0.0)
+            self.rotate(rotation_angles[0], rotation_angles[1], rotation_angles[2], rotation_center=rotation_center)
+        if position is not None:
+            self.translate(position[0], position[1], position[2])

@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Dict, Any, Iterable, Optional, Union
+from typing import Dict, Iterable, Union
 from core.materials.materials import Material
 
 class AttenuationDataBase(Dict[Material, np.ndarray]):

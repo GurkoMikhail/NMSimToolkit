@@ -1,64 +1,39 @@
-import numpy as np
-from typing import Union, overload, Any, Tuple, Optional
+from typing import NamedTuple
 from numpy.typing import NDArray
-from core.other.typing_definitions import Float, Vector3D, Energy, Time, Length, ID, Species
 
-class ParticleCore:
-    species: Union[Species, NDArray[Species]]
-    position: Vector3D
-    direction: Vector3D
-    energy: Union[Energy, NDArray[Energy]]
-    emission_time: Union[Time, NDArray[Time]]
-    emission_energy: Union[Energy, NDArray[Energy]]
-    emission_position: Vector3D
-    emission_direction: Vector3D
-    distance_traveled: Union[Length, NDArray[Length]]
-    ID: Union[ID, NDArray[ID]]
+from core.other.typing_definitions import Energy, Float, Length, Time, Species, Index
+from core.other.vectors import Vector3D
+from core.geometry.navigation_state import NavigationState
+from core.particles.initial_state import InitialState
+from core.particles.kinematic_state import KinematicState
 
-    def move(self, distance: Union[Length, NDArray[Length]]) -> None: ...
-    def rotate(self, theta: Union[Float, NDArray[Float]], phi: Union[Float, NDArray[Float]]) -> None: ...
+
+class ParticleBank(NamedTuple):
+    state: KinematicState
+    initial_state: InitialState
+    navigation_state: NavigationState
+    count_array: NDArray[Index]
+    capacity: int
 
     @classmethod
-    def get_dtype(cls) -> np.dtype: ...
+    def allocate(cls, capacity: int) -> 'ParticleBank': ...
 
-class Particle(np.void, ParticleCore):
-    species: Species
-    position: Vector3D
-    direction: Vector3D
-    energy: Energy
-    emission_time: Time
-    emission_energy: Energy
-    emission_position: Vector3D
-    emission_direction: Vector3D
-    distance_traveled: Length
-    ID: ID
+    @property
+    def count(self) -> int: ...
 
-class ParticleArray(np.ndarray, ParticleCore):
-    count: int
-
-    species: NDArray[Species]
-    position: Vector3D
-    direction: Vector3D
-    energy: NDArray[Energy]
-    emission_time: NDArray[Time]
-    emission_energy: NDArray[Energy]
-    emission_position: Vector3D
-    emission_direction: Vector3D
-    distance_traveled: NDArray[Length]
-    ID: NDArray[ID]
-
-    def __new__(cls, shape: Union[int, Tuple[int, ...]]) -> 'ParticleArray': ...
-
-    @classmethod
-    def create(
-        cls,
+    def inject_particles(
+        self,
         species: NDArray[Species],
         position: Vector3D,
         direction: Vector3D,
         energy: NDArray[Energy],
-        emission_time: Optional[NDArray[Time]] = None,
-        emission_position: Optional[Vector3D] = None,
-        emission_direction: Optional[Vector3D] = None,
-        distance_traveled: Optional[NDArray[Length]] = None
-    ) -> 'ParticleArray': ...
+        emission_time: NDArray[Time],
+        distance_traveled: NDArray[Length]
+    ) -> NDArray[Index]: ...
 
+    @property
+    def active_indices(self) -> NDArray[Index]: ...
+
+    def move(self, target_indices: NDArray[Index], distances: NDArray[Float]) -> None: ...
+
+    def rotate(self, target_indices: NDArray[Index], thetas: NDArray[Float], phis: NDArray[Float]) -> None: ...

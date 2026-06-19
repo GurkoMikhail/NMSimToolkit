@@ -30,11 +30,14 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     from core.geometry.gamma_cameras import GammaCamera
     from core.geometry.geometries import Box
     from core.geometry.parametric_collimators import ParametricParallelCollimator
-    from core.geometry.volumes import TransformableVolume, VolumeWithChilds
-    from core.transport.simulation_managers import SimulationManager
-    from core.data.data_manager import SimulationDataManager
+    from core.geometry.volumes import Volume
+    from core.scene.nodes import CompositeNode
     from core.geometry.voxel_volumes import WoodcockVoxelVolume
-    from core.transport.propagation_managers import PropagationWithInteraction
+    from core.transport.simulation_managers import SimulationManager
+    from core.transport.propagator import ParticlePropagator
+    from core.physics.physics_compiler import PhysicsCompiler
+    from core.data.data_manager import DataManager
+    from core.data.data_handlers import HistoryAssemblerHandler
     from core.source.sources import Tc99m_MIBI
     from settings.database_setting import material_database, attenuation_database
 
@@ -42,7 +45,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
 
     start_time, stop_time = time_interval
 
-    simulation_volume = VolumeWithChilds(
+    root_scene = Volume(
         geometry=Box(120*cm, 120*cm, 80*cm),
         material=material_database['Air, Dry (near sea level)'],
         name='Simulation_volume'
@@ -58,12 +61,12 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
         material_distribution=material_distribution,
         name='Phantom'
     )
-    phantom.set_parent(simulation_volume)
+    phantom.set_parent(root_scene)
     
     detector_list = []
 
     for i in range(gamma_cameras):
-        detector = TransformableVolume(
+        detector = Volume(
             geometry=Box(54.*cm, 40*cm, 0.95*cm),
             material=material_database['Sodium Iodide'],
             name=f'Detector at {round((angle + delta_angle*i)/degree, 1)} deg'
@@ -88,7 +91,7 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
         spect_head.translate(y=radius + spect_head.size[2]/2)
         spect_head.rotate(alpha=angle + delta_angle*i)
     
-        simulation_volume.add_child(spect_head)
+        root_scene.add_child(spect_head)
         detector_list.append(detector)
 
     distribution = np.load(f'phantoms/hoffman_activity.npy')
@@ -98,40 +101,32 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
         voxel_size=4*mm
     )
     source.rng = rng
-    source.set_state(start_time)
+    source.set_state(rng_state=rng.bit_generator.state)
+    phantom.add_child(source)
 
-    propagation_manager = PropagationWithInteraction(
-        attenuation_database=attenuation_database,
-        rng=rng
-    )
-
-    simulation_manager = SimulationManager(
-        source=source,
-        simulation_volume=simulation_volume,
-        propagation_manager=propagation_manager,
+    propagator = ParticlePropagator()
+    manager = SimulationManager(
+        scene=root_scene,
+        propagator=propagator,
+        stop_time=stop_time,
         particles_number=10**6,
-        stop_time=stop_time
+        buffer_capacity=100000
     )
-    simulation_manager.name = f'{round(angle/degree, 1)} deg'
-    simulation_manager.start()
+    manager.global_timer = start_time
+    manager.name = f'{round(angle/degree, 1)} deg'
+    manager.start()
 
-    simulation_data_manager = SimulationDataManager(
-        filename=f'brain_healthy/{simulation_manager.name}.hdf',
-        sensitive_volumes=detector_list,
-        lock=lock,
-        iteraction_buffer_size=int(10**4)
+
+    handler = HistoryAssemblerHandler(sensitive_volumes=detector_list)
+    data_manager = DataManager(
+        filename=f'brain_healthy/{manager.name}.hdf',
+        handlers=[handler],
+        queue=manager.queue
     )
-    
-    while True:
-        data = simulation_manager.queue.get()
-        if isinstance(data, np.ndarray):
-            simulation_data_manager.add_interaction_data(data)
-        elif data == 'stop':
-            simulation_manager.join()
-            simulation_data_manager.save_interaction_data()
-            break
-        else:
-            raise ValueError("Неверное значение Propagation Manager")
+    data_manager.start()
+
+    manager.join()
+    data_manager.join()
 
 
 if __name__ == '__main__':

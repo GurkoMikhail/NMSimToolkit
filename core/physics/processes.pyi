@@ -1,12 +1,9 @@
 import numpy as np
-from abc import ABC, abstractmethod
-from typing import Optional, Any, Tuple, Union
+from abc import ABC
+from typing import Optional, Any
 from numpy.typing import NDArray
 from core.materials.attenuation_functions import AttenuationFunction
-from core.particles.particles import Particle, ParticleArray
-from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Energy, Vector3D, Float
-from core.data.interaction_data import InteractionArray
+from core.other.typing_definitions import Float
 
 class Process(ABC):
     rng: np.random.Generator
@@ -19,15 +16,11 @@ class Process(ABC):
     def energy_range(self) -> NDArray[Float]: ...
     @energy_range.setter
     def energy_range(self, value: NDArray[Float]) -> None: ...
-    def get_LAC(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]: ...
-    def generate_free_path(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]: ...
-    def __call__(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> InteractionArray: ...
 
 class PhotoelectricEffect(Process): ...
 
 class CoherentScattering(Process):
     theta_generator: Any
-    def generate_theta(self, particle: ParticleArray, material: Union[Material, MaterialArray]) -> NDArray[Float]: ...
     def generate_phi(self, size: int) -> NDArray[Float]: ...
 
 class ComptonScattering(CoherentScattering):
