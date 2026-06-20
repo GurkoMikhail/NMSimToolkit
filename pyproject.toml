@@ -30,3 +30,6 @@ test = [
     "pytest",
     "psutil"
 ]
+
+[tool.setuptools.packages.find]
+include = ["core*"]
