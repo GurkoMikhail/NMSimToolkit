@@ -5,12 +5,12 @@ import numpy as np
 
 from core.geometry.geometries import Box
 from numba import cfunc
-from core.geometry.woodcoock_volumes import WoodcockParameticVolume
+from core.geometry.woodcock_volumes import WoodcockParametricVolume
 from core.materials.materials import Material, MaterialArray
 from core.other.typing_definitions import Float, Index, Length, Vector3D, NumbaFloat, NumbaIndex
 
 
-class WoodcockVoxelVolume(WoodcockParameticVolume):
+class WoodcockVoxelVolume(WoodcockParametricVolume):
     """
     Класс воксельного Woodcock объёма
     

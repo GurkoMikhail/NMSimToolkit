@@ -5,12 +5,12 @@ import numpy as np
 import settings.database_setting as settings
 from core.geometry.geometries import Box
 from numba import cfunc
-from core.geometry.woodcoock_volumes import WoodcockParameticVolume
+from core.geometry.woodcock_volumes import WoodcockParametricVolume
 from core.materials.materials import Material
 from core.other.typing_definitions import Float, Vector3D, NumbaIndex, NumbaFloat
 
 
-class ParametricParallelCollimator(WoodcockParameticVolume):
+class ParametricParallelCollimator(WoodcockParametricVolume):
     """
     Класс параметрического коллиматора с параллельными каналами
 
@@ -97,7 +97,7 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
         return collimated, self._vacuum
 
 
-class ParametricParallelSquareCollimator(WoodcockParameticVolume):
+class ParametricParallelSquareCollimator(WoodcockParametricVolume):
     """
     Parallel square hole collimator (CZT).
     Параметры:

@@ -1,10 +1,10 @@
 import numpy as np
 from typing import Optional, Tuple, Any
-from core.geometry.woodcoock_volumes import WoodcockParameticVolume
+from core.geometry.woodcock_volumes import WoodcockParametricVolume
 from core.materials.materials import Material, MaterialArray
 from core.other.typing_definitions import Length, Vector3D, Float
 
-class WoodcockVoxelVolume(WoodcockParameticVolume):
+class WoodcockVoxelVolume(WoodcockParametricVolume):
     material_distribution: MaterialArray
     _voxel_size_ratio: Length
     def __init__(self, voxel_size: Length, material_distribution: MaterialArray, name: Optional[str] = None) -> None: ...

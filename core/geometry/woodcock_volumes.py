@@ -16,7 +16,7 @@ class WoodcockVolume(Volume):
     """
 
 
-class WoodcockParameticVolume(WoodcockVolume):
+class WoodcockParametricVolume(WoodcockVolume):
     """
     Класс параметрического Woodcock объёма
     """
