@@ -1,12 +1,12 @@
 import numpy as np
 from typing import Any, Optional, Tuple, Union, List
 
-from core.geometry.woodcoock_volumes import WoodcockParameticVolume
+from core.geometry.woodcock_volumes import WoodcockParametricVolume
 from core.materials.materials import Material
 from core.other.typing_definitions import Float, Vector3D
 
 
-class ParametricParallelCollimator(WoodcockParameticVolume):
+class ParametricParallelCollimator(WoodcockParametricVolume):
     def __init__(self, size: Union[np.ndarray, list, tuple], hole_diameter: Float, septa: Float, material: Optional[Material] = None, name: Optional[str] = None) -> None: ...
     @property
     def material_list(self) -> List[Material]: ...
@@ -14,7 +14,7 @@ class ParametricParallelCollimator(WoodcockParameticVolume):
     def _compile_cfunc(self) -> Any: ...
     def _parametric_function(self, position: Vector3D) -> Tuple[np.ndarray, Material]: ...
 
-class ParametricParallelSquareCollimator(WoodcockParameticVolume):
+class ParametricParallelSquareCollimator(WoodcockParametricVolume):
     def __init__(self, size: Union[np.ndarray, list, tuple], hole_width: Float, septa: Float, material: Optional[Material] = None, name: Optional[str] = None) -> None: ...
     @property
     def material_list(self) -> List[Material]: ...

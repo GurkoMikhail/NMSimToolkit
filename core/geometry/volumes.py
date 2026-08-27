@@ -1,4 +1,3 @@
-from copy import deepcopy
 from itertools import count
 from typing import Any, List, Optional, Sequence
 
@@ -36,7 +35,6 @@ class Volume(CompositeNode):
         self.geometry = geometry
         self.material = material
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name
-        self._dublicate_counter = count(1)
         self._geometry_buffer: Optional[NDArray[Any]] = None
         self._flattened_scene: Optional[FlattenedScene] = None
 
@@ -55,7 +53,7 @@ class Volume(CompositeNode):
 
     @property
     def material_cfunc(self) -> CMaterialFunc:
-        """ CFUNCTYPE pointer of the @cfunc for Woodcock paramteric volumes. Defaults to None for normal volumes. """
+        """ CFUNCTYPE pointer of the @cfunc for Woodcock parametric volumes. Defaults to None for normal volumes. """
         return None
 
     @property
@@ -110,19 +108,6 @@ class Volume(CompositeNode):
             if isinstance(current, Volume):
                 top_vol = current
         return top_vol
-
-    def dublicate(self):
-        result = deepcopy(self)
-        result.name = f'{self.name}.{next(self._dublicate_counter)}'
-        result.parent = None
-        # Dublicate children
-        childs = result.childs
-        result.childs = []
-        for child in childs:
-            if hasattr(child, 'dublicate'):
-                child_copy = child.dublicate()
-                result.add_child(child_copy)
-        return result
 
     def set_parent(self, parent: 'CompositeNode') -> None:
         parent.add_child(self)
