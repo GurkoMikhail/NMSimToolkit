@@ -13,3 +13,5 @@ dependencies:
   - pint
   - pydantic
   - pyyaml
+  - pytest
+  - psutil

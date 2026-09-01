@@ -10,7 +10,6 @@ from hepunits import*
 
 def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, lock):
     import logging
-    from core.other.telegram_bot import TeleBotHandler
     from pathlib import Path
     
     log_path = Path(f'logs/lung_cancer/{round(angle/degree, 1)} deg.log')
@@ -18,12 +17,9 @@ def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, loc
     file_handler = logging.FileHandler(log_path)
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(logging.Formatter('[%(asctime)s: %(levelname)s] %(message)s'))
-    telebot_handler = TeleBotHandler()
-    telebot_handler.setLevel(logging.WARNING)
-    telebot_handler.setFormatter(logging.Formatter('[%(asctime)s: %(levelname)s]\n%(message)s'))
     
     logging.basicConfig(
-        handlers=[file_handler, telebot_handler]
+        handlers=[file_handler]
     )
     
     from core.materials.materials import MaterialArray
