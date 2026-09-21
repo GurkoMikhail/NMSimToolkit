@@ -3,12 +3,15 @@ import os
 import yaml
 import numpy as np
 from pathlib import Path
+import hepunits as units
 
 from core.config.models import SimulationConfig, VolumeConfig, BoxConfig, SimulationManagerConfig, DataManagerConfig
 from core.config.yaml_loader import load_simulation_config
 from core.config.yaml_dumper import dump_simulation_config
 from core.config.builder import SceneBuilder
 from core.geometry.volumes import Volume
+from core.geometry.voxel_volumes import WoodcockVoxelVolume
+from core.source.sources import Source
 
 class TestConfig(unittest.TestCase):
     def setUp(self):
@@ -126,7 +129,7 @@ class TestConfig(unittest.TestCase):
         child2 = config.scene.children[1]
         self.assertEqual(child2.type, "Source")
         self.assertEqual(child2.energy, 0.1405) # 140.5 keV in MeV
-        self.assertTrue(np.isclose(child2.activity, 300e6)) # 300 MBq in Bq
+        self.assertTrue(np.isclose(child2.activity, 300e6 * units.Bq)) # 300 MBq in HepUnits (0.3 decays/ns)
         self.assertEqual(child2.distribution.format, "raw")
         self.assertEqual(child2.distribution.mapping[1.0], 100.0)
         self.assertEqual(child2.distribution.fill_value, 0.0)
@@ -158,8 +161,6 @@ class TestConfig(unittest.TestCase):
     def test_scene_builder(self):
         config = load_simulation_config(self.test_yaml)
         builder = SceneBuilder()
-        from core.geometry.voxel_volumes import WoodcockVoxelVolume
-        from core.source.sources import Source
         root_node = builder.build_scene(config.scene)
 
         self.assertIsInstance(root_node, Volume)
@@ -185,7 +186,16 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(child2.distribution[0, 0, 0], 0.0)
         # 100 is converted to probability since the source object normalizes the distribution upon init
         self.assertTrue(np.isclose(child2.distribution[0, 0, 1], 100.0 / 300.0))
-        self.assertTrue(np.isclose(child2.initial_activity, 300e6)) # The total activity defaults to sum of distribution before normalization
+        self.assertTrue(np.isclose(child2.initial_activity, 300e6 * units.Bq)) # Total activity in hepunits (ns^-1)
+
+    def test_load_nema_1_cam_yaml(self):
+        # Проверка корректной загрузки конфигурации nema_1_cam.yaml с разрешением шаблонов протокола
+        config = load_simulation_config("nema_1_cam.yaml")
+        self.assertIsInstance(config, SimulationConfig)
+        builder = SceneBuilder()
+        root_node = builder.build_scene(config.scene)
+        self.assertIsNotNone(root_node)
+        self.assertEqual(root_node.name, "Simulation_volume")
 
 if __name__ == '__main__':
     unittest.main()

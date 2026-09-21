@@ -1,6 +1,11 @@
-import yaml
+from copy import deepcopy
 from pathlib import Path
+from typing import Optional, Dict, Any
+import yaml
+
 from core.config.models import SimulationConfig
+from core.config.orchestrator import Orchestrator
+
 
 def load_raw_config(filepath: str | Path) -> dict:
     """Loads a YAML file and returns the raw dictionary, stripping YAML anchors."""
@@ -12,7 +17,28 @@ def load_raw_config(filepath: str | Path) -> dict:
         
     return config_dict
 
-def load_simulation_config(filepath: str | Path) -> SimulationConfig:
-    """Loads a YAML file and parses it into a strictly typed SimulationConfig Pydantic model."""
+
+def load_simulation_config(
+    filepath: str | Path,
+    context: Optional[Dict[str, float]] = None,
+    resolve_protocol: bool = True
+) -> SimulationConfig:
+    """Загружает YAML-файл и парсит его в строго типизированную модель SimulationConfig.
+    
+    Если resolve_protocol=True и в конфигурации задан протокол сканирования (или передан context),
+    выполняет подстановку шаблонных переменных (${var}) начальными значениями.
+    """
     config_dict = load_raw_config(filepath)
+
+    if resolve_protocol:
+        has_protocol = bool(config_dict.get('protocol'))
+        if context is not None:
+            orch = Orchestrator(config_dict)
+            config_dict = orch.inject_variables(deepcopy(config_dict), context)
+        elif has_protocol:
+            orch = Orchestrator(config_dict)
+            tasks = orch.generate_tasks()
+            if tasks:
+                config_dict = orch.inject_variables(deepcopy(config_dict), tasks[0])
+
     return SimulationConfig.model_validate(config_dict)

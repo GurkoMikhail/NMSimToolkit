@@ -130,6 +130,9 @@ dmypy.json
 
 # Output files
 /output data/*.hdf
+output data/
+*.h5
+*.hdf5
 
 # stat files
 /stats/*.txt

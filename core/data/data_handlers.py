@@ -21,6 +21,13 @@ class BaseDataHandler(abc.ABC):
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         pass
 
+    def finalize(self) -> None:
+        """
+        Финализация записи данных в HDF5 при завершении моделирования.
+        По умолчанию не выполняет действий, переопределяется в подклассах при необходимости.
+        """
+        pass
+
 class DirectStreamHandler(BaseDataHandler):
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')

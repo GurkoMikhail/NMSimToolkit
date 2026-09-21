@@ -1,7 +1,9 @@
+from collections import defaultdict
 import numpy as np
 from numpy.typing import NDArray
 
-from core.geometry.volumes import Volume, GeometryBufferDType
+import core.geometry.flattened_scene as flattened_scene_mod
+from core.geometry.volumes import GeometryBufferDType
 from core.scene.nodes import CompositeNode
 
 
@@ -16,8 +18,7 @@ class GeometryCompiler:
         Main entry point for scene compilation.
         Converts the OOP hierarchy into a flat numpy AoS structure.
         """
-        from core.geometry.flattened_scene import FlattenedScene
-        flat_list = FlattenedScene(root_node).flat_list
+        flat_list = flattened_scene_mod.FlattenedScene(root_node).flat_list
         capacity = len(flat_list)
         buffer = np.zeros(capacity, dtype=GeometryBufferDType)
 
@@ -37,7 +38,6 @@ class GeometryCompiler:
             return
 
         # Шаг 1: O(N) построение списка смежности
-        from collections import defaultdict
         children_map = defaultdict(list)
         for i in range(capacity):
             _, _, p_idx = flat_list[i]

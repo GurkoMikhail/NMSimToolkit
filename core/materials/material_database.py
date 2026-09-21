@@ -41,10 +41,9 @@ class MaterialDataBase(dict):
                 else:
                     for element, weight in material_group['Composition'].items():
                         composition_dict.update({element: Float(np.copy(weight))})
-                try:
+                if 'Z\\A' in material_group:
                     ZtoA_ratio = Float(np.copy(material_group['Z\\A']))
-                except:
-                    # print(f'Для {material_name} отсутствует Z\\A')
+                else:
                     ZtoA_ratio = 0.5
                 ID = next(self.counter)
                 composition_dict = namedtuple('composition', composition_dict)(**composition_dict)

@@ -1,6 +1,10 @@
-import numpy as np
+import ctypes
 from typing import List
 
+import numpy as np
+
+import settings.database_setting as settings
+from core.geometry.flattened_scene import FlattenedScene
 from core.geometry.volumes import Volume
 from core.scene.nodes import CompositeNode
 from core.physics.processes import Process
@@ -17,7 +21,6 @@ class PhysicsCompiler:
     """
 
     def _build_material_bank(self, materials_list: List[Material], processes_list: List[Process]) -> MaterialBank:
-        import settings.database_setting as settings
         capacity = len(settings.material_database) + 1
 
         mat_info_buffer = np.zeros(capacity, dtype=MaterialInfoDType)
@@ -104,7 +107,6 @@ class PhysicsCompiler:
         """
         Builds the complete PhysicsBuffer from the root volume and active processes.
         """
-        from core.geometry.flattened_scene import FlattenedScene
         flat_list = FlattenedScene(root_node).flat_list
 
         all_materials = []
@@ -131,7 +133,6 @@ class PhysicsCompiler:
         for i, (vol, _, _) in enumerate(flat_list):
             majorant_material_map[i] = vol.majorant_material.ID
             if vol.material_cfunc is not None:
-                import ctypes
                 woodcock_function_pointers[i] = ctypes.cast(vol.material_cfunc, ctypes.c_void_p).value
             else:
                 woodcock_function_pointers[i] = 0

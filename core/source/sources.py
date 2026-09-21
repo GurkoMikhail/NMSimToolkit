@@ -26,7 +26,7 @@ class Source(CompositeNode):
     [half_life] = sec
     """
 
-    distribution: NDArray[Float]
+    _distribution: NDArray[Float]
     initial_activity: NDArray[Float]
     voxel_size: Length
     size: Vector3D
@@ -40,36 +40,85 @@ class Source(CompositeNode):
 
     def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = Float(4 * units.mm), radiation_type: str = 'Gamma', energy: Union[Float, List[List[Float]]] = Float(140.5 * units.keV), half_life: Time = Float(6 * units.hour), rng: Optional[np.random.Generator] = None) -> None:
         super().__init__()
-        self.distribution = np.asarray(distribution, dtype=Float)
-        self.initial_activity = np.sum(self.distribution) if activity is None else np.asarray(activity, dtype=Float)
-        self.distribution /= np.sum(self.distribution)
-        self.voxel_size = voxel_size
-        self.size = np.asarray(self.distribution.shape)*self.voxel_size
+        dist_array = np.asarray(distribution, dtype=Float)
+        total_activity = Float(np.sum(dist_array))
+        self.initial_activity = total_activity if activity is None else np.asarray(activity, dtype=Float)
+        self._voxel_size = Float(voxel_size)
         self.radiation_type = radiation_type
+        self.size = np.zeros(3, dtype=Float)
+        self.emission_table = []
+        self._distribution = np.empty((0, 0, 0), dtype=Float)
+        self.distribution = dist_array
 
         energy = [[energy, Float(1.0)], ] if not isinstance(energy, list) else energy
         energy_arr = np.array(energy)
         self.energy = np.zeros(energy_arr.shape[0], dtype=[("energy", Float), ("probability", Float)])
         self.energy["energy"] = cast(NDArray[Float], energy_arr[:, 0])
         self.energy["probability"] = energy_arr[:, 1]
-        self.energy["probability"] /= np.sum(self.energy["probability"])
+        en_prob_sum = np.sum(self.energy["probability"])
+        if en_prob_sum > 0:
+            self.energy["probability"] /= en_prob_sum
 
         self.half_life = half_life
-        self._generate_emission_table()
+        self.distribution_path: Optional[str] = None
+        self.distribution_config: Optional[Any] = None
         self.rng = np.random.default_rng() if rng is None else rng
 
+    @property
+    def distribution(self) -> NDArray[Float]:
+        """Нормированное пространственное распределение вероятностей испускания частиц."""
+        return self._distribution
 
-    def _generate_emission_table(self):
-        xs, ys, zs = np.meshgrid(
-            np.linspace(0, self.size[0], self.distribution.shape[0], endpoint=False),
-            np.linspace(0, self.size[1], self.distribution.shape[1], endpoint=False),
-            np.linspace(0, self.size[2], self.distribution.shape[2], endpoint=False),
-            indexing = 'ij'
+    @distribution.setter
+    def distribution(self, value: Any) -> None:
+        dist_array = np.asarray(value, dtype=Float)
+        if dist_array.size == 0:
+            self._distribution = dist_array
+            self.size = np.zeros(3, dtype=Float)
+            self._generate_emission_table()
+            return
+        total_activity = Float(np.sum(dist_array))
+        if total_activity <= 0.0:
+            raise ValueError("Распределение активности не может быть нулевым или отрицательным — источник не содержит активного вещества.")
+        self._distribution = dist_array / total_activity
+        self.size = np.asarray(self._distribution.shape) * self._voxel_size
+        self._generate_emission_table()
+
+    @property
+    def voxel_size(self) -> Length:
+        """Шаг воксельной сетки распределения активности (мм)."""
+        return self._voxel_size
+
+    @voxel_size.setter
+    def voxel_size(self, value: Length) -> None:
+        self._voxel_size = Float(value)
+        if self._distribution is not None and self._distribution.size > 0:
+            self.size = np.asarray(self._distribution.shape) * self._voxel_size
+            self._generate_emission_table()
+
+    def _generate_emission_table(self) -> None:
+        """
+        Генерация таблицы координат и нормированных вероятностей испускания для непустых вокселей.
+        Гарантирует, что сумма вероятностей строго равна 1.0 (без машинной погрешности округления).
+        """
+        if self._distribution.size == 0:
+            self.emission_table = [np.zeros((0, 3), dtype=Float), np.zeros(0, dtype=Float)]
+            return
+
+        grid_x, grid_y, grid_z = np.meshgrid(
+            np.linspace(0, self.size[0], self._distribution.shape[0], endpoint=False),
+            np.linspace(0, self.size[1], self._distribution.shape[1], endpoint=False),
+            np.linspace(0, self.size[2], self._distribution.shape[2], endpoint=False),
+            indexing='ij'
         )
-        position = np.stack((xs, ys, zs), axis=3).reshape(-1, 3) - self.size/2
-        probability = self.distribution.ravel()
+        position = np.stack((grid_x, grid_y, grid_z), axis=3).reshape(-1, 3) - self.size / 2
+        probability = self._distribution.ravel()
         indices = probability.nonzero()[0]
-        self.emission_table = [position[indices], probability[indices]]
+        prob_values = probability[indices]
+        prob_sum = np.sum(prob_values)
+        if prob_sum > 0:
+            prob_values = prob_values / prob_sum
+        self.emission_table = [position[indices], prob_values]
 
     @property
     def decay_constant(self) -> Float:
@@ -259,7 +308,7 @@ class SourcePhantom(Tc99m_MIBI):
     """
 
     def __init__(self, phantom_name: str, activity: Optional[Float] = None, voxel_size: Float = Float(4 * units.mm)) -> None:
-        distribution = np.load(f'Phantoms/{phantom_name}.npy')
+        distribution = np.load(f'Phantoms/{phantom_name}.npy', allow_pickle=True)
         super().__init__(distribution, activity, voxel_size)
 
 

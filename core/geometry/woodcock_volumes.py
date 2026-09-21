@@ -31,6 +31,11 @@ class WoodcockParametricVolume(WoodcockVolume):
             self._cfunc = self._compile_cfunc()
         return self._cfunc.ctypes
 
+    def invalidate_geometry(self) -> None:
+        """Инвалидирует геометрический буфер и сбрасывает кэш скомпилированной функции материала."""
+        super().invalidate_geometry()
+        self._cfunc = None
+
     def _compile_cfunc(self):
         """
         Должен быть переопределен в наследниках для генерации @cfunc,
