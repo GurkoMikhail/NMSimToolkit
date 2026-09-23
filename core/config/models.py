@@ -100,6 +100,12 @@ class SourceConfig(CompositeNodeConfig):
     energy: Union[EnergyConfig, List[List[float]]] = 140.5 * units.keV
     half_life: TimeConfig = 6.0 * units.hour
 
+class DoseGridNodeConfig(CompositeNodeConfig):
+    type: Literal['DoseGridNode'] = 'DoseGridNode'
+    size: Tuple[LengthConfig, LengthConfig, LengthConfig] = (100.0 * units.mm, 100.0 * units.mm, 100.0 * units.mm)
+    dose_voxel_size: LengthConfig = 5.0 * units.mm
+    is_active: bool = True
+
 class BaseSpatialNodeConfig(SpatialNodeConfig):
     type: Literal['SpatialNode'] = 'SpatialNode'
 
@@ -116,6 +122,7 @@ AnyNodeConfig = Annotated[
         ParametricParallelCollimatorConfig,
         ParametricParallelSquareCollimatorConfig,
         SourceConfig,
+        DoseGridNodeConfig,
     ],
     Field(discriminator='type')
 ]
@@ -127,9 +134,11 @@ GammaCameraConfig.model_rebuild()
 ParametricParallelCollimatorConfig.model_rebuild()
 ParametricParallelSquareCollimatorConfig.model_rebuild()
 SourceConfig.model_rebuild()
+DoseGridNodeConfig.model_rebuild()
 
 class DirectStreamHandlerConfig(BaseModel):
     type: Literal['DirectStreamHandler'] = 'DirectStreamHandler'
+    show_escaped_tracks: bool = False
 
 class SensitiveVolumeHandlerConfig(BaseModel):
     type: Literal['SensitiveVolumeHandler'] = 'SensitiveVolumeHandler'
@@ -140,11 +149,17 @@ class HistoryAssemblerHandlerConfig(BaseModel):
     sensitive_volumes: List[str] = Field(default_factory=list)
     save_initial_states: bool = True
 
+class DoseMapHandlerConfig(BaseModel):
+    type: Literal['DoseMapHandler'] = 'DoseMapHandler'
+    grid_names: List[str] = Field(default_factory=list)
+    shm_name: str = 'nmsim_dose_shm'
+
 AnyDataHandlerConfig = Annotated[
     Union[
         DirectStreamHandlerConfig,
         SensitiveVolumeHandlerConfig,
-        HistoryAssemblerHandlerConfig
+        HistoryAssemblerHandlerConfig,
+        DoseMapHandlerConfig
     ],
     Field(discriminator='type')
 ]
@@ -183,11 +198,26 @@ class StepAndShootProtocolConfig(BaseProtocolConfig):
     start_angle: AngleConfig
     end_angle: AngleConfig
     time_per_view: TimeConfig
+    head_angles: Optional[List[AngleConfig]] = None
+    radius: Optional[LengthConfig] = None
+    endpoint: bool = True
+
+class SpectProtocolConfig(BaseProtocolConfig):
+    type: Literal['SPECT', 'SpectProtocol'] = 'SPECT'
+    views: int = 32
+    gamma_cameras: int = 2
+    start_angle: AngleConfig = 0.0 * units.deg
+    end_angle: AngleConfig = 360.0 * units.deg
+    time_per_view: TimeConfig = 1.0 * units.s
+    radius: LengthConfig = 250.0 * units.mm
+    head_angles: Optional[List[AngleConfig]] = None
+    endpoint: bool = False
 
 AnyProtocolConfig = Annotated[
     Union[
         CustomSweepProtocolConfig,
-        StepAndShootProtocolConfig
+        StepAndShootProtocolConfig,
+        SpectProtocolConfig
     ],
     Field(discriminator='type')
 ]

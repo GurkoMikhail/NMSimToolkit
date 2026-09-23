@@ -5,6 +5,7 @@ import numpy as np
 
 from core.geometry.geometries import Box
 from numba import cfunc
+from core.geometry.volumes import Volume
 from core.geometry.woodcock_volumes import WoodcockParametricVolume
 from core.materials.materials import Material, MaterialArray
 from core.other.typing_definitions import Float, Index, Length, Vector3D, NumbaFloat, NumbaIndex
@@ -31,6 +32,8 @@ class WoodcockVoxelVolume(WoodcockParametricVolume):
             )
         self.material_distribution = material_distribution
         self._voxel_size_ratio = voxel_size/self.size
+        self.distribution_path: Optional[str] = None
+        self.distribution_config: Optional[Any] = None
 
     @property
     def voxel_size(self) -> Vector3D:
@@ -94,7 +97,6 @@ class WoodcockVoxelVolume(WoodcockParametricVolume):
         return np.ones_like(material, dtype=bool), material
 
     def add_child(self, child: 'SpatialNode') -> None:
-        from core.geometry.volumes import Volume
         if isinstance(child, Volume):
             raise TypeError("WoodcockVoxelVolume is a monolithic tracking grid and cannot contain other geometry Volumes. Use CompositeNode or another Volume as the parent.")
         super().add_child(child)

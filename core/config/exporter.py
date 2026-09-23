@@ -26,7 +26,7 @@ from core.config.models import (
     TranslateConfig,
     VolumeConfig,
     WoodcockVoxelVolumeConfig,
-
+    DoseGridNodeConfig,
     RawDistributionConfig,
 )
 from core.config.yaml_dumper import dump_simulation_config
@@ -39,7 +39,7 @@ from core.geometry.parametric_collimators import (
 from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.scene.nodes import CompositeNode, SpatialNode
-
+from core.scene.dose_grid_node import DoseGridNode
 from core.source.sources import Source
 
 logger = logging.getLogger(__name__)
@@ -200,6 +200,18 @@ class SceneExporter:
                 radiation_type=rad_type,
                 energy=energy_val,
                 half_life=half_life,
+                children=children_cfgs,
+            )
+
+        # 7. DoseGridNode
+        if isinstance(node, DoseGridNode):
+            children_cfgs = [cls.export_node(c) for c in node.childs]
+            return DoseGridNodeConfig(
+                name=node_name,
+                transformations=transforms,
+                size=(float(node.size[0]), float(node.size[1]), float(node.size[2])),
+                dose_voxel_size=float(node.dose_voxel_size),
+                is_active=bool(node.is_active),
                 children=children_cfgs,
             )
 

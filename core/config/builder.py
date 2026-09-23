@@ -8,7 +8,8 @@ from core.config.models import (
     AnyNodeConfig, VolumeConfig, GammaCameraConfig, WoodcockVoxelVolumeConfig,
     ParametricParallelCollimatorConfig, ParametricParallelSquareCollimatorConfig,
     SourceConfig, BoxConfig, SimulationConfig, TranslateConfig, RotateConfig,
-    NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig
+    NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig,
+    DoseGridNodeConfig
 )
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
@@ -18,6 +19,7 @@ from core.geometry.parametric_collimators import ParametricParallelCollimator, P
 from core.materials.materials import MaterialArray
 from core.source.sources import Source
 from core.scene.nodes import SpatialNode, CompositeNode
+from core.scene.dose_grid_node import DoseGridNode
 
 class SceneBuilder:
     def __init__(self, base_dir: Optional[Any] = None):
@@ -30,7 +32,8 @@ class SceneBuilder:
             'WoodcockVoxelVolume': self._build_woodcock_voxel_volume,
             'ParametricParallelCollimator': self._build_parametric_parallel_collimator,
             'ParametricParallelSquareCollimator': self._build_parametric_parallel_square_collimator,
-            'Source': self._build_source
+            'Source': self._build_source,
+            'DoseGridNode': self._build_dose_grid_node
         }
         self.node_cache: Dict[str, SpatialNode] = {}
 
@@ -117,17 +120,17 @@ class SceneBuilder:
 
     def _resolve_dist_path(self, path_str: str) -> str:
         # Разрешение путей распределения данных (с поддержкой относительных путей)
-        p = Path(path_str)
-        if p.is_absolute():
-            if p.is_file():
-                return str(p)
-            raise FileNotFoundError(f"Файл распределения не найден: {p}")
+        file_path = Path(path_str)
+        if file_path.is_absolute():
+            if file_path.is_file():
+                return str(file_path)
+            raise FileNotFoundError(f"Файл распределения не найден: {file_path}")
         if self.base_dir:
-            cand = self.base_dir / p
-            if cand.is_file():
-                return str(cand)
-        if p.is_file():
-            return str(p)
+            candidate_path = self.base_dir / file_path
+            if candidate_path.is_file():
+                return str(candidate_path)
+        if file_path.is_file():
+            return str(file_path)
         raise FileNotFoundError(f"Файл распределения не найден: {path_str}")
 
     def _load_raw_distribution(self, dist_config: AnyDistributionConfig) -> np.ndarray:
@@ -263,4 +266,19 @@ class SceneBuilder:
             node.name = config.name
         if dist_config.path is not None:
             node.distribution_path = str(self._resolve_dist_path(dist_config.path))
+        return node
+
+    def _build_dose_grid_node(self, config: DoseGridNodeConfig) -> DoseGridNode:
+        size = [
+            self._to_float(config.size[0], check_positive=True),
+            self._to_float(config.size[1], check_positive=True),
+            self._to_float(config.size[2], check_positive=True),
+        ]
+        dose_voxel_size = self._to_float(config.dose_voxel_size, check_positive=True)
+        node = DoseGridNode(
+            name=config.name,
+            size=size,
+            dose_voxel_size=dose_voxel_size,
+            is_active=config.is_active,
+        )
         return node
