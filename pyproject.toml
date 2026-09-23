@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nmsimtoolkit"
+version = "0.2.0"
+description = "Интерактивный пакет и 3D GUI для моделирования ядерной медицины (ОФЭКТ/ПЭТ)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Mikhail Gurko" }
+]
+dependencies = [
+    "pyside6>=6.5.0",
+    "pyvista>=0.40.0",
+    "pyvistaqt>=0.11.0",
+    "vtk>=9.2.0",
+    "pyqtgraph>=0.13.0",
+    "numba>=0.58.0",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "h5py>=3.8.0",
+    "hepunits>=2.3.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "pint>=0.21",
+    "cffi>=1.15.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-qt>=4.2.0",
+    "mypy>=1.5.0",
+    "ruff>=0.1.0"
+]
+
+[project.scripts]
+nmsim-cli = "run_simulation:main"
+nmsim-gui = "gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "gui*", "settings*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning"
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "output data",
+    "tables",
+    "stats",
+    "logs",
+    "phantoms"
+]

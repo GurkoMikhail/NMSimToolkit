@@ -1,12 +1,23 @@
 name: NMSimToolkit
 channels:
+  - conda-forge
   - defaults
 dependencies:
-  - python=3.13
-  - numba
-  - numpy
-  - scipy
-  - h5py
-  - cffi
-  - conda-forge::hepunits
-prefix: /home/user/micromamba/envs/NMSimToolkit
+  - python>=3.10,<3.13
+  - numba>=0.58.0
+  - numpy>=1.24.0
+  - scipy>=1.10.0
+  - h5py>=3.8.0
+  - cffi>=1.15.0
+  - hepunits>=2.3.0
+  - pint>=0.21
+  - pydantic>=2.0.0
+  - pyyaml>=6.0
+  - pyside6>=6.5.0
+  - pyvista>=0.40.0
+  - pyvistaqt>=0.11.0
+  - vtk>=9.2.0
+  - pyqtgraph>=0.13.0
+  - pip
+  - pip:
+      - -e .

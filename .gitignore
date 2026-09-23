@@ -117,6 +117,24 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
+# IDE settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Linter & tool caches
+.ruff_cache/
+
 # mkdocs documentation
 /site
 
@@ -129,6 +147,8 @@ dmypy.json
 .pyre/
 
 # Output files
+/output data/*
+!/output data/.gitkeep
 /output data/*.hdf
 output data/
 *.h5
