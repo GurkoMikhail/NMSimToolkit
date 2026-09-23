@@ -9,11 +9,10 @@ import yaml
 from core.config.orchestrator import Orchestrator
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python run_simulation.py <config.yaml>")
-        # sys.exit(1)
-        
-    config_file = "nema_1_cam.yaml"
+    if len(sys.argv) >= 2:
+        config_file = sys.argv[1]
+    else:
+        config_file = "nema_1_cam.yaml"
     print(f"Loading configuration from {config_file}...")
     
     with open(config_file, 'r') as f:
