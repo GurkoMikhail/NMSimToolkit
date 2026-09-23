@@ -1,3 +1,4 @@
+from enum import Enum, auto
 import logging
 import queue
 import threading as mt
@@ -10,7 +11,15 @@ import numpy as np
 import hepunits as units
 from numpy.typing import NDArray
 
+class SimulationState(Enum):
+    IDLE = auto()
+    RUNNING = auto()
+    PAUSED = auto()
+    STOPPED = auto()
+
 from core.geometry.volumes import Volume
+from core.geometry.geometry_compiler import GeometryCompiler
+from core.physics.physics_compiler import PhysicsCompiler
 from core.scene.nodes import CompositeNode
 from core.source.source_compiler import SourceCompiler
 from core.other.typing_definitions import Float, Index
@@ -53,39 +62,81 @@ class SimulationManager(Thread):
         scene: CompositeNode,
         propagator: Optional[ParticlePropagator] = None,
         stop_time: Float = 1*units.s,
+        start_time: Float = Float(0.0),
         particles_number: Union[int, Float] = 10**3,
+        min_energy: Float = 1*units.keV,
         queue: Optional[Queue] = None,
-        buffer_capacity: int = 100000
+        buffer_capacity: int = 100000,
+        name: Optional[str] = None,
+        seed: Optional[int] = None
     ) -> None:
         super().__init__()
+        if name is not None:
+            self.name = name
         self.scene = scene
         self.active_sources = SourceCompiler().compile_scene(scene)
         self.propagator = ParticlePropagator() if propagator is None else propagator
-
-        from core.geometry.geometry_compiler import GeometryCompiler
-        from core.physics.physics_compiler import PhysicsCompiler
 
         self.geometry_buffer = GeometryCompiler().compile_scene(scene)
         self.physics_buffer = PhysicsCompiler().compile_scene(scene, self.propagator.processes)
         self.stop_time = stop_time
         self.particles_number = int(particles_number)
-        self.min_energy = 1*units.keV
-        self.queue = Queue(maxsize=1) if queue is None else queue
+        self.min_energy = min_energy
+        self.queue = Queue(maxsize=64) if queue is None else queue
         self.step = 1
         self.profile = False
         self.daemon = True
 
         self.bank = ParticleBank.allocate(self.particles_number)
         self.data_buffer = SimulationDataBuffer.allocate(buffer_capacity, buffer_capacity, buffer_capacity)
+        if seed is not None:
+            self.propagator.rng = np.random.default_rng(seed)
+            for src in self.active_sources:
+                src.rng = self.propagator.rng
         self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
-        self.global_timer = Float(0.0)
+        self.global_timer = Float(start_time)
 
-        signal(SIGINT, self.sigint_handler)
+        self._state: SimulationState = SimulationState.IDLE
+        self._stop_event = mt.Event()
+        self._pause_event = mt.Event()
+        self._pause_event.set()
+
+        try:
+            signal(SIGINT, self.sigint_handler)
+        except (ValueError, AttributeError):
+            pass
+
+    @property
+    def state(self) -> SimulationState:
+        return self._state
+
+    def pause(self) -> None:
+        """Приостанавливает выполнение моделирования."""
+        self._pause_event.clear()
+        self._state = SimulationState.PAUSED
+
+    def resume(self) -> None:
+        """Возобновляет приостановленное моделирование."""
+        self._state = SimulationState.RUNNING
+        self._pause_event.set()
+
+    def stop(self) -> None:
+        """Кооперативно останавливает процесс моделирования."""
+        self._stop_event.set()
+        self._pause_event.set()
+        self._state = SimulationState.STOPPED
+
+    def step_once(self) -> None:
+        """Выполняет один шаг моделирования для покадрового анализа."""
+        self.next_step()
+        self.flush_interactions()
+        self.flush_initial_states()
+        self.flush_dead_particles()
 
     def sigint_handler(self, signal, frame):
         _logger.error(f'{self.name} interrupted at {datetime_from_seconds(self.global_timer/units.second)}')
-        self.stop_time = 0
+        self.stop()
 
     def send_data(self, data):
         # We need to copy or view the interaction data up to cursor
@@ -231,11 +282,11 @@ class SimulationManager(Thread):
             return
 
         # Pre-flight Check: Ensure buffer has enough space for a worst-case scenario
-        if len(active_indices) > self.data_buffer.interactions.remaining_capacity:
-            self.flush_interactions()
-
         if len(active_indices) > self.data_buffer.initial_states.remaining_capacity:
             self.flush_initial_states()
+
+        if len(active_indices) > self.data_buffer.interactions.remaining_capacity:
+            self.flush_interactions()
 
         # Step physics and kinematics
         self.propagator.step(
@@ -249,16 +300,73 @@ class SimulationManager(Thread):
         # Invalidation
         dead_indices = self._apply_invalidators(active_indices)
 
-        if dead_indices.size > 0:
-            if len(dead_indices) > self.data_buffer.dead_particles.remaining_capacity:
-                self.flush_interactions()
-                self.flush_initial_states()
-                self.flush_dead_particles()
+        # Сброс накопленных начальных состояний и взаимодействий до обработки выбывших частиц
+        # для обеспечения строгой хронологической последовательности телеметрии треков
+        if self.data_buffer.initial_states.cursor_value > 0:
+            self.flush_initial_states()
 
-            dead_ids = self.bank.initial_state.ID[dead_indices]
-            self.data_buffer.dead_particles.append(dead_ids)
+        if self.data_buffer.interactions.cursor_value > 0:
+            self.flush_interactions()
+
+        if dead_indices.size > 0:
+            self._collect_escaped_particles(dead_indices)
+            self._handle_dead_particles(dead_indices)
 
         self.step += 1
+
+    def _collect_escaped_particles(self, dead_indices: np.ndarray) -> None:
+        """
+        Регистрация вылетевших частиц за границы геометрии сцены и отправка в очередь телеметрии.
+        """
+        if self.queue is None:
+            return
+
+        escaped_mask = (self.bank.navigation_state.current_volume[dead_indices] < 0)
+        if not np.any(escaped_mask):
+            return
+
+        esc_idx = dead_indices[escaped_mask]
+        birth_x = self.bank.initial_state.emission_position.x[esc_idx]
+        birth_y = self.bank.initial_state.emission_position.y[esc_idx]
+        birth_z = self.bank.initial_state.emission_position.z[esc_idx]
+        esc_x = self.bank.state.position.x[esc_idx]
+        esc_y = self.bank.state.position.y[esc_idx]
+        esc_z = self.bank.state.position.z[esc_idx]
+        esc_pids = self.bank.initial_state.ID[esc_idx]
+        has_interacted = self.bank.initial_state.has_interacted[esc_idx]
+
+        esc_chunk = {
+            'type': 'escaped_particles',
+            'data': {
+                'birth_x': np.array(birth_x, copy=True),
+                'birth_y': np.array(birth_y, copy=True),
+                'birth_z': np.array(birth_z, copy=True),
+                'pos_x': np.array(esc_x, copy=True),
+                'pos_y': np.array(esc_y, copy=True),
+                'pos_z': np.array(esc_z, copy=True),
+                'particle_id': np.array(esc_pids, copy=True),
+                'has_interacted': np.array(has_interacted, copy=True),
+            }
+        }
+        self.send_data(esc_chunk)
+
+    def _handle_dead_particles(self, dead_indices: np.ndarray) -> None:
+        """
+        Запись идентификаторов поглощенных и выбывших частиц в кольцевой буфер завершенных историй.
+        """
+        dead_ids = self.bank.initial_state.ID[dead_indices]
+        buffer_capacity = self.data_buffer.dead_particles.capacity
+        if len(dead_ids) > self.data_buffer.dead_particles.remaining_capacity:
+            self.flush_dead_particles()
+
+        if len(dead_ids) <= self.data_buffer.dead_particles.remaining_capacity:
+            self.data_buffer.dead_particles.append(dead_ids)
+        else:
+            for idx in range(0, len(dead_ids), buffer_capacity):
+                chunk_slice = dead_ids[idx:idx + buffer_capacity]
+                if len(chunk_slice) > self.data_buffer.dead_particles.remaining_capacity:
+                    self.flush_dead_particles()
+                self.data_buffer.dead_particles.append(chunk_slice)
 
     def run(self):
         if self.profile:
@@ -272,16 +380,28 @@ class SimulationManager(Thread):
     def _run(self):
         _logger.warning(f'{self.name} started from {datetime_from_seconds(self.global_timer/units.second)} to {datetime_from_seconds(self.stop_time/units.second)}')
         start_timepoint = datetime.now()
+        self._state = SimulationState.RUNNING
+        self._pause_event.set()
+        self._stop_event.clear()
 
-        while np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.global_timer <= self.stop_time):
+        while (np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.global_timer <= self.stop_time)) and not self._stop_event.is_set():
+            if not self._pause_event.is_set():
+                self._state = SimulationState.PAUSED
+                while not self._pause_event.is_set() and not self._stop_event.is_set():
+                    self._pause_event.wait(timeout=0.05)
+                if self._stop_event.is_set():
+                    break
+                self._state = SimulationState.RUNNING
+
             self.next_step()
             _logger.debug(f'Global timer of {self.name} at {datetime_from_seconds(self.global_timer/units.second)}')
 
         # Final flush
-        self.flush_interactions()
         self.flush_initial_states()
+        self.flush_interactions()
         self.flush_dead_particles()
         self.queue.put('stop')
+        self._state = SimulationState.STOPPED
 
         stop_timepoint = datetime.now()
         _logger.warning(f'{self.name} finished at {datetime_from_seconds(self.global_timer/units.second)}')

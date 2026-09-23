@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Optional, List, Sequence
+from typing import Optional, List, Sequence, Tuple
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float
@@ -10,7 +10,8 @@ class SpatialNode:
     Base node that is responsible only for spatial mathematics (4x4 matrices).
     It manages local transformations and computes global and inverse global matrices.
     """
-    def __init__(self):
+    def __init__(self, name: Optional[str] = None):
+        self.name = name if name is not None else self.__class__.__name__
         self.local_matrix = np.eye(4, dtype=Float)
         self._parent: Optional['CompositeNode'] = None
         self._global_matrix_cache: Optional[NDArray[Float]] = None
@@ -55,8 +56,8 @@ class SpatialNode:
         return self._inverse_global_matrix_cache
 
     def translate(self, x: Float = Float(0.), y: Float = Float(0.), z: Float = Float(0.), in_local: bool = False) -> None:
-        """Translates the node. Modifies local_matrix and invalidates cache."""
-        translation = np.asarray([x, y, z])
+        """Переместить узел. Модифицирует local_matrix и сбрасывает кэш."""
+        translation = np.asarray([float(x), float(y), float(z)], dtype=float)
         translation_matrix = utils.compute_translation_matrix(translation)
         if in_local:
             self.local_matrix = self.local_matrix @ translation_matrix
@@ -65,9 +66,9 @@ class SpatialNode:
         self.invalidate_matrix_cache()
 
     def rotate(self, alpha: Float = Float(0.), beta: Float = Float(0.), gamma: Float = Float(0.), rotation_center: Sequence[Float] = (Float(0), Float(0), Float(0)), in_local: bool = False) -> None:
-        """Rotates the node. Modifies local_matrix and invalidates cache."""
-        rotation_angles = np.asarray([alpha, beta, gamma])
-        rot_center = np.asarray(rotation_center)
+        """Повернуть узел. Модифицирует local_matrix и сбрасывает кэш."""
+        rotation_angles = np.asarray([float(alpha), float(beta), float(gamma)], dtype=float)
+        rot_center = np.asarray([float(c) for c in rotation_center], dtype=float)
         rotation_matrix = utils.compute_translation_matrix(rot_center)
         rotation_matrix = rotation_matrix @ utils.compute_rotation_matrix(rotation_angles)
         rotation_matrix = rotation_matrix @ utils.compute_translation_matrix(-rot_center)
@@ -108,10 +109,9 @@ class CompositeNode(SpatialNode):
     """
     Composite Node to manage a heterogeneous hierarchy of SpatialNodes.
     """
-    def __init__(self):
-        super().__init__()
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(name=name)
         self.childs: List['SpatialNode'] = []
-
 
     def invalidate_matrix_cache(self) -> None:
         """Invalidates matrix cache recursively down the tree."""
@@ -121,9 +121,22 @@ class CompositeNode(SpatialNode):
 
     def add_child(self, child: 'SpatialNode') -> None:
         """Adds a child node and correctly handles parent reassignment."""
+        if child.parent is self and child in self.childs:
+            return
         if child.parent is not None:
             if child in child.parent.childs:
                 child.parent.childs.remove(child)
-        self.childs.append(child)
+        if child not in self.childs:
+            self.childs.append(child)
         child.parent = self
         child.invalidate_matrix_cache()
+
+    def remove_child(self, child: 'SpatialNode') -> None:
+        """Removes a child node and resets its parent."""
+        if child in self.childs:
+            self.childs.remove(child)
+            child.parent = None
+            child.invalidate_matrix_cache()
+
+
+

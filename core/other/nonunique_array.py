@@ -21,7 +21,10 @@ class NonuniqueArray(np.ndarray):
     def __array_finalize__(self, obj: Any) -> None:
         if obj is None:
             return
-        self.element_list = copy(getattr(obj, 'element_list', [None]))
+        if isinstance(obj, NonuniqueArray):
+            self.element_list = copy(obj.element_list)
+        else:
+            self.element_list = [None]
         
     def __contains__(self, key: Any) -> bool:
         return key in self.element_list

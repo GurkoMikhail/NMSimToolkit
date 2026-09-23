@@ -4,7 +4,7 @@ import numpy as np
 
 import settings.database_setting as settings
 from core.geometry.geometries import Box
-from numba import cfunc
+from numba import cfunc, njit
 from core.geometry.woodcock_volumes import WoodcockParametricVolume
 from core.materials.materials import Material
 from core.other.typing_definitions import Float, Vector3D, NumbaIndex, NumbaFloat
@@ -33,6 +33,28 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
         self._compute_constants()
     
     @property
+    def hole_diameter(self) -> Float:
+        """Диаметр отверстий коллиматора (мм)."""
+        return self._hole_diameter
+
+    @hole_diameter.setter
+    def hole_diameter(self, value: Float) -> None:
+        self._hole_diameter = Float(value)
+        self._compute_constants()
+        self.invalidate_geometry()
+
+    @property
+    def septa(self) -> Float:
+        """Толщина перегородок (септ) между отверстиями (мм)."""
+        return self._septa
+
+    @septa.setter
+    def septa(self, value: Float) -> None:
+        self._septa = Float(value)
+        self._compute_constants()
+        self.invalidate_geometry()
+
+    @property
     def material_list(self) -> list[Material]:
         return [self.material, self._vacuum]
 
@@ -57,8 +79,6 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
         ad = Float(self._ad)
         a = Float(self._a)
         ad_2 = Float(self._ad_2)
-
-        from numba import njit
 
         @njit(inline='always', cache=True)
         def is_hexagon(ax, ay):
@@ -118,6 +138,28 @@ class ParametricParallelSquareCollimator(WoodcockParametricVolume):
 
         self._vacuum = settings.material_database["Vacuum"]
         self._compute_constants()
+
+    @property
+    def hole_width(self) -> Float:
+        """Ширина квадратных отверстий коллиматора (мм)."""
+        return self._hole_width
+
+    @hole_width.setter
+    def hole_width(self, value: Float) -> None:
+        self._hole_width = Float(value)
+        self._compute_constants()
+        self.invalidate_geometry()
+
+    @property
+    def septa(self) -> Float:
+        """Толщина перегородок (септ) между отверстиями (мм)."""
+        return self._septa
+
+    @septa.setter
+    def septa(self, value: Float) -> None:
+        self._septa = Float(value)
+        self._compute_constants()
+        self.invalidate_geometry()
 
     @property
     def material_list(self) -> list[Material]:

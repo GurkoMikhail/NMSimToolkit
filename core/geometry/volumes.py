@@ -11,8 +11,6 @@ from core.other.nonunique_array import NonuniqueArray
 from core.other.typing_definitions import Float, Vector3D, Index, CMaterialFunc
 from core.other.transform import TransformDType
 from core.geometry.geometries import ShapeDataDType
-from core.geometry.flattened_scene import FlattenedScene
-
 GeometryBufferDType = np.dtype([
     ('shape_data', ShapeDataDType),
     ('transform', TransformDType),
@@ -20,6 +18,9 @@ GeometryBufferDType = np.dtype([
     ('parent_index', Index),
     ('volume_index', Index)
 ])
+
+import core.geometry.geometry_compiler as geom_compiler
+
 
 class Volume(CompositeNode):
     """ Base class for an elementary volume, inheriting from CompositeNode for scene graph hierarchy. """
@@ -36,20 +37,12 @@ class Volume(CompositeNode):
         self.material = material
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name
         self._geometry_buffer: Optional[NDArray[Any]] = None
-        self._flattened_scene: Optional[FlattenedScene] = None
 
     def __init_subclass__(cls):
         cls._counter = count(1)
 
     def __repr__(self):
         return f'{self.name}'
-
-    @property
-    def flattened_scene(self) -> FlattenedScene:
-        """ Lazy evaluation of the flattened scene starting from this volume. """
-        if self._flattened_scene is None:
-            self._flattened_scene = FlattenedScene(self)
-        return self._flattened_scene
 
     @property
     def material_cfunc(self) -> CMaterialFunc:
@@ -80,23 +73,43 @@ class Volume(CompositeNode):
     @size.setter
     def size(self, value: Vector3D) -> None:
         self.geometry.size = value
-        self.invalidate_scene()
+        self.invalidate_geometry()
+
+    @property
+    def local_bound(self) -> Vector3D:
+        """Локальные габариты объема (размеры геометрии [Lx, Ly, Lz])."""
+        return self.geometry.size
 
     @property
     def geometry_buffer(self) -> NDArray[Any]:
         """ Lazy compilation of GeometryBuffer (AoS Structured Array) """
         if self._geometry_buffer is None:
-            from core.geometry.geometry_compiler import GeometryCompiler
-            self._geometry_buffer = GeometryCompiler().compile_scene(self)
+            self._geometry_buffer = geom_compiler.GeometryCompiler().compile_scene(self)
         return self._geometry_buffer
 
-    def invalidate_scene(self) -> None:
-        """ Инвалидация кэша геометрии у этого объекта и его родителей/детей. """
+    def invalidate_geometry(self) -> None:
+        """Сбрасывает кэш скомпилированной геометрии у этого объёма и всех родительских Volume."""
         self._geometry_buffer = None
-        self._flattened_scene = None
-        # We need to invalidate matrix cache as well
-        self.invalidate_matrix_cache()
+        curr = self.parent
+        while curr is not None:
+            if isinstance(curr, Volume):
+                curr._geometry_buffer = None
+            curr = curr.parent
 
+    def invalidate_matrix_cache(self) -> None:
+        """Инвалидирует кэш матриц и буфер геометрии у текущего узла и его предков/потомков."""
+        super().invalidate_matrix_cache()
+        self.invalidate_geometry()
+
+    def add_child(self, child: 'SpatialNode') -> None:
+        """Добавление дочернего узла с инвалидацией буферов геометрии."""
+        super().add_child(child)
+        self.invalidate_geometry()
+
+    def remove_child(self, child: 'SpatialNode') -> None:
+        """Удаление дочернего узла с инвалидацией буферов геометрии."""
+        super().remove_child(child)
+        self.invalidate_geometry()
 
     @property
     def top_volume(self) -> 'Volume':
@@ -111,7 +124,6 @@ class Volume(CompositeNode):
 
     def set_parent(self, parent: 'CompositeNode') -> None:
         parent.add_child(self)
-        self.invalidate_scene()
 
 
 

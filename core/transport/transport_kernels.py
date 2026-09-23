@@ -18,6 +18,7 @@ from core.physics.physics_kernels import _get_macroscopic_cross_sections
 
 from numba.extending import intrinsic
 from numba.core import types
+from llvmlite import ir
 
 
 @intrinsic
@@ -26,7 +27,6 @@ def call_cfunc_ptr(typingctx, ptr, x, y, z):
     def codegen(context, builder, signature, args):
         ptr_val, x_val, y_val, z_val = args
         # Cast integer pointer to a function pointer
-        from llvmlite import ir
         fnty = ir.FunctionType(ir.IntType(64), [ir.DoubleType(), ir.DoubleType(), ir.DoubleType()])
         fnptr = builder.inttoptr(ptr_val, fnty.as_pointer())
         return builder.call(fnptr, [x_val, y_val, z_val])

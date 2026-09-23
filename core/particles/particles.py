@@ -7,6 +7,7 @@ from core.other.vectors import Vector3D
 from core.geometry.navigation_state import NavigationState
 from core.particles.initial_state import InitialState
 from core.particles.kinematic_state import KinematicState
+import core.particles.particles_kernels as kernel
 
 
 class ParticleBank(NamedTuple):
@@ -105,7 +106,6 @@ class ParticleBank(NamedTuple):
         self.initial_state.emission_direction.z[target_indices] = direction.z
 
         # Invalidate navigation state for reused slots
-        import core.particles.particles_kernels as kernel
         kernel.update_navigation_state_inject_kernel(self.navigation_state, target_indices)
 
         return target_indices
@@ -119,7 +119,6 @@ class ParticleBank(NamedTuple):
         """
         Facade for move_kernel, applying distances across target active particles.
         """
-        import core.particles.particles_kernels as kernel
         kernel.move_kernel(self.state, target_indices, distances)
         kernel.update_navigation_state_move_kernel(self.navigation_state, target_indices, distances)
 
@@ -127,6 +126,5 @@ class ParticleBank(NamedTuple):
         """
         Facade for rotate_kernel, applying thetas and phis across target active particles.
         """
-        import core.particles.particles_kernels as kernel
         kernel.rotate_kernel(self.state, target_indices, thetas, phis)
         kernel.update_navigation_state_rotate_kernel(self.navigation_state, target_indices)

@@ -36,18 +36,30 @@ class Box(Geometry):
     distance_method: str
     distance_epsilon: Length
 
-    def __init__(self, x: Length, y: Length, z: Length, **kwds: Any) -> None:
+    def __init__(
+        self,
+        x: Length,
+        y: Length,
+        z: Length,
+        distance_method: str = 'ray_casting',
+        distance_epsilon: Float = Float(1. * units.micron),
+        **kwds: Any
+    ) -> None:
         super().__init__([x, y, z])
-        self.distance_method = 'ray_casting'
-        self.distance_epsilon = Float(1. * units.micron)
-        args = [
-            'distance_method',
-            'distance_epsilon'
-        ]
+        self.distance_method = str(kwds.get('distance_method', distance_method))
+        self.distance_epsilon = Float(kwds.get('distance_epsilon', distance_epsilon))
 
-        for arg in args:
-            if arg in kwds:
-                setattr(self, arg, kwds[arg])
+    @property
+    def x(self) -> Length:
+        return self.size[0]
+
+    @property
+    def y(self) -> Length:
+        return self.size[1]
+
+    @property
+    def z(self) -> Length:
+        return self.size[2]
 
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
         shape_data_array[index]['shape'] = 0

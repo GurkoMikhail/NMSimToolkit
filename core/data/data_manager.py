@@ -1,6 +1,8 @@
 import logging
 import threading
+import time
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, List, Optional
 
 import h5py
@@ -14,17 +16,24 @@ _logger.setLevel(logging.DEBUG)
 
 class DataManager(threading.Thread):
     """
-    Consumer Thread for saving InteractionBuffer chunks from SoA engine
-    to HDF5 file using delegated BaseDataHandlers.
+    Поток-потребитель для сохранения чанков InteractionBuffer из SoA-движка
+    в файл HDF5 с использованием делегированных обработчиков BaseDataHandler.
     """
 
-    def __init__(self, filename: str, handlers: List[BaseDataHandler], queue: Any = None, lock: Optional[Any] = None) -> None:
+    def __init__(self, filename: str, handlers: List[BaseDataHandler], queue: Any = None, lock: Optional[Any] = None, swmr: bool = True) -> None:
         super().__init__()
-        self.filename = Path(f'output data/{filename}')
+        fn_path = Path(filename)
+        if fn_path.is_absolute():
+            self.filename = fn_path
+        else:
+            self.filename = Path(f'output data/{filename}')
         self.filename.parent.mkdir(parents=True, exist_ok=True)
 
         self.queue = queue
         self.lock = lock
+        # Режим SWMR (Single Writer Multiple Reader) несовместим со сценарием
+        # нескольких процессов-писателей (наличие внешнего файлового мьютекса lock)
+        self.swmr = swmr and (lock is None)
         self.daemon = True
 
         self.handlers = []
@@ -36,7 +45,7 @@ class DataManager(threading.Thread):
 
     def run(self):
         """
-        Consumes chunks from the queue until 'stop' signal.
+        Извлекает чанки из очереди до получения сигнала 'stop'.
         """
         if self.queue is None:
             return
@@ -48,17 +57,48 @@ class DataManager(threading.Thread):
             elif isinstance(chunk, dict):
                 frozen_chunk = self._freeze_chunk(chunk)
                 for h in self.handlers:
-                    h.process_chunk(frozen_chunk)
+                    try:
+                        h.process_chunk(frozen_chunk)
+                    except Exception as e:
+                        _logger.error(f"Ошибка обработки чанка обработчиком {h}: {e}", exc_info=True)
+
+        for h in self.handlers:
+            try:
+                h.finalize()
+            except Exception as e:
+                _logger.error(f"Ошибка финализации обработчика {h}: {e}", exc_info=True)
+
+        def write_metadata(f: h5py.File) -> None:
+            if 'metadata' not in f:
+                meta = f.create_group('metadata')
+            else:
+                meta = f['metadata']
+            meta.attrs['completion_time'] = str(time.strftime('%Y-%m-%d %H:%M:%S'))
+
+        try:
+            self._write_with_retry(write_metadata)
+        except (OSError, RuntimeError, KeyError, ValueError) as e:
+            _logger.debug(f"Запись метаданных пропущена: {e}")
+
+    def stop(self, timeout: Optional[float] = 1.0) -> None:
+        """
+        Завершение фонового потока диспетчера данных и закрытие ресурсов.
+        """
+        if self.queue is not None:
+            try:
+                self.queue.put('stop')
+            except (OSError, ValueError):
+                pass
+        if self.is_alive():
+            self.join(timeout=timeout)
 
     @staticmethod
     def _freeze_chunk(chunk: dict) -> dict:
         """
-        Sets all numpy arrays within the chunk data to read-only
-        to prevent accidental modification during multi-handler broadcast.
-        Returns a shallow copy of the data dictionary to protect keys from .pop().
+        Устанавливает флаг только для чтения на все массивы numpy внутри данных чанка
+        для предотвращения случайной модификации при широковещательной рассылке обработчикам.
+        Возвращает защищенную копию словаря данных для защиты ключей.
         """
-        from types import MappingProxyType
-
         data = chunk.get('data')
         if isinstance(data, dict):
             frozen_data = {}
@@ -75,16 +115,21 @@ class DataManager(threading.Thread):
 
     def _write_with_retry(self, write_func: Any) -> None:
         """
-        Executes an HDF5 write function with retry logic and optional mutex locking.
+        Выполняет функцию записи HDF5 с логикой повторных попыток и опциональной файловой блокировкой.
         """
-        import time
         retries = 100
 
         def do_write():
             for i in range(retries):
                 try:
-                    with h5py.File(self.filename, 'a') as f:
+                    with h5py.File(self.filename, 'a', libver='latest') as f:
+                        if self.swmr:
+                            try:
+                                f.swmr_mode = True
+                            except (OSError, RuntimeError):
+                                pass
                         write_func(f)
+                        f.flush()
                     return
                 except (OSError, BlockingIOError):
                     if i == retries - 1:

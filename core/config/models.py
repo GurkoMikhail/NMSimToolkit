@@ -52,6 +52,7 @@ class RawDistributionConfig(BaseDistributionConfig):
     format: Literal['raw'] = 'raw'
     shape: Tuple[int, int, int]
     order: Literal['C', 'F'] = 'C'
+    encoding: Literal['text', 'binary'] = 'text'
 
 AnyDistributionConfig = Annotated[
     Union[
