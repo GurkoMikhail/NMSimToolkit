@@ -1,7 +1,7 @@
 import os
 import sys
 
-# Обеспечение offscreen платформы для headless-тестирования Qt в unittest
+# Настройка переменных окружения для headless Qt (offscreen)
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QT_API"] = "pyside6"
 

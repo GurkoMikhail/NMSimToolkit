@@ -1,7 +1,6 @@
 import sys
 import time
 import tracemalloc
-import psutil
 import os
 import numpy as np
 
@@ -201,10 +200,11 @@ def main():
     print(f"OOP Peak RAM allocation (loop): {oop_peak_mb:.2f} MB")
     print(f"SoA Peak RAM allocation (loop): {soa_peak_mb:.2f} MB")
 
-    process = psutil.Process(os.getpid())
-    rss_mb = process.memory_info().rss / 1024 / 1024
-    print("-" * 50)
-    print(f"Total Process RSS: {rss_mb:.2f} MB")
+    if psutil is not None:
+        process = psutil.Process(os.getpid())
+        rss_mb = process.memory_info().rss / 1024 / 1024
+        print("-" * 50)
+        print(f"Total Process RSS: {rss_mb:.2f} MB")
     print("="*50)
 
 

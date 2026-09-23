@@ -1,6 +1,8 @@
 import unittest
 import numpy as np
+from pydantic import ValidationError
 
+from core.config.models import CustomSweepProtocolConfig
 from core.config.orchestrator import Orchestrator
 
 class TestOrchestrator(unittest.TestCase):
@@ -47,9 +49,6 @@ class TestOrchestrator(unittest.TestCase):
         }
 
     def test_invalid_zipped_lengths(self):
-        from core.config.models import CustomSweepProtocolConfig
-        from pydantic import ValidationError
-
         with self.assertRaises(ValidationError):
             CustomSweepProtocolConfig(
                 zipped_variables={
@@ -59,7 +58,6 @@ class TestOrchestrator(unittest.TestCase):
             )
 
     def test_orchestrator_job_generation(self):
-        from core.config.models import CustomSweepProtocolConfig
         sweep = CustomSweepProtocolConfig(
             grid_variables={
                 "energy": [100.0, 200.0]

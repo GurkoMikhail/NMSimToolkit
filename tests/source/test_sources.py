@@ -81,5 +81,43 @@ class TestSourcesSoA(unittest.TestCase):
         self.assertEqual(len(indices), 0)
         self.assertEqual(self.bank.count, self.capacity)
 
+    def test_source_unnormalized_distribution_and_activity(self):
+        """Проверка автоматической нормировки распределения и независимости общей активности."""
+        from core.source.sources import Source
+        import hepunits as units
+
+        # Матрица активности с суммой элементов != 1 (например 50000.0)
+        raw_dist = np.array([
+            [[1000.0, 2000.0], [3000.0, 4000.0]],
+            [[5000.0, 6000.0], [7000.0, 22000.0]]
+        ], dtype=float)
+        self.assertEqual(np.sum(raw_dist), 50000.0)
+
+        # 1. Задаем источник с явной общей активностью 10 МБк
+        src = Source(distribution=raw_dist, activity=Float(10 * units.MBq))
+        # Пространственное распределение должно быть отнормировано к 1
+        self.assertAlmostEqual(float(np.sum(src.distribution)), 1.0, places=7)
+        # Вектор вероятностей в таблице испускания также строго равен 1
+        self.assertAlmostEqual(float(np.sum(src.emission_table[1])), 1.0, places=7)
+        # Общая активность равна заданным 10 МБк
+        self.assertAlmostEqual(float(src.initial_activity), float(10 * units.MBq))
+
+        # 2. Генерация позиций не должна вызывать ошибку 'probabilities do not sum to 1'
+        pos = src.generate_position(50)
+        self.assertEqual(pos.shape, (50, 3))
+
+        # 3. Присвоение нового распределения с произвольной суммой через сеттер
+        new_dist = np.ones((8, 8, 8)) * 42.0
+        src.distribution = new_dist
+        self.assertAlmostEqual(float(np.sum(src.distribution)), 1.0, places=7)
+        self.assertAlmostEqual(float(np.sum(src.emission_table[1])), 1.0, places=7)
+        pos2 = src.generate_position(20)
+        self.assertEqual(pos2.shape, (20, 3))
+
+        # 4. Если активность не задана, она берется из суммы вокселей до нормировки
+        src2 = Source(distribution=raw_dist)
+        self.assertAlmostEqual(float(src2.initial_activity), 50000.0)
+        self.assertAlmostEqual(float(np.sum(src2.distribution)), 1.0, places=7)
+
 if __name__ == '__main__':
     unittest.main()
