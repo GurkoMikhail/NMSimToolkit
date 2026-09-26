@@ -384,7 +384,7 @@ class SimulationManager(Thread):
         self._pause_event.set()
         self._stop_event.clear()
 
-        while (np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.global_timer <= self.stop_time)) and not self._stop_event.is_set():
+        while (np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.global_timer < self.stop_time)) and not self._stop_event.is_set():
             if not self._pause_event.is_set():
                 self._state = SimulationState.PAUSED
                 while not self._pause_event.is_set() and not self._stop_event.is_set():

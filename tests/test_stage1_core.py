@@ -44,7 +44,7 @@ class TestStage1Core(unittest.TestCase):
             shm_name=shm_name,
             projection_shape=(32, 32),
             create_shm=True,
-            fov_size=100.0,
+            detector_size=100.0,
             sensitive_volume_ids={0},
             max_tracks_per_batch=100
         )

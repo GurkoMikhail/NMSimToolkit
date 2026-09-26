@@ -14,7 +14,8 @@ from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
 import settings.database_setting as database_setting
-from gui.viewmodels.node_viewmodel import GammaCameraViewModel, NodeViewModel
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
 
 _logger = logging.getLogger(__name__)
 
@@ -219,24 +220,6 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
             self._endpoint = b
             self.changed.emit()
             self.parameter_changed.emit("endpoint", b)
-
-    @property
-    def views_number(self) -> int:
-        """Общее число ракурсов (псевдоним views)."""
-        return self._views
-
-    @views_number.setter
-    def views_number(self, val: int) -> None:
-        self.views = val
-
-    @property
-    def orbit_radius(self) -> float:
-        """Радиус орбиты (псевдоним radius)."""
-        return self._radius
-
-    @orbit_radius.setter
-    def orbit_radius(self, val: float) -> None:
-        self.radius = val
 
     @property
     def angular_range(self) -> float:

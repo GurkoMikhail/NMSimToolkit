@@ -1,11 +1,7 @@
-from gui.viewmodels.decorators import observable_field
-from gui.viewmodels.node_viewmodel import (
-    NodeViewModel,
-    VolumeViewModel,
-    VoxelVolumeViewModel,
-    GammaCameraViewModel,
-    DoseGridViewModel,
-    create_node_viewmodel,
+from gui.viewmodels.decorators import (
+    core_field,
+    gui_field,
+    IViewModelWithPropertyChanged,
 )
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.procedure_viewmodel import (
@@ -25,13 +21,9 @@ from gui.viewmodels.data_handler_viewmodel import (
 )
 
 __all__ = [
-    'observable_field',
-    'NodeViewModel',
-    'VolumeViewModel',
-    'VoxelVolumeViewModel',
-    'GammaCameraViewModel',
-    'DoseGridViewModel',
-    'create_node_viewmodel',
+    'core_field',
+    'gui_field',
+    'IViewModelWithPropertyChanged',
     'SceneViewModel',
     'BaseProcedureViewModel',
     'SpectProcedureViewModel',

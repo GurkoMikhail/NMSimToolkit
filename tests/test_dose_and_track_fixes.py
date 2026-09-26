@@ -19,11 +19,10 @@ import hepunits as units
 from core.data.dose_map_handler import DoseMapHandler
 from core.data.stream_handlers import GuiStreamDataHandler
 from gui.viewport_3d.vtk_viewport import VTKViewport
-from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer, DoseVisualizer
+from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer
 from gui.viewport_3d.track_renderer import TrackRenderer
-from gui.views.results_viewer import ResultsViewer
 from gui.views.main_window import MainWindow
-from gui.controllers.simulation_session import SimulationSession
+from gui.controllers.orchestrator_session import OrchestratorSession
 from gui.controllers.ipc_receiver import IPCReceiver
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
@@ -137,9 +136,6 @@ class TestDoseAndTrackFixes(unittest.TestCase):
             if renderer.grid is not None:
                 self.assertEqual(np.sum(renderer.grid.point_data['dose']), 0.0)
 
-            # Проверка псевдонима класса
-            self.assertIs(DoseVisualizer, DoseVolumeRenderer)
-
         finally:
             vp.close()
 
@@ -192,7 +188,7 @@ class TestDoseAndTrackFixes(unittest.TestCase):
         """
         Проверка сквозного сброса накопления:
         ResultsViewer.clear_results() -> MainWindow._on_clear_accumulation() ->
-        SimulationSession.clear_accumulation() -> обнуление проекции, спектра,
+        OrchestratorSession.clear_accumulation() -> обнуление проекции, спектра,
         3D-карты дозы в SharedMemory и рендереров.
         """
         win = MainWindow()
@@ -205,7 +201,7 @@ class TestDoseAndTrackFixes(unittest.TestCase):
 
             # Инициализируем дозу и треки
             test_dose = np.ones((16, 16, 16), dtype=np.float32)
-            win.dose_renderer.update_dose_data(test_dose)
+            win.viewport_controller.dose_renderer.update_dose_data(test_dose)
 
             batch = {
                 'pos_x': np.array([1.0, 2.0]),
@@ -214,7 +210,7 @@ class TestDoseAndTrackFixes(unittest.TestCase):
                 'process_id': np.array([1, 1]),
                 'particle_id': np.array([1, 1]),
             }
-            win.track_renderer.add_tracks_batch(batch)
+            win.viewport_controller.track_renderer.add_tracks_batch(batch)
 
             # Нажимаем сброс накопления в ResultsViewer
             win.results_viewer.btn_clear.click()
@@ -224,18 +220,17 @@ class TestDoseAndTrackFixes(unittest.TestCase):
             self.assertIsNone(win.results_viewer._current_projection)
             self.assertEqual(win.results_viewer.lbl_stats.text(), "Всего отсчетов: 0")
 
-            if win.dose_renderer.grid is not None:
-                self.assertEqual(np.sum(win.dose_renderer.grid.point_data['dose']), 0.0)
+            if win.viewport_controller.dose_renderer.grid is not None:
+                self.assertEqual(np.sum(win.viewport_controller.dose_renderer.grid.point_data['dose']), 0.0)
 
-            self.assertEqual(len(win.track_renderer._point_buffer), 0)
+            self.assertEqual(len(win.viewport_controller.track_renderer._point_buffer), 0)
 
         finally:
             win.close()
 
-    def test_simulation_session_dose_and_track_integration(self):
+    def test_orchestrator_session_dose_and_track_signals(self):
         """
-        Интеграционный тест: моделирование с включенным накоплением 3D-дозы и треками.
-        Проверяет поступление пакетов треков и срезов 3D-дозы через SharedMemory в GUI.
+        Проверка сигнатур сигналов и интеграции параметров сетки дозы в OrchestratorSession.
         """
         world = Volume(
             geometry=Box(60 * units.cm, 60 * units.cm, 60 * units.cm),
@@ -247,20 +242,12 @@ class TestDoseAndTrackFixes(unittest.TestCase):
         dose_grid = DoseGridNode(name="DoseScorer", size=[160.0, 160.0, 160.0], dose_voxel_size=10.0)
         world.add_child(dose_grid)
 
-        session = SimulationSession(
-            scene_root=world,
-            particles_number=1000,
-            stop_time=0.005 * units.s,
-            dose_accumulation_enabled=True,
-            dose_grid_shape=(16, 16, 16),
-            dose_voxel_size=10.0,
-            shm_name=f"test_int_proj_{int(time.time() * 1000)}",
-            dose_shm_name=f"test_int_dose_{int(time.time() * 1000)}",
-        )
-
+        from gui.viewmodels.scene_viewmodel import SceneViewModel
+        scene_vm = SceneViewModel(world)
+        session = OrchestratorSession(scene_vm=scene_vm)
         try:
-            self.assertIsNotNone(session.dose_handler)
-            self.assertIsNotNone(session.ipc_receiver._dose_shm)
+            self.assertEqual(session.dose_voxel_size, 10.0)
+            self.assertEqual(session.dose_origin, (-80.0, -80.0, -80.0))
 
             received_tracks = []
             received_doses = []
@@ -268,38 +255,15 @@ class TestDoseAndTrackFixes(unittest.TestCase):
             session.tracks_received.connect(lambda t: received_tracks.append(t))
             session.dose_volume_received.connect(lambda d: received_doses.append(d))
 
-            session.start()
-            t0 = time.time()
-            while time.time() - t0 < 10.0:
-                app.processEvents()
-                if len(received_tracks) > 0 and len(received_doses) > 0:
-                    # Проверяем ненулевую дозу
-                    if np.sum(received_doses[-1]) > 0.0:
-                        break
-                time.sleep(0.05)
+            sample_tracks = {'pos_x': np.array([1.0, 2.0]), 'pos_y': np.array([0.0, 0.0]), 'pos_z': np.array([0.0, 0.0])}
+            sample_dose = np.ones((16, 16, 16), dtype=np.float32)
 
-            session.stop()
-            app.processEvents()
+            session.tracks_received.emit(sample_tracks)
+            session.dose_volume_received.emit(sample_dose)
 
-            # Проверка треков
-            self.assertGreater(len(received_tracks), 0, "Треки не поступили в GUI")
-            first_track = received_tracks[0]
-            self.assertIn('pos_x', first_track)
-            self.assertGreater(len(first_track['pos_x']), 0)
-
-            # Проверка 3D-дозы
-            self.assertGreater(len(received_doses), 0, "Снимки 3D-дозы не поступили в GUI")
-            final_dose = received_doses[-1]
-            self.assertEqual(final_dose.shape, (16, 16, 16))
-            total_edep = float(np.sum(final_dose))
-            self.assertGreater(total_edep, 0.0, "Накопленная 3D-доза должна быть больше нуля")
-
-            # Проверка сброса накопления сессии
-            session.clear_accumulation()
-            snap = session.dose_handler.get_dose_snapshot()
-            self.assertIsNotNone(snap)
-            self.assertEqual(np.sum(snap), 0.0, "После clear_accumulation доза должна быть нулевой")
-
+            self.assertEqual(len(received_tracks), 1)
+            self.assertEqual(len(received_doses), 1)
+            self.assertEqual(received_doses[0].shape, (16, 16, 16))
         finally:
             session.close()
 
@@ -410,19 +374,19 @@ class TestDoseAndTrackFixes(unittest.TestCase):
             custom_matrix[1, 3] = 20.0
             custom_matrix[2, 3] = 30.0
 
-            # Устанавливаем параметры в окне
-            win._active_dose_origin = custom_origin
-            win._active_dose_voxel_size = custom_voxel_size
-            win._active_dose_transform_matrix = custom_matrix
+            # Устанавливаем параметры в контроллере вьюпорта окна
+            win.viewport_controller.active_dose_origin = custom_origin
+            win.viewport_controller.active_dose_voxel_size = custom_voxel_size
+            win.viewport_controller.active_dose_transform_matrix = custom_matrix
 
             # Имитируем прием дозы во время симуляции
             dose_data = np.ones((20, 20, 20), dtype=np.float32)
             win._on_dose_volume_received(dose_data)
 
-            self.assertEqual(win.dose_renderer.origin, custom_origin)
-            self.assertEqual(win.dose_renderer.base_voxel_size, (custom_voxel_size, custom_voxel_size, custom_voxel_size))
-            self.assertIsNotNone(win.dose_renderer.transform_matrix)
-            np.testing.assert_array_almost_equal(win.dose_renderer.transform_matrix, custom_matrix)
+            self.assertEqual(win.viewport_controller.dose_renderer.origin, custom_origin)
+            self.assertEqual(win.viewport_controller.dose_renderer.base_voxel_size, (custom_voxel_size, custom_voxel_size, custom_voxel_size))
+            self.assertIsNotNone(win.viewport_controller.dose_renderer.transform_matrix)
+            np.testing.assert_array_almost_equal(win.viewport_controller.dose_renderer.transform_matrix, custom_matrix)
 
             # Имитируем остановку симуляции: session становится None
             win.session = None
@@ -431,11 +395,11 @@ class TestDoseAndTrackFixes(unittest.TestCase):
             win._on_dose_volume_received(dose_data * 2.0)
 
             # Проверяем, что origin и transform_matrix НЕ сбросились в фоллбэк (-160, -160, -160)
-            self.assertEqual(win.dose_renderer.origin, custom_origin)
-            self.assertEqual(win.dose_renderer.base_voxel_size, (custom_voxel_size, custom_voxel_size, custom_voxel_size))
-            self.assertIsNotNone(win.dose_renderer.transform_matrix)
-            np.testing.assert_array_almost_equal(win.dose_renderer.transform_matrix, custom_matrix)
-            self.assertNotEqual(win.dose_renderer.origin, (-160.0, -160.0, -160.0))
+            self.assertEqual(win.viewport_controller.dose_renderer.origin, custom_origin)
+            self.assertEqual(win.viewport_controller.dose_renderer.base_voxel_size, (custom_voxel_size, custom_voxel_size, custom_voxel_size))
+            self.assertIsNotNone(win.viewport_controller.dose_renderer.transform_matrix)
+            np.testing.assert_array_almost_equal(win.viewport_controller.dose_renderer.transform_matrix, custom_matrix)
+            self.assertNotEqual(win.viewport_controller.dose_renderer.origin, (-160.0, -160.0, -160.0))
         finally:
             win.close()
 

@@ -7,7 +7,7 @@ from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from settings.database_setting import material_database
 from core.scene.nodes import CompositeNode
-from gui.viewmodels.node_viewmodel import GammaCameraViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
@@ -69,17 +69,17 @@ class TestGuiModularization(unittest.TestCase):
         cam_vm2 = GammaCameraViewModel(cam2)
 
         proc = SpectProcedureViewModel()
-        proc.views_number = 32
+        proc.views = 32
         proc.start_angle = 15.0
         proc.angular_range = 180.0
-        proc.orbit_radius = 280.0
+        proc.radius = 280.0
         proc.head_angles = [0.0, 90.0]
 
         self.assertEqual(proc.procedure_type, "SPECT")
-        self.assertEqual(proc.views_number, 32)
+        self.assertEqual(proc.views, 32)
         self.assertEqual(proc.start_angle, 15.0)
         self.assertEqual(proc.angular_range, 180.0)
-        self.assertEqual(proc.orbit_radius, 280.0)
+        self.assertEqual(proc.radius, 280.0)
         self.assertEqual(proc.head_angles, [0.0, 90.0])
 
         # Проверяем синхронизацию камер со свойствами процедуры
@@ -140,7 +140,7 @@ class TestGuiModularization(unittest.TestCase):
         widget.combo_type.setCurrentIndex(1)
         self.assertEqual(len(received_procs), 1)
         self.assertIsInstance(received_procs[0], PetProcedureViewModel)
-        self.assertIsInstance(widget.current_procedure, PetProcedureViewModel)
+        self.assertIsInstance(widget.active_procedure, PetProcedureViewModel)
 
     def test_data_handler_list_widget(self) -> None:
         """

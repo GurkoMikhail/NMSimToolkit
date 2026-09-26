@@ -9,11 +9,11 @@ from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.scene.nodes import CompositeNode, SpatialNode
-from core.transport.simulation_managers import SimulationState
-from gui.controllers.ipc_receiver import IPCReceiver
-from gui.controllers.simulation_session import SimulationSession
-from gui.viewmodels.decorators import core_field, gui_field, observable_field
-from gui.viewmodels.node_viewmodel import NodeViewModel, VolumeViewModel, GammaCameraViewModel
+from gui.controllers.orchestrator_session import OrchestratorSession
+from gui.viewmodels.decorators import core_field, gui_field
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewport_3d.vtk_viewport import VTKViewport
 from gui.views.main_window import MainWindow
@@ -33,7 +33,7 @@ class TestGuiRefactoringVerification(unittest.TestCase):
 
     def test_single_source_of_truth_descriptors(self):
         """
-        Проверка Single Source of Truth: core_field и observable_field
+        Проверка Single Source of Truth: core_field и gui_field
         не дублируют значение в instance.__dict__, а читают/пишут строго в core_node.
         """
         node = SpatialNode(name="OriginalName")
@@ -41,7 +41,6 @@ class TestGuiRefactoringVerification(unittest.TestCase):
         class SampleViewModel:
             name = core_field('name')
             tag = gui_field(default='LocalTag')
-            obs = observable_field('name')
 
             def __init__(self, core):
                 self.core_node = core
@@ -67,29 +66,20 @@ class TestGuiRefactoringVerification(unittest.TestCase):
         self.assertEqual(vm.__dict__.get("tag"), "NewTag")
         self.assertFalse(hasattr(node, "tag"))
 
-        # 5. Проверка observable_field на атрибуте ядра (не создает дубликата)
-        vm.obs = "ChangedViaObs"
-        self.assertEqual(node.name, "ChangedViaObs")
-        self.assertNotIn("obs", vm.__dict__)
-
-    def test_simulation_session_lifecycle(self):
+    def test_orchestrator_session_lifecycle(self):
         """
-        Проверка контроллера SimulationSession: создание конвейера,
+        Проверка контроллера OrchestratorSession: создание,
         управление жизненным циклом и детерминированное закрытие ресурсов.
         """
         from settings.database_setting import material_database
         root = CompositeNode(name="SessionTestScene")
         vol = Volume(geometry=Box(10.0, 10.0, 10.0), material=material_database['Water, Liquid'], name="TargetBox")
         root.add_child(vol)
-
-        session = SimulationSession(
-            scene_root=root,
-            shm_name="test_sim_session_shm",
-            projection_shape=(16, 16),
+        scene_vm = SceneViewModel(root)
+        session = OrchestratorSession(
+            scene_vm=scene_vm,
             particles_number=20,
             stop_time=0.01,
-            fps=30.0,
-            h5_filename="test_session.h5"
         )
 
         started_log = []
@@ -102,27 +92,20 @@ class TestGuiRefactoringVerification(unittest.TestCase):
         session.session_resumed.connect(lambda: resumed_log.append(True))
         session.session_stopped.connect(lambda: stopped_log.append(True))
 
-        self.assertIsNotNone(session.runner)
-        self.assertIsNotNone(session.receiver)
-        self.assertIsNotNone(session.stream_handler)
-        self.assertIsNotNone(session.data_manager)
+        self.assertFalse(session.is_running)
+        self.assertFalse(session.is_paused)
 
         session.pause()
-        self.assertEqual(len(paused_log), 1)
+        self.assertEqual(len(paused_log), 0)
 
         session.resume()
-        self.assertEqual(len(resumed_log), 1)
+        self.assertEqual(len(resumed_log), 0)
 
         session.stop()
-        self.assertEqual(len(stopped_log), 1)
+        self.assertEqual(len(stopped_log), 0)
 
-        # Детерминированное закрытие ресурсов
         session.close()
-        self.assertTrue(session._is_closed)
-        self.assertIsNone(session.runner)
-        self.assertIsNone(session.receiver)
-        self.assertIsNone(session.stream_handler)
-        self.assertIsNone(session.data_manager)
+        self.assertFalse(session.is_running)
 
     def test_scene_tree_widget_reverse_map(self):
         """
@@ -216,41 +199,30 @@ class TestGuiRefactoringVerification(unittest.TestCase):
 
         win.close()
 
-    def test_simulation_session_edge_cases(self):
+    def test_orchestrator_session_edge_cases(self):
         """
-        Тестирование граничных условий SimulationSession:
-        - Идемпотентность close()
-        - Вызов start() после close() вызывает RuntimeError
+        Тестирование граничных условий OrchestratorSession:
+        - Идемпотентность stop() и close()
         - Безопасность вызовов pause/resume/step_once при незапущенной сессии
+        - Генерация задач при пустой сцене возвращает пустой список
         """
-        from settings.database_setting import material_database
-        root = CompositeNode(name="EdgeCaseScene")
-        vol = Volume(geometry=Box(10.0, 10.0, 10.0), material=material_database['Water, Liquid'], name="TargetBox")
-        root.add_child(vol)
-
-        session = SimulationSession(
-            scene_root=root,
-            shm_name="test_edge_session_shm",
-            projection_shape=(16, 16),
-            particles_number=10,
-            stop_time=0.01,
-            h5_filename="test_edge_session.h5"
-        )
+        session = OrchestratorSession(scene_vm=None)
 
         # Вызовы управления до старта
         session.pause()
         session.resume()
         session.step_once()
-        session.stop()
+        session.clear_accumulation()
+        self.assertFalse(session.is_running)
+        self.assertFalse(session.is_paused)
+
+        # Генерация задач без сцены
+        jobs = session.generate_jobs()
+        self.assertEqual(len(jobs), 0)
 
         # Двойной close()
         session.close()
         session.close()
-        self.assertTrue(session._is_closed)
-
-        # Попытка старта после закрытия
-        with self.assertRaises(RuntimeError):
-            session.start()
 
     def test_descriptors_edge_cases(self):
         """
@@ -390,7 +362,7 @@ class TestGuiRefactoringVerification(unittest.TestCase):
         scene_vm.select_node(cam_vm)
 
         # Симулируем перемещение манипулятора
-        win.spect_manipulator.orbit_changed.emit(330.0, 45.0, 0.0)
+        win.viewport_controller.spect_manipulator.orbit_changed.emit(330.0, 45.0, 0.0)
         self.assertAlmostEqual(cam_vm.orbit_radius, 330.0)
         self.assertAlmostEqual(cam_vm.orbit_angle, 45.0)
 

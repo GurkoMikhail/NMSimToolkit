@@ -16,7 +16,7 @@ from gui.controllers.ipc_receiver import IPCReceiver
 from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
 from gui.viewmodels.procedure_viewmodel import BaseProcedureViewModel, SpectProcedureViewModel, CustomSweepProcedureViewModel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
-from gui.viewmodels.node_viewmodel import DoseGridViewModel
+from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
 
 _logger = logging.getLogger(__name__)
 

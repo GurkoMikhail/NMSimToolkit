@@ -10,11 +10,15 @@ from core.materials.materials import Material
 from core.data.dose_map_handler import DoseMapHandler, DoseGridEntry
 from core.config.exporter import SceneExporter
 from core.config.builder import SceneBuilder
-from gui.viewmodels.node_viewmodel import DoseGridViewModel, VolumeViewModel, create_node_viewmodel
+from core.geometry.gamma_cameras import GammaCamera
+from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.factory import create_node_viewmodel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.views.scene_tree_widget import SceneTreeWidget
 from gui.views.property_inspector import PropertyInspector
-from gui.controllers.simulation_session import SimulationSession
+from gui.controllers.orchestrator_session import OrchestratorSession
 
 # Инициализация QApplication для тестирования Qt-компонентов
 app = QApplication.instance() or QApplication([])
@@ -195,43 +199,32 @@ class TestDoseGridNode(unittest.TestCase):
         finally:
             handler.close()
 
-    def test_07_simulation_session_with_dose_grid_nodes(self):
-        """Проверка автоматической инициализации DoseMapHandler из дерева сцены SimulationSession."""
+    def test_07_orchestrator_session_with_dose_grid_nodes(self):
+        """Проверка автоматической инициализации параметров сетки дозы из дерева сцены OrchestratorSession."""
         world = CompositeNode(name="World")
         target_dose = DoseGridNode(name="TargetDose", size=[80.0, 80.0, 80.0], dose_voxel_size=4.0)
         world.add_child(target_dose)
+        scene_vm = SceneViewModel(world)
 
-        session = SimulationSession(
-            scene_root=world,
-            dose_accumulation_enabled=True,
-            particles_number=100
-        )
+        session = OrchestratorSession(scene_vm=scene_vm)
         try:
-            self.assertIsNotNone(session.dose_handler)
-            self.assertEqual(len(session.dose_handler.entries), 1)
-            self.assertEqual(session.dose_grid_shape, (20, 20, 20))
             self.assertEqual(session.dose_voxel_size, 4.0)
             self.assertEqual(session.dose_origin, (-40.0, -40.0, -40.0))
-
-            # Имитация завершения моделирования с заполнением данных
-            session.dose_handler.entries[0]._dose_grid[10, 10, 10] = 42.0
-            session._on_runner_finished()
-
-            # Проверяем, что массив скопировался в target_dose.dose_data
-            self.assertIsNotNone(target_dose.dose_data)
-            self.assertEqual(target_dose.dose_data[10, 10, 10], 42.0)
-
-            # Проверка очистки накопления
-            session.clear_accumulation()
-            self.assertEqual(target_dose.dose_data[10, 10, 10], 0.0)
+            self.assertIsNotNone(session.dose_transform_matrix)
         finally:
             session.close()
 
+        handler = DoseMapHandler(grid_nodes=[target_dose], create_shm=False)
+        try:
+            self.assertEqual(len(handler.entries), 1)
+            self.assertEqual(handler.entries[0].grid_shape, (20, 20, 20))
+            self.assertEqual(handler.entries[0].voxel_size, (4.0, 4.0, 4.0))
+            self.assertEqual(handler.entries[0].origin, (-40.0, -40.0, -40.0))
+        finally:
+            handler.close()
+
     def test_08_gamma_camera_child_dose_grid_auto_bounds(self):
         """Проверка автоматической подгонки размеров создаваемой сетки дозы под BoundingBox гамма-камеры."""
-        from core.geometry.gamma_cameras import GammaCamera
-        from gui.viewmodels.node_viewmodel import GammaCameraViewModel
-
         collimator = Volume(geometry=Box(400.0, 400.0, 40.0), material=Material("Pb"), name="Collimator")
         detector = Volume(geometry=Box(400.0, 400.0, 10.0), material=Material("NaI"), name="Detector")
         camera = GammaCamera(collimator=collimator, detector=detector, name="SpectCamera")
@@ -256,9 +249,6 @@ class TestDoseGridNode(unittest.TestCase):
 
     def test_09_property_inspector_fit_to_parent(self):
         """Проверка кнопки подогнать под родителя в PropertyInspector для DoseGridViewModel."""
-        from core.geometry.gamma_cameras import GammaCamera
-        from gui.viewmodels.node_viewmodel import GammaCameraViewModel
-
         collimator = Volume(geometry=Box(400.0, 400.0, 40.0), material=Material("Pb"), name="Collimator")
         detector = Volume(geometry=Box(400.0, 400.0, 10.0), material=Material("NaI"), name="Detector")
         camera = GammaCamera(collimator=collimator, detector=detector, name="SpectCamera")

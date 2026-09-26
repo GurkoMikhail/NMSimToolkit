@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QDialogButtonBox, QWidget
 )
 
+from gui.models.gui_settings import GuiSimulationSettings
+
 
 class SimulationSettingsDialog(QDialog):
     """
@@ -13,13 +15,15 @@ class SimulationSettingsDialog(QDialog):
     и параметров отрисовки 3D-треков частиц.
     """
 
-    def __init__(self, current_settings: Dict[str, Any], parent: Optional[QWidget] = None) -> None:
+    def __init__(self, current_settings: GuiSimulationSettings, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Параметры расчета симуляции")
         self.resize(450, 420)
         self.setModal(True)
 
-        self._settings = dict(current_settings)
+        if not isinstance(current_settings, GuiSimulationSettings):
+            raise TypeError("current_settings должен быть экземпляром GuiSimulationSettings")
+        self._settings: GuiSimulationSettings = current_settings
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -33,27 +37,27 @@ class SimulationSettingsDialog(QDialog):
         self.spin_particles = QSpinBox(grp_calc)
         self.spin_particles.setRange(1, 1_000_000_000)
         self.spin_particles.setSingleStep(1000)
-        self.spin_particles.setValue(int(self._settings.get("particles_number", 5000)))
+        self.spin_particles.setValue(int(self._settings.particles_number))
         form_calc.addRow("Число частиц на задачу:", self.spin_particles)
 
         self.spin_pool = QSpinBox(grp_calc)
         cpu_cnt = os.cpu_count() or 4
         self.spin_pool.setRange(1, max(1, cpu_cnt * 2))
-        self.spin_pool.setValue(int(self._settings.get("pool_size", 1)))
+        self.spin_pool.setValue(int(self._settings.pool_size))
         form_calc.addRow("Размер пула воркеров:", self.spin_pool)
 
         self.spin_stop_time = QDoubleSpinBox(grp_calc)
         self.spin_stop_time.setRange(0.001, 100_000.0)
         self.spin_stop_time.setSingleStep(0.5)
         self.spin_stop_time.setSuffix(" с")
-        self.spin_stop_time.setValue(float(self._settings.get("stop_time", 1.0)))
+        self.spin_stop_time.setValue(float(self._settings.stop_time))
         form_calc.addRow("Время счета (Stop Time):", self.spin_stop_time)
 
         self.spin_min_energy = QDoubleSpinBox(grp_calc)
         self.spin_min_energy.setRange(0.01, 100_000.0)
         self.spin_min_energy.setSingleStep(1.0)
         self.spin_min_energy.setSuffix(" кэВ")
-        self.spin_min_energy.setValue(float(self._settings.get("min_energy", 1.0)))
+        self.spin_min_energy.setValue(float(self._settings.min_energy))
         form_calc.addRow("Минимальная энергия:", self.spin_min_energy)
 
         main_layout.addWidget(grp_calc)
@@ -65,7 +69,7 @@ class SimulationSettingsDialog(QDialog):
         self.spin_buffer = QSpinBox(grp_data)
         self.spin_buffer.setRange(1000, 100_000_000)
         self.spin_buffer.setSingleStep(50000)
-        self.spin_buffer.setValue(int(self._settings.get("buffer_capacity", 10000)))
+        self.spin_buffer.setValue(int(self._settings.buffer_capacity))
         form_data.addRow("Емкость буфера частиц:", self.spin_buffer)
 
         main_layout.addWidget(grp_data)
@@ -77,21 +81,21 @@ class SimulationSettingsDialog(QDialog):
         self.spin_max_batch = QSpinBox(grp_tracks)
         self.spin_max_batch.setRange(10, 100_000)
         self.spin_max_batch.setSingleStep(500)
-        self.spin_max_batch.setValue(int(self._settings.get("max_tracks_per_batch", 2000)))
+        self.spin_max_batch.setValue(int(self._settings.max_tracks_per_batch))
         form_tracks.addRow("Максимум треков в пачке:", self.spin_max_batch)
 
         self.spin_max_points = QSpinBox(grp_tracks)
         self.spin_max_points.setRange(100, 1_000_000)
         self.spin_max_points.setSingleStep(5000)
-        self.spin_max_points.setValue(int(self._settings.get("max_tracks_points", 50000)))
+        self.spin_max_points.setValue(int(self._settings.max_tracks_points))
         form_tracks.addRow("Максимум точек треков:", self.spin_max_points)
 
         self.chk_render_lines = QCheckBox("Отрисовывать треки сплошными линиями", grp_tracks)
-        self.chk_render_lines.setChecked(bool(self._settings.get("render_as_lines", True)))
+        self.chk_render_lines.setChecked(bool(self._settings.render_as_lines))
         form_tracks.addRow(self.chk_render_lines)
 
         self.chk_show_escaped = QCheckBox("Отображать вылетевшие за пределы треки", grp_tracks)
-        self.chk_show_escaped.setChecked(bool(self._settings.get("show_escaped_tracks", False)))
+        self.chk_show_escaped.setChecked(bool(self._settings.show_escaped_tracks))
         form_tracks.addRow(self.chk_show_escaped)
 
         main_layout.addWidget(grp_tracks)
@@ -102,11 +106,12 @@ class SimulationSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
 
-    def get_settings(self) -> Dict[str, Any]:
+    def get_settings(self) -> GuiSimulationSettings:
         """
-        Возвращает обновленный словарь параметров симуляции.
+        Возвращает обновленную типизированную модель конфигурации GuiSimulationSettings.
         """
-        return {
+        updated_dict = self._settings.to_dict()
+        updated_dict.update({
             "particles_number": self.spin_particles.value(),
             "pool_size": self.spin_pool.value(),
             "stop_time": self.spin_stop_time.value(),
@@ -116,4 +121,5 @@ class SimulationSettingsDialog(QDialog):
             "max_tracks_points": self.spin_max_points.value(),
             "render_as_lines": self.chk_render_lines.isChecked(),
             "show_escaped_tracks": self.chk_show_escaped.isChecked(),
-        }
+        })
+        return GuiSimulationSettings(**updated_dict)

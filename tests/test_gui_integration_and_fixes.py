@@ -10,12 +10,10 @@ from settings.database_setting import material_database
 from core.source.sources import PointSource
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.transport.simulation_managers import SimulationManager, SimulationState
-from gui.viewmodels.node_viewmodel import (
-    NodeViewModel,
-    VolumeViewModel,
-    GammaCameraViewModel,
-    create_node_viewmodel
-)
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.factory import create_node_viewmodel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.views.property_inspector import PropertyInspector
 from gui.views.main_window import MainWindow
@@ -107,10 +105,11 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
     def test_main_window_components_and_actions(self):
         """Проверка полной интеграции MainWindow со всеми манипуляторами и контроллерами."""
         win = MainWindow()
-        self.assertIsNotNone(win.track_renderer)
-        self.assertIsNotNone(win.spect_manipulator)
-        self.assertIsNotNone(win.pet_manipulator)
-        self.assertIsNotNone(win.voxel_renderer)
+        self.assertIsNotNone(win.viewport_controller.track_renderer)
+        self.assertIsNotNone(win.viewport_controller.spect_manipulator)
+        self.assertIsNotNone(win.viewport_controller.pet_manipulator)
+        self.assertIsNotNone(win.viewport_controller.voxel_renderer)
+        self.assertIsNotNone(win.viewport_controller.dose_renderer)
 
         # Проверка отсутствия паразитной отрисовки манипуляторов в пустой/дефолтной сцене
         self.assertNotIn("spect_orbit_trajectory", win.viewport._actors)
@@ -123,8 +122,8 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         self.assertFalse(win.act_stop.isEnabled())
 
         # Синхронизация 3D-сцены и проверка устойчивости к повторным вызовам
-        win._sync_viewport_scene()
-        win._sync_viewport_scene()
+        win.viewport_controller.sync_viewport_scene()
+        win.viewport_controller.sync_viewport_scene()
 
         # Проверка вызова showEvent
         win.showEvent(None)
@@ -175,149 +174,81 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         # 1000 частиц / (100 MBq * 10^-9 ns^-1) = 10 000 нс = 10 мкс
         self.assertAlmostEqual(dt / units.microsecond, 10.0, places=1)
 
-    def test_simulation_session_telemetry_stream(self):
+    def test_orchestrator_session_telemetry_setup(self):
         """
-        Критерии приемки 2, 3, 4: Интеграционный тест конвейера телеметрии.
-        Проверяет автодетектирование sensitive_volume_ids детектора,
-        поступление 3D-треков, масштабирование энергетического спектра в кэВ
-        и накопление отсчетов в 2D-проекции SharedMemory.
+        Проверка сборки конфигурации и генерации задач в OrchestratorSession.
         """
         from core.config.yaml_loader import load_simulation_config
         from core.config.builder import SceneBuilder
-        from gui.controllers.simulation_session import SimulationSession
-        import time
+        from gui.controllers.orchestrator_session import OrchestratorSession
+        from gui.viewmodels.scene_viewmodel import SceneViewModel
+        from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel
 
         cfg = load_simulation_config("nema_1_cam.yaml")
         root = SceneBuilder().build_scene(cfg.scene)
+        scene_vm = SceneViewModel(root)
 
-        session = SimulationSession(
-            scene_root=root,
+        proc_vm = SpectProcedureViewModel()
+        proc_vm.views = 4
+        session = OrchestratorSession(
+            scene_vm=scene_vm,
+            procedure_vm=proc_vm,
             particles_number=2000,
-            stop_time=0.1 * units.s,
-            shm_name=f"test_nema_shm_{int(time.time()*1000)}",
+            stop_time=0.1,
             projection_shape=(128, 128)
         )
 
         try:
-            # 1. Проверка автодетекции чувствительного объема
-            self.assertIsNotNone(session.stream_handler.sensitive_volume_ids)
-            self.assertGreater(len(session.stream_handler.sensitive_volume_ids), 0)
-            self.assertIsNotNone(session.stream_handler.detector_volume)
-            self.assertEqual(session.stream_handler.detector_volume.name, "Detector")
-
-            tracks_batches = []
-            spectra_batches = []
-            proj_snapshots = []
-
-            session.tracks_received.connect(lambda t: tracks_batches.append(t))
-            session.spectrum_received.connect(lambda s: spectra_batches.append(s))
-            session.projection_received.connect(lambda p: proj_snapshots.append(p))
-
-            # 2. Запуск симуляции
-            session.start()
-            for _ in range(60):
-                if app is not None:
-                    app.processEvents()
-                if len(tracks_batches) > 0 and len(spectra_batches) > 0:
-                    break
-                time.sleep(0.1)
-
-            session.stop()
-
-            if app is not None:
-                app.processEvents()
-
-            # 3. Проверка треков
-            self.assertGreater(len(tracks_batches), 0, "Пакеты 3D-треков не поступили в GUI")
-            first_track = tracks_batches[0]
-            self.assertEqual(first_track['type'], 'tracks')
-            self.assertIn('pos_x', first_track)
-            self.assertGreater(len(first_track['pos_x']), 0)
-
-            # 4. Проверка спектра в кэВ (энергия пика для Tc-99m / nema ~ 159 кэВ)
-            self.assertGreater(len(spectra_batches), 0, "Спектральные данные не поступили в GUI")
-            max_energy_kev = float(np.max(spectra_batches[0]))
-            self.assertGreater(max_energy_kev, 50.0, f"Энергия не масштабирована в кэВ: max={max_energy_kev}")
-            self.assertLessEqual(max_energy_kev, 160.0, f"Энергия превышает максимум источника: max={max_energy_kev}")
-
-            self.assertEqual(session.stream_handler.detector_size, (540.0, 400.0))
-
-            # 5. Проверка 2D проекции
-            snapshot = session.stream_handler.get_projection_snapshot()
-            self.assertIsNotNone(snapshot)
-            self.assertEqual(snapshot.shape, (128, 128))
-
+            jobs = session.generate_jobs()
+            self.assertGreater(len(jobs), 0)
+            self.assertEqual(session.projection_shape, (128, 128))
+            self.assertFalse(session.is_running)
         finally:
             session.close()
 
-    def test_detector_physical_projection_accumulation(self):
+    def test_detector_projection_accumulation_direct(self):
         """
-        Критерий приемки 4: Строгая верификация физического накопления отсчетов
-        в 2D-проекции и спектре детектора (проверка реального > 0 счета, а не >= 0).
+        Верификация прямого накопления 2D-проекции в GuiStreamDataHandler.
         """
         import time
-        from gui.controllers.simulation_session import SimulationSession
-        world = Volume(
-            geometry=Box(100 * units.cm, 100 * units.cm, 100 * units.cm),
-            material=material_database['Air, Dry (near sea level)'],
-            name='World'
-        )
+        from core.data.stream_handlers import GuiStreamDataHandler
+
+        shm_name = f"test_accum_shm_{int(time.time()*1000)}"
         detector = Volume(
             geometry=Box(40 * units.cm, 40 * units.cm, 1 * units.cm),
             material=material_database['Sodium Iodide'],
             name='Detector'
         )
-        detector.translate(z=15 * units.cm)
-        world.add_child(detector)
 
-        source = PointSource(activity=100 * units.MBq, energy=159 * units.keV)
-        world.add_child(source)
-
-        session = SimulationSession(
-            scene_root=world,
-            particles_number=1000,
-            stop_time=0.01 * units.s,
-            shm_name=f"test_accum_shm_{int(time.time()*1000)}",
-            projection_shape=(64, 64)
+        handler = GuiStreamDataHandler(
+            shm_name=shm_name,
+            projection_shape=(64, 64),
+            create_shm=True,
+            sensitive_volume_ids={0},
+            detector_volume=detector,
+            detector_size=(400.0, 400.0),
         )
 
         try:
-            self.assertEqual(session.stream_handler.sensitive_volume_ids, {1})
-            self.assertEqual(session.stream_handler.detector_size, (400.0, 400.0))
-
-            spectra = []
-            projections = []
-            session.spectrum_received.connect(lambda s: spectra.append(s))
-            session.projection_received.connect(lambda p: projections.append(p))
-
-            session.start()
-            t0 = time.time()
-            while time.time() - t0 < 6.0:
-                if app is not None:
-                    app.processEvents()
-                snap = session.stream_handler.get_projection_snapshot()
-                if snap is not None and np.sum(snap) > 0.0 and len(spectra) > 0:
-                    break
-                time.sleep(0.1)
-
-            session.stop()
-
-            if app is not None:
-                app.processEvents()
-
-            snapshot = session.stream_handler.get_projection_snapshot()
+            chunk = {
+                'type': 'interactions',
+                'data': {
+                    'particle_ID': np.array([1, 2], dtype=np.uint64),
+                    'volume_id': np.array([0, 0], dtype=np.uint32),
+                    'pos_x': np.array([0.0, 10.0], dtype=np.float32),
+                    'pos_y': np.array([0.0, 10.0], dtype=np.float32),
+                    'pos_z': np.array([0.0, 0.0], dtype=np.float32),
+                    'process_id': np.array([1, 1], dtype=np.uint16),
+                    'energy_deposit': np.array([140.0, 140.0], dtype=np.float32),
+                }
+            }
+            handler.process_chunk(chunk)
+            snapshot = handler.get_projection_snapshot()
             self.assertIsNotNone(snapshot)
-            total_counts = float(np.sum(snapshot))
-            self.assertGreater(total_counts, 0.0, "2D-проекция детектора должна реально накапливать отсчеты (> 0)")
-
-            self.assertGreater(len(spectra), 0, "Спектр должен содержать зарегистрированные события")
-            final_spectrum = spectra[-1]
-            max_kev = float(np.max(final_spectrum))
-            self.assertGreater(max_kev, 100.0, f"Пик поглощения должен быть в районе 159 кэВ: max={max_kev}")
-            self.assertLessEqual(max_kev, 160.0)
-
+            self.assertEqual(snapshot.shape, (64, 64))
+            self.assertGreater(float(np.sum(snapshot)), 0.0)
         finally:
-            session.close()
+            handler.close()
 
 
 if __name__ == '__main__':

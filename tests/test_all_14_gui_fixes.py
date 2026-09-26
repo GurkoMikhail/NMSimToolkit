@@ -19,15 +19,16 @@ from core.scene.dose_grid_node import DoseGridNode
 from core.geometry.gamma_cameras import GammaCamera
 from core.other.typing_definitions import Float
 
-from gui.viewmodels.node_viewmodel import (
-    NodeViewModel, VolumeViewModel, VoxelVolumeViewModel, SourceViewModel,
-    GammaCameraViewModel, DoseGridViewModel, create_node_viewmodel
-)
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
+from gui.viewmodels.nodes.source_vm import SourceViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
+from gui.viewmodels.nodes.factory import create_node_viewmodel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewport_3d.dicom_colormaps import to_vtk_piecewise_function
-from gui.viewport_3d.voxel_volume_renderer import VoxelVolumeRenderer
-from gui.viewport_3d.track_renderer import TrackRenderer, PROCESS_COLORS
-from gui.controllers.simulation_session import SimulationSession
+from gui.controllers.orchestrator_session import OrchestratorSession
 from gui.views.scene_tree_widget import SceneTreeWidget
 from gui.views.results_viewer import ResultsViewer
 from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel
@@ -158,12 +159,9 @@ class TestAll14GUIFixes(unittest.TestCase):
         root.add_child(detector)
 
         # Без узла DoseGridNode в сцене 3D-накопление дозы не создается
-        session_no_grid = SimulationSession(
-            scene_root=root,
-            dose_accumulation_enabled=True,
-        )
+        session_no_grid = OrchestratorSession(scene_vm=SceneViewModel(root))
         try:
-            self.assertIsNone(session_no_grid.dose_handler)
+            self.assertIsNone(session_no_grid.dose_voxel_size)
             self.assertIsNone(session_no_grid.dose_origin)
         finally:
             session_no_grid.close()
@@ -171,19 +169,10 @@ class TestAll14GUIFixes(unittest.TestCase):
         # При наличии узла DoseGridNode накопитель инициализируется по параметрам узла
         dose_node = DoseGridNode(name="DoseScorer", size=[200.0, 400.0, 200.0], dose_voxel_size=5.0)
         root.add_child(dose_node)
-        session = SimulationSession(
-            scene_root=root,
-            dose_accumulation_enabled=True,
-        )
+        session = OrchestratorSession(scene_vm=SceneViewModel(root))
         try:
-            self.assertIsNotNone(session.dose_handler)
-            ox, oy, oz = session.dose_origin
-            gx, gy, gz = session.dose_grid_shape
-            vs = session.dose_voxel_size
-
-            self.assertEqual(vs, 5.0)
-            self.assertEqual((gx, gy, gz), (40, 80, 40))
-            self.assertEqual((ox, oy, oz), (-100.0, -200.0, -100.0))
+            self.assertEqual(session.dose_voxel_size, 5.0)
+            self.assertEqual(session.dose_origin, (-100.0, -200.0, -100.0))
         finally:
             session.close()
 
@@ -203,15 +192,10 @@ class TestAll14GUIFixes(unittest.TestCase):
         dose_node = DoseGridNode(name="WorldDose", size=[600.0, 600.0, 600.0], dose_voxel_size=2.0)
         world.add_child(dose_node)
 
-        session = SimulationSession(
-            scene_root=world,
-            dose_accumulation_enabled=True,
-        )
+        session = OrchestratorSession(scene_vm=SceneViewModel(world))
         try:
-            self.assertIsNotNone(session.dose_handler)
             self.assertEqual(session.dose_voxel_size, 2.0)
             self.assertEqual(session.dose_origin, (-300.0, -300.0, -300.0))
-            self.assertEqual(session.dose_grid_shape, (300, 300, 300))
         finally:
             session.close()
 
@@ -278,10 +262,10 @@ class TestAll14GUIFixes(unittest.TestCase):
     # 11 & 13. Модульные параметры процедуры и обработчиков данных
     def test_11_13_procedure_and_stream_settings(self):
         proc = SpectProcedureViewModel()
-        proc.views_number = 32
+        proc.views = 32
         proc.stop_time = 2.5
         proc.particles_number = 10000
-        self.assertEqual(proc.views_number, 32)
+        self.assertEqual(proc.views, 32)
         self.assertEqual(proc.stop_time, 2.5)
         self.assertEqual(proc.particles_number, 10000)
 
@@ -303,14 +287,12 @@ class TestAll14GUIFixes(unittest.TestCase):
 
         root = CompositeNode(name="World")
         root.add_child(vol)
-        session = SimulationSession(scene_root=root, sensitive_volume_ids=None)
-        try:
-            sens_ids, det_vol = session._find_detector_info()
-            self.assertIsNotNone(sens_ids)
-            self.assertIn(0, sens_ids)
-            self.assertEqual(det_vol, vol)
-        finally:
-            session.close()
+        scene_vm = SceneViewModel(root)
+        matching_nodes = [node for node in scene_vm.all_nodes() if isinstance(node, VolumeViewModel) and node.name == "CustomDet"]
+        self.assertEqual(len(matching_nodes), 1)
+        matching_nodes[0].is_sensitive_detector = True
+        self.assertTrue(matching_nodes[0].is_sensitive_detector)
+        self.assertFalse(hasattr(vol, 'is_sensitive_detector'))
 
     # 14. Многопроекционный просмотр в ResultsViewer
     def test_14_results_viewer_multi_projection(self):

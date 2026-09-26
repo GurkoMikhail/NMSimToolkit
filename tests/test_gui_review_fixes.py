@@ -12,7 +12,7 @@
 - CLEAN-3: Поддержка PetScannerViewModel и фабрики create_node_viewmodel
 - CLEAN-5: Очистка сигналов в SceneTreeWidget при rebuild_tree
 - CLEAN-6 / CLEAN-7: Логирование ошибок в decorators.py
-- CLEAN-8: Отложенный запуск DataManager в SimulationSession
+- CLEAN-8: Отложенный запуск в OrchestratorSession
 - CLEAN-9: SimulationRunner.run() вызывает публичный manager.run()
 - STYLE-5: Точечное обновление PropertyInspector._on_property_changed_externally
 - STYLE-8: Детерминированная генерация имен в SceneTreeWidget
@@ -35,14 +35,12 @@ from core.scene.nodes import SpatialNode, CompositeNode
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Geometry, Box
 from core.materials.materials import Material
-from gui.viewmodels.node_viewmodel import (
-    NodeViewModel,
-    VolumeViewModel,
-    VoxelVolumeViewModel,
-    GammaCameraViewModel,
-    PetScannerViewModel,
-    create_node_viewmodel,
-)
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.pet_scanner_vm import PetScannerViewModel
+from gui.viewmodels.nodes.factory import create_node_viewmodel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.decorators import core_field, gui_field
 from gui.viewport_3d.dicom_colormaps import to_vtk_piecewise_function
@@ -50,9 +48,9 @@ from gui.viewport_3d.track_renderer import TrackRenderer
 from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.controllers.ipc_receiver import IPCReceiver
 from gui.controllers.simulation_runner import SimulationRunner
-from gui.controllers.simulation_session import SimulationSession
-from gui.views.property_inspector import PropertyInspector
+from gui.controllers.orchestrator_session import OrchestratorSession
 from gui.views.scene_tree_widget import SceneTreeWidget
+from gui.views.property_inspector import PropertyInspector
 from gui.views.results_viewer import configure_pyqtgraph_theme
 from gui.views.main_window import MainWindow
 
@@ -109,12 +107,6 @@ class TestGuiReviewFixes(unittest.TestCase):
         self.assertTrue(runner.is_running)
 
         runner._running_event.clear()
-        self.assertFalse(runner.is_running)
-
-        # Проверка свойства обратной совместимости _is_running
-        runner._is_running = True
-        self.assertTrue(runner.is_running)
-        runner._is_running = False
         self.assertFalse(runner.is_running)
 
     # -------------------------------------------------------------------------
@@ -176,8 +168,9 @@ class TestGuiReviewFixes(unittest.TestCase):
     # CLEAN-3: PetScannerViewModel
     # -------------------------------------------------------------------------
     def test_clean_3_pet_scanner_viewmodel_factory(self):
-        """Проверка создания PetScannerViewModel фабрикой create_node_viewmodel."""
-        class PetScanner(CompositeNode):
+        from core.geometry.pet_scanners import PetScanner as CorePetScanner, PETScanner as CorePETScanner
+
+        class PetScanner(CorePetScanner):
             pass
 
         node = PetScanner(name="PET_Ring_1")
@@ -186,7 +179,7 @@ class TestGuiReviewFixes(unittest.TestCase):
         self.assertEqual(vm.name, "PET_Ring_1")
 
         # Проверка распознавания по классу PETScanner
-        class PETScanner(CompositeNode):
+        class PETScanner(CorePETScanner):
             pass
 
         node2 = PETScanner(name="PET_Sector")
@@ -237,24 +230,15 @@ class TestGuiReviewFixes(unittest.TestCase):
             self.assertIn("Ошибка в колбэке on_change для поля val", mock_log.call_args[0][0])
 
     # -------------------------------------------------------------------------
-    # CLEAN-8: DataManager отложенный запуск
+    # CLEAN-8: OrchestratorSession отложенный запуск
     # -------------------------------------------------------------------------
-    def test_clean_8_simulation_session_data_manager_deferred_start(self):
-        """Проверка, что _setup_pipeline не стартует data_manager до вызова start()."""
-        with patch("gui.controllers.simulation_session.GuiStreamDataHandler"), \
-             patch("gui.controllers.simulation_session.SimulationManager"), \
-             patch("gui.controllers.simulation_session.DataManager") as mock_dm_cls, \
-             patch("gui.controllers.simulation_session.IPCReceiver"), \
-             patch("gui.controllers.simulation_session.SimulationRunner"):
-            mock_dm_instance = mock_dm_cls.return_value
-            mock_dm_instance.is_alive.return_value = False
-
-            session = SimulationSession(scene_root=MagicMock())
-            mock_dm_instance.start.assert_not_called()
-
-            session.start()
-            mock_dm_instance.start.assert_called_once()
-            session.stop()
+    def test_clean_8_orchestrator_session_deferred_start(self):
+        """Проверка, что OrchestratorSession не запускает фоновые потоки до явного старта."""
+        session = OrchestratorSession(scene_vm=None)
+        self.assertFalse(session.is_running)
+        self.assertIsNone(session._worker_thread)
+        self.assertIsNone(session._ipc_receiver)
+        session.close()
 
     # -------------------------------------------------------------------------
     # CLEAN-9: SimulationRunner.run вызывает manager.run
@@ -322,17 +306,17 @@ class TestGuiReviewFixes(unittest.TestCase):
         scene_vm.add_node(scene_vm.root_vm, vm2)
 
         win.scene_vm = scene_vm
-        win._sync_viewport_scene()
+        win.viewport_controller.sync_viewport_scene()
 
-        self.assertIn(id(vm1), win._node_connections)
-        self.assertIn(id(vm2), win._node_connections)
+        self.assertIn(id(vm1), win.viewport_controller.node_connections)
+        self.assertIn(id(vm2), win.viewport_controller.node_connections)
 
         # Удаляем узел vm2 и синхронизируем сцену
         scene_vm.remove_node(vm2)
-        win._sync_viewport_scene()
+        win.viewport_controller.sync_viewport_scene()
 
-        self.assertIn(id(vm1), win._node_connections)
-        self.assertNotIn(id(vm2), win._node_connections)
+        self.assertIn(id(vm1), win.viewport_controller.node_connections)
+        self.assertNotIn(id(vm2), win.viewport_controller.node_connections)
         win.close()
 
     # -------------------------------------------------------------------------
@@ -393,7 +377,7 @@ class TestGuiReviewFixes(unittest.TestCase):
         """Проверка вызова set_colormap и set_opacity_threshold в VoxelVolumeRenderer при смене свойств."""
         win = MainWindow()
         mock_renderer = MagicMock()
-        win.voxel_renderer = mock_renderer
+        win.viewport_controller.voxel_renderer = mock_renderer
 
         mock_core = MagicMock()
         mock_core.material_distribution.shape = (32, 32, 32)

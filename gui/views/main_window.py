@@ -13,15 +13,13 @@ from PySide6.QtWidgets import (
 )
 
 from gui.viewmodels.scene_viewmodel import SceneViewModel
-from gui.viewmodels.node_viewmodel import (
-    NodeViewModel,
-    VolumeViewModel,
-    VoxelVolumeViewModel,
-    SourceViewModel,
-    GammaCameraViewModel,
-    PetScannerViewModel,
-    DoseGridViewModel,
-)
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
+from gui.viewmodels.nodes.source_vm import SourceViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.pet_scanner_vm import PetScannerViewModel
+from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
 from gui.views.scene_tree_widget import SceneTreeWidget
 from gui.views.property_inspector import PropertyInspector
 from gui.views.results_viewer import ResultsViewer
@@ -32,13 +30,9 @@ from gui.views.simulation_settings_dialog import SimulationSettingsDialog
 from gui.viewmodels.procedure_viewmodel import BaseProcedureViewModel, SpectProcedureViewModel, procedure_from_config
 from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel, DirectStreamHandlerViewModel
 from gui.viewport_3d.vtk_viewport import VTKViewport
-from gui.viewport_3d.track_renderer import TrackRenderer
-from gui.viewport_3d.spect_manipulator import SPECTManipulator
-from gui.viewport_3d.pet_manipulator import PETManipulator
-from gui.viewport_3d.voxel_volume_renderer import VoxelVolumeRenderer
-from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer
 from gui.controllers.orchestrator_session import OrchestratorSession
-from gui.controllers.simulation_session import SimulationSession
+from gui.controllers.viewport_controller import SceneViewportController
+from gui.models.gui_settings import GuiSimulationSettings
 from core.scene.nodes import CompositeNode
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
@@ -58,13 +52,16 @@ class MainWindow(QMainWindow):
     Главное окно графического интерфейса NMSimToolkit.
     Объединяет 3D-вьюпорт, дерево сцены, инспектор свойств и панель результатов
     в модульную архитектуру док-панелей (QDockWidget).
-    Сборка вычислительного конвейера и IPC делегирована классу SimulationSession.
+    Синхронизация 3D-вьюпорта делегирована SceneViewportController,
+    а параллельный расчет — OrchestratorSession.
     """
 
     def __init__(self, scene_vm: Optional[SceneViewModel] = None, parent: Optional[Any] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("NMSimToolkit - Интерактивное 3D моделирование ядерной медицины")
         self.resize(1400, 900)
+
+        self.viewport_controller: Optional[SceneViewportController] = None
 
         # Модель представления сцены
         if scene_vm is None:
@@ -73,29 +70,16 @@ class MainWindow(QMainWindow):
             water_mat = database_setting.material_database.get('Water, Liquid', Material(name='Water, Liquid'))
             default_vol = Volume(geometry=Box(200.0, 200.0, 200.0), material=water_mat, name="WaterPhantom")
             default_root.add_child(default_vol)
-            self.scene_vm = SceneViewModel(default_root)
+            self._scene_vm = SceneViewModel(default_root)
         else:
-            self.scene_vm = scene_vm
+            self._scene_vm = scene_vm
 
         self.current_config: Any = None
         self.current_config_path: Optional[str] = None
-        self._node_connections: Dict[int, Tuple[NodeViewModel, List[Any]]] = {}
         self.shm_name: str = "nmsim_gui_proj_shm"
         self.projection_shape = (128, 128)
 
-        self.sim_settings: Dict[str, Any] = {
-            'views_number': 1,
-            'stop_time': 1.0,
-            'angular_range': 360.0,
-            'particles_number': 5000,
-            'buffer_capacity': 10000,
-            'max_tracks_per_batch': 2000,
-            'max_tracks_points': 50000,
-            'render_as_lines': True,
-            'show_escaped_tracks': False,
-            'dose_accumulation_enabled': True,
-            'dose_voxel_size': 5.0,
-        }
+        self.sim_settings: GuiSimulationSettings = GuiSimulationSettings()
 
         self._init_components()
         self._init_docks()
@@ -106,31 +90,29 @@ class MainWindow(QMainWindow):
         self._update_action_states(running=False, paused=False)
 
     @property
-    def _connected_node_ids(self) -> Set[int]:
-        return set(self._node_connections.keys())
+    def scene_vm(self) -> SceneViewModel:
+        return self._scene_vm
+
+    @scene_vm.setter
+    def scene_vm(self, vm: SceneViewModel) -> None:
+        self._scene_vm = vm
+        if self.viewport_controller is not None:
+            self.viewport_controller.set_scene_viewmodel(vm)
 
     def _init_components(self) -> None:
         # Центральный 3D вьюпорт
         self.viewport = VTKViewport(self)
         self.setCentralWidget(self.viewport)
 
-        # 3D рендереры и манипуляторы
-        self.track_renderer = TrackRenderer(self.viewport, render_as_lines=True)
-        self.spect_manipulator = SPECTManipulator(self.viewport)
-        self.pet_manipulator = PETManipulator(self.viewport)
-        self.voxel_renderer = VoxelVolumeRenderer(self.viewport)
-        self.dose_renderer = DoseVolumeRenderer(self.viewport)
-        self.dose_visualizer = self.dose_renderer
-        self.dose_viaualizator = self.dose_renderer
-        self.voxel_visualizer = self.voxel_renderer
-
-        # Параметры активной воксельной сетки дозы (кэшируются для предотвращения скачков при остановке)
-        self._active_dose_voxel_size: float = 5.0
-        self._active_dose_origin: Optional[Tuple[float, float, float]] = None
-        self._active_dose_transform_matrix: Optional[np.ndarray] = None
+        # Выделенный контроллер синхронизации сцены и 3D-вьюпорта (SRP)
+        self.viewport_controller = SceneViewportController(
+            viewport=self.viewport,
+            scene_vm=self._scene_vm,
+            parent=self,
+        )
 
         # Фасад сессии моделирования (Mediator / Session Controller)
-        self.session: Optional[SimulationSession] = None
+        self.session: Optional[OrchestratorSession] = None
 
         # Дерево сцены
         self.scene_tree = SceneTreeWidget(self.scene_vm, self)
@@ -263,13 +245,13 @@ class MainWindow(QMainWindow):
         self.act_toggle_tracks = QAction("Отображать треки", self)
         self.act_toggle_tracks.setCheckable(True)
         self.act_toggle_tracks.setChecked(True)
-        self.act_toggle_tracks.toggled.connect(self.track_renderer.set_visible)
+        self.act_toggle_tracks.toggled.connect(self.viewport_controller.track_renderer.set_visible)
         view_menu.addAction(self.act_toggle_tracks)
 
         self.act_toggle_dose = QAction("Отображать карту дозы", self)
         self.act_toggle_dose.setCheckable(True)
         self.act_toggle_dose.setChecked(True)
-        self.act_toggle_dose.toggled.connect(self.dose_renderer.set_visible)
+        self.act_toggle_dose.toggled.connect(self.viewport_controller.dose_renderer.set_visible)
         view_menu.addAction(self.act_toggle_dose)
 
         view_menu.addSeparator()
@@ -302,7 +284,7 @@ class MainWindow(QMainWindow):
         self.lbl_preview_view = QLabel("Ракурс:")
         toolbar.addWidget(self.lbl_preview_view)
         self.spin_preview_view = QSpinBox()
-        self.spin_preview_view.setRange(1, max(1, self.sim_settings.get('views_number', 1)))
+        self.spin_preview_view.setRange(1, max(1, self.sim_settings.views_number))
         self.spin_preview_view.setValue(1)
         self.spin_preview_view.setToolTip("Предварительный просмотр ориентации детекторных головок ОФЭКТ для выбранного ракурса")
         self.spin_preview_view.valueChanged.connect(self._on_preview_view_changed)
@@ -317,7 +299,6 @@ class MainWindow(QMainWindow):
         # Связь выбора узла в дереве с инспектором и 3D-манипулятором
         self.scene_vm.node_selected.connect(self.property_inspector.set_target_viewmodel)
         self.scene_vm.node_selected.connect(self._on_node_selected)
-        self.spect_manipulator.orbit_changed.connect(self._on_spect_manipulator_changed)
         self.property_inspector.dose_voxel_size_changed.connect(lambda vs: self.sim_settings.update({'dose_voxel_size': vs}))
 
         # Связь выбора процедуры и обработчиков с инспектором
@@ -341,7 +322,7 @@ class MainWindow(QMainWindow):
         self.orchestrator_session.session_error.connect(lambda err: QMessageBox.critical(self, "Ошибка", f"Сбой расчета:\n{err}"))
 
         # Потоковая визуализация от сфокусированного воркера
-        self.orchestrator_session.tracks_received.connect(self.track_renderer.add_tracks_batch)
+        self.orchestrator_session.tracks_received.connect(self.viewport_controller.track_renderer.add_tracks_batch)
         self.orchestrator_session.projection_received.connect(self.results_viewer.set_projection_data)
         self.orchestrator_session.projection_stack_updated.connect(self._on_projection_stack_updated)
         self.orchestrator_session.spectrum_received.connect(self.results_viewer.set_spectrum_data)
@@ -351,7 +332,7 @@ class MainWindow(QMainWindow):
         )
 
         # Раздельные подписки для оптимизированной инкрементальной синхронизации
-        self.scene_vm.scene_loaded.connect(lambda vm: self._sync_viewport_scene())
+        self.scene_vm.scene_loaded.connect(lambda vm: self.viewport_controller.sync_viewport_scene())
         self.scene_vm.node_added.connect(self._on_node_added)
         self.scene_vm.node_removed.connect(self._on_node_removed)
 
@@ -371,300 +352,41 @@ class MainWindow(QMainWindow):
         self.results_viewer.accumulation_cleared.connect(self._on_clear_accumulation)
 
         # Начальная отрисовка сцены во вьюпорте и генерация задач
-        self._sync_viewport_scene()
+        self.viewport_controller.sync_viewport_scene()
         self._on_generate_jobs()
 
-    def _sync_viewport_scene(self) -> None:
-        """
-        Полная синхронизация визуальных 3D-мешей в VTKViewport с графом SceneViewModel.
-        """
-        if self.viewport is None or self.scene_vm is None or self.scene_vm.root_vm is None:
-            return
-
-        all_nodes = self.scene_vm.all_nodes()
-        current_actor_names = set()
-        has_spect = False
-        has_pet = False
-
-        for node_vm in all_nodes:
-            actor_name = f"mesh_{id(node_vm)}"
-            current_actor_names.add(actor_name)
-            self._add_or_update_node_actor(node_vm)
-            if isinstance(node_vm, GammaCameraViewModel):
-                has_spect = True
-            if isinstance(node_vm, PetScannerViewModel):
-                has_pet = True
-
-        # Исключение паразитной отрисовки манипуляторов при отсутствии узлов
-        if not has_spect:
-            self.spect_manipulator.remove_visuals()
-        if not has_pet:
-            self.pet_manipulator.remove_visuals()
-
-        # Удаляем акторы и отключаем подписки узлов, которых больше нет в сцене
-        current_node_ids = {id(n) for n in all_nodes}
-        for node_id in list(self._node_connections.keys()):
-            if node_id not in current_node_ids:
-                self._disconnect_node(node_id)
-
-        for existing in list(self.viewport._actors.keys()):
-            if existing.startswith("mesh_") and existing not in current_actor_names:
-                self.viewport.remove_actor(existing)
-
-        self.viewport.render()
-
-    def _disconnect_node(self, node_id: int) -> None:
-        """
-        Явное отключение Qt-сигналов и удаление ссылки на ViewModel узла.
-        """
-        if node_id in self._node_connections:
-            node_vm, conns = self._node_connections.pop(node_id)
-            for conn in conns:
-                try:
-                    QObject.disconnect(conn)
-                except Exception:
-                    pass
-
-    def _disconnect_all_nodes(self) -> None:
-        """
-        Полное отключение подписок на все узлы сцены.
-        """
-        for node_id in list(self._node_connections.keys()):
-            self._disconnect_node(node_id)
-
-    def _add_or_update_node_actor(self, node_vm: NodeViewModel) -> None:
-        """
-        Добавление или обновление геометрического актора узла в 3D вьюпорте.
-        """
-        actor_name = f"mesh_{id(node_vm)}"
-
-        if isinstance(node_vm, VolumeViewModel):
-            sz = node_vm.size
-            box = pv.Box(bounds=(-sz[0]/2, sz[0]/2, -sz[1]/2, sz[1]/2, -sz[2]/2, sz[2]/2))
-            color = node_vm.color
-            c = color[:3] if isinstance(color, tuple) and len(color) >= 3 else (0.2, 0.6, 1.0)
-            self.viewport.add_mesh_actor(actor_name, box, color=c, opacity=0.45)
-            self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
-
-        elif isinstance(node_vm, VoxelVolumeViewModel):
-            dist = node_vm.core_node.material_distribution
-            if dist is not None:
-                data = np.asarray(dist.ID, dtype=np.float32)
-                if float(np.max(data)) == 0.0:
-                    data = np.asarray(dist.view(np.ndarray), dtype=np.float32)
-                if float(np.max(data)) == 0.0:
-                    data = np.asarray(dist.density, dtype=np.float32)
-                self.voxel_renderer.set_volume_data(
-                    data,
-                    voxel_size=node_vm.voxel_size,
-                    origin=node_vm.origin
-                )
-                self.voxel_renderer.set_colormap(node_vm.colormap_name)
-                self.voxel_renderer.set_opacity_parameters(
-                    max_opacity=float(node_vm.max_opacity),
-                    threshold=float(node_vm.opacity_threshold),
-                    preset=node_vm.opacity_preset
-                )
-                self.voxel_renderer.set_lod_factor(float(node_vm.lod_factor))
-                self.viewport.update_actor_transform(self.voxel_renderer.actor_name, node_vm.global_matrix)
-
-        elif isinstance(node_vm, SourceViewModel):
-            if node_vm.is_point_source:
-                sphere = pv.Sphere(radius=8.0)
-                self.viewport.add_mesh_actor(actor_name, sphere, color=(1.0, 0.2, 0.2), opacity=0.85)
-            else:
-                sz = node_vm.size
-                if any(s <= 0 for s in sz):
-                    sz = (50.0, 50.0, 50.0)
-                box = pv.Box(bounds=(-sz[0]/2, sz[0]/2, -sz[1]/2, sz[1]/2, -sz[2]/2, sz[2]/2))
-                self.viewport.add_mesh_actor(actor_name, box, color=(1.0, 0.8, 0.1), opacity=0.35, style='wireframe')
-            self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
-
-        elif isinstance(node_vm, DoseGridViewModel):
-            sz = node_vm.size
-            if any(s <= 0 for s in sz):
-                sz = (100.0, 100.0, 100.0)
-            box = pv.Box(bounds=(-sz[0]/2, sz[0]/2, -sz[1]/2, sz[1]/2, -sz[2]/2, sz[2]/2))
-            color = (0.2, 0.9, 0.3)
-            opacity = 0.85 if node_vm.is_active else 0.3
-            self.viewport.add_mesh_actor(
-                actor_name,
-                box,
-                color=color,
-                opacity=opacity,
-                style='wireframe',
-                line_width=2.0
-            )
-            self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
-
-        # Подписка на изменение матрицы и свойств узла для инкрементального обновления
-        node_id = id(node_vm)
-        if node_id not in self._node_connections:
-            conn1 = node_vm.transform_changed.connect(
-                lambda n=node_vm: self._on_node_transform_changed(n)
-            )
-            conn2 = node_vm.property_changed.connect(
-                lambda prop, val, n=node_vm: self._on_node_property_changed(n, prop, val)
-            )
-            self._node_connections[node_id] = (node_vm, [conn1, conn2])
-
     def _on_node_transform_changed(self, node_vm: NodeViewModel) -> None:
-        """
-        Инкрементальное обновление матрицы трансформации актора без пересоздания меша.
-        """
-        actor_name = f"mesh_{id(node_vm)}"
-        self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
-        if isinstance(node_vm, VoxelVolumeViewModel) and self.voxel_renderer is not None:
-            self.viewport.update_actor_transform(self.voxel_renderer.actor_name, node_vm.global_matrix)
+        """Инкрементальное обновление матрицы трансформации актора без пересоздания меша."""
+        self.viewport_controller.on_node_transform_changed(node_vm)
 
     def _on_node_property_changed(self, node_vm: NodeViewModel, prop_name: str, value: Any) -> None:
-        """
-        Инкрементальное обновление параметров актора при смене геометрии, цвета или физических свойств.
-        """
-        if prop_name in ('size', 'color', 'voxel_size', 'is_point_source', 'file_path', 'dose_voxel_size', 'is_active'):
-            self._add_or_update_node_actor(node_vm)
-            self.viewport.render()
-        elif prop_name == 'colormap_name' and isinstance(node_vm, VoxelVolumeViewModel):
-            if self.voxel_renderer is not None:
-                self.voxel_renderer.set_colormap(str(value))
-                self.viewport.render()
-        elif prop_name == 'opacity_threshold' and isinstance(node_vm, VoxelVolumeViewModel):
-            if self.voxel_renderer is not None:
-                self.voxel_renderer.set_opacity_threshold(float(value))
-                self.viewport.render()
-        elif prop_name == 'max_opacity' and isinstance(node_vm, VoxelVolumeViewModel):
-            if self.voxel_renderer is not None:
-                self.voxel_renderer.set_max_opacity(float(value))
-                self.viewport.render()
-        elif prop_name == 'opacity_preset' and isinstance(node_vm, VoxelVolumeViewModel):
-            if self.voxel_renderer is not None:
-                self.voxel_renderer.set_opacity_preset(str(value))
-                self.viewport.render()
-        elif prop_name == 'lod_factor' and isinstance(node_vm, VoxelVolumeViewModel):
-            if self.voxel_renderer is not None:
-                self.voxel_renderer.set_lod_factor(float(value))
-                self.viewport.render()
+        """Инкрементальное обновление параметров актора при смене геометрии или свойств."""
+        self.viewport_controller.on_node_property_changed(node_vm, prop_name, value)
 
     def _on_node_added(self, node_vm: NodeViewModel) -> None:
-        """
-        Точечное добавление нового актора в сцену (рекурсивно для дочерних узлов).
-        """
-        def _add_recursive(vm: NodeViewModel) -> None:
-            self._add_or_update_node_actor(vm)
-            for child in vm.children:
-                _add_recursive(child)
-
-        _add_recursive(node_vm)
-        self.viewport.render()
+        """Точечное добавление нового актора в сцену."""
+        self.viewport_controller.on_node_added(node_vm)
 
     def _on_node_removed(self, node_vm: NodeViewModel) -> None:
-        """
-        Точечное удаление актора из сцены (рекурсивно для дочерних узлов).
-        """
-        def _remove_recursive(vm: NodeViewModel) -> None:
-            actor_name = f"mesh_{id(vm)}"
-            self.viewport.remove_actor(actor_name)
-            if isinstance(vm, VoxelVolumeViewModel) and self.voxel_renderer is not None:
-                self.viewport.remove_actor(self.voxel_renderer.actor_name)
-            self._disconnect_node(id(vm))
-            for child in vm.children:
-                _remove_recursive(child)
-
-        _remove_recursive(node_vm)
-        self.viewport.render()
+        """Точечное удаление актора из сцены."""
+        self.viewport_controller.on_node_removed(node_vm)
 
     def _on_node_selected(self, vm: Optional[NodeViewModel]) -> None:
         if self.dock_inspector.isHidden():
             self.dock_inspector.show()
         self.dock_inspector.raise_()
-
-        if isinstance(vm, GammaCameraViewModel):
-            self.spect_manipulator.half_thickness = vm.half_thickness
-            self.spect_manipulator.set_orbit_parameters(
-                vm.orbit_radius,
-                vm.orbit_angle,
-                z=vm.orbit_z,
-                render=True,
-                emit_signal=False
-            )
-        else:
-            self.spect_manipulator.remove_visuals()
-
-    def _on_spect_manipulator_changed(self, radius: float, angle_deg: float, z_pos: float) -> None:
-        """
-        Обработка перемещения ОФЭКТ-манипулятора в 3D-пространстве.
-        """
-        if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
-            self.scene_vm.selected_node.set_orbit_position(radius, angle_deg, z=z_pos)
+        self.viewport_controller.on_node_selected(vm)
 
     def _apply_job_angles_to_viewport(self, context: Dict[str, Any]) -> None:
-        """
-        Применяет углы из контекста задачи к гамма-камерам во вьюпорте.
-        """
-        cam_vms = [n for n in self.scene_vm.all_nodes() if isinstance(n, GammaCameraViewModel)]
-        if not cam_vms:
-            return
-
-        radius = 250.0
-        if isinstance(self.procedure_vm, SpectProcedureViewModel):
-            radius = float(self.procedure_vm.radius)
-
-        for i, cam_vm in enumerate(cam_vms):
-            ang = context.get(f"head_{i}_angle")
-            if ang is None:
-                ang = context.get("current_angle")
-            if ang is not None:
-                cam_vm.set_orbit_position(radius, float(ang), cam_vm.orbit_z)
-
-        if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
-            sel = self.scene_vm.selected_node
-            self.spect_manipulator.set_orbit_parameters(sel.orbit_radius, sel.orbit_angle, z=sel.orbit_z, render=False, emit_signal=False)
-
-        self.viewport.render()
+        """Применяет углы из контекста задачи к гамма-камерам во вьюпорте."""
+        self.viewport_controller.apply_job_angles_to_viewport(context, self.procedure_vm)
 
     def _on_preview_view_changed(self, view_number_1based: int) -> None:
-        """
-        Предварительный кинематический поворот всех детекторных головок в 3D-сцене на выбранный ракурс ОФЭКТ.
-        Позволяет оценить взаимную ориентацию детекторов и геометрию сканирования.
-        """
-        view_idx = max(0, view_number_1based - 1)
-        cam_vms = [n for n in self.scene_vm.all_nodes() if isinstance(n, GammaCameraViewModel)]
-        if not cam_vms:
-            return
+        """Предварительный кинематический поворот детекторов на выбранный ракурс ОФЭКТ."""
+        base_angle = self.viewport_controller.preview_view(view_number_1based, self.procedure_vm)
+        views_total = self.procedure_vm.views if isinstance(self.procedure_vm, SpectProcedureViewModel) else 1
+        self.lbl_status.setText(f"Предпросмотр ОФЭКТ: Ракурс {view_number_1based}/{views_total} (угол {base_angle:.1f}°)")
 
-        if isinstance(self.procedure_vm, SpectProcedureViewModel):
-            radius = float(self.procedure_vm.radius)
-            poses = Orchestrator.compute_spect_poses(
-                views_or_protocol=self.procedure_vm.views,
-                gamma_cameras=self.procedure_vm.gamma_cameras,
-                start_angle_deg=self.procedure_vm.start_angle,
-                end_angle_deg=self.procedure_vm.end_angle,
-                head_angle_offsets=self.procedure_vm.head_angles if self.procedure_vm.head_angles else None,
-                endpoint=self.procedure_vm.endpoint,
-            )
-            pose_idx = min(view_idx, len(poses) - 1) if poses else 0
-            angles = poses[pose_idx] if poses else [0.0] * len(cam_vms)
-            for i, cam_vm in enumerate(cam_vms):
-                ang = angles[i] if i < len(angles) else angles[0]
-                cam_vm.set_orbit_position(radius, float(ang), cam_vm.orbit_z)
-            base_angle = angles[0] if angles else 0.0
-            views_number = self.procedure_vm.views
-        else:
-            views_number = max(1, int(self.sim_settings.get('views_number', 1)))
-            angular_range = float(self.sim_settings.get('angular_range', 360.0))
-            start_angle = float(self.sim_settings.get('start_angle', 0.0))
-            orbit_radius = float(self.sim_settings.get('orbit_radius', 250.0))
-            base_angle = (view_idx / views_number) * angular_range + start_angle
-            step = 360.0 / len(cam_vms)
-            for i, cam_vm in enumerate(cam_vms):
-                cam_vm.set_orbit_position(orbit_radius, (base_angle + step * i) % 360.0, cam_vm.orbit_z)
-
-        if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
-            sel = self.scene_vm.selected_node
-            self.spect_manipulator.set_orbit_parameters(sel.orbit_radius, sel.orbit_angle, z=sel.orbit_z, render=False, emit_signal=False)
-
-        self.viewport.render()
-        self.lbl_status.setText(f"Предпросмотр ОФЭКТ: Ракурс {view_idx + 1}/{views_number} (угол {base_angle:.1f}°)")
 
     def _on_projection_stack_updated(self, stack: np.ndarray, current_view: int, total_views: int, angle: float) -> None:
         """
@@ -780,12 +502,8 @@ class MainWindow(QMainWindow):
         """
         if self.orchestrator_session is not None:
             self.orchestrator_session.clear_accumulation()
-        if self.session is not None and self.session is not self.orchestrator_session:
-            self.session.clear_accumulation()
-        if self.dose_renderer is not None:
-            self.dose_renderer.clear()
-        if self.track_renderer is not None:
-            self.track_renderer.clear()
+        self.viewport_controller.clear_dose_volume()
+        self.viewport_controller.clear_tracks()
         self.lbl_status.setText("Накопление данных сброшено")
 
     def _on_pause_simulation(self) -> None:
@@ -824,23 +542,7 @@ class MainWindow(QMainWindow):
         Использует геометрические параметры активной сессии или последние сохраненные
         параметры сетки, гарантируя неизменность origin и матриц при остановке симуляции.
         """
-        if self.dose_renderer is None:
-            return
-
-        if self.session is not None:
-            if self.session.dose_origin is not None:
-                self._active_dose_origin = self.session.dose_origin
-            if self.session.dose_voxel_size is not None:
-                self._active_dose_voxel_size = self.session.dose_voxel_size
-            if self.session.dose_transform_matrix is not None:
-                self._active_dose_transform_matrix = self.session.dose_transform_matrix
-
-        self.dose_renderer.update_dose_data(
-            dose_data,
-            voxel_size=self._active_dose_voxel_size,
-            origin=self._active_dose_origin,
-            transform_matrix=self._active_dose_transform_matrix
-        )
+        self.viewport_controller.on_dose_volume_received(dose_data, session=self.session)
 
     def _update_action_states(self, running: bool, paused: bool) -> None:
         self.act_run.setEnabled(not running)
@@ -857,24 +559,19 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: Any) -> None:
         if self.orchestrator_session is not None:
             self.orchestrator_session.close()
-        if self.session is not None and self.session is not self.orchestrator_session:
-            self.session.close()
-            self.session = None
-        self._disconnect_all_nodes()
+        if self.viewport_controller is not None:
+            self.viewport_controller.close()
         self.viewport.close()
         super().closeEvent(event)
 
     def _on_new_scene(self) -> None:
         root = CompositeNode(name="WorldScene")
-        self._disconnect_all_nodes()
+        if self.viewport_controller is not None:
+            self.viewport_controller.disconnect_all_nodes()
+            self.viewport_controller.clear_dose_volume()
+            self.viewport_controller.clear_tracks()
         self.scene_vm.load_scene(root)
         self.viewport.clear_actors()
-        if self.dose_renderer is not None:
-            self.dose_renderer.clear()
-        if self.track_renderer is not None:
-            self.track_renderer.clear()
-        self._active_dose_origin = None
-        self._active_dose_transform_matrix = None
         self.current_config = None
         self.current_config_path = None
         self.lbl_status.setText("Создана новая пустая сцена")
@@ -888,11 +585,9 @@ class MainWindow(QMainWindow):
                 cfg = load_simulation_config(filepath, resolve_protocol=True)
                 builder = SceneBuilder(base_dir=filepath.parent)
                 root_node = builder.build_scene(cfg.scene)
-                self._disconnect_all_nodes()
-                if self.dose_renderer is not None:
-                    self.dose_renderer.clear()
-                self._active_dose_origin = None
-                self._active_dose_transform_matrix = None
+                if self.viewport_controller is not None:
+                    self.viewport_controller.disconnect_all_nodes()
+                    self.viewport_controller.clear_dose_volume()
                 self.scene_vm.load_scene(root_node)
                 self.scene_vm.apply_simulation_config(cfg)
                 self.current_config = cfg
@@ -911,25 +606,25 @@ class MainWindow(QMainWindow):
 
                 # Восстановление параметров менеджера симуляции и пула
                 if cfg.simulation_manager is not None:
-                    self.sim_settings['particles_number'] = cfg.simulation_manager.particles_number
-                    self.orchestrator_session.particles_number = cfg.simulation_manager.particles_number
+                    self.sim_settings.particles_number = int(cfg.simulation_manager.particles_number)
+                    self.orchestrator_session.particles_number = int(cfg.simulation_manager.particles_number)
                     try:
                         st_sec = float(cfg.simulation_manager.stop_time) / float(units.s)
-                        self.sim_settings['stop_time'] = st_sec
+                        self.sim_settings.stop_time = st_sec
                         self.orchestrator_session.stop_time = st_sec
                     except (TypeError, ValueError):
                         pass
                     try:
                         me_kev = float(cfg.simulation_manager.min_energy) / float(units.keV)
-                        self.sim_settings['min_energy'] = me_kev
+                        self.sim_settings.min_energy = me_kev
                         self.orchestrator_session.min_energy = me_kev
                     except (TypeError, ValueError):
                         pass
 
                 if cfg.pool_size is not None:
-                    self.sim_settings['pool_size'] = cfg.pool_size
-                    self.orchestrator_session.pool_size = cfg.pool_size
-                    self.jobs_widget.spin_pool_size.setValue(cfg.pool_size)
+                    self.sim_settings.pool_size = int(cfg.pool_size)
+                    self.orchestrator_session.pool_size = int(cfg.pool_size)
+                    self.jobs_widget.spin_pool_size.setValue(int(cfg.pool_size))
 
                 self._on_generate_jobs()
                 self.viewport.reset_camera()
@@ -962,17 +657,17 @@ class MainWindow(QMainWindow):
             new_settings = dialog.get_settings()
             self.sim_settings.update(new_settings)
             # Применение параметров к вычислительной сессии
-            self.orchestrator_session.particles_number = new_settings['particles_number']
-            self.orchestrator_session.stop_time = new_settings['stop_time']
-            self.orchestrator_session.min_energy = new_settings['min_energy']
-            self.orchestrator_session.pool_size = new_settings['pool_size']
-            self.jobs_widget.spin_pool_size.setValue(new_settings['pool_size'])
-            self.data_manager_vm.buffer_capacity = new_settings['buffer_capacity']
+            self.orchestrator_session.particles_number = new_settings.particles_number
+            self.orchestrator_session.stop_time = new_settings.stop_time
+            self.orchestrator_session.min_energy = new_settings.min_energy
+            self.orchestrator_session.pool_size = new_settings.pool_size
+            self.jobs_widget.spin_pool_size.setValue(new_settings.pool_size)
+            self.data_manager_vm.buffer_capacity = new_settings.buffer_capacity
 
             # Синхронизация с обработчиком DirectStreamHandlerViewModel при наличии
-            for h in self.data_manager_vm.handlers:
-                if isinstance(h, DirectStreamHandlerViewModel):
-                    h.show_escaped_tracks = new_settings['show_escaped_tracks']
+            for handler_vm in self.data_manager_vm.handlers:
+                if isinstance(handler_vm, DirectStreamHandlerViewModel):
+                    handler_vm.show_escaped_tracks = new_settings.show_escaped_tracks
 
             self._on_generate_jobs()
             self.lbl_status.setText("Параметры симуляции обновлены")

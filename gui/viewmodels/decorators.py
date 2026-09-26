@@ -1,26 +1,35 @@
 import logging
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 import numpy as np
 
 _logger = logging.getLogger(__name__)
 
 
-def _is_equal(a: Any, b: Any) -> bool:
+@runtime_checkable
+class IViewModelWithPropertyChanged(Protocol):
+    """
+    Контракт модели представления с поддержкой сигнала property_changed.
+    Исключает утиную типизацию и проверку hasattr/getattr при эмиссии сигналов.
+    """
+    property_changed: Any
+
+
+def _is_equal(first_value: Any, second_value: Any) -> bool:
     """
     Безопасное поэлементное сравнение значений, включая массивы numpy.
     """
-    if a is b:
+    if first_value is second_value:
         return True
-    if a is None or b is None:
+    if first_value is None or second_value is None:
         return False
-    if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
+    if isinstance(first_value, np.ndarray) or isinstance(second_value, np.ndarray):
         try:
-            return bool(np.array_equal(a, b))
-        except Exception:
+            return bool(np.array_equal(first_value, second_value))
+        except (ValueError, TypeError):
             return False
     try:
-        return bool(a == b)
-    except Exception:
+        return bool(first_value == second_value)
+    except (ValueError, TypeError):
         return False
 
 
@@ -36,18 +45,14 @@ def _emit_property_change(
     if on_change is not None:
         try:
             on_change(instance, value)
-        except Exception as e:
-            _logger.error(f"Ошибка в колбэке on_change для поля {name}: {e}", exc_info=True)
+        except Exception as err:
+            _logger.error(f"Ошибка в колбэке on_change для поля {name}: {err}", exc_info=True)
 
-    try:
-        signal = instance.property_changed
-    except AttributeError:
-        signal = None
-    if signal is not None and name is not None:
+    if isinstance(instance, IViewModelWithPropertyChanged) and name is not None:
         try:
-            signal.emit(name, value)
-        except Exception as e:
-            _logger.error(f"Ошибка эмиссии сигнала property_changed для поля {name}: {e}", exc_info=True)
+            instance.property_changed.emit(name, value)
+        except Exception as err:
+            _logger.error(f"Ошибка эмиссии сигнала property_changed для поля {name}: {err}", exc_info=True)
 
 
 class core_field:
@@ -134,54 +139,4 @@ class gui_field:
             return
 
         instance.__dict__[self.name] = value
-        _emit_property_change(instance, self.name, value, self.on_change)
-
-
-class observable_field:
-    """
-    Унифицированный дескриптор реактивного свойства ViewModel (Single Source of Truth).
-    Если целевой атрибут присутствует в объекте ядра (core_node), чтение и запись осуществляются
-    исключительно через core_node без дублирования копии в instance.__dict__.
-    В противном случае значение сохраняется в локальном словаре instance.__dict__.
-    """
-
-    def __init__(
-        self,
-        core_attr: Optional[str] = None,
-        default: Any = None,
-        on_change: Optional[Callable[[Any, Any], None]] = None
-    ) -> None:
-        self.core_attr = core_attr
-        self.default = default
-        self.on_change = on_change
-        self.name: Optional[str] = None
-
-    def __set_name__(self, owner: Any, name: str) -> None:
-        self.name = name
-        if self.core_attr is None:
-            self.core_attr = name
-
-    def __get__(self, instance: Any, owner: Optional[Any] = None) -> Any:
-        if instance is None:
-            return self
-        
-        try:
-            return instance.core_node.__getattribute__(self.core_attr)
-        except AttributeError:
-            return instance.__dict__.get(self.name, self.default)
-
-    def __set__(self, instance: Any, value: Any) -> None:
-        if self.name is None:
-            return
-
-        old_value = self.__get__(instance)
-        if _is_equal(old_value, value):
-            return
-
-        try:
-            setattr(instance.core_node, self.core_attr, value)
-            instance.__dict__.pop(self.name, None)
-        except AttributeError:
-            instance.__dict__[self.name] = value
-
         _emit_property_change(instance, self.name, value, self.on_change)

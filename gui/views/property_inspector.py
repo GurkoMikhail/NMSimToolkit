@@ -10,17 +10,17 @@ from PySide6.QtWidgets import (
     QSlider, QScrollArea, QPushButton, QCheckBox, QFileDialog
 )
 
-from gui.viewmodels.node_viewmodel import (
-    NodeViewModel,
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import (
     VolumeViewModel,
-    VoxelVolumeViewModel,
-    GammaCameraViewModel,
-    SourceViewModel,
-    DoseGridViewModel,
     CollimatorViewModel,
     ParametricParallelCollimatorViewModel,
     ParametricParallelSquareCollimatorViewModel,
 )
+from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.source_vm import SourceViewModel
+from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
     SpectProcedureViewModel,
@@ -35,6 +35,7 @@ from gui.viewmodels.data_handler_viewmodel import (
     DoseMapHandlerViewModel,
     DataManagerViewModel,
 )
+from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewport_3d.dicom_colormaps import get_available_colormaps
 import settings.database_setting as database_setting
 
@@ -53,12 +54,12 @@ class PropertyInspector(QWidget):
     def __init__(self, parent: Optional[Any] = None) -> None:
         super().__init__(parent)
         self.current_vm: Optional[NodeViewModel] = None
-        self.scene_vm: Optional[Any] = None
+        self.scene_vm: Optional[SceneViewModel] = None
         self._is_updating_ui: bool = False
 
         self._init_ui()
 
-    def set_scene_viewmodel(self, scene_vm: Any) -> None:
+    def set_scene_viewmodel(self, scene_vm: Optional[SceneViewModel]) -> None:
         """Привязка модели сцены для доступа к узлам (например, DoseGridNode)."""
         self.scene_vm = scene_vm
 

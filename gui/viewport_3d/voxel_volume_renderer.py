@@ -263,7 +263,3 @@ class VoxelVolumeRenderer:
         self.volume_mapper = None
         self.volume_property = None
         self.grid = None
-
-
-# Псевдонимы для совместимости
-VoxelRenderer = VoxelVolumeRenderer

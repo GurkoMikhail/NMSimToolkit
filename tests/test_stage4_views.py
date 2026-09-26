@@ -14,7 +14,7 @@ from core.geometry.geometries import Box
 from core.materials.materials import Material
 from core.scene.nodes import CompositeNode
 from gui.viewmodels.scene_viewmodel import SceneViewModel
-from gui.viewmodels.node_viewmodel import VolumeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.views.scene_tree_widget import SceneTreeWidget
 from gui.views.property_inspector import PropertyInspector
 from gui.views.results_viewer import ResultsViewer

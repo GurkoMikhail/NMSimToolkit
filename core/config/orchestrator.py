@@ -183,6 +183,7 @@ def _worker_function(payload: Tuple[Any, ...]) -> None:
                 telemetry_queue.put({'type': 'task_finished', 'task_id': task_id, 'seed': seed})
             except (ValueError, OSError):
                 pass
+        return (context, final_config)
     except Exception as exc:
         if telemetry_queue is not None:
             try:
@@ -384,10 +385,12 @@ class Orchestrator:
 
             if pool_size > 1:
                 with Pool(pool_size) as pool:
-                    pool.map(_worker_function, payloads)
+                    return pool.map(_worker_function, payloads)
             else:
+                results = []
                 for payload in payloads:
-                    _worker_function(payload)
+                    results.append(_worker_function(payload))
+                return results
         finally:
             try:
                 mp_manager.shutdown()

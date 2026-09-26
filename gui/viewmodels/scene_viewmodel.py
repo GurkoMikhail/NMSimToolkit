@@ -4,7 +4,9 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal
 
 from core.scene.nodes import SpatialNode, CompositeNode
-from gui.viewmodels.node_viewmodel import NodeViewModel, VolumeViewModel, create_node_viewmodel
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.factory import create_node_viewmodel
 from core.config.models import (
     SimulationConfig,
     SensitiveVolumeHandlerConfig,
@@ -149,7 +151,7 @@ class SceneViewModel(QObject):
 
     def all_nodes(self) -> List[NodeViewModel]:
         """
-        Возвращает плоский список всех узлов сцены.
+        Возвращает плоский список всех узлов сцены в прямом порядке обхода (pre-order DFS).
         """
         if self.root_vm is None:
             return []
@@ -158,5 +160,6 @@ class SceneViewModel(QObject):
         while stack:
             curr = stack.pop()
             nodes.append(curr)
-            stack.extend(curr.children)
+            stack.extend(reversed(curr.children))
         return nodes
+

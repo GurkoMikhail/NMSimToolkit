@@ -6,11 +6,11 @@ from gui.viewport_3d.dicom_colormaps import (
     to_vtk_piecewise_function,
 )
 from gui.viewport_3d.vtk_viewport import VTKViewport
-from gui.viewport_3d.voxel_volume_renderer import VoxelVolumeRenderer, VoxelRenderer
+from gui.viewport_3d.voxel_volume_renderer import VoxelVolumeRenderer
 from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.viewport_3d.pet_manipulator import PETManipulator
 from gui.viewport_3d.track_renderer import TrackRenderer
-from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer, DoseVisualizer, DoseViaualizator
+from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer
 
 __all__ = [
     'get_available_colormaps',
@@ -20,10 +20,7 @@ __all__ = [
     'to_vtk_piecewise_function',
     'VTKViewport',
     'VoxelVolumeRenderer',
-    'VoxelRenderer',
     'DoseVolumeRenderer',
-    'DoseVisualizer',
-    'DoseViaualizator',
     'SPECTManipulator',
     'PETManipulator',
     'TrackRenderer',

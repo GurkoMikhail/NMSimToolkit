@@ -46,17 +46,6 @@ class SimulationRunner(QThread):
         """
         return self._running_event.is_set()
 
-    @property
-    def _is_running(self) -> bool:
-        return self._running_event.is_set()
-
-    @_is_running.setter
-    def _is_running(self, val: bool) -> None:
-        if val:
-            self._running_event.set()
-        else:
-            self._running_event.clear()
-
     def set_simulation_manager(self, manager: SimulationManager) -> None:
         """
         Установка одиночного экземпляра менеджера моделирования.

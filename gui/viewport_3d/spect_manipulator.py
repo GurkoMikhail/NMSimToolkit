@@ -5,7 +5,7 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal
 import pyvista as pv
 
-from gui.viewmodels.node_viewmodel import GammaCameraViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
 
 _logger = logging.getLogger(__name__)
 

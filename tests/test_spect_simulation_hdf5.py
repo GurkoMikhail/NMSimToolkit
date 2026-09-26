@@ -12,11 +12,18 @@ from core.geometry.gamma_cameras import GammaCamera
 from core.materials.materials import Material
 from core.config.models import SpectProtocolConfig, StepAndShootProtocolConfig
 from core.config.orchestrator import Orchestrator
+from PySide6.QtWidgets import QApplication
 from core.data.data_manager import DataManager
 from core.data.dose_map_handler import DoseMapHandler
 from core.data.data_handlers import HistoryAssemblerHandler
-from gui.controllers.simulation_session import SimulationSession
-from gui.viewmodels.node_viewmodel import GammaCameraViewModel, VolumeViewModel
+from gui.controllers.viewport_controller import SceneViewportController
+from gui.viewmodels.scene_viewmodel import SceneViewModel
+from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel
+from gui.viewport_3d.vtk_viewport import VTKViewport
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+
+app = QApplication.instance() or QApplication([])
 
 
 class TestSpectSimulationHDF5(unittest.TestCase):
@@ -64,9 +71,9 @@ class TestSpectSimulationHDF5(unittest.TestCase):
         # Углы: 90, 180, 270, 0(360)
         np.testing.assert_allclose(poses[1], [90.0, 180.0, 270.0, 0.0])
 
-    def test_simulation_session_multi_head_preview(self) -> None:
+    def test_viewport_controller_multi_head_preview(self) -> None:
         """
-        Проверка предварительного кинематического позиционирования N головок через preview_view().
+        Проверка предварительного кинематического позиционирования N головок через SceneViewportController.preview_view().
         """
         import settings.database_setting as database_setting
         mat_db = database_setting.material_database
@@ -85,19 +92,19 @@ class TestSpectSimulationHDF5(unittest.TestCase):
         root.add_child(cam2)
         root.add_child(cam3)
         root.add_child(cam4)
+        scene_vm = SceneViewModel(root)
+        viewport = VTKViewport()
+        viewport_ctrl = SceneViewportController(viewport=viewport, scene_vm=scene_vm)
 
-        session = SimulationSession(
-            scene_root=root,
-            views_number=8,
-            angular_range=360.0,
-            start_angle=0.0,
-            gamma_cameras_number=4,
-            head_angle_offsets=[0.0, 90.0, 180.0, 270.0],
-            h5_filename=self.h5_path,
-        )
+        proc_vm = SpectProcedureViewModel()
+        proc_vm.views = 32
+        proc_vm.start_angle = 0.0
+        proc_vm.end_angle = 360.0
+        proc_vm.gamma_cameras = 4
+        proc_vm.head_angles = [0.0, 90.0, 180.0, 270.0]
 
-        # Предпросмотр 2-го ракурса (индекс 2 из 8: 2/8 * 360 = 90 градусов базовый угол)
-        base_ang = session.preview_view(2)
+        # Предпросмотр 2-го ракурса (индекс 2 из 8 при 1-based view_number_1based=3: 2/8 * 360 = 90 градусов)
+        base_ang = viewport_ctrl.preview_view(3, proc_vm)
         self.assertAlmostEqual(base_ang, 90.0)
 
         # Камеры должны занять углы:
@@ -110,7 +117,7 @@ class TestSpectSimulationHDF5(unittest.TestCase):
             angle = float(np.degrees(np.arctan2(y, x)) % 360.0)
             self.assertAlmostEqual(angle, exp_deg, delta=1e-3)
 
-        session.close()
+        viewport_ctrl.close()
 
     def test_hdf5_storage_raw_data_only(self) -> None:
         """

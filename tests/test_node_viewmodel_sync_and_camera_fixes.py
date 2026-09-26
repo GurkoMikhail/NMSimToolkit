@@ -13,13 +13,11 @@ from core.materials.materials import Material
 from core.geometry.gamma_cameras import GammaCamera
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.materials.materials import MaterialArray
-from gui.viewmodels.node_viewmodel import (
-    NodeViewModel,
-    VolumeViewModel,
-    VoxelVolumeViewModel,
-    GammaCameraViewModel,
-    create_node_viewmodel,
-)
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.factory import create_node_viewmodel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.viewport_3d.voxel_volume_renderer import VoxelVolumeRenderer

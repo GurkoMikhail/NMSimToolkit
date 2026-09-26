@@ -5,28 +5,33 @@ from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.scene.nodes import SpatialNode, CompositeNode
-from gui.viewmodels.decorators import observable_field
-from gui.viewmodels.node_viewmodel import (
-    NodeViewModel,
-    VolumeViewModel,
-    create_node_viewmodel,
-)
+from gui.viewmodels.decorators import core_field, gui_field
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.factory import create_node_viewmodel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 
 
 class TestStage2ViewModels(unittest.TestCase):
-    def test_observable_field_reactivity(self):
-        """Проверка дескриптора observable_field и двусторонней синхронизации."""
+    def test_core_and_gui_field_reactivity(self):
+        """Проверка дескрипторов core_field и gui_field и двусторонней синхронизации."""
         core_node = SpatialNode()
         vm = NodeViewModel(core_node)
 
         changed_log = []
         vm.property_changed.connect(lambda name, val: changed_log.append((name, val)))
 
+        # 1. core_field
         vm.name = "PhantomNode"
         self.assertEqual(core_node.name, "PhantomNode")
         self.assertEqual(len(changed_log), 1)
         self.assertEqual(changed_log[0], ("name", "PhantomNode"))
+
+        # 2. gui_field
+        vm.visible = False
+        self.assertFalse(vm.visible)
+        self.assertEqual(len(changed_log), 2)
+        self.assertEqual(changed_log[1], ("visible", False))
 
     def test_node_viewmodel_transformations(self):
         """Проверка трансформаций через ViewModel и сигналов."""

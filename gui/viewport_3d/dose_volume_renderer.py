@@ -248,8 +248,3 @@ class DoseVolumeRenderer:
             self.volume_actor.SetVisibility(1 if visible else 0)
             if self.viewport is not None:
                 self.viewport.render()
-
-
-# Псевдонимы для обратной совместимости с различными именованиями
-DoseVisualizer = DoseVolumeRenderer
-DoseViaualizator = DoseVolumeRenderer

@@ -33,7 +33,6 @@ class GuiStreamDataHandler(BaseDataHandler):
         detector_volume: Optional[Any] = None,
         detector_size: Optional[Union[Tuple[float, float], Sequence[float], float]] = None,
         detector_inv_matrix: Optional[np.ndarray] = None,
-        fov_size: Optional[float] = None,
     ) -> None:
         """
         Инициализация обработчика потоковых данных GUI.
@@ -49,7 +48,6 @@ class GuiStreamDataHandler(BaseDataHandler):
         :param detector_volume: Экземпляр чувствительного объема (Volume) детектора.
         :param detector_size: Физические размеры кристалла детектора (Ширина, Высота) в мм.
         :param detector_inv_matrix: Обратная матрица трансформации детектора (Мир -> Локальный).
-        :param fov_size: [Устарело] Поле зрения детектора (мм), сохранено для обратной совместимости.
         """
         super().__init__()
         self.track_queue = track_queue
@@ -61,7 +59,6 @@ class GuiStreamDataHandler(BaseDataHandler):
         self.show_escaped_tracks = show_escaped_tracks
         self.detector_volume = detector_volume
         self.detector_inv_matrix = detector_inv_matrix
-        self.fov_size = fov_size
 
         if detector_size is not None:
             if isinstance(detector_size, (int, float)):
@@ -72,12 +69,8 @@ class GuiStreamDataHandler(BaseDataHandler):
             if isinstance(detector_volume, Volume):
                 vol_size = detector_volume.local_bound
                 self.detector_size = (float(vol_size[0]), float(vol_size[1]))
-            elif fov_size is not None:
-                self.detector_size = (float(fov_size), float(fov_size))
             else:
                 self.detector_size = (400.0, 400.0)
-        elif fov_size is not None:
-            self.detector_size = (float(fov_size), float(fov_size))
         else:
             self.detector_size = (400.0, 400.0)
 

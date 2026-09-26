@@ -143,11 +143,6 @@ class ProcedureSelectorWidget(QDockWidget):
         """Активная модель представления процедуры."""
         return self._procedures[self._active_key]
 
-    @property
-    def current_procedure(self) -> BaseProcedureViewModel:
-        """Активная модель представления процедуры (псевдоним active_procedure)."""
-        return self.active_procedure
-
     def set_scene_viewmodel(self, scene_vm: Any) -> None:
         """Привязка модели сцены для синхронизации геометрии."""
         self.scene_vm = scene_vm
