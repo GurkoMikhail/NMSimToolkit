@@ -1,6 +1,5 @@
-from core.geometry.pet_scanners import PetScanner, PETScanner
+from core.geometry.pet_scanners import PetScanner
 
 __all__ = [
     'PetScanner',
-    'PETScanner',
 ]

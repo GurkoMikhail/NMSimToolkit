@@ -28,5 +28,3 @@ class PetScanner(CompositeNode):
         self.axial_length = Float(axial_length)
         self.num_sectors = int(num_sectors)
 
-
-PETScanner = PetScanner

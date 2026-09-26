@@ -168,24 +168,13 @@ class TestGuiReviewFixes(unittest.TestCase):
     # CLEAN-3: PetScannerViewModel
     # -------------------------------------------------------------------------
     def test_clean_3_pet_scanner_viewmodel_factory(self):
-        from core.geometry.pet_scanners import PetScanner as CorePetScanner, PETScanner as CorePETScanner
-
-        class PetScanner(CorePetScanner):
-            pass
+        from core.geometry.pet_scanners import PetScanner
 
         node = PetScanner(name="PET_Ring_1")
         vm = create_node_viewmodel(node)
         self.assertIsInstance(vm, PetScannerViewModel)
         self.assertEqual(vm.name, "PET_Ring_1")
-
-        # Проверка распознавания по классу PETScanner
-        class PETScanner(CorePETScanner):
-            pass
-
-        node2 = PETScanner(name="PET_Sector")
-        vm2 = create_node_viewmodel(node2)
-        self.assertIsInstance(vm2, PetScannerViewModel)
-        self.assertEqual(vm2.node_type, "PETScanner")
+        self.assertEqual(vm.node_type, "PetScanner")
 
     # -------------------------------------------------------------------------
     # CLEAN-5: Отключение сигналов в SceneTreeWidget
