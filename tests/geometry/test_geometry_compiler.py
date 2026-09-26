@@ -13,7 +13,7 @@ from core.materials.materials import Material
 from core.geometry.geometry_kernels import cast_path_kernel
 from core.particles.particles import ParticleBank
 from core.other.typing_definitions import Float, Length, Energy, Time, Species
-from core.other.vectors import Vector3D
+from core.other.vectors import Vector3DSoA
 
 def create_complex_scene():
     mat_root = Material(name="RootMat", ID=1)
@@ -106,8 +106,8 @@ def main():
     print("4. Profiling SoA (Numba) raycasting...")
     bank = ParticleBank.allocate(N)
     species = np.ones(N, dtype=Species)
-    pos_soa = Vector3D(x=pos[:,0], y=pos[:,1], z=pos[:,2])
-    dir_soa = Vector3D(x=dir[:,0], y=dir[:,1], z=dir[:,2])
+    pos_soa = Vector3DSoA(x=pos[:,0], y=pos[:,1], z=pos[:,2])
+    dir_soa = Vector3DSoA(x=dir[:,0], y=dir[:,1], z=dir[:,2])
     energy = np.ones(N, dtype=Energy)
     time_arr = np.zeros(N, dtype=Time)
     dist = np.zeros(N, dtype=Length)

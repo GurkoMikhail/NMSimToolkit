@@ -344,9 +344,9 @@ class TestGUIIntegrationFixes(unittest.TestCase):
                 voxel_size="2.0 mm"
             )
             vol = builder._build_woodcock_voxel_volume(cfg)
-            self.assertEqual(vol.distribution_path, str(p1))
+            self.assertEqual(builder.get_distribution_path(vol), str(p1))
 
-            vm = VoxelVolumeViewModel(vol)
+            vm = VoxelVolumeViewModel(vol, file_path=builder.get_distribution_path(vol))
             self.assertEqual(vm.file_path, str(p1))
             self.assertEqual(vm.dimensions, (8, 8, 8))
             self.assertEqual(list(vm.size), [16.0, 16.0, 16.0])
@@ -359,7 +359,6 @@ class TestGUIIntegrationFixes(unittest.TestCase):
 
             # Проверяем, что матрица ядра и размеры обновились
             self.assertEqual(vm.file_path, str(p2))
-            self.assertEqual(vol.distribution_path, str(p2))
             self.assertEqual(vm.dimensions, (16, 12, 10))
             self.assertEqual(vol.material_distribution.shape, (16, 12, 10))
             np.testing.assert_allclose(vol.size, [32.0, 24.0, 20.0])
@@ -382,8 +381,8 @@ class TestGUIIntegrationFixes(unittest.TestCase):
                 activity="1 MBq"
             )
             src_node = builder._build_source(src_cfg)
-            self.assertEqual(src_node.distribution_path, str(src_p))
-            src_vm = SourceViewModel(src_node)
+            self.assertEqual(builder.get_distribution_path(src_node), str(src_p))
+            src_vm = SourceViewModel(src_node, file_path=builder.get_distribution_path(src_node))
             self.assertEqual(src_vm.file_path, str(src_p))
 
     # 7. Хронологический порядок и непрерывность треков в GuiStreamDataHandler
@@ -580,6 +579,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
                 root_node=win.scene_vm.root_vm.core_node,
                 simulation_manager_cfg=SimulationManagerConfig(particles_number=100),
                 data_manager_cfg=win.data_manager_vm.to_config(),
+                distribution_registry=win.scene_vm.distribution_registry,
             )
             phantom_cfg = next(c for c in sim_config.scene.children if c.name == "Phantom")
             self.assertIsInstance(phantom_cfg.distribution, RawDistributionConfig)

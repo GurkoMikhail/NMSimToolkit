@@ -4,32 +4,47 @@ import numpy as np
 from core.other.typing_definitions import Float
 import hepunits as units
 
-import settings.database_setting as database_setting
+from core.materials.materials import Material
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 
 
 class GammaCamera(Volume):
 
-    def __init__(self, collimator: Volume, detector: Volume, gap: Float = Float(1 * units.mm), shielding_thickness: Float = Float(2 * units.cm), glass_backend_thickness: Float = Float(5 * units.cm), name: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        collimator: Volume,
+        detector: Volume,
+        gap: Float = Float(1 * units.mm),
+        shielding_thickness: Float = Float(2 * units.cm),
+        glass_backend_thickness: Float = Float(5 * units.cm),
+        shielding_material: Optional[Material] = None,
+        internal_medium: Optional[Material] = None,
+        glass_material: Optional[Material] = None,
+        name: Optional[str] = None,
+    ) -> None:
         detector_box_size = np.where(collimator.size > detector.size, collimator.size, detector.size)
         detector_box_size[2] = collimator.size[2] + gap + detector.size[2] + glass_backend_thickness
-        material_database = database_setting.material_database
+
+        air_mat = internal_medium if internal_medium is not None else Material(name='Air, Dry (near sea level)')
+        glass_mat = glass_material if glass_material is not None else Material(name='Glass, Borosilicate (Pyrex)')
+        shield_mat = shielding_material if shielding_material is not None else Material(name='Pb')
+
         detector_box = Volume(
             geometry=Box(*detector_box_size),
-            material=material_database['Air, Dry (near sea level)'],
+            material=air_mat,
             name='Detector_box'
         )
         glass_backend_size = detector_box_size.copy()
         glass_backend_size[2] = glass_backend_thickness
         glass_backend = Volume(
             geometry=Box(*glass_backend_size),
-            material=material_database['Glass, Borosilicate (Pyrex)'],
+            material=glass_mat,
             name='Glass_backend'
         )
         super().__init__(
             geometry=Box(detector_box_size[0] + 2*shielding_thickness, detector_box_size[1] + 2*shielding_thickness, detector_box_size[2] + shielding_thickness),
-            material=material_database['Pb'],
+            material=shield_mat,
             name=name
         )
         detector_box.translate(z=shielding_thickness/2)

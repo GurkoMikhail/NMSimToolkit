@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 
 from core.particles.particles import ParticleBank
 from core.other.typing_definitions import Species, Float, Length, Energy, Time
-from core.other.vectors import Vector3D
+from core.other.vectors import Vector3DSoA
 
 
 def generate_test_data(n: int):
@@ -47,10 +47,10 @@ def test_particle_bank_lifecycle_and_operations():
     assert bank.capacity == n
     assert bank.count == 0
 
-    pos_soa = Vector3D(position[:, 0], position[:, 1], position[:, 2])
-    dir_soa = Vector3D(direction[:, 0], direction[:, 1], direction[:, 2])
-    em_pos_soa = Vector3D(emission_position[:, 0], emission_position[:, 1], emission_position[:, 2])
-    em_dir_soa = Vector3D(emission_direction[:, 0], emission_direction[:, 1], emission_direction[:, 2])
+    pos_soa = Vector3DSoA(position[:, 0], position[:, 1], position[:, 2])
+    dir_soa = Vector3DSoA(direction[:, 0], direction[:, 1], direction[:, 2])
+    em_pos_soa = Vector3DSoA(emission_position[:, 0], emission_position[:, 1], emission_position[:, 2])
+    em_dir_soa = Vector3DSoA(emission_direction[:, 0], emission_direction[:, 1], emission_direction[:, 2])
 
     target_indices = bank.inject_particles(
         species=species,

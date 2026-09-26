@@ -24,10 +24,10 @@ class VoxelVolumeViewModel(NodeViewModel):
     opacity_preset = gui_field(default='air_cutoff')
     file_path = gui_field(default='')
 
-    def __init__(self, core_node: WoodcockVoxelVolume, parent_vm: Optional[NodeViewModel] = None) -> None:
+    def __init__(self, core_node: WoodcockVoxelVolume, parent_vm: Optional[NodeViewModel] = None, file_path: str = "") -> None:
         super().__init__(core_node, parent_vm)
-        if core_node.distribution_path:
-            self.file_path = str(core_node.distribution_path)
+        if file_path:
+            self.file_path = str(file_path)
 
     @property
     def size(self) -> np.ndarray:
@@ -123,7 +123,6 @@ class VoxelVolumeViewModel(NodeViewModel):
                 mat_arr.view(np.ndarray)[:] = int_data
 
             self.core_node.material_distribution = mat_arr
-            self.core_node.distribution_path = str(target_path)
             new_size = np.asarray(mat_arr.shape, dtype=float) * np.asarray(self.core_node.voxel_size, dtype=float)
             self.core_node.size = new_size
             self.core_node.invalidate_geometry()

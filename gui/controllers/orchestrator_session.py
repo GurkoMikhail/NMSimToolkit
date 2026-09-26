@@ -209,10 +209,12 @@ class OrchestratorSession(QObject):
         )
         data_mgr_cfg = self.data_manager_vm.to_config()
 
+        dist_registry = self.scene_vm.distribution_registry if self.scene_vm else None
         sim_config = SceneExporter.export_to_config(
             root_node=root_core,
             simulation_manager_cfg=sim_mgr_cfg,
             data_manager_cfg=data_mgr_cfg,
+            distribution_registry=dist_registry,
             pool_size=self.pool_size,
         )
         sim_config.protocol = self.procedure_vm.to_config()
@@ -264,10 +266,12 @@ class OrchestratorSession(QObject):
             min_energy=self.min_energy * units.keV,
         )
         data_mgr_cfg = self.data_manager_vm.to_config()
+        dist_registry = self.scene_vm.distribution_registry if self.scene_vm else None
         sim_config = SceneExporter.export_to_config(
             root_node=root_core,
             simulation_manager_cfg=sim_mgr_cfg,
             data_manager_cfg=data_mgr_cfg,
+            distribution_registry=dist_registry,
             pool_size=self.pool_size,
         )
         sim_config.protocol = self.procedure_vm.to_config()

@@ -24,6 +24,7 @@ from core.scene.dose_grid_node import DoseGridNode
 class SceneBuilder:
     def __init__(self, base_dir: Optional[Any] = None):
         self.base_dir = Path(base_dir) if base_dir else None
+        self.distribution_registry: Dict[SpatialNode, AnyDistributionConfig] = {}
         self.factory_map: Dict[str, Callable[[AnyNodeConfig], SpatialNode]] = {
             'SpatialNode': self._build_spatial_node,
             'CompositeNode': self._build_composite_node,
@@ -185,9 +186,7 @@ class SceneBuilder:
         v_size_raw = config.voxel_size if config.voxel_size is not None else 1.0
         voxel_size = self._to_float(v_size_raw, check_positive=True)
         node = WoodcockVoxelVolume(voxel_size=voxel_size, material_distribution=mat_arr, name=config.name)
-        node.distribution_config = dist_config
-        if dist_config.path is not None:
-            node.distribution_path = str(self._resolve_dist_path(dist_config.path))
+        self.distribution_registry[node] = dist_config
         return node
 
     def _build_gamma_camera(self, config: GammaCameraConfig) -> GammaCamera:
@@ -199,12 +198,21 @@ class SceneBuilder:
         shielding = self._to_float(shielding_raw, check_positive=True)
         glass_raw = config.glass_backend_thickness if config.glass_backend_thickness is not None else 50.0
         glass = self._to_float(glass_raw, check_positive=True)
+
+        mat_db = database_setting.material_database
+        shielding_mat = mat_db['Pb']
+        internal_medium = mat_db['Air, Dry (near sea level)']
+        glass_mat = mat_db['Glass, Borosilicate (Pyrex)']
+
         return GammaCamera(
             collimator=collimator,
             detector=detector,
             gap=gap,
             shielding_thickness=shielding,
             glass_backend_thickness=glass,
+            shielding_material=shielding_mat,
+            internal_medium=internal_medium,
+            glass_material=glass_mat,
             name=config.name
         )
 
@@ -261,12 +269,20 @@ class SceneBuilder:
             energy=energy,
             half_life=half_life
         )
-        node.distribution_config = dist_config
         if config.name is not None:
             node.name = config.name
-        if dist_config.path is not None:
-            node.distribution_path = str(self._resolve_dist_path(dist_config.path))
+        self.distribution_registry[node] = dist_config
         return node
+
+    def get_distribution_path(self, node: SpatialNode) -> Optional[str]:
+        """
+        Возвращает абсолютный путь к файлу распределения для указанного узла из реестра сборок.
+        """
+        dist_config = self.distribution_registry.get(node)
+        if dist_config is not None and isinstance(dist_config, (NumpyDistributionConfig, RawDistributionConfig)):
+            if dist_config.path is not None:
+                return str(self._resolve_dist_path(dist_config.path))
+        return None
 
     def _build_dose_grid_node(self, config: DoseGridNodeConfig) -> DoseGridNode:
         size = [

@@ -47,8 +47,10 @@ class SourceViewModel(NodeViewModel):
     half_life = gui_field(default=6.0, on_change=_on_source_half_life_change)     # часы
     file_path = gui_field(default='')
 
-    def __init__(self, core_node: Any, parent_vm: Optional[NodeViewModel] = None) -> None:
+    def __init__(self, core_node: Any, parent_vm: Optional[NodeViewModel] = None, file_path: str = "") -> None:
         super().__init__(core_node, parent_vm)
+        if file_path:
+            self.file_path = str(file_path)
         self._sync_from_core()
 
     def _sync_from_core(self) -> None:
@@ -78,9 +80,6 @@ class SourceViewModel(NodeViewModel):
             if half_life_field is not None:
                 half_life_float = float(half_life_field)
                 self.half_life = (half_life_float / 3600.0) if (half_life_float > 0 and not np.isinf(half_life_float)) else 0.0
-
-            if self.core_node.distribution_path:
-                self.file_path = str(self.core_node.distribution_path)
 
     @property
     def is_point_source(self) -> bool:
@@ -124,7 +123,6 @@ class SourceViewModel(NodeViewModel):
             target_shape = shape or self.dimensions
             data = DistributionLoader.load(target_path, target_shape=target_shape, order=order)
             if isinstance(self.core_node, Source):
-                self.core_node.distribution_path = str(target_path)
                 self.core_node.distribution = data.astype(float)
             self.file_path = str(target_path)
             self.property_changed.emit('file_path', self.file_path)

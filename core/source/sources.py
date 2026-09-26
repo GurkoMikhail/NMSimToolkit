@@ -5,9 +5,9 @@ import hepunits as units
 from numpy.typing import NDArray
 
 import core.other.utils as utils
-from core.other.typing_definitions import Float, Length, Time, Vector3D, Species, Index
+from core.other.typing_definitions import Float, Length, Time, Species, Index
+from core.other.vectors import Vector3DSoA
 from core.particles.particles import ParticleBank
-from core.other.vectors import Vector3D
 from core.scene.nodes import CompositeNode
 
 
@@ -60,8 +60,6 @@ class Source(CompositeNode):
             self.energy["probability"] /= en_prob_sum
 
         self.half_life = half_life
-        self.distribution_path: Optional[str] = None
-        self.distribution_config: Optional[Any] = None
         self.rng = np.random.default_rng() if rng is None else rng
 
     @property
@@ -199,12 +197,12 @@ class Source(CompositeNode):
         position_arr = self.generate_position(n)
         emission_time = self.generate_emission_time(n, t1, t2)
 
-        position = Vector3D(
+        position = Vector3DSoA(
             x=position_arr[:, 0].astype(Length),
             y=position_arr[:, 1].astype(Length),
             z=position_arr[:, 2].astype(Length)
         )
-        direction = Vector3D(
+        direction = Vector3DSoA(
             x=direction_arr[:, 0].astype(Float),
             y=direction_arr[:, 1].astype(Float),
             z=direction_arr[:, 2].astype(Float)

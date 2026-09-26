@@ -5,10 +5,10 @@ from numpy.typing import NDArray
 from core.other.typing_definitions import Float
 
 
-class Vector3D(NamedTuple):
+class Vector3DSoA(NamedTuple):
     """
-    Structure of Arrays (SoA) representation for 3D vectors.
-    Contains flat 1D C-contiguous numpy arrays for X, Y, and Z components.
+    SoA-структура (Structure of Arrays) для представления трехмерных векторных полей частиц.
+    Содержит плоские одномерные C-непрерывные массивы numpy для компонент X, Y и Z.
     """
     x: NDArray[Float]
     y: NDArray[Float]
@@ -16,20 +16,19 @@ class Vector3D(NamedTuple):
 
     def validate(self) -> None:
         """
-        Validates that the Vector3D contains 1-dimensional arrays
-        of equal length.
+        Проверяет, что компоненты являются одномерными массивами одинаковой длины.
         """
         if self.x.ndim != 1 or self.y.ndim != 1 or self.z.ndim != 1:
-            raise ValueError("Vector3D arrays must be 1-dimensional.")
+            raise ValueError("Массивы координат Vector3DSoA должны быть одномерными.")
 
         length = self.x.shape[0]
         if self.y.shape[0] != length or self.z.shape[0] != length:
-            raise ValueError("Vector3D arrays must have the same length.")
+            raise ValueError("Массивы координат Vector3DSoA должны иметь одинаковую длину.")
 
     @classmethod
-    def allocate(cls, capacity: int, dtype: np.dtype = Float) -> 'Vector3D':
+    def allocate(cls, capacity: int, dtype: np.dtype = Float) -> 'Vector3DSoA':
         """
-        Allocates a Vector3D with uninitialized memory for the given capacity.
+        Выделяет память под SoA-буфер векторов заданной емкости.
         """
         buffer = cls(
             x=np.empty(capacity, dtype=dtype),
@@ -38,3 +37,8 @@ class Vector3D(NamedTuple):
         )
         buffer.validate()
         return buffer
+
+
+__all__ = [
+    'Vector3DSoA',
+]

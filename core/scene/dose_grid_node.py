@@ -30,7 +30,6 @@ class DoseGridNode(CompositeNode):
         self._size = np.asarray(size, dtype=Float)
         self._dose_voxel_size = float(dose_voxel_size)
         self.is_active = bool(is_active)
-        self.dose_data: Optional[np.ndarray] = None
 
     @property
     def size(self) -> NDArray[Float]:
@@ -75,8 +74,3 @@ class DoseGridNode(CompositeNode):
         """Оценка расхода оперативной памяти для сетки типа float64 в МБ."""
         n_elements = int(np.prod(self.grid_shape))
         return float(n_elements * 8 / (1024 * 1024))
-
-    def clear(self) -> None:
-        """Сброс накопленной дозы в ноль."""
-        if self.dose_data is not None:
-            self.dose_data.fill(0.0)

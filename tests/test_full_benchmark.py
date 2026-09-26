@@ -49,6 +49,9 @@ class TestFullBenchmark(unittest.TestCase):
         spect_head = GammaCamera(
             collimator=collimator,
             detector=detector,
+            shielding_material=material_database['Pb'],
+            internal_medium=material_database['Air, Dry (near sea level)'],
+            glass_material=material_database['Glass, Borosilicate (Pyrex)'],
             shielding_thickness=2*units.cm,
             glass_backend_thickness=7.6*units.cm,
             name='Gamma_camera'

@@ -32,8 +32,6 @@ class WoodcockVoxelVolume(WoodcockParametricVolume):
             )
         self.material_distribution = material_distribution
         self._voxel_size_ratio = voxel_size/self.size
-        self.distribution_path: Optional[str] = None
-        self.distribution_config: Optional[Any] = None
 
     @property
     def voxel_size(self) -> Vector3D:

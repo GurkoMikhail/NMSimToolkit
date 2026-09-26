@@ -3,7 +3,7 @@ from numpy.typing import NDArray
 from typing import NamedTuple
 
 from core.other.typing_definitions import Energy, Float, ID, Length, Time, Species, Index
-from core.other.vectors import Vector3D
+from core.other.vectors import Vector3DSoA
 from core.geometry.navigation_state import NavigationState
 from core.particles.initial_state import InitialState
 from core.particles.kinematic_state import KinematicState
@@ -12,8 +12,9 @@ import core.particles.particles_kernels as kernel
 
 class ParticleBank(NamedTuple):
     """
-    Facade for managing the object pool of SoA-based particles.
-    Separates OOP lifecycle management from Numba computational kernels.
+    Фасад для управления пулом объектов частиц на базе SoA-структуры.
+
+    Разделяет высокоуровневое управление жизненным циклом и Numba-кернелы расчетов.
     """
     state: KinematicState
     initial_state: InitialState
@@ -24,7 +25,7 @@ class ParticleBank(NamedTuple):
     @classmethod
     def allocate(cls, capacity: int) -> 'ParticleBank':
         """
-        Allocates a complete ParticleBank Object Pool with its internal arrays.
+        Выделяет память под пул частиц заданной емкости вместе с внутренними массивами.
         """
         state = KinematicState.allocate(capacity)
         initial_state = InitialState.allocate(capacity)
@@ -45,16 +46,17 @@ class ParticleBank(NamedTuple):
     def inject_particles(
         self,
         species: NDArray[Species],
-        position: Vector3D,
-        direction: Vector3D,
+        position: Vector3DSoA,
+        direction: Vector3DSoA,
         energy: NDArray[Energy],
         emission_time: NDArray[Time],
         distance_traveled: NDArray[Length]
     ) -> NDArray[Index]:
         """
-        Injects new particles into inactive slots in the object pool.
-        Returns the indices where the particles were successfully injected.
-        Sets emission data automatically based on input state.
+        Инжектирует новые частицы в неактивные слоты пула объектов.
+
+        Возвращает индексы слотов, в которые были добавлены частицы.
+        Автоматически сохраняет параметры излучения на основе входного состояния.
         """
         num_new = species.shape[0]
 
@@ -112,19 +114,19 @@ class ParticleBank(NamedTuple):
 
     @property
     def active_indices(self) -> NDArray[Index]:
-        """Returns the indices of currently active particles in the pool."""
+        """Возвращает массив индексов активных в данный момент частиц в пуле."""
         return np.nonzero(self.state.is_active)[0]
 
     def move(self, target_indices: NDArray[Index], distances: NDArray[Float]) -> None:
         """
-        Facade for move_kernel, applying distances across target active particles.
+        Фасад для move_kernel, перемещающий выбранные активные частицы на заданные расстояния.
         """
         kernel.move_kernel(self.state, target_indices, distances)
         kernel.update_navigation_state_move_kernel(self.navigation_state, target_indices, distances)
 
     def rotate(self, target_indices: NDArray[Index], thetas: NDArray[Float], phis: NDArray[Float]) -> None:
         """
-        Facade for rotate_kernel, applying thetas and phis across target active particles.
+        Фасад для rotate_kernel, поворачивающий направление движения выбранных активных частиц.
         """
         kernel.rotate_kernel(self.state, target_indices, thetas, phis)
         kernel.update_navigation_state_rotate_kernel(self.navigation_state, target_indices)

@@ -1,17 +1,15 @@
 import numpy as np
-from typing import NamedTuple
+from typing import NamedTuple, Any
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Time, Length
 from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID, Species, Charge
-from core.other.vectors import Vector3D
+from core.other.vectors import Vector3DSoA
 
-
-from typing import Any
 
 class RNGContext(NamedTuple):
     """
-    Explicit CFFI state pointer wrapper to pass into Numba kernels for random number generation.
+    Явная CFFI-обертка над указателем состояния генератора случайных чисел для передачи в Numba-кернелы.
     """
     next_double: Any
     state_addr: int
@@ -19,7 +17,7 @@ class RNGContext(NamedTuple):
     @classmethod
     def from_numpy_rng(cls, rng: np.random.Generator) -> 'RNGContext':
         """
-        Extracts the CFFI next_double pointer and state address from a NumPy generator.
+        Извлекает указатель CFFI next_double и адрес состояния из генератора NumPy.
         """
         return cls(
             next_double=rng.bit_generator.cffi.next_double,
@@ -29,8 +27,9 @@ class RNGContext(NamedTuple):
 
 class InteractionBuffer(NamedTuple):
     """
-    SoA Ring/Flush buffer for in-place logging of particle interactions.
-    Allocated once and reused to avoid array concatenation and memory fragmentation.
+    SoA-буфер для промежуточной фиксации актов взаимодействия частиц на месте.
+
+    Выделяется однократно и используется повторно для предотвращения фрагментации памяти.
     """
     process_id: NDArray[ProcessID]
     volume_id: NDArray[Index]
@@ -43,10 +42,10 @@ class InteractionBuffer(NamedTuple):
     species: NDArray[Species]
     Z: NDArray[Charge]
 
-    position: Vector3D
-    direction: Vector3D
+    position: Vector3DSoA
+    direction: Vector3DSoA
 
-    cursor: NDArray[Index]  # Length 1, tracks the number of elements written
+    cursor: NDArray[Index]  # Длина 1, отслеживает число записанных элементов
     capacity: int
 
     @property
@@ -62,13 +61,12 @@ class InteractionBuffer(NamedTuple):
 
     def validate(self) -> None:
         """
-        Validates that all arrays within the InteractionBuffer have
-        matching capacities and are 1-dimensional.
+        Проверяет согласованность размерностей массивов буфера взаимодействий.
         """
         self.position.validate()
         self.direction.validate()
 
-        arrays = [
+        tracked_arrays = [
             self.process_id,
             self.volume_id,
             self.material_id,
@@ -81,27 +79,27 @@ class InteractionBuffer(NamedTuple):
             self.Z
         ]
 
-        # All base fields should be 1-dimensional
-        for arr in arrays:
-            if arr.ndim != 1:
-                raise ValueError("All arrays in InteractionBuffer must be 1-dimensional.")
+        # Все базовые поля должны быть одномерными
+        for target_array in tracked_arrays:
+            if target_array.ndim != 1:
+                raise ValueError("Все массивы в InteractionBuffer должны быть одномерными.")
 
-        # Validate lengths match the pool capacity
-        for arr in arrays:
-            if arr.shape[0] != self.capacity:
-                raise ValueError("All arrays in InteractionBuffer must have the same length (capacity).")
+        # Проверка согласованности емкости
+        for target_array in tracked_arrays:
+            if target_array.shape[0] != self.capacity:
+                raise ValueError("Все массивы в InteractionBuffer должны иметь одинаковую длину (емкость).")
 
-        # Validate vector lengths against capacity
+        # Проверка длины компонент векторов
         if self.position.x.shape[0] != self.capacity:
-            raise ValueError("Vector components in InteractionBuffer must have the same length as the base arrays.")
+            raise ValueError("Компоненты векторов в InteractionBuffer должны иметь ту же длину, что и базовые массивы.")
 
         if self.cursor.shape != (1,):
-            raise ValueError("Cursor must be a 1-dimensional array of length 1.")
+            raise ValueError("Курсор должен быть одномерным массивом длины 1.")
 
     @classmethod
     def allocate(cls, capacity: int) -> 'InteractionBuffer':
         """
-        Allocates an empty InteractionBuffer with the specified capacity.
+        Выделяет память под InteractionBuffer заданной емкости.
         """
         buffer = cls(
             process_id=np.empty(capacity, dtype=ProcessID),
@@ -114,8 +112,8 @@ class InteractionBuffer(NamedTuple):
             distance_traveled=np.empty(capacity, dtype=Float),
             species=np.empty(capacity, dtype=Species),
             Z=np.empty(capacity, dtype=Charge),
-            position=Vector3D.allocate(capacity, dtype=Float),
-            direction=Vector3D.allocate(capacity, dtype=Float),
+            position=Vector3DSoA.allocate(capacity, dtype=Float),
+            direction=Vector3DSoA.allocate(capacity, dtype=Float),
             cursor=np.zeros(1, dtype=Index),
             capacity=capacity
         )
@@ -123,24 +121,24 @@ class InteractionBuffer(NamedTuple):
         return buffer
 
     def flush_to_dict(self, clear: bool = True) -> dict:
-        c = self.cursor_value
+        cursor_pos = self.cursor_value
         chunk = {
-            'process_id': self.process_id[:c].copy(),
-            'volume_id': self.volume_id[:c].copy(),
-            'material_id': self.material_id[:c].copy(),
-            'particle_ID': self.particle_ID[:c].copy(),
-            'energy_deposit': self.energy_deposit[:c].copy(),
-            'scattering_theta': self.scattering_theta[:c].copy(),
-            'scattering_phi': self.scattering_phi[:c].copy(),
-            'distance_traveled': self.distance_traveled[:c].copy(),
-            'species': self.species[:c].copy(),
-            'Z': self.Z[:c].copy(),
-            'pos_x': self.position.x[:c].copy(),
-            'pos_y': self.position.y[:c].copy(),
-            'pos_z': self.position.z[:c].copy(),
-            'dir_x': self.direction.x[:c].copy(),
-            'dir_y': self.direction.y[:c].copy(),
-            'dir_z': self.direction.z[:c].copy(),
+            'process_id': self.process_id[:cursor_pos].copy(),
+            'volume_id': self.volume_id[:cursor_pos].copy(),
+            'material_id': self.material_id[:cursor_pos].copy(),
+            'particle_ID': self.particle_ID[:cursor_pos].copy(),
+            'energy_deposit': self.energy_deposit[:cursor_pos].copy(),
+            'scattering_theta': self.scattering_theta[:cursor_pos].copy(),
+            'scattering_phi': self.scattering_phi[:cursor_pos].copy(),
+            'distance_traveled': self.distance_traveled[:cursor_pos].copy(),
+            'species': self.species[:cursor_pos].copy(),
+            'Z': self.Z[:cursor_pos].copy(),
+            'pos_x': self.position.x[:cursor_pos].copy(),
+            'pos_y': self.position.y[:cursor_pos].copy(),
+            'pos_z': self.position.z[:cursor_pos].copy(),
+            'dir_x': self.direction.x[:cursor_pos].copy(),
+            'dir_y': self.direction.y[:cursor_pos].copy(),
+            'dir_z': self.direction.z[:cursor_pos].copy(),
         }
         if clear:
             self.reset_cursor()
@@ -149,15 +147,15 @@ class InteractionBuffer(NamedTuple):
 
 class InitialStateBuffer(NamedTuple):
     """
-    SoA Ring/Flush buffer for in-place logging of initial particle states
-    upon their first interaction in the volume.
+    SoA-буфер для промежуточной фиксации начальных состояний частиц
+    при их первом взаимодействии в объеме.
     """
     particle_ID: NDArray[ID]
     emission_time: NDArray[Time]
     emission_energy: NDArray[Energy]
 
-    emission_position: Vector3D
-    emission_direction: Vector3D
+    emission_position: Vector3DSoA
+    emission_direction: Vector3DSoA
 
     cursor: NDArray[Index]
     capacity: int
@@ -177,25 +175,25 @@ class InitialStateBuffer(NamedTuple):
         self.emission_position.validate()
         self.emission_direction.validate()
 
-        arrays = [
+        tracked_arrays = [
             self.particle_ID,
             self.emission_time,
             self.emission_energy,
         ]
 
-        for arr in arrays:
-            if arr.ndim != 1:
-                raise ValueError("All arrays in InitialStateBuffer must be 1-dimensional.")
+        for target_array in tracked_arrays:
+            if target_array.ndim != 1:
+                raise ValueError("Все массивы в InitialStateBuffer должны быть одномерными.")
 
-        for arr in arrays:
-            if arr.shape[0] != self.capacity:
-                raise ValueError("All arrays in InitialStateBuffer must have the same length (capacity).")
+        for target_array in tracked_arrays:
+            if target_array.shape[0] != self.capacity:
+                raise ValueError("Все массивы в InitialStateBuffer должны иметь одинаковую длину (емкость).")
 
         if self.emission_position.x.shape[0] != self.capacity:
-            raise ValueError("Vector components in InitialStateBuffer must have the same length as the base arrays.")
+            raise ValueError("Компоненты векторов в InitialStateBuffer должны иметь ту же длину, что и базовые массивы.")
 
         if self.cursor.shape != (1,):
-            raise ValueError("Cursor must be a 1-dimensional array of length 1.")
+            raise ValueError("Курсор должен быть одномерным массивом длины 1.")
 
     @classmethod
     def allocate(cls, capacity: int) -> 'InitialStateBuffer':
@@ -203,8 +201,8 @@ class InitialStateBuffer(NamedTuple):
             particle_ID=np.empty(capacity, dtype=ID),
             emission_time=np.empty(capacity, dtype=Time),
             emission_energy=np.empty(capacity, dtype=Energy),
-            emission_position=Vector3D.allocate(capacity, dtype=Length),
-            emission_direction=Vector3D.allocate(capacity, dtype=Float),
+            emission_position=Vector3DSoA.allocate(capacity, dtype=Length),
+            emission_direction=Vector3DSoA.allocate(capacity, dtype=Float),
             cursor=np.zeros(1, dtype=Index),
             capacity=capacity
         )
@@ -212,17 +210,17 @@ class InitialStateBuffer(NamedTuple):
         return buffer
 
     def flush_to_dict(self, clear: bool = True) -> dict:
-        c = self.cursor_value
+        cursor_pos = self.cursor_value
         chunk = {
-            'particle_ID': self.particle_ID[:c].copy(),
-            'emission_time': self.emission_time[:c].copy(),
-            'emission_energy': self.emission_energy[:c].copy(),
-            'pos_x': self.emission_position.x[:c].copy(),
-            'pos_y': self.emission_position.y[:c].copy(),
-            'pos_z': self.emission_position.z[:c].copy(),
-            'dir_x': self.emission_direction.x[:c].copy(),
-            'dir_y': self.emission_direction.y[:c].copy(),
-            'dir_z': self.emission_direction.z[:c].copy(),
+            'particle_ID': self.particle_ID[:cursor_pos].copy(),
+            'emission_time': self.emission_time[:cursor_pos].copy(),
+            'emission_energy': self.emission_energy[:cursor_pos].copy(),
+            'pos_x': self.emission_position.x[:cursor_pos].copy(),
+            'pos_y': self.emission_position.y[:cursor_pos].copy(),
+            'pos_z': self.emission_position.z[:cursor_pos].copy(),
+            'dir_x': self.emission_direction.x[:cursor_pos].copy(),
+            'dir_y': self.emission_direction.y[:cursor_pos].copy(),
+            'dir_z': self.emission_direction.z[:cursor_pos].copy(),
         }
         if clear:
             self.reset_cursor()
@@ -231,7 +229,7 @@ class InitialStateBuffer(NamedTuple):
 
 class DeadParticlesBuffer(NamedTuple):
     """
-    SoA Ring/Flush buffer for in-place logging of dead particle IDs.
+    SoA-буфер для промежуточной фиксации идентификаторов завершивших трекинг частиц.
     """
     particle_ID: NDArray[ID]
     cursor: NDArray[Index]
@@ -250,11 +248,11 @@ class DeadParticlesBuffer(NamedTuple):
 
     def validate(self) -> None:
         if self.particle_ID.ndim != 1:
-            raise ValueError("particle_ID array in DeadParticlesBuffer must be 1-dimensional.")
+            raise ValueError("Массив particle_ID в DeadParticlesBuffer должен быть одномерным.")
         if self.particle_ID.shape[0] != self.capacity:
-            raise ValueError("particle_ID array in DeadParticlesBuffer must have length equal to capacity.")
+            raise ValueError("Массив particle_ID в DeadParticlesBuffer должен иметь длину, равную емкости.")
         if self.cursor.shape != (1,):
-            raise ValueError("Cursor must be a 1-dimensional array of length 1.")
+            raise ValueError("Курсор должен быть одномерным массивом длины 1.")
 
     @classmethod
     def allocate(cls, capacity: int) -> 'DeadParticlesBuffer':
@@ -268,18 +266,18 @@ class DeadParticlesBuffer(NamedTuple):
 
     def append(self, particle_ids: NDArray[ID]) -> None:
         """
-        Appends dead particle IDs to the buffer and advances the cursor.
+        Добавляет идентификаторы завершивших трекинг частиц в буфер и сдвигает курсор.
         """
-        n = len(particle_ids)
-        c = self.cursor_value
-        if c + n > self.capacity:
-            raise ValueError("Insufficient capacity in DeadParticlesBuffer.")
-        self.particle_ID[c:c + n] = particle_ids
-        self.cursor[0] += n
+        particles_count = len(particle_ids)
+        cursor_pos = self.cursor_value
+        if cursor_pos + particles_count > self.capacity:
+            raise ValueError("Недостаточно места в DeadParticlesBuffer.")
+        self.particle_ID[cursor_pos:cursor_pos + particles_count] = particle_ids
+        self.cursor[0] += particles_count
 
     def flush_to_array(self, clear: bool = True) -> NDArray[ID]:
-        c = self.cursor_value
-        chunk = self.particle_ID[:c].copy()
+        cursor_pos = self.cursor_value
+        chunk = self.particle_ID[:cursor_pos].copy()
         if clear:
             self.reset_cursor()
         return chunk
@@ -287,7 +285,7 @@ class DeadParticlesBuffer(NamedTuple):
 
 class SimulationDataBuffer(NamedTuple):
     """
-    Combined Data-Oriented logging buffer for particle transport.
+    Объединенный буфер логирования данных моделирования переноса частиц.
     """
     interactions: InteractionBuffer
     initial_states: InitialStateBuffer
@@ -296,7 +294,7 @@ class SimulationDataBuffer(NamedTuple):
     @classmethod
     def allocate(cls, interaction_capacity: int, initial_state_capacity: int, dead_particles_capacity: int) -> 'SimulationDataBuffer':
         """
-        Allocates interaction, initial state, and dead particle buffers with given capacities.
+        Выделяет буферы взаимодействий, начальных состояний и завершивших трекинг частиц заданной емкости.
         """
         return cls(
             interactions=InteractionBuffer.allocate(interaction_capacity),

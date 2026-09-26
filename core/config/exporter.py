@@ -1,13 +1,14 @@
 import math
 import logging
 from pathlib import Path
-from typing import Any, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 import hepunits as units
 
 from core.config.models import (
+    AnyDistributionConfig,
     AnyNodeConfig,
     BaseCompositeNodeConfig,
     BaseSpatialNodeConfig,
@@ -84,7 +85,11 @@ class SceneExporter:
         return transforms
 
     @classmethod
-    def export_node(cls, node: SpatialNode) -> AnyNodeConfig:
+    def export_node(
+        cls,
+        node: SpatialNode,
+        distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
+    ) -> AnyNodeConfig:
         """
         Рекурсивно экспортирует узел сцены в Pydantic-модель конфигурации.
         """
@@ -93,8 +98,8 @@ class SceneExporter:
 
         # 1. GammaCamera
         if isinstance(node, GammaCamera):
-            collimator_cfg = cls.export_node(node.collimator)
-            detector_cfg = cls.export_node(node.detector)
+            collimator_cfg = cls.export_node(node.collimator, distribution_registry=distribution_registry)
+            detector_cfg = cls.export_node(node.detector, distribution_registry=distribution_registry)
             return GammaCameraConfig(
                 name=node_name,
                 transformations=transforms,
@@ -131,17 +136,12 @@ class SceneExporter:
         # 4. WoodcockVoxelVolume
         if isinstance(node, WoodcockVoxelVolume):
             v_size = float(np.mean(node.voxel_size)) if isinstance(node.voxel_size, (list, tuple, np.ndarray, Sequence)) else float(node.voxel_size)
-            dist_path = node.distribution_path or 'phantom.npy'
-            if node.distribution_config is not None:
-                dist_cfg = node.distribution_config
-            else:
-                p_str = str(dist_path).lower()
-                if p_str.endswith(('.dat', '.raw', '.txt')):
-                    sh = (int(node.material_distribution.shape[0]), int(node.material_distribution.shape[1]), int(node.material_distribution.shape[2]))
-                    dist_cfg = RawDistributionConfig(path=str(dist_path), shape=sh, order='F')
-                else:
-                    dist_cfg = NumpyDistributionConfig(path=str(dist_path))
-            children_cfgs = [cls.export_node(c) for c in node.childs]
+            dist_cfg = None
+            if distribution_registry is not None:
+                dist_cfg = distribution_registry.get(node)
+            if dist_cfg is None:
+                dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'phantom'}.npy")
+            children_cfgs = [cls.export_node(c, distribution_registry=distribution_registry) for c in node.childs]
             return WoodcockVoxelVolumeConfig(
                 name=node_name,
                 transformations=transforms,
@@ -156,11 +156,10 @@ class SceneExporter:
             if isinstance(geo, Box):
                 geo_cfg = BoxConfig(x=float(geo.size[0]), y=float(geo.size[1]), z=float(geo.size[2]))
             else:
-                # По умолчанию Box с размерами объекта
                 geo_cfg = BoxConfig(x=float(node.size[0]), y=float(node.size[1]), z=float(node.size[2]))
 
             mat_name = node.material.name
-            children_cfgs = [cls.export_node(c) for c in node.childs]
+            children_cfgs = [cls.export_node(c, distribution_registry=distribution_registry) for c in node.childs]
 
             return VolumeConfig(
                 name=node_name,
@@ -172,19 +171,14 @@ class SceneExporter:
 
         # 6. Source
         if isinstance(node, Source):
-            dist_path = node.distribution_path or 'source_dist.npy'
             act = float(np.sum(node.initial_activity)) if node.initial_activity is not None else None
             v_sz = float(np.mean(node.voxel_size)) if isinstance(node.voxel_size, (list, tuple, np.ndarray, Sequence)) else float(node.voxel_size)
-            if node.distribution_config is not None:
-                dist_cfg = node.distribution_config
-            else:
-                p_str = str(dist_path).lower()
-                if p_str.endswith(('.dat', '.raw', '.txt')):
-                    sh = (int(node.distribution.shape[0]), int(node.distribution.shape[1]), int(node.distribution.shape[2]))
-                    dist_cfg = RawDistributionConfig(path=str(dist_path), shape=sh, order='F')
-                else:
-                    dist_cfg = NumpyDistributionConfig(path=str(dist_path))
-            children_cfgs = [cls.export_node(c) for c in node.childs]
+            dist_cfg = None
+            if distribution_registry is not None:
+                dist_cfg = distribution_registry.get(node)
+            if dist_cfg is None:
+                dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'source_dist'}.npy")
+            children_cfgs = [cls.export_node(c, distribution_registry=distribution_registry) for c in node.childs]
             half_life = float(node.half_life)
             rad_type = node.radiation_type
             if len(node.energy) == 1:
@@ -197,7 +191,7 @@ class SceneExporter:
                 distribution=dist_cfg,
                 activity=act,
                 voxel_size=v_sz,
-                radiation_type=rad_type,
+                radiation_type=str(rad_type),
                 energy=energy_val,
                 half_life=half_life,
                 children=children_cfgs,
@@ -205,7 +199,7 @@ class SceneExporter:
 
         # 7. DoseGridNode
         if isinstance(node, DoseGridNode):
-            children_cfgs = [cls.export_node(c) for c in node.childs]
+            children_cfgs = [cls.export_node(c, distribution_registry=distribution_registry) for c in node.childs]
             return DoseGridNodeConfig(
                 name=node_name,
                 transformations=transforms,
@@ -217,7 +211,7 @@ class SceneExporter:
 
         # 8. CompositeNode
         if isinstance(node, CompositeNode):
-            children_cfgs = [cls.export_node(c) for c in node.childs]
+            children_cfgs = [cls.export_node(c, distribution_registry=distribution_registry) for c in node.childs]
             return BaseCompositeNodeConfig(
                 name=node_name,
                 transformations=transforms,
@@ -231,11 +225,15 @@ class SceneExporter:
         )
 
     @classmethod
-    def export_scene(cls, root_node: SpatialNode) -> AnyNodeConfig:
+    def export_scene(
+        cls,
+        root_node: SpatialNode,
+        distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
+    ) -> AnyNodeConfig:
         """
         Экспортирует корневой узел графа сцены.
         """
-        return cls.export_node(root_node)
+        return cls.export_node(root_node, distribution_registry=distribution_registry)
 
     @classmethod
     def export_to_config(
@@ -244,11 +242,12 @@ class SceneExporter:
         simulation_manager_cfg: Optional[SimulationManagerConfig] = None,
         data_manager_cfg: Optional[DataManagerConfig] = None,
         pool_size: int = 1,
+        distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
     ) -> SimulationConfig:
         """
         Формирует полный SimulationConfig из корневого узла сцены и опциональных параметров.
         """
-        scene_cfg = cls.export_scene(root_node)
+        scene_cfg = cls.export_scene(root_node, distribution_registry=distribution_registry)
         sim_mgr = simulation_manager_cfg or SimulationManagerConfig()
         data_mgr = data_manager_cfg or DataManagerConfig(
             filename="output.h5",
@@ -270,6 +269,7 @@ class SceneExporter:
         simulation_manager_cfg: Optional[SimulationManagerConfig] = None,
         data_manager_cfg: Optional[DataManagerConfig] = None,
         pool_size: int = 1,
+        distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
     ) -> None:
         """
         Экспортирует граф сцены напрямую в YAML-файл конфигурации.
@@ -279,5 +279,6 @@ class SceneExporter:
             simulation_manager_cfg=simulation_manager_cfg,
             data_manager_cfg=data_manager_cfg,
             pool_size=pool_size,
+            distribution_registry=distribution_registry,
         )
         dump_simulation_config(config, filepath)

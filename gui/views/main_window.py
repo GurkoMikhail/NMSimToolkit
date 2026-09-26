@@ -588,7 +588,7 @@ class MainWindow(QMainWindow):
                 if self.viewport_controller is not None:
                     self.viewport_controller.disconnect_all_nodes()
                     self.viewport_controller.clear_dose_volume()
-                self.scene_vm.load_scene(root_node)
+                self.scene_vm.load_scene(root_node, distribution_registry=builder.distribution_registry)
                 self.scene_vm.apply_simulation_config(cfg)
                 self.current_config = cfg
                 self.current_config_path = str(filepath)
