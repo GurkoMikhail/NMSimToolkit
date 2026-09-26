@@ -140,6 +140,7 @@ def _worker_function(payload: Tuple[Any, ...]) -> Any:
 
     # 5. Instantiate Managers
     sim_config = final_config.simulation_manager
+    pause_event = task_dict.get('_pause_event')
     manager = SimulationManager(
         scene=root_scene,
         propagator=propagator,
@@ -149,7 +150,8 @@ def _worker_function(payload: Tuple[Any, ...]) -> Any:
         min_energy=sim_config.min_energy,
         buffer_capacity=final_config.data_manager.buffer_capacity,
         name=f"Task_seed_{seed}",
-        seed=seed
+        seed=seed,
+        pause_event=pause_event,
     )
 
     data_manager = DataManager(

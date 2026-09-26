@@ -97,7 +97,7 @@ class TestSpectSimulationHDF5(unittest.TestCase):
         viewport_ctrl = SceneViewportController(viewport=viewport, scene_vm=scene_vm)
 
         proc_vm = SpectProcedureViewModel()
-        proc_vm.views = 32
+        proc_vm.steps = 8
         proc_vm.start_angle = 0.0
         proc_vm.end_angle = 360.0
         proc_vm.gamma_cameras = 4

@@ -115,6 +115,100 @@ class TestStage5Controllers(unittest.TestCase):
             except Exception:
                 pass
 
+    def test_focused_pause_proxy_behavior(self):
+        """Проверка FocusedPauseProxy для двухуровневой паузы и пошагового выполнения."""
+        import threading
+        from gui.controllers.stream_handlers import FocusedPauseProxy
+
+        global_pause = threading.Event()
+        focused_pause = threading.Event()
+        step_trigger = threading.Event()
+
+        # По умолчанию воркеры запущены (события взведены)
+        global_pause.set()
+        focused_pause.set()
+
+        proxy = FocusedPauseProxy(
+            global_pause_event=global_pause,
+            focused_pause_event=focused_pause,
+            step_trigger_event=step_trigger
+        )
+
+        # 1. По умолчанию воркер не на паузе (is_set() возвращает True -> разрешено выполнение)
+        self.assertTrue(proxy.is_set())
+
+        # 2. Глобальная пауза всего пула (сброс флага активности)
+        global_pause.clear()
+        self.assertFalse(proxy.is_set())
+        global_pause.set()
+        self.assertTrue(proxy.is_set())
+
+        # 3. Локальная пауза сфокусированного воркера
+        focused_pause.clear()
+        self.assertFalse(proxy.is_set())
+
+        # 4. Одиночный шаг частиц (Particle Batch Step) при нахождении на паузе
+        step_trigger.set()
+        # Первый вызов is_set() потребляет триггер и возвращает True (шаг разрешен)
+        self.assertTrue(proxy.is_set())
+        # Следующий вызов is_set() снова возвращает False (шаг завершен, пауза восстановлена)
+        self.assertFalse(proxy.is_set())
+        # Триггер шага сброшен
+        self.assertFalse(step_trigger.is_set())
+
+    def test_orchestrator_session_two_level_pause_controls(self):
+        """Проверка методов и сигналов двухуровневой паузы в OrchestratorSession."""
+        import threading
+        from gui.controllers.orchestrator_session import OrchestratorSession
+
+        session = OrchestratorSession(pool_size=2)
+        session._is_running = True
+        session._global_pause_event = threading.Event()
+        session._global_pause_event.set()
+        session._focused_pause_event = threading.Event()
+        session._focused_pause_event.set()
+        session._step_trigger_event = threading.Event()
+
+        paused_signals = []
+        resumed_signals = []
+        focused_paused_signals = []
+        focused_resumed_signals = []
+
+        session.session_paused.connect(lambda: paused_signals.append(True))
+        session.session_resumed.connect(lambda: resumed_signals.append(True))
+        session.focused_worker_paused.connect(lambda tid: focused_paused_signals.append(tid))
+        session.focused_worker_resumed.connect(lambda tid: focused_resumed_signals.append(tid))
+
+        # 1. Глобальная пауза пула
+        session.pause_all()
+        self.assertTrue(session.is_paused)
+        self.assertFalse(session._global_pause_event.is_set())
+        self.assertEqual(len(paused_signals), 1)
+
+        # 2. Возобновление пула
+        session.resume_all()
+        self.assertFalse(session.is_paused)
+        self.assertTrue(session._global_pause_event.is_set())
+        self.assertEqual(len(resumed_signals), 1)
+
+        # 3. Локальная пауза сфокусированного воркера
+        session.set_focused_job(1)
+        session.pause_focused_worker()
+        self.assertTrue(session.is_focused_worker_paused)
+        self.assertFalse(session._focused_pause_event.is_set())
+        self.assertEqual(focused_paused_signals, [1])
+
+        # 4. Шаг сфокусированного воркера
+        session.step_focused_worker()
+        if session._step_trigger_event is not None:
+            self.assertTrue(session._step_trigger_event.is_set())
+
+        # 5. Возобновление сфокусированного воркера
+        session.resume_focused_worker()
+        self.assertFalse(session.is_focused_worker_paused)
+        self.assertTrue(session._focused_pause_event.is_set())
+        self.assertEqual(focused_resumed_signals, [1])
+
 
 if __name__ == '__main__':
     unittest.main()

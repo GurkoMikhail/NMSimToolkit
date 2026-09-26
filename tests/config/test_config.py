@@ -24,8 +24,7 @@ class TestConfig(unittest.TestCase):
             },
             "data_manager": {
                 "filename": "output.h5",
-                "handlers": [],
-                "buffer_capacity": 1000
+                "handlers": []
             },
             "scene": {
                 "type": "Volume",

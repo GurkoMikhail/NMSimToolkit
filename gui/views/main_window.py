@@ -5,12 +5,15 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 import pyvista as pv
 import hepunits as units
-from PySide6.QtCore import Qt, QSize, QTimer, QObject
-from PySide6.QtGui import QAction, QIcon, QKeySequence
+from PySide6.QtCore import Qt, QSize, QTimer, QObject, QEvent
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QActionGroup
 from PySide6.QtWidgets import (
     QMainWindow, QDockWidget, QToolBar, QStatusBar,
-    QFileDialog, QMessageBox, QLabel, QSpinBox
+    QFileDialog, QMessageBox, QLabel, QSpinBox, QComboBox,
+    QApplication, QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox
 )
+
+from gui.viewport_3d.transform_gizmo import GizmoMode, GizmoSpace
 
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
@@ -83,11 +86,16 @@ class MainWindow(QMainWindow):
 
         self._init_components()
         self._init_docks()
+        self._init_gizmo_actions()
         self._init_menus()
         self._init_toolbar()
         self._init_statusbar()
         self._connect_signals()
         self._update_action_states(running=False, paused=False)
+
+        app_inst = QApplication.instance()
+        if app_inst is not None:
+            app_inst.installEventFilter(self)
 
     @property
     def scene_vm(self) -> SceneViewModel:
@@ -120,6 +128,7 @@ class MainWindow(QMainWindow):
         # Инспектор свойств
         self.property_inspector = PropertyInspector(self)
         self.property_inspector.set_scene_viewmodel(self.scene_vm)
+        self.property_inspector.set_min_buffer_capacity(self.sim_settings.particles_number)
 
         # Панель результатов
         self.results_viewer = ResultsViewer(self)
@@ -127,6 +136,7 @@ class MainWindow(QMainWindow):
         # Модели процедур и диспетчера данных
         self.procedure_vm = SpectProcedureViewModel()
         self.data_manager_vm = DataManagerViewModel()
+        self.data_manager_vm.min_buffer_capacity = self.sim_settings.particles_number
 
         # Диспетчер параллельной оркестрации (OrchestratorSession)
         self.orchestrator_session = OrchestratorSession(
@@ -181,6 +191,51 @@ class MainWindow(QMainWindow):
         self.dock_results.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.dock_results)
 
+    def _init_gizmo_actions(self) -> None:
+        """Инициализация действий и элементов управления интерактивного манипулятора Gizmo."""
+        self.gizmo_action_group = QActionGroup(self)
+        self.gizmo_action_group.setExclusive(True)
+
+        self.act_gizmo_translate = QAction("☩ Перемещение (W)", self)
+        self.act_gizmo_translate.setCheckable(True)
+        self.act_gizmo_translate.setChecked(True)
+        self.act_gizmo_translate.setShortcuts([QKeySequence(Qt.Key.Key_W), QKeySequence("Ц"), QKeySequence("ц")])
+        self.act_gizmo_translate.setToolTip("Режим перемещения объекта вдоль осей или плоскостей (W / Ц)")
+        self.act_gizmo_translate.triggered.connect(lambda: self._set_gizmo_mode(GizmoMode.TRANSLATE))
+        self.gizmo_action_group.addAction(self.act_gizmo_translate)
+
+        self.act_gizmo_rotate = QAction("⟲ Вращение (E)", self)
+        self.act_gizmo_rotate.setCheckable(True)
+        self.act_gizmo_rotate.setShortcuts([QKeySequence(Qt.Key.Key_E), QKeySequence("У"), QKeySequence("у")])
+        self.act_gizmo_rotate.setToolTip("Режим вращения объекта вокруг координатных осей (E / У)")
+        self.act_gizmo_rotate.triggered.connect(lambda: self._set_gizmo_mode(GizmoMode.ROTATE))
+        self.gizmo_action_group.addAction(self.act_gizmo_rotate)
+
+        self.act_gizmo_scale = QAction("⤢ Масштаб (R)", self)
+        self.act_gizmo_scale.setCheckable(True)
+        self.act_gizmo_scale.setShortcuts([QKeySequence(Qt.Key.Key_R), QKeySequence("К"), QKeySequence("к")])
+        self.act_gizmo_scale.setToolTip("Режим масштабирования объекта (R / К)")
+        self.act_gizmo_scale.triggered.connect(lambda: self._set_gizmo_mode(GizmoMode.SCALE))
+        self.gizmo_action_group.addAction(self.act_gizmo_scale)
+
+        self.act_gizmo_space = QAction("🌐 Мировые (Q)", self)
+        self.act_gizmo_space.setCheckable(True)
+        self.act_gizmo_space.setShortcuts([QKeySequence(Qt.Key.Key_Q), QKeySequence("Й"), QKeySequence("й")])
+        self.act_gizmo_space.setToolTip("Переключение системы координат: Мировая / Локальная (Q / Й)")
+        self.act_gizmo_space.triggered.connect(self._toggle_gizmo_space)
+
+        self.combo_grid_snap = QComboBox()
+        self.combo_grid_snap.addItems(["Выкл", "1 мм", "5 мм", "10 мм", "25 мм", "50 мм", "100 мм"])
+        self.combo_grid_snap.setCurrentText("10 мм")
+        self.combo_grid_snap.setToolTip("Шаг дискретной координатной сетки привязки (Shift — временное отключение)")
+        self.combo_grid_snap.currentTextChanged.connect(self._on_grid_snap_changed)
+
+        self.combo_angle_snap = QComboBox()
+        self.combo_angle_snap.addItems(["Выкл", "5°", "10°", "15°", "30°", "45°", "90°"])
+        self.combo_angle_snap.setCurrentText("5°")
+        self.combo_angle_snap.setToolTip("Шаг угловой привязки вращения (Shift — временное отключение)")
+        self.combo_angle_snap.currentTextChanged.connect(self._on_angle_snap_changed)
+
     def _init_menus(self) -> None:
         menubar = self.menuBar()
 
@@ -210,16 +265,22 @@ class MainWindow(QMainWindow):
         # Меню Моделирование
         sim_menu = menubar.addMenu("&Моделирование")
         self.act_run = QAction("▶ &Запуск", self)
-        self.act_pause = QAction("⏸ &Пауза", self)
-        self.act_resume = QAction("⏯ &Возобновить", self)
+        self.act_pause = QAction("⏸ Пауза &пула", self)
+        self.act_resume = QAction("⏯ Возобновить п&ул", self)
+        self.act_pause_focused = QAction("⏸ Пауза &фокуса", self)
+        self.act_resume_focused = QAction("⏯ Возобновить фок&ус", self)
         self.act_stop = QAction("⏹ &Остановить", self)
-        self.act_step = QAction("⏭ &Шаг вперед", self)
+        self.act_step = QAction("⏭ &Шаг фокуса", self)
 
         sim_menu.addAction(self.act_run)
         sim_menu.addAction(self.act_pause)
         sim_menu.addAction(self.act_resume)
-        sim_menu.addAction(self.act_stop)
+        sim_menu.addSeparator()
+        sim_menu.addAction(self.act_pause_focused)
+        sim_menu.addAction(self.act_resume_focused)
         sim_menu.addAction(self.act_step)
+        sim_menu.addSeparator()
+        sim_menu.addAction(self.act_stop)
         sim_menu.addSeparator()
 
         self.act_settings = QAction("⚙ &Параметры расчета...", self)
@@ -255,6 +316,14 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.act_toggle_dose)
 
         view_menu.addSeparator()
+        gizmo_menu = view_menu.addMenu("3D Манипулятор (Gizmo)")
+        gizmo_menu.addAction(self.act_gizmo_translate)
+        gizmo_menu.addAction(self.act_gizmo_rotate)
+        gizmo_menu.addAction(self.act_gizmo_scale)
+        gizmo_menu.addSeparator()
+        gizmo_menu.addAction(self.act_gizmo_space)
+
+        view_menu.addSeparator()
         view_menu.addAction(self.dock_tree.toggleViewAction())
         view_menu.addAction(self.dock_procedures.toggleViewAction())
         view_menu.addAction(self.dock_handlers.toggleViewAction())
@@ -270,8 +339,12 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.act_run)
         toolbar.addAction(self.act_pause)
         toolbar.addAction(self.act_resume)
-        toolbar.addAction(self.act_stop)
+        toolbar.addSeparator()
+        toolbar.addAction(self.act_pause_focused)
+        toolbar.addAction(self.act_resume_focused)
         toolbar.addAction(self.act_step)
+        toolbar.addSeparator()
+        toolbar.addAction(self.act_stop)
         toolbar.addSeparator()
         toolbar.addAction(self.act_settings)
         toolbar.addSeparator()
@@ -281,14 +354,36 @@ class MainWindow(QMainWindow):
         toolbar.addAction(act_reset)
         toolbar.addSeparator()
 
-        self.lbl_preview_view = QLabel("Ракурс:")
+        self.lbl_preview_view = QLabel("Шаг:")
         toolbar.addWidget(self.lbl_preview_view)
         self.spin_preview_view = QSpinBox()
-        self.spin_preview_view.setRange(1, max(1, self.sim_settings.views_number))
+        total_steps = self.procedure_vm.steps if isinstance(self.procedure_vm, SpectProcedureViewModel) else 1
+        self.spin_preview_view.setRange(1, max(1, total_steps))
         self.spin_preview_view.setValue(1)
-        self.spin_preview_view.setToolTip("Предварительный просмотр ориентации детекторных головок ОФЭКТ для выбранного ракурса")
+        self.spin_preview_view.setToolTip("Предварительный просмотр ориентации детекторных головок ОФЭКТ для выбранного шага")
         self.spin_preview_view.valueChanged.connect(self._on_preview_view_changed)
         toolbar.addWidget(self.spin_preview_view)
+
+        # Панель инструментов: 3D Манипулятор (Transform Gizmo)
+        gizmo_toolbar = QToolBar("3D Манипулятор", self)
+        gizmo_toolbar.setObjectName("GizmoToolBar")
+        gizmo_toolbar.setIconSize(QSize(20, 20))
+        self.addToolBar(gizmo_toolbar)
+
+        gizmo_toolbar.addAction(self.act_gizmo_translate)
+        gizmo_toolbar.addAction(self.act_gizmo_rotate)
+        gizmo_toolbar.addAction(self.act_gizmo_scale)
+        gizmo_toolbar.addSeparator()
+        gizmo_toolbar.addAction(self.act_gizmo_space)
+        gizmo_toolbar.addSeparator()
+
+        lbl_grid = QLabel("Сетка:")
+        gizmo_toolbar.addWidget(lbl_grid)
+        gizmo_toolbar.addWidget(self.combo_grid_snap)
+
+        lbl_angle = QLabel("Угол:")
+        gizmo_toolbar.addWidget(lbl_angle)
+        gizmo_toolbar.addWidget(self.combo_angle_snap)
 
     def _init_statusbar(self) -> None:
         status = self.statusBar()
@@ -299,7 +394,6 @@ class MainWindow(QMainWindow):
         # Связь выбора узла в дереве с инспектором и 3D-манипулятором
         self.scene_vm.node_selected.connect(self.property_inspector.set_target_viewmodel)
         self.scene_vm.node_selected.connect(self._on_node_selected)
-        self.property_inspector.dose_voxel_size_changed.connect(lambda vs: self.sim_settings.update({'dose_voxel_size': vs}))
 
         # Связь выбора процедуры и обработчиков с инспектором
         self.procedure_selector.procedure_changed.connect(self._on_procedure_changed)
@@ -343,13 +437,26 @@ class MainWindow(QMainWindow):
 
         # Управляющие действия моделирования
         self.act_run.triggered.connect(self._on_start_simulation)
-        self.act_pause.triggered.connect(self._on_pause_simulation)
-        self.act_resume.triggered.connect(self._on_resume_simulation)
+        self.act_pause.triggered.connect(self._on_pause_all)
+        self.act_resume.triggered.connect(self._on_resume_all)
+        self.act_pause_focused.triggered.connect(self._on_pause_focused)
+        self.act_resume_focused.triggered.connect(self._on_resume_focused)
         self.act_stop.triggered.connect(self._on_stop_simulation)
         self.act_step.triggered.connect(self._on_step_simulation)
 
+        # Сигналы сессии оркестратора для паузы и возобновления
+        self.orchestrator_session.session_paused.connect(self._on_session_paused)
+        self.orchestrator_session.session_resumed.connect(self._on_session_resumed)
+        self.orchestrator_session.focused_worker_paused.connect(lambda tid: self.jobs_widget.on_job_paused(tid, is_local=True))
+        self.orchestrator_session.focused_worker_resumed.connect(lambda tid: self.jobs_widget.on_job_resumed(tid))
+
         # Сброс накопления из панели результатов
         self.results_viewer.accumulation_cleared.connect(self._on_clear_accumulation)
+
+        # Синхронизация состояния манипулятора Gizmo с панелью инструментов
+        if self.viewport_controller is not None and self.viewport_controller.transform_gizmo is not None:
+            self.viewport_controller.transform_gizmo.mode_changed.connect(self._on_gizmo_mode_changed)
+            self.viewport_controller.transform_gizmo.space_changed.connect(self._on_gizmo_space_changed)
 
         # Начальная отрисовка сцены во вьюпорте и генерация задач
         self.viewport_controller.sync_viewport_scene()
@@ -376,16 +483,23 @@ class MainWindow(QMainWindow):
             self.dock_inspector.show()
         self.dock_inspector.raise_()
         self.viewport_controller.on_node_selected(vm)
+        if vm is not None:
+            self.lbl_status.setText(
+                f"Выбран объект '{vm.name}'. Манипулятор Gizmo: W/Ц — перемещение, "
+                f"E/У — вращение, R/К — масштаб, Q/Й — система координат, Shift — отключение привязки"
+            )
+        else:
+            self.lbl_status.setText("Статус: Готов (IDLE)")
 
     def _apply_job_angles_to_viewport(self, context: Dict[str, Any]) -> None:
         """Применяет углы из контекста задачи к гамма-камерам во вьюпорте."""
         self.viewport_controller.apply_job_angles_to_viewport(context, self.procedure_vm)
 
     def _on_preview_view_changed(self, view_number_1based: int) -> None:
-        """Предварительный кинематический поворот детекторов на выбранный ракурс ОФЭКТ."""
+        """Предварительный кинематический поворот детекторов на выбранный шаг ОФЭКТ."""
         base_angle = self.viewport_controller.preview_view(view_number_1based, self.procedure_vm)
-        views_total = self.procedure_vm.views if isinstance(self.procedure_vm, SpectProcedureViewModel) else 1
-        self.lbl_status.setText(f"Предпросмотр ОФЭКТ: Ракурс {view_number_1based}/{views_total} (угол {base_angle:.1f}°)")
+        steps_total = self.procedure_vm.steps if isinstance(self.procedure_vm, SpectProcedureViewModel) else 1
+        self.lbl_status.setText(f"Предпросмотр ОФЭКТ: Шаг {view_number_1based}/{steps_total} (угол {base_angle:.1f}°)")
 
 
     def _on_projection_stack_updated(self, stack: np.ndarray, current_view: int, total_views: int, angle: float) -> None:
@@ -407,10 +521,10 @@ class MainWindow(QMainWindow):
         self.orchestrator_session.procedure_vm = proc_vm
         self.property_inspector.set_target_viewmodel(proc_vm)
         if isinstance(proc_vm, SpectProcedureViewModel):
-            self.spin_preview_view.setRange(1, max(1, proc_vm.views))
-            def _on_proc_param_changed(param: str, val: Any) -> None:
-                if param in ("views", "views_number"):
-                    self.spin_preview_view.setRange(1, max(1, int(val)))
+            self.spin_preview_view.setRange(1, max(1, proc_vm.steps))
+            def _on_proc_param_changed(param_name: str, param_val: Any) -> None:
+                if param_name in ("steps", "gamma_cameras"):
+                    self.spin_preview_view.setRange(1, max(1, int(proc_vm.steps)))
             proc_vm.parameter_changed.connect(_on_proc_param_changed)
         proc_vm.changed.connect(self._on_generate_jobs)
         self._on_generate_jobs()
@@ -452,6 +566,11 @@ class MainWindow(QMainWindow):
         Изменение размера пула рабочих процессов.
         """
         self.orchestrator_session.pool_size = max(1, int(pool_size))
+        self._update_action_states(
+            running=self.orchestrator_session.is_running,
+            paused=self.orchestrator_session.is_paused,
+            focused_paused=self.orchestrator_session.is_focused_worker_paused,
+        )
 
     def _on_start_simulation(self) -> None:
         """
@@ -506,17 +625,29 @@ class MainWindow(QMainWindow):
         self.viewport_controller.clear_tracks()
         self.lbl_status.setText("Накопление данных сброшено")
 
-    def _on_pause_simulation(self) -> None:
+    def _on_pause_all(self) -> None:
         if self.orchestrator_session.is_running:
-            self.orchestrator_session.pause()
+            self.orchestrator_session.pause_all()
             self._update_action_states(running=True, paused=True)
-            self.lbl_status.setText("Моделирование: приостановлено")
+            self.lbl_status.setText("Моделирование: весь пул приостановлен")
 
-    def _on_resume_simulation(self) -> None:
+    def _on_resume_all(self) -> None:
         if self.orchestrator_session.is_running:
-            self.orchestrator_session.resume()
+            self.orchestrator_session.resume_all()
             self._update_action_states(running=True, paused=False)
-            self.lbl_status.setText("Моделирование: возобновлено")
+            self.lbl_status.setText("Моделирование: весь пул возобновлен")
+
+    def _on_pause_focused(self) -> None:
+        if self.orchestrator_session.is_running:
+            self.orchestrator_session.pause_focused_worker()
+            self._update_action_states(running=True, paused=False, focused_paused=True)
+            self.lbl_status.setText("Моделирование: сфокусированный воркер приостановлен")
+
+    def _on_resume_focused(self) -> None:
+        if self.orchestrator_session.is_running:
+            self.orchestrator_session.resume_focused_worker()
+            self._update_action_states(running=True, paused=False, focused_paused=False)
+            self.lbl_status.setText("Моделирование: сфокусированный воркер возобновлен")
 
     def _on_stop_simulation(self) -> None:
         if self.orchestrator_session.is_running:
@@ -526,7 +657,17 @@ class MainWindow(QMainWindow):
 
     def _on_step_simulation(self) -> None:
         if self.orchestrator_session.is_running:
-            self.orchestrator_session.step_once()
+            self.orchestrator_session.step_focused_worker()
+
+    def _on_session_paused(self) -> None:
+        self._update_action_states(running=True, paused=True)
+        for row_idx in range(len(self.orchestrator_session.jobs)):
+            self.jobs_widget.on_job_paused(row_idx, is_local=False)
+
+    def _on_session_resumed(self) -> None:
+        self._update_action_states(running=True, paused=False)
+        for row_idx in range(len(self.orchestrator_session.jobs)):
+            self.jobs_widget.on_job_resumed(row_idx)
 
     def _on_simulation_stopped(self) -> None:
         self.lbl_status.setText("Моделирование: остановлено")
@@ -544,12 +685,18 @@ class MainWindow(QMainWindow):
         """
         self.viewport_controller.on_dose_volume_received(dose_data, session=self.session)
 
-    def _update_action_states(self, running: bool, paused: bool) -> None:
+    def _update_action_states(self, running: bool, paused: bool, focused_paused: bool = False) -> None:
+        pool_size = self.orchestrator_session.pool_size
         self.act_run.setEnabled(not running)
         self.act_pause.setEnabled(running and not paused)
         self.act_resume.setEnabled(running and paused)
+        # Блокировка паузы фокуса при pool_size == 1
+        can_pause_focused = running and not paused and not focused_paused and pool_size > 1
+        can_resume_focused = running and not paused and focused_paused and pool_size > 1
+        self.act_pause_focused.setEnabled(can_pause_focused)
+        self.act_resume_focused.setEnabled(can_resume_focused)
         self.act_stop.setEnabled(running)
-        self.act_step.setEnabled(not running or paused)
+        self.act_step.setEnabled(running and (paused or focused_paused or pool_size == 1))
         self.spin_preview_view.setEnabled(not running)
 
     def showEvent(self, event: Any) -> None:
@@ -557,6 +704,9 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(50, self.viewport.reset_camera)
 
     def closeEvent(self, event: Any) -> None:
+        app_inst = QApplication.instance()
+        if app_inst is not None:
+            app_inst.removeEventFilter(self)
         if self.orchestrator_session is not None:
             self.orchestrator_session.close()
         if self.viewport_controller is not None:
@@ -608,9 +758,12 @@ class MainWindow(QMainWindow):
                 if cfg.simulation_manager is not None:
                     self.sim_settings.particles_number = int(cfg.simulation_manager.particles_number)
                     self.orchestrator_session.particles_number = int(cfg.simulation_manager.particles_number)
+                    self.property_inspector.set_min_buffer_capacity(self.sim_settings.particles_number)
+                    self.data_manager_vm.min_buffer_capacity = self.sim_settings.particles_number
+                    if self.data_manager_vm.buffer_capacity < self.sim_settings.particles_number:
+                        self.data_manager_vm.buffer_capacity = self.sim_settings.particles_number
                     try:
                         st_sec = float(cfg.simulation_manager.stop_time) / float(units.s)
-                        self.sim_settings.stop_time = st_sec
                         self.orchestrator_session.stop_time = st_sec
                     except (TypeError, ValueError):
                         pass
@@ -658,16 +811,153 @@ class MainWindow(QMainWindow):
             self.sim_settings.update(new_settings)
             # Применение параметров к вычислительной сессии
             self.orchestrator_session.particles_number = new_settings.particles_number
-            self.orchestrator_session.stop_time = new_settings.stop_time
             self.orchestrator_session.min_energy = new_settings.min_energy
             self.orchestrator_session.pool_size = new_settings.pool_size
             self.jobs_widget.spin_pool_size.setValue(new_settings.pool_size)
-            self.data_manager_vm.buffer_capacity = new_settings.buffer_capacity
 
-            # Синхронизация с обработчиком DirectStreamHandlerViewModel при наличии
-            for handler_vm in self.data_manager_vm.handlers:
-                if isinstance(handler_vm, DirectStreamHandlerViewModel):
-                    handler_vm.show_escaped_tracks = new_settings.show_escaped_tracks
+            # Обеспечение инварианта buffer_capacity >= particles_number
+            self.property_inspector.set_min_buffer_capacity(new_settings.particles_number)
+            self.data_manager_vm.min_buffer_capacity = new_settings.particles_number
+            if self.data_manager_vm.buffer_capacity < new_settings.particles_number:
+                self.data_manager_vm.buffer_capacity = new_settings.particles_number
+
+            # Передача параметров снаппинга в 3D Gizmo
+            if self.viewport_controller is not None and self.viewport_controller.transform_gizmo is not None:
+                self.viewport_controller.transform_gizmo.grid_snap_step = new_settings.grid_snap_step
+                self.viewport_controller.transform_gizmo.angle_snap_step = new_settings.angle_snap_step
+                self.viewport_controller.transform_gizmo.scale_snap_step = new_settings.scale_snap_step
 
             self._on_generate_jobs()
             self.lbl_status.setText("Параметры симуляции обновлены")
+
+    def _set_gizmo_mode(self, mode: GizmoMode) -> None:
+        """Переключение активного режима манипулятора Gizmo."""
+        if self.viewport_controller is not None and self.viewport_controller.transform_gizmo is not None:
+            self.viewport_controller.transform_gizmo.mode = mode
+            self.viewport.render()
+
+    def _toggle_gizmo_space(self) -> None:
+        """Переключение между мировой и локальной системами координат манипулятора."""
+        if self.viewport_controller is not None and self.viewport_controller.transform_gizmo is not None:
+            gizmo = self.viewport_controller.transform_gizmo
+            gizmo.space = GizmoSpace.LOCAL if gizmo.space == GizmoSpace.WORLD else GizmoSpace.WORLD
+            self.viewport.render()
+
+    def _on_grid_snap_changed(self, text: str) -> None:
+        """Обновление шага координатной сетки привязки манипулятора."""
+        if self.viewport_controller is None or self.viewport_controller.transform_gizmo is None:
+            return
+        mapping = {
+            "Выкл": 0.0,
+            "1 мм": 1.0,
+            "5 мм": 5.0,
+            "10 мм": 10.0,
+            "25 мм": 25.0,
+            "50 мм": 50.0,
+            "100 мм": 100.0,
+        }
+        step_val = mapping.get(text, 10.0)
+        self.viewport_controller.transform_gizmo.grid_snap_step = step_val
+
+    def _on_angle_snap_changed(self, text: str) -> None:
+        """Обновление шага угловой сетки привязки манипулятора."""
+        if self.viewport_controller is None or self.viewport_controller.transform_gizmo is None:
+            return
+        mapping = {
+            "Выкл": 0.0,
+            "5°": 5.0,
+            "10°": 10.0,
+            "15°": 15.0,
+            "30°": 30.0,
+            "45°": 45.0,
+            "90°": 90.0,
+        }
+        angle_val = mapping.get(text, 5.0)
+        self.viewport_controller.transform_gizmo.angle_snap_step = angle_val
+
+    def _on_gizmo_mode_changed(self, mode: GizmoMode) -> None:
+        """Синхронизация кнопок панели инструментов при смене режима манипулятора."""
+        if mode == GizmoMode.TRANSLATE:
+            self.act_gizmo_translate.setChecked(True)
+        elif mode == GizmoMode.ROTATE:
+            self.act_gizmo_rotate.setChecked(True)
+        elif mode == GizmoMode.SCALE:
+            self.act_gizmo_scale.setChecked(True)
+        self.lbl_status.setText(f"Манипулятор Gizmo: режим {mode.value.upper()}")
+
+    def _on_gizmo_space_changed(self, space: GizmoSpace) -> None:
+        """Синхронизация кнопки системы координат при смене пространства манипулятора."""
+        is_local = (space == GizmoSpace.LOCAL)
+        self.act_gizmo_space.setChecked(is_local)
+        self.act_gizmo_space.setText("🌐 Локальные (Q)" if is_local else "🌐 Мировые (Q)")
+        self.lbl_status.setText(f"Манипулятор Gizmo: система координат {space.value.upper()}")
+
+    def eventFilter(self, watched: Any, event: Any) -> bool:
+        """
+        Глобальный перехват горячих клавиш W/E/R/Q манипулятора Gizmo во всех дочерних виджетах
+        (включая дерево сцены и вьюпорт), кроме текстовых полей ввода.
+        """
+        if event is not None and event.type() == QEvent.Type.KeyPress:
+            focus_widget = QApplication.focusWidget()
+            if isinstance(watched, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)) or \
+               isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)):
+                return super().eventFilter(watched, event)
+
+            key = event.key()
+            text_char = event.text().strip().upper()
+            if key == Qt.Key.Key_W or text_char in ('W', 'Ц'):
+                self._set_gizmo_mode(GizmoMode.TRANSLATE)
+                return True
+            elif key == Qt.Key.Key_E or text_char in ('E', 'У'):
+                self._set_gizmo_mode(GizmoMode.ROTATE)
+                return True
+            elif key == Qt.Key.Key_R or text_char in ('R', 'К'):
+                self._set_gizmo_mode(GizmoMode.SCALE)
+                return True
+            elif key == Qt.Key.Key_Q or text_char in ('Q', 'Й'):
+                self._toggle_gizmo_space()
+                return True
+        return super().eventFilter(watched, event)
+
+    def closeEvent(self, event: Any) -> None:
+        """Очистка глобальных фильтров событий и ресурсов при закрытии главного окна."""
+        app_inst = QApplication.instance()
+        if app_inst is not None:
+            app_inst.removeEventFilter(self)
+        super().closeEvent(event)
+
+    def keyPressEvent(self, event: Any) -> None:
+        """
+        Глобальная обработка горячих клавиш W/E/R/Q для переключения режимов 3D-манипулятора.
+        Поддерживает как сканкоды физических клавиш Qt.Key, так и текстовые символы (латиница/кириллица).
+        """
+        if self.viewport_controller is not None and self.viewport_controller.transform_gizmo is not None:
+            gizmo = self.viewport_controller.transform_gizmo
+            key_code = event.key()
+            if key_code == Qt.Key.Key_W:
+                gizmo.mode = GizmoMode.TRANSLATE
+                self.viewport.render()
+                event.accept()
+                return
+            elif key_code == Qt.Key.Key_E:
+                gizmo.mode = GizmoMode.ROTATE
+                self.viewport.render()
+                event.accept()
+                return
+            elif key_code == Qt.Key.Key_R:
+                gizmo.mode = GizmoMode.SCALE
+                self.viewport.render()
+                event.accept()
+                return
+            elif key_code == Qt.Key.Key_Q:
+                gizmo.space = GizmoSpace.WORLD if gizmo.space == GizmoSpace.LOCAL else GizmoSpace.LOCAL
+                self.viewport.render()
+                event.accept()
+                return
+
+            key_text = event.text()
+            if key_text and gizmo.handle_key_action(key_text):
+                self.viewport.render()
+                event.accept()
+                return
+        super().keyPressEvent(event)

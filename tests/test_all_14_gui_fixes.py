@@ -262,10 +262,10 @@ class TestAll14GUIFixes(unittest.TestCase):
     # 11 & 13. Модульные параметры процедуры и обработчиков данных
     def test_11_13_procedure_and_stream_settings(self):
         proc = SpectProcedureViewModel()
-        proc.views = 32
+        proc.steps = 32
         proc.stop_time = 2.5
         proc.particles_number = 10000
-        self.assertEqual(proc.views, 32)
+        self.assertEqual(proc.steps, 32)
         self.assertEqual(proc.stop_time, 2.5)
         self.assertEqual(proc.particles_number, 10000)
 

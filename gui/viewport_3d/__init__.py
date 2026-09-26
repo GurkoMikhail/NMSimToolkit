@@ -11,6 +11,12 @@ from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.viewport_3d.pet_manipulator import PETManipulator
 from gui.viewport_3d.track_renderer import TrackRenderer
 from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer
+from gui.viewport_3d.transform_gizmo import (
+    TransformGizmo,
+    GizmoMode,
+    GizmoSpace,
+    GizmoAxis,
+)
 
 __all__ = [
     'get_available_colormaps',
@@ -24,4 +30,8 @@ __all__ = [
     'SPECTManipulator',
     'PETManipulator',
     'TrackRenderer',
+    'TransformGizmo',
+    'GizmoMode',
+    'GizmoSpace',
+    'GizmoAxis',
 ]

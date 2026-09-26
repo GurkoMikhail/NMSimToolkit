@@ -10,6 +10,7 @@ from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.viewport_3d.pet_manipulator import PETManipulator
 from gui.viewport_3d.voxel_volume_renderer import VoxelVolumeRenderer
 from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer
+from gui.viewport_3d.transform_gizmo import TransformGizmo
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
@@ -64,6 +65,7 @@ class SceneViewportController(QObject):
         self.pet_manipulator = PETManipulator(self.viewport)
         self.voxel_renderer = VoxelVolumeRenderer(self.viewport)
         self.dose_renderer = DoseVolumeRenderer(self.viewport)
+        self.transform_gizmo = TransformGizmo(self.viewport)
 
         # Кэш параметров активной воксельной сетки дозы
         self._active_dose_voxel_size: float = 5.0
@@ -252,6 +254,28 @@ class SceneViewportController(QObject):
             )
             self._node_connections[node_id] = (node_vm, [conn1, conn2])
 
+    def disconnect_node(self, node_id: int) -> None:
+        """
+        Отключение сигналов отслеживаемого узла и удаление из кэша соединений.
+        """
+        if node_id in self._node_connections:
+            node_vm, conns = self._node_connections.pop(node_id)
+            for conn in conns:
+                try:
+                    conn.disconnect()
+                except Exception:
+                    pass
+
+    def disconnect_all_nodes(self) -> None:
+        """
+        Отключение сигналов всех отслеживаемых узлов сцены и деактивация манипуляторов.
+        """
+        for node_id in list(self._node_connections.keys()):
+            self.disconnect_node(node_id)
+        self._node_connections.clear()
+        if self.transform_gizmo is not None:
+            self.transform_gizmo.detach()
+
     def on_node_transform_changed(self, node_vm: NodeViewModel) -> None:
         """
         Инкрементальное обновление матрицы трансформации актора без пересоздания меша.
@@ -262,6 +286,8 @@ class SceneViewportController(QObject):
             self.viewport.update_actor_transform(self.voxel_renderer.actor_name, node_vm.global_matrix)
         elif isinstance(node_vm, PetScannerViewModel) and self.pet_manipulator is not None:
             self.viewport.update_actor_transform(self.pet_manipulator.actor_name, node_vm.global_matrix)
+        if self.transform_gizmo is not None and self.transform_gizmo.target_node is node_vm:
+            self.transform_gizmo.update_visuals()
 
     def on_node_property_changed(self, node_vm: NodeViewModel, prop_name: str, value: Any) -> None:
         """
@@ -323,8 +349,10 @@ class SceneViewportController(QObject):
         self.viewport.render()
 
     def on_node_selected(self, vm: Optional[NodeViewModel]) -> None:
-        """Синхронизация ОФЭКТ/ПЭТ-манипулятора при выборе узла в сцене."""
+        """Синхронизация ОФЭКТ/ПЭТ-манипулятора и Transform Gizmo при выборе узла в сцене."""
         if isinstance(vm, GammaCameraViewModel):
+            if self.transform_gizmo is not None:
+                self.transform_gizmo.detach()
             self.spect_manipulator.half_thickness = vm.half_thickness
             self.spect_manipulator.set_orbit_parameters(
                 vm.orbit_radius,
@@ -335,15 +363,26 @@ class SceneViewportController(QObject):
             )
             self.pet_manipulator.remove_visuals()
         elif isinstance(vm, PetScannerViewModel):
+            if self.transform_gizmo is not None:
+                self.transform_gizmo.detach()
             self.pet_manipulator.set_parameters(
                 diameter=float(vm.diameter),
                 axial_length=float(vm.axial_length),
                 num_sectors=int(vm.num_sectors),
             )
             self.spect_manipulator.remove_visuals()
+        elif vm is not None:
+            self.spect_manipulator.remove_visuals()
+            self.pet_manipulator.remove_visuals()
+            if self.transform_gizmo is not None:
+                self.transform_gizmo.set_target_node(vm)
+            self.viewport.render()
         else:
             self.spect_manipulator.remove_visuals()
             self.pet_manipulator.remove_visuals()
+            if self.transform_gizmo is not None:
+                self.transform_gizmo.detach()
+            self.viewport.render()
 
     def on_spect_manipulator_changed(self, radius: float, angle_deg: float, z_pos: float) -> None:
         """Обработка перемещения ОФЭКТ-манипулятора в 3D-пространстве."""
@@ -407,7 +446,7 @@ class SceneViewportController(QObject):
         if isinstance(procedure_vm, SpectProcedureViewModel):
             radius = float(procedure_vm.radius)
             poses = Orchestrator.compute_spect_poses(
-                views_or_protocol=procedure_vm.views,
+                views_or_protocol=procedure_vm.to_config(),
                 gamma_cameras=procedure_vm.gamma_cameras,
                 start_angle_deg=procedure_vm.start_angle,
                 end_angle_deg=procedure_vm.end_angle,
@@ -477,6 +516,8 @@ class SceneViewportController(QObject):
     def close(self) -> None:
         """Освобождение всех ресурсов и отключение подписок."""
         self.disconnect_all_nodes()
+        if self.transform_gizmo is not None:
+            self.transform_gizmo.detach()
         self.spect_manipulator.remove_visuals()
         self.pet_manipulator.remove_visuals()
         self.clear_tracks()

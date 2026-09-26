@@ -69,14 +69,14 @@ class TestGuiModularization(unittest.TestCase):
         cam_vm2 = GammaCameraViewModel(cam2)
 
         proc = SpectProcedureViewModel()
-        proc.views = 32
+        proc.steps = 32
         proc.start_angle = 15.0
         proc.angular_range = 180.0
         proc.radius = 280.0
         proc.head_angles = [0.0, 90.0]
 
         self.assertEqual(proc.procedure_type, "SPECT")
-        self.assertEqual(proc.views, 32)
+        self.assertEqual(proc.steps, 32)
         self.assertEqual(proc.start_angle, 15.0)
         self.assertEqual(proc.angular_range, 180.0)
         self.assertEqual(proc.radius, 280.0)
@@ -193,7 +193,7 @@ class TestGuiModularization(unittest.TestCase):
         """
         Тестирование сессии оркестратора: генерация задач и управление фокусом.
         """
-        proc = SpectProcedureViewModel(views=4, gamma_cameras=1)
+        proc = SpectProcedureViewModel(steps=4, gamma_cameras=1)
 
         dm = DataManagerViewModel()
         session = OrchestratorSession(

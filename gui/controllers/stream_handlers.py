@@ -1,5 +1,6 @@
 import logging
 import queue
+import time
 from multiprocessing import Queue as MpQueue
 from multiprocessing import shared_memory
 from collections.abc import Mapping
@@ -139,23 +140,23 @@ class GuiStreamDataHandler(BaseDataHandler):
         if pos_x is None or len(pos_x) == 0:
             return
 
-        n = len(pos_x)
-        limit = min(n, self.max_tracks_per_batch)
-        sub = slice(0, limit)
+        total_particles = len(pos_x)
+        batch_limit = min(total_particles, self.max_tracks_per_batch)
+        batch_slice = slice(0, batch_limit)
 
-        bx = np.asarray(pos_x)[sub]
-        by = np.asarray(pos_y)[sub]
-        bz = np.asarray(pos_z)[sub] if pos_z is not None else np.zeros_like(bx)
-        pids = np.asarray(particle_id)[sub] if particle_id is not None else None
+        batch_x = np.asarray(pos_x)[batch_slice]
+        batch_y = np.asarray(pos_y)[batch_slice]
+        batch_z = np.asarray(pos_z)[batch_slice] if pos_z is not None else np.zeros_like(batch_x)
+        particle_ids = np.asarray(particle_id)[batch_slice] if particle_id is not None else None
 
         birth_payload = {
             'type': 'tracks',
-            'pos_x': np.array(bx, copy=True),
-            'pos_y': np.array(by, copy=True),
-            'pos_z': np.array(bz, copy=True),
-            'process_id': np.full(len(bx), -2, dtype=np.int32),
-            'particle_id': np.array(pids, copy=True) if pids is not None else None,
-            'energy_deposit': np.zeros(len(bx), dtype=np.float32),
+            'pos_x': np.array(batch_x, copy=True),
+            'pos_y': np.array(batch_y, copy=True),
+            'pos_z': np.array(batch_z, copy=True),
+            'process_id': np.full(len(batch_x), -2, dtype=np.int32),
+            'particle_id': np.array(particle_ids, copy=True) if particle_ids is not None else None,
+            'energy_deposit': np.zeros(len(batch_x), dtype=np.float32),
             'detector_energy_deposit': None,
         }
         try:
@@ -354,14 +355,67 @@ class GuiStreamDataHandler(BaseDataHandler):
                 self._shm.close()
                 if self._owns_shm:
                     self._shm.unlink()
-            except Exception as e:
-                _logger.debug(f"Ошибка при закрытии SharedMemory: {e}")
+            except (OSError, ValueError) as err:
+                _logger.debug(f"Ошибка при закрытии SharedMemory: {err}")
             finally:
                 self._shm = None
                 self._projection_array = None
 
     def __del__(self) -> None:
         self.close()
+
+
+class FocusedPauseProxy:
+    """
+    Межпроцессный прокси-объект управления паузой для сфокусированного воркера.
+    Обеспечивает двухуровневую паузу (глобальная пауза пула + локальная пауза воркера)
+    и покадровый пошаговый расчет порции частиц (Particle Batch Step).
+    """
+
+    def __init__(self, global_pause_event: Any, focused_pause_event: Any, step_trigger_event: Any) -> None:
+        self.global_pause_event = global_pause_event
+        self.focused_pause_event = focused_pause_event
+        self.step_trigger_event = step_trigger_event
+        self._single_step_active: bool = False
+
+    def is_set(self) -> bool:
+        """
+        Проверка разрешения выполнения шага.
+        Если взведен триггер шага, он потребляется и возвращает True ровно на одну итерацию.
+        """
+        if self._single_step_active:
+            self._single_step_active = False
+            return True
+        if self.step_trigger_event is not None and self.step_trigger_event.is_set():
+            self.step_trigger_event.clear()
+            return True
+        global_is_active = self.global_pause_event.is_set() if self.global_pause_event is not None else True
+        focused_is_active = self.focused_pause_event.is_set() if self.focused_pause_event is not None else True
+        return bool(global_is_active and focused_is_active)
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        """
+        Ожидание снятия паузы либо взведения триггера пошагового расчета.
+        """
+        end_time = time.monotonic() + timeout if timeout is not None else None
+        while True:
+            global_is_active = self.global_pause_event.is_set() if self.global_pause_event is not None else True
+            focused_is_active = self.focused_pause_event.is_set() if self.focused_pause_event is not None else True
+            if global_is_active and focused_is_active:
+                return True
+            if self.step_trigger_event is not None and self.step_trigger_event.is_set():
+                self.step_trigger_event.clear()
+                self._single_step_active = True
+                return True
+            if end_time is not None and time.monotonic() >= end_time:
+                return False
+            time.sleep(0.01)
+
+    def set(self) -> None:
+        pass
+
+    def clear(self) -> None:
+        pass
 
 
 def create_gui_stream_handler(
@@ -372,12 +426,28 @@ def create_gui_stream_handler(
     focused_job_index: Optional[int] = None,
     focused_shm_name: Optional[str] = None,
     projection_shape: Tuple[int, int] = (128, 128),
+    global_pause_event: Optional[Any] = None,
+    focused_pause_event: Optional[Any] = None,
+    step_trigger_event: Optional[Any] = None,
 ) -> List[BaseDataHandler]:
     """
-    Фабрика для создания GuiStreamDataHandler для сфокусированного процесса.
+    Фабрика для создания GuiStreamDataHandler и настройки межпроцессного контроля паузы.
     Инжектируется из подсистемы GUI в оркестратор ядра без создания прямых связей.
     """
-    if focused_shm_name and (focused_job_index is None or task_id == focused_job_index):
+    is_focused = (focused_job_index is None or task_id == focused_job_index)
+
+    # Настройка межпроцессных событий паузы для процесса
+    if global_pause_event is not None:
+        if is_focused and focused_pause_event is not None and step_trigger_event is not None:
+            task_dict['_pause_event'] = FocusedPauseProxy(
+                global_pause_event=global_pause_event,
+                focused_pause_event=focused_pause_event,
+                step_trigger_event=step_trigger_event,
+            )
+        else:
+            task_dict['_pause_event'] = global_pause_event
+
+    if focused_shm_name and is_focused:
         def _find_detector_node(node: Any) -> Any:
             if isinstance(node, GammaCamera):
                 return node.detector
@@ -403,5 +473,6 @@ def create_gui_stream_handler(
 
 __all__ = [
     'GuiStreamDataHandler',
+    'FocusedPauseProxy',
     'create_gui_stream_handler',
 ]

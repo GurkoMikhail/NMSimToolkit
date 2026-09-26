@@ -64,9 +64,10 @@ class SimulationManager(Thread):
         particles_number: Union[int, Float] = 10**3,
         min_energy: Float = 1*units.keV,
         queue: Optional[Queue] = None,
-        buffer_capacity: int = 100000,
+        buffer_capacity: Optional[int] = None,
         name: Optional[str] = None,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        pause_event: Optional[Any] = None,
     ) -> None:
         super().__init__()
         if name is not None:
@@ -79,13 +80,14 @@ class SimulationManager(Thread):
         self.physics_buffer = PhysicsCompiler().compile_scene(scene, self.propagator.processes)
         self.stop_time = stop_time
         self.particles_number = int(particles_number)
+        effective_capacity = self.particles_number if buffer_capacity is None else max(int(buffer_capacity), self.particles_number)
         self.min_energy = min_energy
         self.queue = Queue(maxsize=64) if queue is None else queue
         self.step = 1
         self.daemon = True
 
         self.bank = ParticleBank.allocate(self.particles_number)
-        self.data_buffer = SimulationDataBuffer.allocate(buffer_capacity, buffer_capacity, buffer_capacity)
+        self.data_buffer = SimulationDataBuffer.allocate(effective_capacity, effective_capacity, effective_capacity)
         if seed is not None:
             self.propagator.rng = np.random.default_rng(seed)
             for src in self.active_sources:
@@ -96,8 +98,10 @@ class SimulationManager(Thread):
 
         self._state: SimulationState = SimulationState.IDLE
         self._stop_event = mt.Event()
-        self._pause_event = mt.Event()
-        self._pause_event.set()
+        self._is_external_pause = pause_event is not None
+        self._pause_event = pause_event if pause_event is not None else mt.Event()
+        if not self._is_external_pause:
+            self._pause_event.set()
 
         try:
             signal(SIGINT, self.sigint_handler)
@@ -127,8 +131,8 @@ class SimulationManager(Thread):
     def step_once(self) -> None:
         """Выполняет один шаг моделирования для покадрового анализа."""
         self.next_step()
-        self.flush_interactions()
         self.flush_initial_states()
+        self.flush_interactions()
         self.flush_dead_particles()
 
     def sigint_handler(self, signal, frame):
@@ -160,10 +164,18 @@ class SimulationManager(Thread):
     def flush_dead_particles(self) -> None:
         """
         Сбрасывает накопленные идентификаторы выбывших частиц в очередь телеметрии.
+        Для сохранения строгой причинно-следственной связи перед отправкой выбывших частиц
+        гарантированно сбрасываются все предшествующие начальные состояния и взаимодействия.
         """
         dead_count = self.data_buffer.dead_particles.cursor_value
         if dead_count == 0:
             return
+
+        if self.data_buffer.initial_states.cursor_value > 0:
+            self.flush_initial_states()
+
+        if self.data_buffer.interactions.cursor_value > 0:
+            self.flush_interactions()
 
         _logger.debug(f'{self.name} flushing {dead_count} dead particles')
         chunk = {
@@ -218,20 +230,20 @@ class SimulationManager(Thread):
         # Initial guess: linear approximation
         dt = Float(num_to_inject / total_act)
 
-        def f(dt):
-            return sum(src.get_activity(self.global_timer) * src._get_effective_dt(dt) for src in self.active_sources) - num_to_inject
+        def objective_func(current_dt: Float) -> float:
+            return sum(src.get_activity(self.global_timer) * src._get_effective_dt(current_dt) for src in self.active_sources) - num_to_inject
 
-        def df(dt):
-            return sum(src.get_activity(self.global_timer + dt) for src in self.active_sources)
+        def derivative_func(current_dt: Float) -> float:
+            return sum(src.get_activity(self.global_timer + current_dt) for src in self.active_sources)
 
         # Newton-Raphson
         for _ in range(self.MAX_NEWTON_ITERATIONS):
-            f_val = f(dt)
-            df_val = df(dt)
-            if df_val == 0:
+            func_val = objective_func(dt)
+            deriv_val = derivative_func(dt)
+            if deriv_val == 0:
                 break
-            dt = dt - Float(f_val / df_val)
-            if abs(f_val) < self.NEWTON_TARGET_PRECISION:
+            dt = dt - Float(func_val / deriv_val)
+            if abs(func_val) < self.NEWTON_TARGET_PRECISION:
                 break
 
         dt = max(dt, self.MIN_TIME_STEP)
@@ -252,9 +264,9 @@ class SimulationManager(Thread):
             for i in range(int(shortfall)):
                 quotas[indices[i % len(indices)]] += 1
 
-        for src, n in zip(self.active_sources, quotas):
-            if n > 0:
-                src.inject(self.bank, n, self.global_timer, target_time)
+        for source_obj, quota_count in zip(self.active_sources, quotas):
+            if quota_count > 0:
+                source_obj.inject(self.bank, quota_count, self.global_timer, target_time)
 
     def _replenish_bank(self):
         num_active = np.count_nonzero(self.bank.state.is_active)
@@ -296,14 +308,6 @@ class SimulationManager(Thread):
 
         # Invalidation
         dead_indices = self._apply_invalidators(active_indices)
-
-        # Сброс накопленных начальных состояний и взаимодействий до обработки выбывших частиц
-        # для обеспечения строгой хронологической последовательности телеметрии треков
-        if self.data_buffer.initial_states.cursor_value > 0:
-            self.flush_initial_states()
-
-        if self.data_buffer.interactions.cursor_value > 0:
-            self.flush_interactions()
 
         if dead_indices.size > 0:
             self._collect_escaped_particles(dead_indices)
@@ -373,7 +377,8 @@ class SimulationManager(Thread):
         _logger.warning(f'{self.name} started from {timedelta(seconds=self.global_timer/units.second)} to {timedelta(seconds=self.stop_time/units.second)}')
         start_timepoint = datetime.now()
         self._state = SimulationState.RUNNING
-        self._pause_event.set()
+        if not self._is_external_pause:
+            self._pause_event.set()
         self._stop_event.clear()
 
         while (np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.global_timer < self.stop_time)) and not self._stop_event.is_set():

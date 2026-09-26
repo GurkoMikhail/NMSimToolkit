@@ -95,6 +95,41 @@ class TestStage2ViewModels(unittest.TestCase):
         self.assertEqual(len(scene_vm.root_vm.children), 1)
         self.assertNotIn(child2_core, root.childs)
 
+    def test_spect_procedure_steps_and_total_projections(self):
+        """Проверка полей steps, total_projections и синхронизации с конфигурацией."""
+        from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel, procedure_from_config
+        from core.config.models import SpectProtocolConfig
+
+        proc = SpectProcedureViewModel()
+        self.assertEqual(proc.steps, 32)
+        self.assertEqual(proc.gamma_cameras, 2)
+        self.assertEqual(proc.total_projections, 64)
+        with self.assertRaises(AttributeError):
+            _ = proc.views
+
+        # Изменение steps
+        proc.steps = 16
+        self.assertEqual(proc.steps, 16)
+        self.assertEqual(proc.total_projections, 32)
+
+        # Изменение gamma_cameras
+        proc.gamma_cameras = 4
+        self.assertEqual(proc.steps, 16)
+        self.assertEqual(proc.total_projections, 64)
+
+        # Конвертация в SpectProtocolConfig
+        cfg = proc.to_config()
+        self.assertIsInstance(cfg, SpectProtocolConfig)
+        self.assertEqual(cfg.views, 64)
+        self.assertEqual(cfg.gamma_cameras, 4)
+
+        # Восстановление из SpectProtocolConfig
+        loaded_vm = procedure_from_config(cfg)
+        self.assertIsInstance(loaded_vm, SpectProcedureViewModel)
+        self.assertEqual(loaded_vm.steps, 16)
+        self.assertEqual(loaded_vm.gamma_cameras, 4)
+        self.assertEqual(loaded_vm.total_projections, 64)
+
 
 if __name__ == '__main__':
     unittest.main()

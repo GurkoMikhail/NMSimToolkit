@@ -15,7 +15,12 @@ from core.config.orchestrator import Orchestrator
 from gui.controllers.ipc_receiver import IPCReceiver
 from gui.controllers.stream_handlers import create_gui_stream_handler
 from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
-from gui.viewmodels.procedure_viewmodel import BaseProcedureViewModel, SpectProcedureViewModel, CustomSweepProcedureViewModel
+from gui.viewmodels.procedure_viewmodel import (
+    BaseProcedureViewModel,
+    SpectProcedureViewModel,
+    PetProcedureViewModel,
+    CustomSweepProcedureViewModel,
+)
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
 
@@ -38,6 +43,9 @@ class _OrchestratorWorkerThread(QThread):
         focused_job_index: Optional[int],
         focused_shm_name: Optional[str],
         projection_shape: Tuple[int, int],
+        global_pause_event: Optional[Any] = None,
+        focused_pause_event: Optional[Any] = None,
+        step_trigger_event: Optional[Any] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -46,6 +54,9 @@ class _OrchestratorWorkerThread(QThread):
         self.focused_job_index = focused_job_index
         self.focused_shm_name = focused_shm_name
         self.projection_shape = projection_shape
+        self.global_pause_event = global_pause_event
+        self.focused_pause_event = focused_pause_event
+        self.step_trigger_event = step_trigger_event
 
     def run(self) -> None:
         try:
@@ -57,6 +68,9 @@ class _OrchestratorWorkerThread(QThread):
                     self.focused_job_index,
                     self.focused_shm_name,
                     self.projection_shape,
+                    self.global_pause_event,
+                    self.focused_pause_event,
+                    self.step_trigger_event,
                 ),
             )
             self.completed.emit(results)
@@ -84,6 +98,9 @@ class OrchestratorSession(QObject):
     job_progress = Signal(int, float, int, float)  # task_id, progress, counts, cps
     job_finished = Signal(int)
 
+    focused_worker_paused = Signal(int)
+    focused_worker_resumed = Signal(int)
+
     tracks_received = Signal(dict)
     projection_received = Signal(object)
     projection_stack_updated = Signal(object, int, int, float)
@@ -98,7 +115,7 @@ class OrchestratorSession(QObject):
         data_manager_vm: Optional[DataManagerViewModel] = None,
         pool_size: int = 1,
         particles_number: int = 5000,
-        stop_time: float = 1.0,
+        stop_time: Optional[float] = None,
         min_energy: float = 1.0,
         shm_name: str = "nmsim_gui_proj_shm",
         projection_shape: Tuple[int, int] = (128, 128),
@@ -108,10 +125,11 @@ class OrchestratorSession(QObject):
         super().__init__(parent)
         self.scene_vm = scene_vm
         self.procedure_vm = procedure_vm or SpectProcedureViewModel()
+        if stop_time is not None:
+            self.stop_time = float(stop_time)
         self.data_manager_vm = data_manager_vm or DataManagerViewModel()
         self.pool_size = max(1, int(pool_size))
         self.particles_number = int(particles_number)
-        self.stop_time = float(stop_time)
         self.min_energy = float(min_energy)
         self.shm_name = shm_name
         self.projection_shape = projection_shape
@@ -120,12 +138,17 @@ class OrchestratorSession(QObject):
         self._jobs: List[Dict[str, Any]] = []
         self._is_running: bool = False
         self._is_paused: bool = False
+        self._is_focused_paused: bool = False
 
         self._worker_thread: Optional[_OrchestratorWorkerThread] = None
         self._ipc_receiver: Optional[IPCReceiver] = None
         self._mp_manager: Optional[Any] = None
         self._telemetry_queue: Optional[Any] = None
         self._shm: Optional[shared_memory.SharedMemory] = None
+
+        self._global_pause_event: Optional[Any] = None
+        self._focused_pause_event: Optional[Any] = None
+        self._step_trigger_event: Optional[Any] = None
 
     @property
     def is_running(self) -> bool:
@@ -134,6 +157,45 @@ class OrchestratorSession(QObject):
     @property
     def is_paused(self) -> bool:
         return self._is_paused
+
+    @property
+    def is_focused_paused(self) -> bool:
+        return self._is_focused_paused
+
+    @property
+    def is_focused_worker_paused(self) -> bool:
+        return self._is_focused_paused
+
+    @property
+    def stop_time(self) -> float:
+        """Время экспозиции/моделирования, определяемое активной процедурой (SSOT)."""
+        if isinstance(self.procedure_vm, SpectProcedureViewModel):
+            return float(self.procedure_vm.time_per_view)
+        elif isinstance(self.procedure_vm, PetProcedureViewModel):
+            return float(self.procedure_vm.time_per_frame)
+        return 1.0
+
+    @stop_time.setter
+    def stop_time(self, new_stop_time: float) -> None:
+        """Синхронизация времени с активной моделью процедуры."""
+        validated_time = max(0.001, float(new_stop_time))
+        if isinstance(self.procedure_vm, SpectProcedureViewModel):
+            self.procedure_vm.time_per_view = validated_time
+        elif isinstance(self.procedure_vm, PetProcedureViewModel):
+            self.procedure_vm.time_per_frame = validated_time
+
+    def _get_stop_time_cfg(self) -> Any:
+        """Вычисляет конфигурацию времени остановки для экспортера ядра."""
+        if isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
+            all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
+            if "stop_time" in all_sweep_vars:
+                return "${stop_time} s"
+            return 1.0 * units.s
+        elif isinstance(self.procedure_vm, SpectProcedureViewModel):
+            return float(self.procedure_vm.time_per_view) * units.s
+        elif isinstance(self.procedure_vm, PetProcedureViewModel):
+            return float(self.procedure_vm.time_per_frame) * units.s
+        return 1.0 * units.s
 
     @property
     def jobs(self) -> List[Dict[str, Any]]:
@@ -173,8 +235,8 @@ class OrchestratorSession(QObject):
         pass
 
     def step_once(self) -> None:
-        """Выполнение одного расчетного шага (для пошаговой отладки)."""
-        pass
+        """Выполнение одного расчетного шага сфокусированным воркером."""
+        self.step_focused_worker()
 
     def generate_jobs(self) -> List[Dict[str, Any]]:
         """
@@ -191,15 +253,11 @@ class OrchestratorSession(QObject):
         # Сборка базовой конфигурации
         root_core = self.scene_vm.root_vm.core_node
         start_time_cfg: Any = 0.0 * units.ns
-        stop_time_cfg: Any = self.stop_time * units.s
+        stop_time_cfg: Any = self._get_stop_time_cfg()
         if isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
             all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
             if "start_time" in all_sweep_vars:
                 start_time_cfg = "${start_time} s"
-            if "stop_time" in all_sweep_vars:
-                stop_time_cfg = "${stop_time} s"
-        elif isinstance(self.procedure_vm, SpectProcedureViewModel):
-            stop_time_cfg = self.procedure_vm.time_per_view * units.s
 
         sim_mgr_cfg = SimulationManagerConfig(
             particles_number=self.particles_number,
@@ -249,15 +307,11 @@ class OrchestratorSession(QObject):
             return
 
         start_time_cfg: Any = 0.0 * units.ns
-        stop_time_cfg: Any = self.stop_time * units.s
+        stop_time_cfg: Any = self._get_stop_time_cfg()
         if isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
             all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
             if "start_time" in all_sweep_vars:
                 start_time_cfg = "${start_time} s"
-            if "stop_time" in all_sweep_vars:
-                stop_time_cfg = "${stop_time} s"
-        elif isinstance(self.procedure_vm, SpectProcedureViewModel):
-            stop_time_cfg = self.procedure_vm.time_per_view * units.s
 
         sim_mgr_cfg = SimulationManagerConfig(
             particles_number=self.particles_number,
@@ -291,6 +345,12 @@ class OrchestratorSession(QObject):
 
         self._mp_manager = Manager()
         self._telemetry_queue = self._mp_manager.Queue()
+        self._global_pause_event = self._mp_manager.Event()
+        self._global_pause_event.set()
+        self._focused_pause_event = self._mp_manager.Event()
+        self._focused_pause_event.set()
+        self._step_trigger_event = self._mp_manager.Event()
+        self._step_trigger_event.clear()
 
         # 3. Запуск приемника телеметрии IPCReceiver
         self._ipc_receiver = IPCReceiver(
@@ -317,6 +377,9 @@ class OrchestratorSession(QObject):
             focused_job_index=self.focused_job_index,
             focused_shm_name=self.shm_name,
             projection_shape=self.projection_shape,
+            global_pause_event=self._global_pause_event,
+            focused_pause_event=self._focused_pause_event,
+            step_trigger_event=self._step_trigger_event,
             parent=self,
         )
         self._worker_thread.completed.connect(self._on_worker_completed)
@@ -324,6 +387,7 @@ class OrchestratorSession(QObject):
 
         self._is_running = True
         self._is_paused = False
+        self._is_focused_paused = False
         self._worker_thread.start()
         self.session_started.emit()
 
@@ -357,20 +421,56 @@ class OrchestratorSession(QObject):
         self.session_error.emit(error_msg)
 
     def pause(self) -> None:
+        """Приостановка всего пула процессов."""
+        self.pause_all()
+
+    def pause_all(self) -> None:
+        """Глобальная приостановка всех воркеров пула."""
         if self._is_running and not self._is_paused:
             self._is_paused = True
+            if self._global_pause_event is not None:
+                self._global_pause_event.clear()
             self.session_paused.emit()
 
     def resume(self) -> None:
+        """Возобновление работы пула процессов."""
+        self.resume_all()
+
+    def resume_all(self) -> None:
+        """Глобальное возобновление работы всех воркеров пула."""
         if self._is_running and self._is_paused:
             self._is_paused = False
+            if self._global_pause_event is not None:
+                self._global_pause_event.set()
             self.session_resumed.emit()
+
+    def pause_focused_worker(self) -> None:
+        """Локальная приостановка сфокусированного процесса для покадрового анализа."""
+        if self._is_running and not self._is_focused_paused:
+            self._is_focused_paused = True
+            if self._focused_pause_event is not None:
+                self._focused_pause_event.clear()
+            self.focused_worker_paused.emit(self.focused_job_index)
+
+    def resume_focused_worker(self) -> None:
+        """Возобновление работы сфокусированного процесса."""
+        if self._is_running and self._is_focused_paused:
+            self._is_focused_paused = False
+            if self._focused_pause_event is not None:
+                self._focused_pause_event.set()
+            self.focused_worker_resumed.emit(self.focused_job_index)
+
+    def step_focused_worker(self) -> None:
+        """Выполнение одного дискретного расчетного шага пачки частиц сфокусированным воркером."""
+        if self._is_running and self._step_trigger_event is not None:
+            self._step_trigger_event.set()
 
     def stop(self) -> None:
         """Остановка всех процессов оркестратора и освобождение ресурсов."""
         was_running = self._is_running
         self._is_running = False
         self._is_paused = False
+        self._is_focused_paused = False
 
         if self._worker_thread is not None and self._worker_thread.isRunning():
             self._worker_thread.terminate()
@@ -405,6 +505,9 @@ class OrchestratorSession(QObject):
                 pass
             self._mp_manager = None
         self._telemetry_queue = None
+        self._global_pause_event = None
+        self._focused_pause_event = None
+        self._step_trigger_event = None
 
     def close(self) -> None:
         self.stop()

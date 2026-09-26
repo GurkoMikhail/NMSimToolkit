@@ -53,42 +53,56 @@ class TestArchitecturalReviewFixes(unittest.TestCase):
     def test_gui_simulation_settings_validation_and_update(self) -> None:
         """Проверка строгой валидации диапазонов Pydantic и метода update()."""
         settings = GuiSimulationSettings()
-        self.assertEqual(settings.views_number, 1)
-        self.assertEqual(settings.stop_time, 1.0)
-        self.assertEqual(settings.dose_voxel_size, 5.0)
+        self.assertEqual(settings.particles_number, 5000)
+        self.assertEqual(settings.min_energy, 1.0)
+        self.assertEqual(settings.grid_snap_step, 10.0)
+        self.assertEqual(settings.angle_snap_step, 15.0)
+        self.assertEqual(settings.scale_snap_step, 1.0)
 
         # Успешное обновление
         settings.update({
-            'views_number': 64,
-            'stop_time': 10.0,
-            'dose_voxel_size': 2.5,
+            'particles_number': 10000,
             'pool_size': 4,
+            'grid_snap_step': 20.0,
+            'angle_snap_step': 15.0,
+            'scale_snap_step': 0.2,
         })
-        self.assertEqual(settings.views_number, 64)
-        self.assertEqual(settings.stop_time, 10.0)
-        self.assertEqual(settings.dose_voxel_size, 2.5)
+        self.assertEqual(settings.particles_number, 10000)
         self.assertEqual(settings.pool_size, 4)
+        self.assertEqual(settings.grid_snap_step, 20.0)
+        self.assertEqual(settings.angle_snap_step, 15.0)
+        self.assertEqual(settings.scale_snap_step, 0.2)
 
         # Ошибки валидации инвариантов
         with self.assertRaises(ValidationError):
-            settings.views_number = 0  # ge=1
+            settings.particles_number = 0  # ge=1
 
         with self.assertRaises(ValidationError):
-            settings.stop_time = -1.0  # gt=0.0
+            settings.min_energy = -1.0  # ge=0.0
 
         with self.assertRaises(ValidationError):
-            settings.dose_voxel_size = 0.0  # gt=0.0
+            settings.pool_size = 0  # ge=1
 
         with self.assertRaises(ValidationError):
-            settings.angular_range = 720.0  # le=360.0
+            settings.grid_snap_step = -5.0  # ge=0.0
 
         # Словарный интерфейс (маппинг)
-        self.assertEqual(settings['views_number'], 64)
-        self.assertEqual(settings.get('stop_time'), 10.0)
+        self.assertEqual(settings['grid_snap_step'], 20.0)
+        self.assertEqual(settings.get('angle_snap_step'), 15.0)
         self.assertEqual(settings.get('unknown_key', 'def'), 'def')
         self.assertIn('particles_number', settings.to_dict())
 
         # Строгая валидация update() (LBYL / fail-fast)
+        # Проверка, что удаленные поля (views_number, stop_time, dose_voxel_size) теперь вызывают KeyError
+        with self.assertRaises(KeyError):
+            settings.update({'views_number': 64})
+
+        with self.assertRaises(KeyError):
+            settings.update({'stop_time': 10.0})
+
+        with self.assertRaises(KeyError):
+            settings.update({'dose_voxel_size': 2.5})
+
         with self.assertRaises(KeyError):
             settings.update({'completely_unknown_key': 123})
 
@@ -97,15 +111,15 @@ class TestArchitecturalReviewFixes(unittest.TestCase):
 
     def test_simulation_settings_dialog_with_gui_settings(self) -> None:
         """Проверка передачи GuiSimulationSettings в SimulationSettingsDialog без TypeError."""
-        settings = GuiSimulationSettings(particles_number=12345, stop_time=7.5)
+        settings = GuiSimulationSettings(particles_number=12345, grid_snap_step=25.0)
         dialog = SimulationSettingsDialog(settings)
         self.assertEqual(dialog.spin_particles.value(), 12345)
-        self.assertAlmostEqual(dialog.spin_stop_time.value(), 7.5)
+        self.assertAlmostEqual(dialog.spin_grid_snap.value(), 25.0)
 
         ret = dialog.get_settings()
         self.assertIsInstance(ret, GuiSimulationSettings)
         self.assertEqual(ret.particles_number, 12345)
-        self.assertAlmostEqual(ret.stop_time, 7.5)
+        self.assertAlmostEqual(ret.grid_snap_step, 25.0)
 
         # Проверка отказа от legacy dict
         with self.assertRaises(TypeError):
@@ -205,7 +219,7 @@ class TestArchitecturalReviewFixes(unittest.TestCase):
         self.viewport_ctrl.sync_viewport_scene()
 
         proc = SpectProcedureViewModel()
-        proc.views = 16
+        proc.steps = 8
         proc.start_angle = 0.0
         proc.end_angle = 360.0
         proc.gamma_cameras = 2
@@ -224,6 +238,7 @@ class TestArchitecturalReviewFixes(unittest.TestCase):
         self.scene_vm.load_scene(self.root)
         self.viewport_ctrl.sync_viewport_scene()
 
+        proc.steps = 4
         proc.gamma_cameras = 4
         proc.head_angles = [0.0, 90.0, 180.0, 270.0]
 

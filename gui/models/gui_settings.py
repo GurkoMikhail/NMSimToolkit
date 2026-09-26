@@ -10,19 +10,15 @@ class GuiSimulationSettings(BaseModel):
     """
     model_config = ConfigDict(validate_assignment=True)
 
-    views_number: int = Field(default=1, ge=1, description="Количество ракурсов ОФЭКТ")
-    stop_time: float = Field(default=1.0, gt=0.0, description="Время моделирования (с)")
-    angular_range: float = Field(default=360.0, gt=0.0, le=360.0, description="Угловой диапазон вращения (град)")
     particles_number: int = Field(default=5000, ge=1, description="Число частиц на задачу")
     pool_size: int = Field(default=1, ge=1, description="Размер пула параллельных процессов")
     min_energy: float = Field(default=1.0, ge=0.0, description="Порог энергии частиц (кэВ)")
-    buffer_capacity: int = Field(default=10000, ge=100, description="Емкость буфера частиц")
     max_tracks_per_batch: int = Field(default=2000, ge=1, description="Максимум треков в пачке")
     max_tracks_points: int = Field(default=50000, ge=1, description="Максимум точек треков")
     render_as_lines: bool = Field(default=True, description="Отрисовка треков линиями")
-    show_escaped_tracks: bool = Field(default=False, description="Отображение вылетевших треков")
-    dose_accumulation_enabled: bool = Field(default=True, description="Включение накопления дозы")
-    dose_voxel_size: float = Field(default=5.0, gt=0.0, description="Размер вокселя дозы (мм)")
+    grid_snap_step: float = Field(default=10.0, gt=0.0, description="Шаг сетки перемещения Gizmo (мм)")
+    angle_snap_step: float = Field(default=15.0, gt=0.0, description="Шаг угловой привязки Gizmo (град)")
+    scale_snap_step: float = Field(default=1.0, gt=0.0, description="Шаг привязки масштаба Gizmo (мм)")
 
     def update(self, new_settings: Any) -> None:
         """
@@ -32,32 +28,24 @@ class GuiSimulationSettings(BaseModel):
             raise TypeError(f"Ожидался GuiSimulationSettings или dict, получено {type(new_settings).__name__}")
         source_data = new_settings.to_dict() if isinstance(new_settings, GuiSimulationSettings) else new_settings
         for param_key, param_value in source_data.items():
-            if param_key == 'views_number':
-                self.views_number = int(param_value)
-            elif param_key == 'stop_time':
-                self.stop_time = float(param_value)
-            elif param_key == 'angular_range':
-                self.angular_range = float(param_value)
-            elif param_key == 'particles_number':
+            if param_key == 'particles_number':
                 self.particles_number = int(param_value)
             elif param_key == 'pool_size':
                 self.pool_size = int(param_value)
             elif param_key == 'min_energy':
                 self.min_energy = float(param_value)
-            elif param_key == 'buffer_capacity':
-                self.buffer_capacity = int(param_value)
             elif param_key == 'max_tracks_per_batch':
                 self.max_tracks_per_batch = int(param_value)
             elif param_key == 'max_tracks_points':
                 self.max_tracks_points = int(param_value)
             elif param_key == 'render_as_lines':
                 self.render_as_lines = bool(param_value)
-            elif param_key == 'show_escaped_tracks':
-                self.show_escaped_tracks = bool(param_value)
-            elif param_key == 'dose_accumulation_enabled':
-                self.dose_accumulation_enabled = bool(param_value)
-            elif param_key == 'dose_voxel_size':
-                self.dose_voxel_size = float(param_value)
+            elif param_key == 'grid_snap_step':
+                self.grid_snap_step = float(param_value)
+            elif param_key == 'angle_snap_step':
+                self.angle_snap_step = float(param_value)
+            elif param_key == 'scale_snap_step':
+                self.scale_snap_step = float(param_value)
             else:
                 raise KeyError(f"Неизвестный параметр конфигурации: {param_key}")
 
@@ -90,3 +78,12 @@ class GuiSimulationSettings(BaseModel):
 
     def values(self):
         return self.model_dump().values()
+
+
+# Псевдоним модели для явного отражения ее доменной зоны ответственности
+ExecutionAndRenderSettings = GuiSimulationSettings
+
+__all__ = [
+    'GuiSimulationSettings',
+    'ExecutionAndRenderSettings',
+]

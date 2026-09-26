@@ -134,5 +134,69 @@ class TestStage1Core(unittest.TestCase):
                 os.remove(tmp_path)
 
 
+    def test_simulation_manager_buffer_capacity_invariant(self):
+        """Проверка инварианта: buffer_capacity тихо поднимается до particles_number при передаче меньшего значения."""
+        scene = CompositeNode()
+        # buffer_capacity < particles_number: тихий clamp, исключения нет
+        mgr_clamped = SimulationManager(scene=scene, particles_number=5000, buffer_capacity=1000)
+        self.assertEqual(mgr_clamped.data_buffer.interactions.capacity, 5000)
+
+        # buffer_capacity >= particles_number: значение сохраняется как есть
+        mgr = SimulationManager(scene=scene, particles_number=5000, buffer_capacity=5000)
+        self.assertEqual(mgr.data_buffer.interactions.capacity, 5000)
+
+        # При buffer_capacity=None ёмкость автоматически равна particles_number
+        mgr_auto = SimulationManager(scene=scene, particles_number=150000, buffer_capacity=None)
+        self.assertEqual(mgr_auto.data_buffer.interactions.capacity, 150000)
+
+    def test_causal_flush_ordering(self):
+        """Проверка причинно-следственного порядка сброса: initial_states -> interactions -> dead_particles."""
+        scene = CompositeNode()
+        received_chunks = []
+        test_queue = queue.Queue()
+        mgr = SimulationManager(scene=scene, particles_number=10, buffer_capacity=10, queue=test_queue)
+
+        # Имитируем накопление данных во всех трех буферах
+        mgr.data_buffer.initial_states.particle_ID[0] = 1
+        mgr.data_buffer.initial_states.emission_time[0] = 0.0
+        mgr.data_buffer.initial_states.emission_energy[0] = 140.0
+        mgr.data_buffer.initial_states.emission_position.x[0] = 0.0
+        mgr.data_buffer.initial_states.emission_position.y[0] = 0.0
+        mgr.data_buffer.initial_states.emission_position.z[0] = 0.0
+        mgr.data_buffer.initial_states.emission_direction.x[0] = 0.0
+        mgr.data_buffer.initial_states.emission_direction.y[0] = 0.0
+        mgr.data_buffer.initial_states.emission_direction.z[0] = 1.0
+        mgr.data_buffer.initial_states.cursor[0] = 1
+
+        mgr.data_buffer.interactions.process_id[0] = 1
+        mgr.data_buffer.interactions.volume_id[0] = 0
+        mgr.data_buffer.interactions.material_id[0] = 1
+        mgr.data_buffer.interactions.particle_ID[0] = 1
+        mgr.data_buffer.interactions.energy_deposit[0] = 20.0
+        mgr.data_buffer.interactions.scattering_theta[0] = 0.1
+        mgr.data_buffer.interactions.scattering_phi[0] = 0.2
+        mgr.data_buffer.interactions.distance_traveled[0] = 5.0
+        mgr.data_buffer.interactions.species[0] = 0
+        mgr.data_buffer.interactions.Z[0] = 7.4
+        mgr.data_buffer.interactions.position.x[0] = 0.0
+        mgr.data_buffer.interactions.position.y[0] = 0.0
+        mgr.data_buffer.interactions.position.z[0] = 5.0
+        mgr.data_buffer.interactions.direction.x[0] = 0.0
+        mgr.data_buffer.interactions.direction.y[0] = 0.0
+        mgr.data_buffer.interactions.direction.z[0] = 1.0
+        mgr.data_buffer.interactions.cursor[0] = 1
+
+        mgr.data_buffer.dead_particles.append(np.array([1], dtype=np.int32))
+
+        # Вызов flush_dead_particles должен сначала сбросить initial_states и interactions
+        mgr.flush_dead_particles()
+
+        while not test_queue.empty():
+            received_chunks.append(test_queue.get())
+
+        chunk_types = [c['type'] for c in received_chunks if isinstance(c, dict)]
+        self.assertEqual(chunk_types, ['initial_states', 'interactions', 'dead_particles'])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -182,6 +182,28 @@ class SimulationJobsWidget(QDockWidget):
                 self._progress_bars[task_id].setValue(100)
         self._update_status_counts()
 
+    def on_job_paused(self, task_id: int, is_local: bool = False) -> None:
+        """Оповещение о приостановке выполнения задачи (глобальной или локальной)."""
+        if 0 <= task_id < self.table.rowCount():
+            item = self.table.item(task_id, 3)
+            if item is not None:
+                if is_local:
+                    item.setText("Пауза (Локально)")
+                    item.setForeground(Qt.darkYellow)
+                else:
+                    item.setText("Пауза")
+                    item.setForeground(Qt.yellow)
+        self._update_status_counts()
+
+    def on_job_resumed(self, task_id: int) -> None:
+        """Оповещение о возобновлении выполнения задачи."""
+        if 0 <= task_id < self.table.rowCount():
+            item = self.table.item(task_id, 3)
+            if item is not None:
+                item.setText("Выполняется")
+                item.setForeground(Qt.yellow)
+        self._update_status_counts()
+
     def on_job_error(self, task_id: int, error_text: str) -> None:
         """Оповещение об ошибке задачи."""
         if 0 <= task_id < self.table.rowCount():
@@ -199,6 +221,7 @@ class SimulationJobsWidget(QDockWidget):
 
         queued = 0
         running = 0
+        paused = 0
         done = 0
         err = 0
 
@@ -207,6 +230,8 @@ class SimulationJobsWidget(QDockWidget):
             text = item.text() if item is not None else ""
             if text == "Выполняется":
                 running += 1
+            elif "Пауза" in text:
+                paused += 1
             elif text == "Завершено":
                 done += 1
             elif text == "Ошибка":
@@ -214,4 +239,10 @@ class SimulationJobsWidget(QDockWidget):
             else:
                 queued += 1
 
-        self.lbl_status.setText(f"Всего задач: {total} | В очереди: {queued} | Выполняется: {running} | Завершено: {done}" + (f" | Ошибок: {err}" if err > 0 else ""))
+        status_text = f"Всего задач: {total} | В очереди: {queued} | Выполняется: {running}"
+        if paused > 0:
+            status_text += f" | На паузе: {paused}"
+        status_text += f" | Завершено: {done}"
+        if err > 0:
+            status_text += f" | Ошибок: {err}"
+        self.lbl_status.setText(status_text)

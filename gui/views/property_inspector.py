@@ -56,12 +56,20 @@ class PropertyInspector(QWidget):
         self.current_vm: Optional[NodeViewModel] = None
         self.scene_vm: Optional[SceneViewModel] = None
         self._is_updating_ui: bool = False
+        self._min_buffer_capacity: int = 1
 
         self._init_ui()
 
     def set_scene_viewmodel(self, scene_vm: Optional[SceneViewModel]) -> None:
         """Привязка модели сцены для доступа к узлам (например, DoseGridNode)."""
         self.scene_vm = scene_vm
+
+    def set_min_buffer_capacity(self, min_capacity: int) -> None:
+        """Устанавливает нижнюю границу емкости буфера данных (не менее числа частиц)."""
+        self._min_buffer_capacity = max(1, int(min_capacity))
+        self.spin_dm_buffer.setMinimum(self._min_buffer_capacity)
+        if self.spin_dm_buffer.value() < self._min_buffer_capacity:
+            self.spin_dm_buffer.setValue(self._min_buffer_capacity)
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -419,11 +427,15 @@ class PropertyInspector(QWidget):
         self.lbl_proc_type = QLabel("ОФЭКТ (SPECT)")
         proc_form.addRow("Тип протокола:", self.lbl_proc_type)
 
-        self.spin_proc_views = QSpinBox()
-        self.spin_proc_views.setRange(1, 1024)
-        self.spin_proc_views.setValue(32)
-        self.spin_proc_views.valueChanged.connect(self._on_proc_views_changed)
-        proc_form.addRow("Число ракурсов (views):", self.spin_proc_views)
+        self.spin_proc_steps = QSpinBox()
+        self.spin_proc_steps.setRange(1, 1024)
+        self.spin_proc_steps.setValue(32)
+        self.spin_proc_steps.valueChanged.connect(self._on_proc_steps_changed)
+        proc_form.addRow("Число шагов (Steps):", self.spin_proc_steps)
+
+        self.lbl_proc_total_views = QLabel("64")
+        self.lbl_proc_total_views.setStyleSheet("color: #a0c0ff; font-weight: bold;")
+        proc_form.addRow("Всего проекций (Total Views):", self.lbl_proc_total_views)
 
         self.spin_proc_cameras = QSpinBox()
         self.spin_proc_cameras.setRange(1, 16)
@@ -515,9 +527,9 @@ class PropertyInspector(QWidget):
         dm_form.addRow("Файл HDF5:", fn_layout)
 
         self.spin_dm_buffer = QSpinBox()
-        self.spin_dm_buffer.setRange(1000, 100_000_000)
-        self.spin_dm_buffer.setSingleStep(50000)
-        self.spin_dm_buffer.setValue(1_000_000)
+        self.spin_dm_buffer.setRange(1, 2_147_483_647)
+        self.spin_dm_buffer.setSingleStep(1)
+        self.spin_dm_buffer.setValue(1)
         self.spin_dm_buffer.valueChanged.connect(self._on_dm_buffer_changed)
         dm_form.addRow("Емкость буфера (частиц):", self.spin_dm_buffer)
 
@@ -1165,8 +1177,9 @@ class PropertyInspector(QWidget):
         vm = self.current_vm
         if isinstance(vm, SpectProcedureViewModel):
             self.lbl_proc_type.setText("ОФЭКТ (SPECT)")
-            self.spin_proc_views.setValue(int(vm.views))
+            self.spin_proc_steps.setValue(int(vm.steps))
             self.spin_proc_cameras.setValue(int(vm.gamma_cameras))
+            self.lbl_proc_total_views.setText(str(vm.total_projections))
             self.spin_proc_radius.setValue(float(vm.radius))
             self.spin_proc_time.setValue(float(vm.time_per_view))
             self.spin_proc_start_angle.setValue(float(vm.start_angle))
@@ -1178,8 +1191,9 @@ class PropertyInspector(QWidget):
             self.chk_proc_endpoint.setChecked(bool(vm.endpoint))
         elif isinstance(vm, PetProcedureViewModel):
             self.lbl_proc_type.setText("ПЭТ (PET)")
-            self.spin_proc_views.setValue(1)
+            self.spin_proc_steps.setValue(1)
             self.spin_proc_cameras.setValue(int(vm.detector_heads))
+            self.lbl_proc_total_views.setText(str(vm.detector_heads))
             self.spin_proc_radius.setValue(float(vm.ring_radius))
             self.spin_proc_time.setValue(float(vm.time_per_frame))
         elif isinstance(vm, BaseProcedureViewModel):
@@ -1221,18 +1235,26 @@ class PropertyInspector(QWidget):
         vm = self.current_vm
         if isinstance(vm, DataManagerViewModel):
             self.txt_dm_filename.setText(vm.filename)
+            effective_min = max(self._min_buffer_capacity, vm.min_buffer_capacity)
+            self.spin_dm_buffer.setMinimum(effective_min)
+            if vm.buffer_capacity < effective_min:
+                vm.buffer_capacity = effective_min
             self.spin_dm_buffer.setValue(int(vm.buffer_capacity))
 
     # Специфичные слоты для процедур
-    def _on_proc_views_changed(self, val: int) -> None:
+    def _on_proc_steps_changed(self, steps_value: int) -> None:
         if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
-            self.current_vm.views = val
-
-    def _on_proc_cameras_changed(self, val: int) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
-            self.current_vm.gamma_cameras = val
+            self.current_vm.steps = steps_value
             self._is_updating_ui = True
-            self.txt_proc_head_angles.setText(", ".join(f"{a:.1f}" for a in self.current_vm.head_angles))
+            self.lbl_proc_total_views.setText(str(self.current_vm.total_projections))
+            self._is_updating_ui = False
+
+    def _on_proc_cameras_changed(self, camera_count: int) -> None:
+        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
+            self.current_vm.gamma_cameras = camera_count
+            self._is_updating_ui = True
+            self.lbl_proc_total_views.setText(str(self.current_vm.total_projections))
+            self.txt_proc_head_angles.setText(", ".join(f"{angle_val:.1f}" for angle_val in self.current_vm.head_angles))
             self._is_updating_ui = False
 
     def _on_proc_radius_changed(self, val: float) -> None:
@@ -1318,4 +1340,5 @@ class PropertyInspector(QWidget):
 
     def _on_dm_buffer_changed(self, val: int) -> None:
         if not self._is_updating_ui and isinstance(self.current_vm, DataManagerViewModel):
-            self.current_vm.buffer_capacity = val
+            effective_val = max(val, self._min_buffer_capacity)
+            self.current_vm.buffer_capacity = effective_val

@@ -248,13 +248,14 @@ class DataManagerViewModel(QObject):
     def __init__(
         self,
         filename: str = "simulation_results.h5",
-        buffer_capacity: int = 1_000_000,
+        buffer_capacity: Optional[int] = None,
         handlers: Optional[List[BaseDataHandlerViewModel]] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
         self._filename: str = filename
-        self._buffer_capacity: int = max(1000, int(buffer_capacity))
+        self._min_buffer_capacity: int = 1
+        self._buffer_capacity: int = buffer_capacity if buffer_capacity is not None else 1
         self._handlers: List[BaseDataHandlerViewModel] = []
 
         if handlers:
@@ -279,12 +280,22 @@ class DataManagerViewModel(QObject):
             self.changed.emit()
 
     @property
+    def min_buffer_capacity(self) -> int:
+        return self._min_buffer_capacity
+
+    @min_buffer_capacity.setter
+    def min_buffer_capacity(self, value: int) -> None:
+        self._min_buffer_capacity = max(1, int(value))
+        if self._buffer_capacity < self._min_buffer_capacity:
+            self.buffer_capacity = self._min_buffer_capacity
+
+    @property
     def buffer_capacity(self) -> int:
         return self._buffer_capacity
 
     @buffer_capacity.setter
     def buffer_capacity(self, cap: int) -> None:
-        c = max(1000, int(cap))
+        c = max(self._min_buffer_capacity, int(cap))
         if self._buffer_capacity != c:
             self._buffer_capacity = c
             self.changed.emit()
@@ -338,7 +349,8 @@ class DataManagerViewModel(QObject):
         Загрузка диспетчера обработчиков данных из конфигурационной модели ядра.
         """
         self._filename = config.filename
-        self._buffer_capacity = config.buffer_capacity
+        raw_capacity = config.buffer_capacity
+        self.buffer_capacity = self._min_buffer_capacity if raw_capacity is None else max(self._min_buffer_capacity, int(raw_capacity))
         for h in list(self._handlers):
             self.remove_handler(h)
 

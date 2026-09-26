@@ -70,7 +70,7 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
 
     def __init__(
         self,
-        views: int = 32,
+        steps: int = 32,
         gamma_cameras: int = 2,
         radius: float = 250.0,
         time_per_view: float = 1.0,
@@ -80,9 +80,10 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         head_angles: Optional[List[float]] = None,
         endpoint: bool = False,
         parent: Optional[QObject] = None,
+        **kwargs: Any,
     ) -> None:
         super().__init__(name="Протокол ОФЭКТ (SPECT)", procedure_type="SPECT", parent=parent)
-        self._views: int = max(1, int(views))
+        self._steps: int = max(1, int(steps))
         self._gamma_cameras: int = max(1, int(gamma_cameras))
         self._radius: float = max(10.0, float(radius))
         self._time_per_view: float = max(0.001, float(time_per_view))
@@ -99,23 +100,28 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         """Автоматический пересчет смещений головок в зависимости от выбранного режима."""
         if "Симметричный" in self._head_mode or "symmetric" in self._head_mode.lower():
             step = 360.0 / self._gamma_cameras if self._gamma_cameras > 0 else 0.0
-            self._head_angles = [step * i for i in range(self._gamma_cameras)]
+            self._head_angles = [step * idx for idx in range(self._gamma_cameras)]
         elif "90" in self._head_mode or "L-режим" in self._head_mode or "l-mode" in self._head_mode.lower():
             self._gamma_cameras = 2
             self._head_angles = [0.0, 90.0]
 
     @property
-    def views(self) -> int:
-        """Общее количество ракурсов сканирования."""
-        return self._views
+    def steps(self) -> int:
+        """Число дискретных шагов вращения гантри ОФЭКТ."""
+        return self._steps
 
-    @views.setter
-    def views(self, val: int) -> None:
-        v = max(1, int(val))
-        if self._views != v:
-            self._views = v
+    @steps.setter
+    def steps(self, new_steps: int) -> None:
+        validated_steps = max(1, int(new_steps))
+        if self._steps != validated_steps:
+            self._steps = validated_steps
             self.changed.emit()
-            self.parameter_changed.emit("views", v)
+            self.parameter_changed.emit("steps", validated_steps)
+
+    @property
+    def total_projections(self) -> int:
+        """Общее число получаемых 2D-проекций: steps * gamma_cameras."""
+        return self._steps * self._gamma_cameras
 
     @property
     def gamma_cameras(self) -> int:
@@ -123,13 +129,13 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         return self._gamma_cameras
 
     @gamma_cameras.setter
-    def gamma_cameras(self, val: int) -> None:
-        c = max(1, int(val))
-        if self._gamma_cameras != c:
-            self._gamma_cameras = c
+    def gamma_cameras(self, new_cameras: int) -> None:
+        camera_count = max(1, int(new_cameras))
+        if self._gamma_cameras != camera_count:
+            self._gamma_cameras = camera_count
             self._recalculate_head_angles()
             self.changed.emit()
-            self.parameter_changed.emit("gamma_cameras", c)
+            self.parameter_changed.emit("gamma_cameras", camera_count)
 
     @property
     def radius(self) -> float:
@@ -137,12 +143,12 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         return self._radius
 
     @radius.setter
-    def radius(self, val: float) -> None:
-        r = max(10.0, float(val))
-        if self._radius != r:
-            self._radius = r
+    def radius(self, new_radius: float) -> None:
+        validated_radius = max(10.0, float(new_radius))
+        if self._radius != validated_radius:
+            self._radius = validated_radius
             self.changed.emit()
-            self.parameter_changed.emit("radius", r)
+            self.parameter_changed.emit("radius", validated_radius)
 
     @property
     def time_per_view(self) -> float:
@@ -150,12 +156,12 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         return self._time_per_view
 
     @time_per_view.setter
-    def time_per_view(self, val: float) -> None:
-        t = max(0.001, float(val))
-        if self._time_per_view != t:
-            self._time_per_view = t
+    def time_per_view(self, new_time: float) -> None:
+        validated_time = max(0.001, float(new_time))
+        if self._time_per_view != validated_time:
+            self._time_per_view = validated_time
             self.changed.emit()
-            self.parameter_changed.emit("time_per_view", t)
+            self.parameter_changed.emit("time_per_view", validated_time)
 
     @property
     def start_angle(self) -> float:
@@ -163,12 +169,12 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         return self._start_angle
 
     @start_angle.setter
-    def start_angle(self, val: float) -> None:
-        a = float(val)
-        if self._start_angle != a:
-            self._start_angle = a
+    def start_angle(self, new_angle: float) -> None:
+        angle_value = float(new_angle)
+        if self._start_angle != angle_value:
+            self._start_angle = angle_value
             self.changed.emit()
-            self.parameter_changed.emit("start_angle", a)
+            self.parameter_changed.emit("start_angle", angle_value)
 
     @property
     def end_angle(self) -> float:
@@ -176,12 +182,12 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         return self._end_angle
 
     @end_angle.setter
-    def end_angle(self, val: float) -> None:
-        a = float(val)
-        if self._end_angle != a:
-            self._end_angle = a
+    def end_angle(self, new_angle: float) -> None:
+        angle_value = float(new_angle)
+        if self._end_angle != angle_value:
+            self._end_angle = angle_value
             self.changed.emit()
-            self.parameter_changed.emit("end_angle", a)
+            self.parameter_changed.emit("end_angle", angle_value)
 
     @property
     def head_mode(self) -> str:
@@ -189,9 +195,9 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         return self._head_mode
 
     @head_mode.setter
-    def head_mode(self, val: str) -> None:
-        if self._head_mode != val:
-            self._head_mode = str(val)
+    def head_mode(self, new_mode: str) -> None:
+        if self._head_mode != new_mode:
+            self._head_mode = str(new_mode)
             self._recalculate_head_angles()
             self.changed.emit()
             self.parameter_changed.emit("head_mode", self._head_mode)
@@ -202,8 +208,8 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         return list(self._head_angles)
 
     @head_angles.setter
-    def head_angles(self, val: List[float]) -> None:
-        self._head_angles = [float(x) for x in val]
+    def head_angles(self, new_head_angles: List[float]) -> None:
+        self._head_angles = [float(angle_deg) for angle_deg in new_head_angles]
         self._gamma_cameras = max(1, len(self._head_angles))
         self.changed.emit()
         self.parameter_changed.emit("head_angles", self._head_angles)
@@ -214,12 +220,12 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         return self._endpoint
 
     @endpoint.setter
-    def endpoint(self, val: bool) -> None:
-        b = bool(val)
-        if self._endpoint != b:
-            self._endpoint = b
+    def endpoint(self, new_endpoint: bool) -> None:
+        endpoint_flag = bool(new_endpoint)
+        if self._endpoint != endpoint_flag:
+            self._endpoint = endpoint_flag
             self.changed.emit()
-            self.parameter_changed.emit("endpoint", b)
+            self.parameter_changed.emit("endpoint", endpoint_flag)
 
     @property
     def angular_range(self) -> float:
@@ -227,10 +233,10 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         return self._end_angle - self._start_angle
 
     @angular_range.setter
-    def angular_range(self, val: float) -> None:
-        self._end_angle = self._start_angle + float(val)
+    def angular_range(self, range_degrees: float) -> None:
+        self._end_angle = self._start_angle + float(range_degrees)
         self.changed.emit()
-        self.parameter_changed.emit("angular_range", val)
+        self.parameter_changed.emit("angular_range", range_degrees)
 
     def sync_cameras(self, camera_vms: List[Any]) -> None:
         """
@@ -243,10 +249,10 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
 
     def to_config(self) -> SpectProtocolConfig:
         """Конвертация в модель конфигурации протокола ОФЭКТ ядра."""
-        head_angles_rad = [float(np.radians(a)) * units.rad for a in self._head_angles] if self._head_angles else None
+        head_angles_rad = [float(np.radians(angle_item)) * units.rad for angle_item in self._head_angles] if self._head_angles else None
         return SpectProtocolConfig(
             type="SPECT",
-            views=self._views,
+            views=self.total_projections,
             gamma_cameras=self._gamma_cameras,
             start_angle=float(np.radians(self._start_angle)) * units.rad,
             end_angle=float(np.radians(self._end_angle)) * units.rad,
@@ -259,10 +265,11 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
     @classmethod
     def from_config(cls, config: SpectProtocolConfig, parent: Optional[QObject] = None) -> 'SpectProcedureViewModel':
         """Восстановление модели представления из конфигурации SpectProtocolConfig."""
-        head_angles = [float(np.degrees(a)) for a in config.head_angles] if config.head_angles else None
+        head_angles = [float(np.degrees(angle_item)) for angle_item in config.head_angles] if config.head_angles else None
         radius = float(config.radius) if config.radius is not None else 250.0
+        steps = max(1, config.views // config.gamma_cameras) if config.gamma_cameras > 0 else config.views
         return cls(
-            views=config.views,
+            steps=steps,
             gamma_cameras=config.gamma_cameras,
             radius=radius,
             time_per_view=float(config.time_per_view) / float(units.s),
@@ -349,24 +356,24 @@ class PetProcedureViewModel(BaseProcedureViewModel):
         return self._detector_heads
 
     @detector_heads.setter
-    def detector_heads(self, val: int) -> None:
-        h = max(2, int(val))
-        if self._detector_heads != h:
-            self._detector_heads = h
+    def detector_heads(self, new_heads: int) -> None:
+        heads_count = max(2, int(new_heads))
+        if self._detector_heads != heads_count:
+            self._detector_heads = heads_count
             self.changed.emit()
-            self.parameter_changed.emit("detector_heads", h)
+            self.parameter_changed.emit("detector_heads", heads_count)
 
     @property
     def time_per_frame(self) -> float:
         return self._time_per_frame
 
     @time_per_frame.setter
-    def time_per_frame(self, val: float) -> None:
-        t = max(0.1, float(val))
-        if self._time_per_frame != t:
-            self._time_per_frame = t
+    def time_per_frame(self, new_time: float) -> None:
+        frame_time_val = max(0.1, float(new_time))
+        if self._time_per_frame != frame_time_val:
+            self._time_per_frame = frame_time_val
             self.changed.emit()
-            self.parameter_changed.emit("time_per_frame", t)
+            self.parameter_changed.emit("time_per_frame", frame_time_val)
 
     def to_config(self) -> CustomSweepProtocolConfig:
         return CustomSweepProtocolConfig(
@@ -396,8 +403,8 @@ class CustomSweepProcedureViewModel(BaseProcedureViewModel):
         return dict(self._grid_variables)
 
     @grid_variables.setter
-    def grid_variables(self, val: Dict[str, List[float]]) -> None:
-        self._grid_variables = dict(val)
+    def grid_variables(self, new_grid_vars: Dict[str, List[float]]) -> None:
+        self._grid_variables = dict(new_grid_vars)
         self.changed.emit()
         self.parameter_changed.emit("grid_variables", self._grid_variables)
 
@@ -406,8 +413,8 @@ class CustomSweepProcedureViewModel(BaseProcedureViewModel):
         return dict(self._zipped_variables)
 
     @zipped_variables.setter
-    def zipped_variables(self, val: Dict[str, List[float]]) -> None:
-        self._zipped_variables = dict(val)
+    def zipped_variables(self, new_zipped_vars: Dict[str, List[float]]) -> None:
+        self._zipped_variables = dict(new_zipped_vars)
         self.changed.emit()
         self.parameter_changed.emit("zipped_variables", self._zipped_variables)
 

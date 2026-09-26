@@ -167,7 +167,7 @@ AnyDataHandlerConfig = Annotated[
 class DataManagerConfig(BaseModel):
     filename: str
     handlers: List[AnyDataHandlerConfig] = Field(default_factory=list)
-    buffer_capacity: int = 1_000_000
+    buffer_capacity: Optional[int] = None
 
 class SimulationManagerConfig(BaseModel):
     start_time: TimeConfig = 0.0 * units.ns
@@ -228,3 +228,5 @@ class SimulationConfig(BaseModel):
     simulation_manager: SimulationManagerConfig
     data_manager: DataManagerConfig
     scene: AnyNodeConfig
+
+

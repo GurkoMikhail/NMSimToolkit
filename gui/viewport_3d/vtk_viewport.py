@@ -79,6 +79,17 @@ class VTKViewport(QWidget):
             self.camera_interaction_ended.emit()
             self.render()
 
+    @property
+    def interactor(self) -> Optional[Any]:
+        """
+        Низкоуровневый vtkRenderWindowInteractor для подключения интерактивных манипуляторов и наблюдателей.
+        """
+        if self.plotter is None:
+            return None
+        if self.plotter.render_window is not None:
+            return self.plotter.render_window.GetInteractor()
+        return None
+
     def add_mesh_actor(
         self,
         name: str,

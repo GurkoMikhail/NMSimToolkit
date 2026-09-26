@@ -189,7 +189,7 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         scene_vm = SceneViewModel(root)
 
         proc_vm = SpectProcedureViewModel()
-        proc_vm.views = 4
+        proc_vm.steps = 4
         session = OrchestratorSession(
             scene_vm=scene_vm,
             procedure_vm=proc_vm,
@@ -250,6 +250,34 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         finally:
             handler.close()
 
+    def test_data_manager_buffer_capacity_gui_constraints(self):
+        """Проверка ограничения емкости буфера данных в GUI (buffer_capacity >= particles_number)."""
+        from gui.views.property_inspector import PropertyInspector
+        from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
+
+        dm_vm = DataManagerViewModel(buffer_capacity=5000)
+        dm_vm.min_buffer_capacity = 10000
+
+        # Емкость буфера автоматически поднимается до min_buffer_capacity
+        self.assertEqual(dm_vm.buffer_capacity, 10000)
+
+        # Попытка установить меньшее значение ограничивается снизу
+        dm_vm.buffer_capacity = 2000
+        self.assertEqual(dm_vm.buffer_capacity, 10000)
+
+        # Проверка связывания через PropertyInspector
+        inspector = PropertyInspector()
+        inspector.set_min_buffer_capacity(25000)
+        inspector.set_target_viewmodel(dm_vm)
+
+        self.assertEqual(inspector.spin_dm_buffer.minimum(), 25000)
+        self.assertEqual(dm_vm.buffer_capacity, 25000)
+
+        # Изменение значения в spinbox ниже минимума не позволяет задать небезопасную емкость
+        inspector.spin_dm_buffer.setValue(1000)
+        self.assertGreaterEqual(dm_vm.buffer_capacity, 25000)
+
 
 if __name__ == '__main__':
     unittest.main()
+

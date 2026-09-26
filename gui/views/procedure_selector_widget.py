@@ -98,12 +98,13 @@ class ProcedureSelectorWidget(QDockWidget):
         if isinstance(vm, SpectProcedureViewModel):
             text = (
                 f"<b>ОФЭКТ (SPECT):</b><br>"
-                f"• Ракурсов (views): {vm.views}<br>"
+                f"• Число шагов (Steps): {vm.steps}<br>"
+                f"• Всего проекций (Total Views): {vm.total_projections}<br>"
                 f"• Гамма-камер: {vm.gamma_cameras}<br>"
                 f"• Конфигурация головок: {vm.head_mode}<br>"
                 f"• Радиус орбиты: {vm.radius:.1f} мм<br>"
                 f"• Диапазон углов: {vm.start_angle:.1f}° — {vm.end_angle:.1f}°<br>"
-                f"• Время на ракурс: {vm.time_per_view:.2f} с"
+                f"• Время на шаг: {vm.time_per_view:.2f} с"
             )
         elif isinstance(vm, PetProcedureViewModel):
             text = (
