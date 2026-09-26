@@ -2,7 +2,7 @@ from enum import Enum, auto
 import logging
 import queue
 import threading as mt
-from datetime import datetime
+from datetime import datetime, timedelta
 from signal import SIGINT, signal
 from typing import Callable, List, Optional, Union
 
@@ -22,7 +22,6 @@ from core.physics.physics_compiler import PhysicsCompiler
 from core.scene.nodes import CompositeNode
 from core.source.source_compiler import SourceCompiler
 from core.other.typing_definitions import Float, Index
-from core.other.utils import datetime_from_seconds
 from core.particles.particles import ParticleBank
 from core.physics.interaction_buffers import SimulationDataBuffer, RNGContext
 from core.physics.physics_buffer import PhysicsBuffer
@@ -133,7 +132,7 @@ class SimulationManager(Thread):
         self.flush_dead_particles()
 
     def sigint_handler(self, signal, frame):
-        _logger.error(f'{self.name} interrupted at {datetime_from_seconds(self.global_timer/units.second)}')
+        _logger.error(f'{self.name} interrupted at {timedelta(seconds=self.global_timer/units.second)}')
         self.stop()
 
     def send_data(self, data):
@@ -371,7 +370,7 @@ class SimulationManager(Thread):
         self._run()
 
     def _run(self):
-        _logger.warning(f'{self.name} started from {datetime_from_seconds(self.global_timer/units.second)} to {datetime_from_seconds(self.stop_time/units.second)}')
+        _logger.warning(f'{self.name} started from {timedelta(seconds=self.global_timer/units.second)} to {timedelta(seconds=self.stop_time/units.second)}')
         start_timepoint = datetime.now()
         self._state = SimulationState.RUNNING
         self._pause_event.set()
@@ -387,7 +386,7 @@ class SimulationManager(Thread):
                 self._state = SimulationState.RUNNING
 
             self.next_step()
-            _logger.debug(f'Global timer of {self.name} at {datetime_from_seconds(self.global_timer/units.second)}')
+            _logger.debug(f'Global timer of {self.name} at {timedelta(seconds=self.global_timer/units.second)}')
 
         # Final flush
         self.flush_initial_states()
@@ -397,5 +396,5 @@ class SimulationManager(Thread):
         self._state = SimulationState.STOPPED
 
         stop_timepoint = datetime.now()
-        _logger.warning(f'{self.name} finished at {datetime_from_seconds(self.global_timer/units.second)}')
+        _logger.warning(f'{self.name} finished at {timedelta(seconds=self.global_timer/units.second)}')
         _logger.info(f'The simulation of {self.name} took {stop_timepoint - start_timepoint}')
