@@ -1,3 +1,7 @@
+"""
+Подпакет управления обработчиками данных симуляции и загрузки воксельных распределений.
+"""
+
 from core.data.data_handlers import BaseDataHandler
 from core.data.data_manager import DataManager
 from core.data.dose_map_handler import DoseMapHandler

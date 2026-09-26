@@ -38,8 +38,8 @@ Thread = mt.Thread
 
 class SimulationManager(Thread):
     """
-    DOD-optimized Simulation Manager with Continuous Injection
-    and in-place Stream Compaction handling.
+    Вычислительный менеджер симуляции, оптимизированный под Data-Oriented Design (SoA),
+    с поддержкой непрерывной инжекции частиц и эффективного уплотнения буферов данных на месте.
     """
     active_sources: List[Source]
     scene: CompositeNode
@@ -83,7 +83,6 @@ class SimulationManager(Thread):
         self.min_energy = min_energy
         self.queue = Queue(maxsize=64) if queue is None else queue
         self.step = 1
-        self.profile = False
         self.daemon = True
 
         self.bank = ParticleBank.allocate(self.particles_number)
@@ -145,7 +144,7 @@ class SimulationManager(Thread):
 
     def flush_interactions(self) -> None:
         """
-        Flushes only the interaction buffer to the queue if it's full.
+        Сбрасывает накопленный буфер взаимодействий в очередь телеметрии.
         """
         interaction_count = self.data_buffer.interactions.cursor_value
         if interaction_count == 0:
@@ -161,7 +160,7 @@ class SimulationManager(Thread):
 
     def flush_dead_particles(self) -> None:
         """
-        Flushes accumulated dead particle IDs to the queue.
+        Сбрасывает накопленные идентификаторы выбывших частиц в очередь телеметрии.
         """
         dead_count = self.data_buffer.dead_particles.cursor_value
         if dead_count == 0:
@@ -176,7 +175,7 @@ class SimulationManager(Thread):
 
     def flush_initial_states(self) -> None:
         """
-        Flushes only the initial states buffer to the queue if it's full.
+        Сбрасывает буфер начальных состояний частиц в очередь телеметрии.
         """
         initial_count = self.data_buffer.initial_states.cursor_value
         if initial_count == 0:
@@ -367,14 +366,9 @@ class SimulationManager(Thread):
                     self.flush_dead_particles()
                 self.data_buffer.dead_particles.append(chunk_slice)
 
-    def run(self):
-        if self.profile:
-            self.run_profile()
-        else:
-            self._run()
-
-    def run_profile(self):
-        runctx('self._run()', globals(), locals(), f'stats/{self.name}.txt')
+    def run(self) -> None:
+        """Запуск цикла симуляции в рабочем потоке."""
+        self._run()
 
     def _run(self):
         _logger.warning(f'{self.name} started from {datetime_from_seconds(self.global_timer/units.second)} to {datetime_from_seconds(self.stop_time/units.second)}')

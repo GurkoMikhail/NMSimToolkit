@@ -43,7 +43,7 @@ nmsim-gui = "gui.app:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*", "gui*", "settings*"]
+include = ["core*", "gui*", "settings*", "infra*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -5,15 +5,15 @@ from core.source.sources import Source
 
 class SourceCompiler:
     """
-    Compiler responsible for extracting a flat list of Sources from a Unified Scene Graph.
+    Компилятор, отвечающий за извлечение плоского списка источников частиц из графа сцены.
     """
     def __init__(self):
         self.active_sources: List[Source] = []
 
     def compile_scene(self, root_node: CompositeNode) -> List[Source]:
         """
-        Traverses the graph and extracts all active Sources.
-        Extracts only Leaf Sources (sources that don't have other Sources as children).
+        Обходит граф сцены и извлекает все активные источники излучения.
+        Извлекает только листовые источники (не имеющие других источников в качестве потомков).
         """
         self.active_sources = []
         self._extract_sources(root_node)
@@ -21,7 +21,7 @@ class SourceCompiler:
 
     def _extract_sources(self, node: CompositeNode) -> bool:
         """
-        Returns True if the current node is a Source and is a leaf in terms of sources.
+        Возвращает True, если текущий узел является источником и листом среди источников.
         """
         has_source_children = False
 

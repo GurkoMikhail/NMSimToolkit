@@ -9,8 +9,8 @@ import core.geometry.volumes as volumes_mod
 
 class FlattenedScene:
     """
-    Encapsulates the Depth-First Search (DFS) traversal of the OOP Scene Graph.
-    Ensures that both GeometryCompiler and PhysicsCompiler process volumes in the exact same order.
+    Инкапсулирует обход графа сцены в глубину (DFS).
+    Гарантирует идентичный порядок обработки объемов в GeometryCompiler и PhysicsCompiler.
     """
 
     def __init__(self, root_node: CompositeNode):
@@ -20,8 +20,8 @@ class FlattenedScene:
     @property
     def flat_list(self) -> List[Tuple['volumes_mod.Volume', NDArray[Float], Index]]:
         """
-        Returns a flattened list where each element is a tuple:
-        (Volume, total_transformation_matrix, parent_index)
+        Возвращает плоский список кортежей:
+        (Volume, общая_матрица_трансформации, parent_index)
         """
         return self._flat_list
 

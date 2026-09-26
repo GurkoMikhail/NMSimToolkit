@@ -23,7 +23,10 @@ import core.geometry.geometry_compiler as geom_compiler
 
 
 class Volume(CompositeNode):
-    """ Base class for an elementary volume, inheriting from CompositeNode for scene graph hierarchy. """
+    """
+    Базовый класс элементарного физического объема с геометрией и материалом,
+    наследующий CompositeNode для построения иерархического графа сцены.
+    """
 
     _counter = count(1)
 
@@ -46,17 +49,17 @@ class Volume(CompositeNode):
 
     @property
     def material_cfunc(self) -> CMaterialFunc:
-        """ CFUNCTYPE pointer of the @cfunc for Woodcock parametric volumes. Defaults to None for normal volumes. """
+        """Указатель CFUNCTYPE на @cfunc для параметрических объемов Вудкока (None для стандартных объемов)."""
         return None
 
     @property
     def majorant_material(self) -> Material:
-        """ Returns the majorant material. Defaults to self.material for normal volumes. """
+        """Возвращает мажорантный материал объема (по умолчанию self.material)."""
         return self.material
 
     @property
     def material_list(self) -> List[Material]:
-        """ Returns a list of all materials used in this volume (and its children). """
+        """Возвращает список всех уникальных материалов, используемых в данном объеме и его потомках."""
         def recursive_generator(node):
             if isinstance(node, Volume):
                 yield node.material
@@ -82,7 +85,7 @@ class Volume(CompositeNode):
 
     @property
     def geometry_buffer(self) -> NDArray[Any]:
-        """ Lazy compilation of GeometryBuffer (AoS Structured Array) """
+        """Ленивая компиляция буфера геометрии GeometryBuffer (структурированный массив AoS)."""
         if self._geometry_buffer is None:
             self._geometry_buffer = geom_compiler.GeometryCompiler().compile_scene(self)
         return self._geometry_buffer
@@ -113,7 +116,7 @@ class Volume(CompositeNode):
 
     @property
     def top_volume(self) -> 'Volume':
-        """ Returns the top-most Volume in the current branch. """
+        """Возвращает наивысший узел Volume в текущей ветви иерархии сцены."""
         current = self
         top_vol = self
         while current.parent is not None:

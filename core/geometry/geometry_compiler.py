@@ -9,14 +9,14 @@ from core.scene.nodes import CompositeNode
 
 class GeometryCompiler:
     """
-    Compiles an OOP Scene Graph into an Array of Structures (AoS) numpy structured array
-    optimized for fast Numba raycasting.
+    Компилирует ООП-граф сцены в структурированный NumPy массив Array of Structures (AoS),
+    оптимизированный для быстрого вычисления пересечений лучей в кернелах Numba.
     """
 
     def compile_scene(self, root_node: CompositeNode) -> NDArray[np.void]:
         """
-        Main entry point for scene compilation.
-        Converts the OOP hierarchy into a flat numpy AoS structure.
+        Главная точка входа компиляции геометрии сцены.
+        Преобразует иерархию узлов в плоскую AoS-структуру NumPy.
         """
         flat_list = flattened_scene_mod.FlattenedScene(root_node).flat_list
         capacity = len(flat_list)
@@ -30,8 +30,8 @@ class GeometryCompiler:
 
     def _compute_miss_indices(self, flat_list: list, buffer: NDArray[np.void]) -> None:
         """
-        Calculates and assigns `miss_index` for Frustum Culling.
-        The miss_index points to the node directly after the current node's subtree.
+        Вычисляет и назначает miss_index для отсечения непересекаемых ветвей (Frustum Culling).
+        miss_index указывает на индекс узла, следующего непосредственно за поддеревом текущего узла.
         """
         capacity = len(flat_list)
         if capacity == 0:
@@ -61,7 +61,7 @@ class GeometryCompiler:
 
     def _populate_buffer(self, flat_list: list, buffer: NDArray[np.void]) -> None:
         """
-        Populates the structured array buffer with shapes, parameters, indices, and transforms.
+        Заполняет буфер структурированного массива геометрическими формами, параметрами, индексами и трансформациями.
         """
         for i, (vol, mat, p_idx) in enumerate(flat_list):
             # Polymorphic delegation to shape-specific data writing

@@ -7,8 +7,10 @@ import core.other.utils as utils
 
 class SpatialNode:
     """
-    Base node that is responsible only for spatial mathematics (4x4 matrices).
-    It manages local transformations and computes global and inverse global matrices.
+    Базовый узел графа сцены, отвечающий за пространственные преобразования (матрицы 4x4).
+
+    Управляет локальными трансформациями, вычисляет и кэширует глобальную
+    и обратную глобальную матрицы преобразования.
     """
     def __init__(self, name: Optional[str] = None):
         self.name = name if name is not None else self.__class__.__name__
@@ -34,13 +36,13 @@ class SpatialNode:
         return current
 
     def invalidate_matrix_cache(self) -> None:
-        """Invalidates the matrix cache for this node and all of its descendants."""
+        """Сбрасывает кэш матриц трансформации узла и всех его потомков."""
         self._global_matrix_cache = None
         self._inverse_global_matrix_cache = None
 
     @property
     def global_matrix(self) -> NDArray[Float]:
-        """Calculates and caches the direct global transformation matrix."""
+        """Вычисляет и кэширует прямую глобальную матрицу трансформации."""
         if self._global_matrix_cache is None:
             if self.parent is not None:
                 self._global_matrix_cache = self.parent.global_matrix @ self.local_matrix
@@ -50,7 +52,7 @@ class SpatialNode:
 
     @property
     def inverse_global_matrix(self) -> NDArray[Float]:
-        """Calculates and caches the inverse global transformation matrix."""
+        """Вычисляет и кэширует обратную глобальную матрицу трансформации."""
         if self._inverse_global_matrix_cache is None:
             self._inverse_global_matrix_cache = np.linalg.inv(self.global_matrix)
         return self._inverse_global_matrix_cache
@@ -107,20 +109,20 @@ class SpatialNode:
 
 class CompositeNode(SpatialNode):
     """
-    Composite Node to manage a heterogeneous hierarchy of SpatialNodes.
+    Составной узел для управления древовидной гетерогенной иерархией SpatialNode.
     """
     def __init__(self, name: Optional[str] = None):
         super().__init__(name=name)
         self.childs: List['SpatialNode'] = []
 
     def invalidate_matrix_cache(self) -> None:
-        """Invalidates matrix cache recursively down the tree."""
+        """Рекурсивно сбрасывает кэш матриц трансформации вниз по дереву дочерних узлов."""
         super().invalidate_matrix_cache()
         for child in self.childs:
             child.invalidate_matrix_cache()
 
     def add_child(self, child: 'SpatialNode') -> None:
-        """Adds a child node and correctly handles parent reassignment."""
+        """Добавляет дочерний узел с корректным обновлением ссылки на родительский узел."""
         if child.parent is self and child in self.childs:
             return
         if child.parent is not None:
@@ -132,7 +134,7 @@ class CompositeNode(SpatialNode):
         child.invalidate_matrix_cache()
 
     def remove_child(self, child: 'SpatialNode') -> None:
-        """Removes a child node and resets its parent."""
+        """Удаляет дочерний узел и сбрасывает ссылку на родителя."""
         if child in self.childs:
             self.childs.remove(child)
             child.parent = None
