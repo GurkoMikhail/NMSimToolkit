@@ -1,7 +1,7 @@
 import itertools
 import re
 from copy import deepcopy
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional, Callable
 import numpy as np
 from multiprocessing import Manager, Pool
 from numpy.random import SeedSequence
@@ -19,9 +19,13 @@ from core.source.sources import Source
 from core.transport.simulation_managers import SimulationManager
 from core.transport.propagator import ParticlePropagator
 from core.data.data_manager import DataManager
-from core.data.data_handlers import DirectStreamHandler, SensitiveVolumeHandler, HistoryAssemblerHandler
+from core.data.data_handlers import (
+    BaseDataHandler,
+    DirectStreamHandler,
+    SensitiveVolumeHandler,
+    HistoryAssemblerHandler,
+)
 from core.data.dose_map_handler import DoseMapHandler
-from core.data.stream_handlers import GuiStreamDataHandler
 from core.geometry.gamma_cameras import GammaCamera
 
 
@@ -58,13 +62,15 @@ def _find_gamma_cameras(node: Any) -> List[GammaCamera]:
             cameras.extend(_find_gamma_cameras(child))
     return cameras
 
-def _worker_function(payload: Tuple[Any, ...]) -> None:
+def _worker_function(payload: Tuple[Any, ...]) -> Any:
     task_dict = payload[0]
     seed = payload[1]
     file_lock = payload[2]
     telemetry_queue = payload[3] if len(payload) > 3 else None
-    focused_shm_name = payload[4] if len(payload) > 4 else None
-    task_id = payload[5] if len(payload) > 5 else task_dict.get('_task_id', 0)
+    extra_handlers = payload[4] if len(payload) > 4 else None
+    extra_handler_factory = payload[5] if len(payload) > 5 else None
+    extra_handler_args = payload[6] if len(payload) > 6 else ()
+    task_id = payload[7] if len(payload) > 7 else task_dict.get('_task_id', 0)
     
     # 1. Validate Config
     final_config = SimulationConfig.model_validate(task_dict)
@@ -105,7 +111,7 @@ def _worker_function(payload: Tuple[Any, ...]) -> None:
     set_rng_for_sources(root_scene)
 
     # 4. Build Data Handlers
-    handlers = []
+    handlers: List[BaseDataHandler] = []
     for h_config in final_config.data_manager.handlers:
         if h_config.type == 'DirectStreamHandler':
             handlers.append(DirectStreamHandler())
@@ -121,28 +127,16 @@ def _worker_function(payload: Tuple[Any, ...]) -> None:
                 grids = [g for g in grids if g.name in h_config.grid_names]
             handlers.append(DoseMapHandler(grid_nodes=grids, shm_name=h_config.shm_name))
 
-    # Динамическое подключение GuiStreamDataHandler для сфокусированного процесса
-    if focused_shm_name:
-        def _find_detector_node(node):
-            if isinstance(node, GammaCamera):
-                return node.detector
-            if isinstance(node, CompositeNode):
-                for ch in node.childs:
-                    res = _find_detector_node(ch)
-                    if res is not None:
-                        return res
-            return None
+    # Внедрение внешних обработчиков данных (Dependency Injection)
+    if extra_handlers:
+        handlers.extend(extra_handlers)
 
-        det_node = _find_detector_node(root_scene)
-        proj_shape = task_dict.get('_projection_shape', (128, 128))
-        stream_handler = GuiStreamDataHandler(
-            track_queue=telemetry_queue,
-            shm_name=focused_shm_name,
-            projection_shape=proj_shape,
-            create_shm=False,
-            detector_volume=det_node
+    if extra_handler_factory is not None:
+        created_handlers = extra_handler_factory(
+            root_scene, task_dict, task_id, *extra_handler_args
         )
-        handlers.append(stream_handler)
+        if created_handlers:
+            handlers.extend(created_handlers)
 
     # 5. Instantiate Managers
     sim_config = final_config.simulation_manager
@@ -342,14 +336,14 @@ class Orchestrator:
     def run(
         self,
         telemetry_queue: Optional[Any] = None,
-        focused_job_index: Optional[int] = None,
-        focused_shm_name: Optional[str] = None,
-        projection_shape: Tuple[int, int] = (128, 128),
-    ) -> None:
+        extra_handlers: Optional[List[BaseDataHandler]] = None,
+        extra_handler_factory: Optional[Callable[..., List[BaseDataHandler]]] = None,
+        extra_handler_args: Tuple[Any, ...] = (),
+    ) -> List[Any]:
         """
         Запускает параллельный цикл вычислений оркестратора, распределяя задачи по пулу процессов.
-        Поддерживает передачу общей очереди телеметрии и динамическое выделение SharedMemory
-        для единственного сфокусированного процесса.
+        Поддерживает передачу общей очереди телеметрии и внедрение внешних обработчиков данных
+        (extra_handlers / extra_handler_factory) для динамического расширения контура сбора результатов.
         """
         pool_size = self.parsed_config.pool_size
         tasks = self.generate_tasks()
@@ -365,7 +359,6 @@ class Orchestrator:
             for idx, (context, seed) in enumerate(zip(tasks, seeds)):
                 task_dict = deepcopy(self.raw_config_dict)
                 task_dict['_task_id'] = idx
-                task_dict['_projection_shape'] = projection_shape
                 task_dict['_context'] = context
                 injected_dict = self.inject_variables(task_dict, context)
                 
@@ -376,12 +369,16 @@ class Orchestrator:
                     
                 seed_val = seed.generate_state(1)[0]
                 
-                focus_shm = focused_shm_name if (focused_job_index is not None and idx == focused_job_index) else None
-
-                if telemetry_queue is not None or focus_shm is not None:
-                    payloads.append((injected_dict, seed_val, locks[filename], telemetry_queue, focus_shm, idx))
-                else:
-                    payloads.append((injected_dict, seed_val, locks[filename]))
+                payloads.append((
+                    injected_dict,
+                    seed_val,
+                    locks[filename],
+                    telemetry_queue,
+                    extra_handlers,
+                    extra_handler_factory,
+                    extra_handler_args,
+                    idx,
+                ))
 
             if pool_size > 1:
                 with Pool(pool_size) as pool:

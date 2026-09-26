@@ -13,6 +13,7 @@ from core.config.models import (
 )
 from core.config.orchestrator import Orchestrator
 from gui.controllers.ipc_receiver import IPCReceiver
+from gui.controllers.stream_handlers import create_gui_stream_handler
 from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
 from gui.viewmodels.procedure_viewmodel import BaseProcedureViewModel, SpectProcedureViewModel, CustomSweepProcedureViewModel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
@@ -50,9 +51,13 @@ class _OrchestratorWorkerThread(QThread):
         try:
             results = self.orchestrator.run(
                 telemetry_queue=self.telemetry_queue,
-                focused_job_index=self.focused_job_index,
-                focused_shm_name=self.focused_shm_name,
-                projection_shape=self.projection_shape,
+                extra_handler_factory=create_gui_stream_handler,
+                extra_handler_args=(
+                    self.telemetry_queue,
+                    self.focused_job_index,
+                    self.focused_shm_name,
+                    self.projection_shape,
+                ),
             )
             self.completed.emit(results)
         except Exception as exc:

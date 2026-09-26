@@ -11,20 +11,33 @@ from core.geometry.volumes import Volume
 _logger = logging.getLogger(__name__)
 
 class BaseDataHandler(abc.ABC):
-    def __init__(self):
-        self.writer_callback: Optional[Callable] = None
+    """
+    Базовый абстрактный класс потребителя потоковых данных симуляции (Data Handler).
+    Задает единый контракт обработки чанков данных и финализации результатов.
+    """
 
-    def set_writer_callback(self, callback: Callable) -> None:
+    def __init__(self) -> None:
+        self.writer_callback: Optional[Callable[[Callable[[h5py.File], None]], None]] = None
+
+    def set_writer_callback(self, callback: Callable[[Callable[[h5py.File], None]], None]) -> None:
+        """
+        Регистрация функции обратного вызова для безопасной записи результатов в HDF5.
+        """
         self.writer_callback = callback
 
     @abc.abstractmethod
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
+        """
+        Обработка порции данных моделирования (начальные состояния частиц, взаимодействия).
+
+        :param chunk: Словарь с типом данных ('type') и пакетом массивов ('data').
+        """
         pass
 
     def finalize(self) -> None:
         """
-        Финализация записи данных в HDF5 при завершении моделирования.
-        По умолчанию не выполняет действий, переопределяется в подклассах при необходимости.
+        Финализация записи данных в хранилище при завершении моделирования.
+        По умолчанию не выполняет действий, переопределяется в специализированных подклассах.
         """
         pass
 

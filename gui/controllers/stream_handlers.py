@@ -1,14 +1,16 @@
 import logging
+import queue
 from multiprocessing import Queue as MpQueue
 from multiprocessing import shared_memory
 from collections.abc import Mapping
-from typing import Any, Dict, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
 
 from core.data.data_handlers import BaseDataHandler
-from core.scene.nodes import SpatialNode
+from core.scene.nodes import SpatialNode, CompositeNode
 from core.geometry.volumes import Volume
+from core.geometry.gamma_cameras import GammaCamera
 
 _logger = logging.getLogger(__name__)
 
@@ -165,8 +167,6 @@ class GuiStreamDataHandler(BaseDataHandler):
         """
         Обработка вылетевших частиц: отправка начальной точки рождения и граничной точки выхода
         в очередь треков для построения сквозных лучей вылетевших квантов.
-        Точки рождения отправляются только для частиц, не имевших предшествующих взаимодействий,
-        чтобы избежать паразитных зигзагов к источнику.
         """
         if self.track_queue is None:
             return
@@ -187,7 +187,6 @@ class GuiStreamDataHandler(BaseDataHandler):
         limit = min(n, self.max_tracks_per_batch)
         sub = slice(0, limit)
 
-        # 1. Отправляем точки рождения только для тех вылетевших частиц, которые ни разу не рассеялись
         if birth_x is not None:
             if has_interacted is not None:
                 uncollided_mask = ~np.asarray(has_interacted)[sub]
@@ -215,7 +214,6 @@ class GuiStreamDataHandler(BaseDataHandler):
                 except queue.Full:
                     pass
 
-        # 2. Отправляем точки выхода
         px = np.asarray(pos_x)[sub]
         py = np.asarray(pos_y)[sub]
         pz = np.asarray(pos_z)[sub] if pos_z is not None else np.zeros_like(px)
@@ -258,14 +256,12 @@ class GuiStreamDataHandler(BaseDataHandler):
 
         n_points = len(pos_x)
 
-        # 1. Отправка треков фотонов в очередь GUI с сохранением связности траекторий
         if self.track_queue is not None:
             if n_points <= self.max_tracks_per_batch:
                 sub_indices = slice(0, n_points)
             else:
                 sub_indices = slice(0, self.max_tracks_per_batch)
 
-            # Выделение реальных спектральных данных детектора (без прореживания)
             det_edep = None
             if self.sensitive_volume_ids is not None and volume_id is not None:
                 det_mask = np.isin(volume_id, list(self.sensitive_volume_ids))
@@ -285,10 +281,8 @@ class GuiStreamDataHandler(BaseDataHandler):
             try:
                 self.track_queue.put_nowait(track_payload)
             except Exception:
-                # Очередь переполнена или закрыта, пропускаем кадр для непрерывности расчета
                 pass
 
-        # 2. Накопление 2D проекции в SharedMemory
         if self._projection_array is not None:
             if self.sensitive_volume_ids is not None and volume_id is not None:
                 mask = np.isin(volume_id, list(self.sensitive_volume_ids))
@@ -307,7 +301,6 @@ class GuiStreamDataHandler(BaseDataHandler):
 
             coords = np.column_stack((px, py, pz))
 
-            # Перевод координат в локальную систему координат детектора
             if isinstance(self.detector_volume, SpatialNode):
                 local_pos = self.detector_volume.convert_to_local_position(coords)
                 lx = local_pos[:, 0]
@@ -326,7 +319,6 @@ class GuiStreamDataHandler(BaseDataHandler):
             half_x = size_x / 2.0
             half_y = size_y / 2.0
 
-            # Отбор взаимодействий в пределах кристалла детектора (с допуском 1e-3 мм на погрешность)
             eps = 1e-3
             in_crystal = (lx >= -half_x - eps) & (lx <= half_x + eps) & (ly >= -half_y - eps) & (ly <= half_y + eps)
             lx = lx[in_crystal]
@@ -334,11 +326,8 @@ class GuiStreamDataHandler(BaseDataHandler):
 
             if len(lx) > 0:
                 h, w = self.projection_shape
-                # Нормализация координат в диапазон пикселей
                 ix = np.clip(((lx / size_x) + 0.5) * (w - 1), 0, w - 1).astype(np.int32)
                 iy = np.clip(((ly / size_y) + 0.5) * (h - 1), 0, h - 1).astype(np.int32)
-
-                # Векторизованное накопление гистограммы на плоскости детектора
                 np.add.at(self._projection_array, (iy, ix), 1.0)
 
     def get_projection_snapshot(self) -> Optional[np.ndarray]:
@@ -373,3 +362,46 @@ class GuiStreamDataHandler(BaseDataHandler):
 
     def __del__(self) -> None:
         self.close()
+
+
+def create_gui_stream_handler(
+    root_scene: Any,
+    task_dict: Dict[str, Any],
+    task_id: int,
+    telemetry_queue: Optional[Any] = None,
+    focused_job_index: Optional[int] = None,
+    focused_shm_name: Optional[str] = None,
+    projection_shape: Tuple[int, int] = (128, 128),
+) -> List[BaseDataHandler]:
+    """
+    Фабрика для создания GuiStreamDataHandler для сфокусированного процесса.
+    Инжектируется из подсистемы GUI в оркестратор ядра без создания прямых связей.
+    """
+    if focused_shm_name and (focused_job_index is None or task_id == focused_job_index):
+        def _find_detector_node(node: Any) -> Any:
+            if isinstance(node, GammaCamera):
+                return node.detector
+            if isinstance(node, CompositeNode):
+                for ch in node.childs:
+                    res = _find_detector_node(ch)
+                    if res is not None:
+                        return res
+            return None
+
+        det_node = _find_detector_node(root_scene)
+        proj_shape = task_dict.get('_projection_shape', projection_shape)
+        stream_handler = GuiStreamDataHandler(
+            track_queue=telemetry_queue,
+            shm_name=focused_shm_name,
+            projection_shape=proj_shape,
+            create_shm=False,
+            detector_volume=det_node
+        )
+        return [stream_handler]
+    return []
+
+
+__all__ = [
+    'GuiStreamDataHandler',
+    'create_gui_stream_handler',
+]

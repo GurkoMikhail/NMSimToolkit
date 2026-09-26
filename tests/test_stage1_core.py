@@ -9,7 +9,7 @@ import numpy as np
 from core.config.exporter import SceneExporter
 from core.config.models import SimulationConfig
 from core.data.data_manager import DataManager
-from core.data.stream_handlers import GuiStreamDataHandler
+from gui.controllers.stream_handlers import GuiStreamDataHandler
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material

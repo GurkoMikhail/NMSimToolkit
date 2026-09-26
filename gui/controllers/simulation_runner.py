@@ -1,12 +1,13 @@
 import logging
 import threading
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from PySide6.QtCore import QThread, Signal
 
 from core.transport.simulation_managers import SimulationManager, SimulationState
 from core.config.models import SimulationConfig
 from core.config.orchestrator import Orchestrator
+from core.data.data_handlers import BaseDataHandler
 
 _logger = logging.getLogger(__name__)
 
@@ -16,7 +17,8 @@ class SimulationRunner(QThread):
     Контроллер выполнения моделирования на базе QThread.
     Изолирует длительные вычисления в отдельном системном потоке,
     предотвращая блокировку основного графического цикла событий Qt.
-    Поддерживает запуск как одиночного SimulationManager, так и пула воркеров Orchestrator.
+    Поддерживает запуск как одиночного SimulationManager, так и пула воркеров Orchestrator
+    с возможностью внешней инъекции обработчиков данных (extra_handlers).
     """
 
     simulation_started = Signal()
@@ -31,12 +33,16 @@ class SimulationRunner(QThread):
         self,
         manager: Optional[SimulationManager] = None,
         config: Optional[SimulationConfig] = None,
-        parent: Optional[Any] = None
+        parent: Optional[Any] = None,
+        extra_handlers: Optional[List[BaseDataHandler]] = None,
+        telemetry_queue: Optional[Any] = None,
     ) -> None:
         super().__init__(parent)
         self.manager = manager
         self.config = config
         self.orchestrator: Optional[Orchestrator] = None
+        self.extra_handlers = extra_handlers
+        self.telemetry_queue = telemetry_queue
         self._running_event = threading.Event()
 
     @property
@@ -75,7 +81,10 @@ class SimulationRunner(QThread):
             elif self.config is not None:
                 # Многопроцессный пул Orchestrator
                 self.orchestrator = Orchestrator(self.config)
-                self.orchestrator.run()
+                self.orchestrator.run(
+                    telemetry_queue=self.telemetry_queue,
+                    extra_handlers=self.extra_handlers,
+                )
             else:
                 raise ValueError("Не задан менеджер или конфигурация для моделирования.")
 

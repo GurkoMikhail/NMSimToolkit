@@ -10,7 +10,7 @@ from hepunits import*
 
 def modeling(angle, radius, gamma_cameras, delta_angle, time_interval, seed, lock):
     import logging
-    from core.other.telegram_bot import TeleBotHandler
+    from infra.monitoring.telegram import TeleBotHandler
     from pathlib import Path
     
     log_path = Path(f'logs/brain_healthy/{round(angle/degree, 1)} deg.log')

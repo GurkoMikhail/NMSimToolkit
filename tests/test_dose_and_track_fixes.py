@@ -17,7 +17,7 @@ app = QApplication.instance() or QApplication(sys.argv)
 import pyvista as pv
 import hepunits as units
 from core.data.dose_map_handler import DoseMapHandler
-from core.data.stream_handlers import GuiStreamDataHandler
+from gui.controllers.stream_handlers import GuiStreamDataHandler
 from gui.viewport_3d.vtk_viewport import VTKViewport
 from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer
 from gui.viewport_3d.track_renderer import TrackRenderer

@@ -34,7 +34,7 @@ from gui.views.results_viewer import ResultsViewer
 from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel
 from gui.viewmodels.data_handler_viewmodel import DirectStreamHandlerViewModel
 from gui.views.property_inspector import PropertyInspector
-from core.data.stream_handlers import GuiStreamDataHandler
+from gui.controllers.stream_handlers import GuiStreamDataHandler
 
 
 # Гарантируем наличие QApplication для GUI тестов

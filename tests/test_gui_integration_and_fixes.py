@@ -211,7 +211,7 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         Верификация прямого накопления 2D-проекции в GuiStreamDataHandler.
         """
         import time
-        from core.data.stream_handlers import GuiStreamDataHandler
+        from gui.controllers.stream_handlers import GuiStreamDataHandler
 
         shm_name = f"test_accum_shm_{int(time.time()*1000)}"
         detector = Volume(

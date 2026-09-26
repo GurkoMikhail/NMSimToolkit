@@ -25,7 +25,7 @@ from core.config.models import (
     WoodcockVoxelVolumeConfig, SourceConfig, NumpyDistributionConfig,
     RawDistributionConfig, SimulationConfig, SimulationManagerConfig
 )
-from core.data.stream_handlers import GuiStreamDataHandler
+from gui.controllers.stream_handlers import GuiStreamDataHandler
 
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
