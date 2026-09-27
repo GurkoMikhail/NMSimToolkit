@@ -4,11 +4,31 @@ import queue
 import threading as mt
 from datetime import datetime, timedelta
 from signal import SIGINT, signal
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Optional, Union, Protocol
 
 import numpy as np
 import hepunits as units
 from numpy.typing import NDArray
+
+
+class PauseEventProtocol(Protocol):
+    """
+    Строгий контракт интерфейса события синхронизации (совместим с threading.Event,
+    multiprocessing.synchronize.Event, mp.Manager().Event() и FocusedPauseProxy).
+    """
+
+    def is_set(self) -> bool:
+        ...
+
+    def set(self) -> None:
+        ...
+
+    def clear(self) -> None:
+        ...
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        ...
+
 
 class SimulationState(Enum):
     IDLE = auto()
@@ -54,7 +74,7 @@ class SimulationManager(Thread):
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
     global_timer: Float
-    pause_event: Any
+    pause_event: PauseEventProtocol
 
     def __init__(
         self,
@@ -68,7 +88,7 @@ class SimulationManager(Thread):
         buffer_capacity: Optional[int] = None,
         name: Optional[str] = None,
         seed: Optional[int] = None,
-        pause_event: Optional[Any] = None,
+        pause_event: Optional[PauseEventProtocol] = None,
     ) -> None:
         super().__init__()
         if name is not None:
