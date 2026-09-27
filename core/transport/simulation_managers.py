@@ -11,10 +11,10 @@ import hepunits as units
 from numpy.typing import NDArray
 
 
-class PauseEventProtocol(Protocol):
+class EventProtocol(Protocol):
     """
-    Строгий контракт интерфейса события синхронизации (совместим с threading.Event,
-    multiprocessing.synchronize.Event, mp.Manager().Event() и FocusedPauseProxy).
+    Универсальный контракт интерфейса события синхронизации (совместим с threading.Event,
+    multiprocessing.synchronize.Event, mp.Manager().Event(), FocusedPauseProxy и др.).
     """
 
     def is_set(self) -> bool:
@@ -74,7 +74,8 @@ class SimulationManager(Thread):
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
     global_timer: Float
-    pause_event: PauseEventProtocol
+    _stop_event: EventProtocol
+    pause_event: EventProtocol
 
     def __init__(
         self,
@@ -88,7 +89,7 @@ class SimulationManager(Thread):
         buffer_capacity: Optional[int] = None,
         name: Optional[str] = None,
         seed: Optional[int] = None,
-        pause_event: Optional[PauseEventProtocol] = None,
+        pause_event: Optional[EventProtocol] = None,
     ) -> None:
         super().__init__()
         if name is not None:
@@ -408,8 +409,7 @@ class SimulationManager(Thread):
         while (np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.global_timer < self.stop_time)) and not self._stop_event.is_set():
             if not self.pause_event.is_set():
                 self._state = SimulationState.PAUSED
-                while not self.pause_event.is_set() and not self._stop_event.is_set():
-                    self.pause_event.wait(timeout=0.05)
+                self.pause_event.wait()
                 if self._stop_event.is_set():
                     break
                 self._state = SimulationState.RUNNING
