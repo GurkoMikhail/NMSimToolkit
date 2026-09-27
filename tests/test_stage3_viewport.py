@@ -616,19 +616,23 @@ class TestStage3Viewport(unittest.TestCase):
         self.assertEqual(gizmo.space, GizmoSpace.WORLD)
 
         # 5. Русская раскладка: клавиша 'У' (E) -> ROTATE, 'К' (R) -> SCALE, 'Ц' (W) -> TRANSLATE
-        QTest.keyClicks(tree, 'у')
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+
+        QApplication.sendEvent(tree, QKeyEvent(QEvent.Type.KeyPress, 0, Qt.KeyboardModifier.NoModifier, 'у'))
         self.assertEqual(gizmo.mode, GizmoMode.ROTATE)
-        QTest.keyClicks(tree, 'к')
+        QApplication.sendEvent(tree, QKeyEvent(QEvent.Type.KeyPress, 0, Qt.KeyboardModifier.NoModifier, 'к'))
         self.assertEqual(gizmo.mode, GizmoMode.SCALE)
-        QTest.keyClicks(tree, 'ц')
+        QApplication.sendEvent(tree, QKeyEvent(QEvent.Type.KeyPress, 0, Qt.KeyboardModifier.NoModifier, 'ц'))
         self.assertEqual(gizmo.mode, GizmoMode.TRANSLATE)
-        QTest.keyClicks(tree, 'й')
+        QApplication.sendEvent(tree, QKeyEvent(QEvent.Type.KeyPress, 0, Qt.KeyboardModifier.NoModifier, 'й'))
         self.assertEqual(gizmo.space, GizmoSpace.LOCAL)
-        QTest.keyClicks(tree, 'й')
+        QApplication.sendEvent(tree, QKeyEvent(QEvent.Type.KeyPress, 0, Qt.KeyboardModifier.NoModifier, 'й'))
         self.assertEqual(gizmo.space, GizmoSpace.WORLD)
 
         # 6. Проверка, что ввод текста в QLineEdit НЕ перехватывается фильтром
         edit = QLineEdit(mw)
+        edit.show()
         edit.setFocus()
         app.processEvents()
         self.assertTrue(edit.hasFocus() or mw.focusWidget() is edit)
@@ -637,6 +641,7 @@ class TestStage3Viewport(unittest.TestCase):
         self.assertEqual(edit.text(), 'w')
 
         mw.close()
+        app.processEvents()
 
 
 if __name__ == '__main__':

@@ -92,6 +92,9 @@ class TransformGizmo(QObject):
         angle_snap_step: float = 5.0,
         scale_snap_step: float = 0.1,
         gizmo_size: float = 80.0,
+        min_gizmo_size: float = 40.0,
+        max_gizmo_size: float = 350.0,
+        adaptive_size: bool = True,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -104,6 +107,9 @@ class TransformGizmo(QObject):
         self._angle_snap_step: float = float(angle_snap_step)
         self._scale_snap_step: float = float(scale_snap_step)
         self._gizmo_size: float = float(gizmo_size)
+        self._min_gizmo_size: float = float(min_gizmo_size)
+        self._max_gizmo_size: float = float(max_gizmo_size)
+        self._adaptive_size: bool = bool(adaptive_size)
 
         self._active_axis: GizmoAxis = GizmoAxis.NONE
         self._is_dragging: bool = False
@@ -210,6 +216,38 @@ class TransformGizmo(QObject):
     @gizmo_size.setter
     def gizmo_size(self, size: float) -> None:
         self._gizmo_size = max(1.0, float(size))
+        if self._gizmo_size > self._max_gizmo_size:
+            self._max_gizmo_size = self._gizmo_size * 2.0
+        self.update_visuals(render=True)
+
+    @property
+    def min_gizmo_size(self) -> float:
+        """Минимально допустимый размер манипулятора (мм)."""
+        return self._min_gizmo_size
+
+    @min_gizmo_size.setter
+    def min_gizmo_size(self, size: float) -> None:
+        self._min_gizmo_size = max(1.0, float(size))
+        self.update_visuals(render=True)
+
+    @property
+    def max_gizmo_size(self) -> float:
+        """Максимально допустимый размер манипулятора (мм)."""
+        return self._max_gizmo_size
+
+    @max_gizmo_size.setter
+    def max_gizmo_size(self, size: float) -> None:
+        self._max_gizmo_size = max(self._min_gizmo_size, float(size))
+        self.update_visuals(render=True)
+
+    @property
+    def adaptive_size(self) -> bool:
+        """Включен ли режим адаптивного вычисления размера манипулятора."""
+        return self._adaptive_size
+
+    @adaptive_size.setter
+    def adaptive_size(self, enabled: bool) -> None:
+        self._adaptive_size = bool(enabled)
         self.update_visuals(render=True)
 
     @property
@@ -333,18 +371,15 @@ class TransformGizmo(QObject):
 
         if self._space == GizmoSpace.LOCAL:
             # Преобразование дельты из локального базиса объекта в родительский базис
-            rotation_basis = current_matrix[0:3, 0:3].copy()
-            # Нормализация базисных векторов (исключение влияния масштаба)
-            norms = np.linalg.norm(rotation_basis, axis=0)
-            norms[norms == 0.0] = 1.0
-            rotation_basis = rotation_basis / norms
+            dir_x, dir_y, dir_z = self._extract_orthonormal_basis(current_matrix)
+            rotation_basis = np.column_stack([dir_x, dir_y, dir_z])
             effective_delta = rotation_basis @ delta_vector
         else:
             if self._target_node.parent_vm is not None:
-                parent_basis = self._target_node.parent_vm.global_matrix[0:3, 0:3].copy()
-                norms = np.linalg.norm(parent_basis, axis=0)
-                norms[norms == 0.0] = 1.0
-                parent_basis = parent_basis / norms
+                parent_dir_x, parent_dir_y, parent_dir_z = self._extract_orthonormal_basis(
+                    self._target_node.parent_vm.global_matrix
+                )
+                parent_basis = np.column_stack([parent_dir_x, parent_dir_y, parent_dir_z])
                 effective_delta = parent_basis.T @ delta_vector
             else:
                 effective_delta = delta_vector
@@ -407,10 +442,10 @@ class TransformGizmo(QObject):
         else:
             # Вращение в глобальной (мировой) системе вокруг центра объекта
             if self._target_node.parent_vm is not None:
-                parent_basis = self._target_node.parent_vm.global_matrix[0:3, 0:3].copy()
-                norms = np.linalg.norm(parent_basis, axis=0)
-                norms[norms == 0.0] = 1.0
-                parent_basis = parent_basis / norms
+                parent_dir_x, parent_dir_y, parent_dir_z = self._extract_orthonormal_basis(
+                    self._target_node.parent_vm.global_matrix
+                )
+                parent_basis = np.column_stack([parent_dir_x, parent_dir_y, parent_dir_z])
                 local_rot = parent_basis.T @ rotation_mat_3x3 @ parent_basis
                 current_matrix[0:3, 0:3] = local_rot @ current_matrix[0:3, 0:3]
             else:
@@ -473,6 +508,111 @@ class TransformGizmo(QObject):
         return False
 
     # ------------------------------------------------------------------------------------------------------------------
+    # Вспомогательные алгоритмы ориентации и масштабирования
+    # ------------------------------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_orthonormal_basis(
+        matrix_4x4: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Извлекает строго ортонормированный 3D-базис (dir_x, dir_y, dir_z) из матрицы трансформации.
+        Гарантирует, что направления осей имеют единичную длину (1.0), взаимно ортогональны
+        и полностью очищены от внутреннего масштаба (scale) и деформаций целевого узла.
+        """
+        sub_matrix_3x3 = np.asarray(matrix_4x4[0:3, 0:3], dtype=np.float64)
+        try:
+            u_matrix, singular_values, vt_matrix = np.linalg.svd(sub_matrix_3x3)
+            if np.any(singular_values < 1e-9):
+                raise ValueError("Матрица ориентации вырождена")
+            rotation_matrix = u_matrix @ vt_matrix
+            if float(np.linalg.det(rotation_matrix)) < 0.0:
+                u_matrix_copy = u_matrix.copy()
+                u_matrix_copy[:, -1] *= -1.0
+                rotation_matrix = u_matrix_copy @ vt_matrix
+            direction_x = rotation_matrix[:, 0]
+            direction_y = rotation_matrix[:, 1]
+            direction_z = rotation_matrix[:, 2]
+        except Exception:
+            # Fallback на модифицированный процесс Грама-Шмидта
+            col_x = sub_matrix_3x3[:, 0].copy()
+            norm_x = float(np.linalg.norm(col_x))
+            direction_x = col_x / norm_x if norm_x > 1e-12 else np.array([1.0, 0.0, 0.0], dtype=np.float64)
+
+            col_y = sub_matrix_3x3[:, 1].copy()
+            col_y = col_y - np.dot(col_y, direction_x) * direction_x
+            norm_y = float(np.linalg.norm(col_y))
+            direction_y = col_y / norm_y if norm_y > 1e-12 else np.array([0.0, 1.0, 0.0], dtype=np.float64)
+
+            direction_z = np.cross(direction_x, direction_y)
+            norm_z = float(np.linalg.norm(direction_z))
+            if norm_z > 1e-12:
+                direction_z = direction_z / norm_z
+            else:
+                direction_z = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+        return (
+            np.ascontiguousarray(direction_x, dtype=np.float64),
+            np.ascontiguousarray(direction_y, dtype=np.float64),
+            np.ascontiguousarray(direction_z, dtype=np.float64),
+        )
+
+    def _compute_gizmo_size(self, gizmo_center: np.ndarray) -> float:
+        """
+        Вычисляет эргономичный и стабильный размер манипулятора (Gizmo size).
+        Размер изолирован от внутреннего масштаба (scale) матрицы целевого узла
+        и ограничивается разумными пределами [min_gizmo_size, max_gizmo_size],
+        либо рассчитывается относительно камеры/сцены.
+        """
+        base_size = self._gizmo_size
+        if not self._adaptive_size:
+            return float(max(self._min_gizmo_size, min(base_size, self._max_gizmo_size)))
+
+        # 1. Попытка расчета относительно камеры для сохранения комфортного экранного размера
+        camera_size: Optional[float] = None
+        if self.viewport is not None and self.viewport.plotter is not None:
+            renderer = self.viewport.plotter.renderer
+            if renderer is not None:
+                try:
+                    camera = renderer.GetActiveCamera()
+                    if camera is not None:
+                        if bool(camera.GetParallelProjection()):
+                            parallel_scale = float(camera.GetParallelScale())
+                            if parallel_scale > 0.0:
+                                camera_size = parallel_scale * 0.28
+                        else:
+                            camera_position = np.array(camera.GetPosition(), dtype=np.float64)
+                            distance_to_camera = float(np.linalg.norm(camera_position - gizmo_center))
+                            view_angle_deg = float(camera.GetViewAngle())
+                            if distance_to_camera > 1.0 and view_angle_deg > 0.0:
+                                visible_height = 2.0 * distance_to_camera * math.tan(
+                                    math.radians(view_angle_deg / 2.0)
+                                )
+                                camera_size = visible_height * 0.15
+                except Exception as camera_err:
+                    _logger.debug(f"Ошибка вычисления размера манипулятора по камере: {camera_err}")
+                    camera_size = None
+
+        if camera_size is not None and camera_size > 0.0:
+            target_size = camera_size
+        elif isinstance(self._target_node, VolumeViewModel):
+            # 2. Адаптивный режим по геометрическим габаритам объема.
+            # Внимание: берется чистый local_bound геометрии (без домножения на scale матрицы трансформации объекта).
+            local_dimensions = self._target_node.local_bound
+            max_dimension = float(np.max(local_dimensions))
+            if max_dimension > 0.0:
+                half_extent = max_dimension * 0.5
+                target_size = max(base_size, half_extent * 1.35)
+            else:
+                target_size = base_size
+        else:
+            target_size = base_size
+
+        # Ограничение разумными пределами [min_gizmo_size, max_gizmo_size]
+        clamped_size = max(self._min_gizmo_size, min(target_size, self._max_gizmo_size))
+        return float(clamped_size)
+
+    # ------------------------------------------------------------------------------------------------------------------
     # Визуализация манипулятора в PyVista / VTK
     # ------------------------------------------------------------------------------------------------------------------
 
@@ -492,27 +632,13 @@ class TransformGizmo(QObject):
         gizmo_center = global_matrix[0:3, 3]
 
         if self._space == GizmoSpace.LOCAL:
-            basis_x = global_matrix[0:3, 0]
-            basis_y = global_matrix[0:3, 1]
-            basis_z = global_matrix[0:3, 2]
-            # Нормализация
-            norm_x = np.linalg.norm(basis_x)
-            norm_y = np.linalg.norm(basis_y)
-            norm_z = np.linalg.norm(basis_z)
-            dir_x = basis_x / (norm_x if norm_x > 0 else 1.0)
-            dir_y = basis_y / (norm_y if norm_y > 0 else 1.0)
-            dir_z = basis_z / (norm_z if norm_z > 0 else 1.0)
+            dir_x, dir_y, dir_z = self._extract_orthonormal_basis(global_matrix)
         else:
             dir_x = np.array([1.0, 0.0, 0.0], dtype=np.float64)
             dir_y = np.array([0.0, 1.0, 0.0], dtype=np.float64)
             dir_z = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
-        size = self._gizmo_size
-        if isinstance(self._target_node, VolumeViewModel):
-            local_half_bounds = self._target_node.local_bound
-            max_half_dim = float(np.max(local_half_bounds))
-            if max_half_dim > 0.0:
-                size = max(self._gizmo_size, max_half_dim * 1.35)
+        size = self._compute_gizmo_size(gizmo_center)
 
         try:
             if self._mode == GizmoMode.TRANSLATE:
