@@ -643,6 +643,192 @@ class TestStage3Viewport(unittest.TestCase):
         mw.close()
         app.processEvents()
 
+    def test_transform_gizmo_orthonormal_orientation_with_scale(self):
+        """Проверка ортонормированности базиса манипулятора при различных масштабах и деформациях объекта."""
+        import math
+        from gui.viewport_3d.transform_gizmo import TransformGizmo
+
+        # 1. Единичный масштаб
+        mat_identity = np.eye(4, dtype=np.float64)
+        dir_x, dir_y, dir_z = TransformGizmo._extract_orthonormal_basis(mat_identity)
+        self.assertAlmostEqual(float(np.linalg.norm(dir_x)), 1.0, places=6)
+        self.assertAlmostEqual(float(np.linalg.norm(dir_y)), 1.0, places=6)
+        self.assertAlmostEqual(float(np.linalg.norm(dir_z)), 1.0, places=6)
+        self.assertAlmostEqual(float(np.dot(dir_x, dir_y)), 0.0, places=6)
+
+        # 2. Неравномерный гигантский масштаб (X=100.0, Y=0.01, Z=50.0) с поворотом на 45 градусов вокруг Z
+        angle_rad = math.radians(45.0)
+        cos_val, sin_val = math.cos(angle_rad), math.sin(angle_rad)
+        rot_mat = np.array([
+            [cos_val, -sin_val, 0.0, 10.0],
+            [sin_val, cos_val, 0.0, 20.0],
+            [0.0, 0.0, 1.0, 30.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ], dtype=np.float64)
+        # Добавляем масштаб
+        rot_mat[0:3, 0] *= 100.0
+        rot_mat[0:3, 1] *= 0.01
+        rot_mat[0:3, 2] *= 50.0
+
+        dir_x, dir_y, dir_z = TransformGizmo._extract_orthonormal_basis(rot_mat)
+        # Все направления должны иметь строго норму 1.0 (без влияния scale объекта)
+        self.assertAlmostEqual(float(np.linalg.norm(dir_x)), 1.0, places=6)
+        self.assertAlmostEqual(float(np.linalg.norm(dir_y)), 1.0, places=6)
+        self.assertAlmostEqual(float(np.linalg.norm(dir_z)), 1.0, places=6)
+        # Векторы строго ортогональны
+        self.assertAlmostEqual(float(np.dot(dir_x, dir_y)), 0.0, places=6)
+        self.assertAlmostEqual(float(np.dot(dir_x, dir_z)), 0.0, places=6)
+        self.assertAlmostEqual(float(np.dot(dir_y, dir_z)), 0.0, places=6)
+        # Правая тройка векторов
+        cross_prod = np.cross(dir_x, dir_y)
+        self.assertTrue(np.allclose(cross_prod, dir_z, atol=1e-5))
+
+        # 3. Вырожденная матрица (все нули) - не должна падать с исключением
+        mat_zero = np.zeros((4, 4), dtype=np.float64)
+        dir_x, dir_y, dir_z = TransformGizmo._extract_orthonormal_basis(mat_zero)
+        self.assertAlmostEqual(float(np.linalg.norm(dir_x)), 1.0, places=6)
+        self.assertAlmostEqual(float(np.linalg.norm(dir_y)), 1.0, places=6)
+        self.assertAlmostEqual(float(np.linalg.norm(dir_z)), 1.0, places=6)
+
+    def test_transform_gizmo_size_independent_of_object_scale_and_clamped(self):
+        """Проверка независимости размера манипулятора от scale матрицы и ограничения min/max."""
+        from gui.viewport_3d.transform_gizmo import TransformGizmo
+        from core.geometry.volumes import Volume
+        from core.geometry.geometries import Box
+        from core.materials.materials import Material
+        from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+
+        mat = Material(name="ScaleMat")
+        vol = Volume(geometry=Box(400.0, 400.0, 400.0), material=mat, name="ScaleBox")
+        vol_vm = VolumeViewModel(vol)
+
+        class MockPlotter:
+            def __init__(self):
+                self.renderer = None
+
+        class MockViewport:
+            def __init__(self):
+                self.plotter = MockPlotter()
+
+            def render(self):
+                pass
+
+            def add_mesh_actor(self, *args, **kwargs):
+                return None
+
+            def remove_actor(self, *args, **kwargs):
+                pass
+
+        mock_vp = MockViewport()
+        gizmo = TransformGizmo(
+            viewport=mock_vp,
+            target_node=vol_vm,
+            gizmo_size=80.0,
+            min_gizmo_size=40.0,
+            max_gizmo_size=350.0
+        )
+
+        # 1. Базовый расчет для Box(400, 400, 400): полуразмер 200 * 1.35 = 270.0
+        size_normal = gizmo._compute_gizmo_size(np.array([0.0, 0.0, 0.0]))
+        self.assertAlmostEqual(size_normal, 270.0, places=5)
+
+        # 2. Применяем гигантский scale 100x в матрицу трансформации объекта
+        scaled_matrix = vol_vm.local_matrix.copy()
+        scaled_matrix[0:3, 0:3] *= 100.0
+        vol_vm.local_matrix = scaled_matrix
+
+        # Размер манипулятора НЕ должен зависеть от внутреннего scale объекта
+        size_scaled = gizmo._compute_gizmo_size(np.array([0.0, 0.0, 0.0]))
+        self.assertAlmostEqual(size_scaled, size_normal, places=5)
+
+        # 3. Огромный объем (4000x4000x4000 мм) должен ограничиваться max_gizmo_size (350 мм)
+        huge_vol = Volume(geometry=Box(4000.0, 4000.0, 4000.0), material=mat, name="HugeBox")
+        huge_vm = VolumeViewModel(huge_vol)
+        gizmo.set_target_node(huge_vm)
+        size_huge = gizmo._compute_gizmo_size(np.array([0.0, 0.0, 0.0]))
+        self.assertEqual(size_huge, 350.0)
+
+        # 4. Крошечный объем (2x2x2 мм) должен ограничиваться min_gizmo_size (40 мм)
+        tiny_vol = Volume(geometry=Box(2.0, 2.0, 2.0), material=mat, name="TinyBox")
+        tiny_vm = VolumeViewModel(tiny_vol)
+        gizmo.set_target_node(tiny_vm)
+        gizmo.gizmo_size = 30.0  # базовый меньше min_gizmo_size
+        size_tiny = gizmo._compute_gizmo_size(np.array([0.0, 0.0, 0.0]))
+        self.assertEqual(size_tiny, 40.0)
+
+        # 5. При отключении адаптивного режима (adaptive_size = False) размер фиксирован
+        gizmo.adaptive_size = False
+        gizmo.gizmo_size = 120.0
+        size_fixed = gizmo._compute_gizmo_size(np.array([0.0, 0.0, 0.0]))
+        self.assertEqual(size_fixed, 120.0)
+
+    def test_transform_gizmo_camera_based_sizing(self):
+        """Проверка адаптации размера манипулятора под дистанцию камеры."""
+        from gui.viewport_3d.transform_gizmo import TransformGizmo
+
+        class MockCamera:
+            def __init__(self, pos=(0.0, 0.0, 500.0), is_parallel=False, parallel_scale=100.0, view_angle=60.0):
+                self.pos = pos
+                self.is_parallel = is_parallel
+                self.parallel_scale = parallel_scale
+                self.view_angle = view_angle
+
+            def GetParallelProjection(self):
+                return 1 if self.is_parallel else 0
+
+            def GetParallelScale(self):
+                return self.parallel_scale
+
+            def GetPosition(self):
+                return self.pos
+
+            def GetViewAngle(self):
+                return self.view_angle
+
+        class MockRenderer:
+            def __init__(self, camera_obj):
+                self._camera = camera_obj
+
+            def GetActiveCamera(self):
+                return self._camera
+
+        class MockPlotter:
+            def __init__(self, renderer_obj):
+                self.renderer = renderer_obj
+
+        class MockViewport:
+            def __init__(self, plotter_obj):
+                self.plotter = plotter_obj
+
+            def render(self):
+                pass
+
+            def add_mesh_actor(self, *args, **kwargs):
+                return None
+
+            def remove_actor(self, *args, **kwargs):
+                pass
+
+        # 1. Перспективная камера на расстоянии 500 мм
+        camera_persp = MockCamera(pos=(0.0, 0.0, 500.0), is_parallel=False, view_angle=60.0)
+        renderer_persp = MockRenderer(camera_persp)
+        vp_persp = MockViewport(MockPlotter(renderer_persp))
+
+        gizmo_persp = TransformGizmo(viewport=vp_persp, min_gizmo_size=20.0, max_gizmo_size=300.0)
+        size_persp = gizmo_persp._compute_gizmo_size(np.array([0.0, 0.0, 0.0]))
+        # visible_height = 2 * 500 * tan(30 deg) = 1000 * 0.57735 = 577.35
+        # camera_size = 577.35 * 0.15 = 86.6
+        self.assertTrue(20.0 <= size_persp <= 300.0)
+        self.assertAlmostEqual(size_persp, 577.35 * 0.15, delta=2.0)
+
+        # 2. Ортографическая камера
+        camera_ortho = MockCamera(is_parallel=True, parallel_scale=200.0)
+        vp_ortho = MockViewport(MockPlotter(MockRenderer(camera_ortho)))
+        gizmo_ortho = TransformGizmo(viewport=vp_ortho, min_gizmo_size=20.0, max_gizmo_size=300.0)
+        size_ortho = gizmo_ortho._compute_gizmo_size(np.array([0.0, 0.0, 0.0]))
+        # 200 * 0.28 = 56.0
+        self.assertAlmostEqual(size_ortho, 56.0, places=1)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1072,12 +1072,13 @@ class TransformGizmo(QObject):
         camera = renderer.GetActiveCamera()
         if camera is not None:
             view_dir = np.array(camera.GetDirectionOfProjection(), dtype=np.float64)
+            dir_x, dir_y, dir_z = self._extract_orthonormal_basis(global_matrix)
             if self._active_axis == GizmoAxis.X:
-                axis_vec = global_matrix[0:3, 0] if self._space == GizmoSpace.LOCAL else np.array([1.0, 0.0, 0.0])
+                axis_vec = dir_x if self._space == GizmoSpace.LOCAL else np.array([1.0, 0.0, 0.0], dtype=np.float64)
             elif self._active_axis == GizmoAxis.Y:
-                axis_vec = global_matrix[0:3, 1] if self._space == GizmoSpace.LOCAL else np.array([0.0, 1.0, 0.0])
+                axis_vec = dir_y if self._space == GizmoSpace.LOCAL else np.array([0.0, 1.0, 0.0], dtype=np.float64)
             else:
-                axis_vec = global_matrix[0:3, 2] if self._space == GizmoSpace.LOCAL else np.array([0.0, 0.0, 1.0])
+                axis_vec = dir_z if self._space == GizmoSpace.LOCAL else np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
             norm_axis = np.linalg.norm(axis_vec)
             if norm_axis > 0:
@@ -1125,13 +1126,11 @@ class TransformGizmo(QObject):
         start_pos = initial_matrix[0:3, 3].copy()
 
         if self._space == GizmoSpace.LOCAL:
-            rotation_basis = initial_matrix[0:3, 0:3].copy()
-            norms = np.linalg.norm(rotation_basis, axis=0)
-            norms[norms == 0.0] = 1.0
-            rotation_basis = rotation_basis / norms
-            axis_x = rotation_basis[:, 0]
-            axis_y = rotation_basis[:, 1]
-            axis_z = rotation_basis[:, 2]
+            dir_x, dir_y, dir_z = self._extract_orthonormal_basis(initial_matrix)
+            rotation_basis = np.column_stack([dir_x, dir_y, dir_z])
+            axis_x = dir_x
+            axis_y = dir_y
+            axis_z = dir_z
         else:
             axis_x = np.array([1.0, 0.0, 0.0], dtype=np.float64)
             axis_y = np.array([0.0, 1.0, 0.0], dtype=np.float64)
@@ -1157,10 +1156,10 @@ class TransformGizmo(QObject):
             effective_delta = local_delta
         else:
             if self._target_node.parent_vm is not None:
-                parent_basis = self._target_node.parent_vm.global_matrix[0:3, 0:3].copy()
-                norms = np.linalg.norm(parent_basis, axis=0)
-                norms[norms == 0.0] = 1.0
-                parent_basis = parent_basis / norms
+                parent_dir_x, parent_dir_y, parent_dir_z = self._extract_orthonormal_basis(
+                    self._target_node.parent_vm.global_matrix
+                )
+                parent_basis = np.column_stack([parent_dir_x, parent_dir_y, parent_dir_z])
                 effective_delta = parent_basis.T @ projected_delta
             else:
                 effective_delta = projected_delta
@@ -1212,10 +1211,10 @@ class TransformGizmo(QObject):
             new_matrix[0:3, 0:3] = initial_matrix[0:3, 0:3] @ rotation_mat_3x3
         else:
             if self._target_node.parent_vm is not None:
-                parent_basis = self._target_node.parent_vm.global_matrix[0:3, 0:3].copy()
-                norms = np.linalg.norm(parent_basis, axis=0)
-                norms[norms == 0.0] = 1.0
-                parent_basis = parent_basis / norms
+                parent_dir_x, parent_dir_y, parent_dir_z = self._extract_orthonormal_basis(
+                    self._target_node.parent_vm.global_matrix
+                )
+                parent_basis = np.column_stack([parent_dir_x, parent_dir_y, parent_dir_z])
                 local_rot = parent_basis.T @ rotation_mat_3x3 @ parent_basis
                 new_matrix[0:3, 0:3] = local_rot @ initial_matrix[0:3, 0:3]
             else:
