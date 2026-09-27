@@ -1,40 +1,14 @@
 from enum import Enum, auto
 import logging
 import queue
-import threading as mt
+import threading
 from datetime import datetime, timedelta
 from signal import SIGINT, signal
-from typing import Callable, List, Optional, Union, Protocol
+from typing import Callable, List, Optional, Union, Any
 
 import numpy as np
 import hepunits as units
 from numpy.typing import NDArray
-
-
-class EventProtocol(Protocol):
-    """
-    Универсальный контракт интерфейса события синхронизации (совместим с threading.Event,
-    multiprocessing.synchronize.Event, mp.Manager().Event(), FocusedPauseProxy и др.).
-    """
-
-    def is_set(self) -> bool:
-        ...
-
-    def set(self) -> None:
-        ...
-
-    def clear(self) -> None:
-        ...
-
-    def wait(self, timeout: Optional[float] = None) -> bool:
-        ...
-
-
-class SimulationState(Enum):
-    IDLE = auto()
-    RUNNING = auto()
-    PAUSED = auto()
-    STOPPED = auto()
 
 from core.geometry.volumes import Volume
 from core.geometry.geometry_compiler import GeometryCompiler
@@ -51,8 +25,18 @@ from core.transport.propagator import ParticlePropagator
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.DEBUG)
 
+
+class SimulationState(Enum):
+    """
+    Состояния жизненного цикла процесса моделирования.
+    """
+    IDLE = auto()
+    RUNNING = auto()
+    PAUSED = auto()
+    STOPPED = auto()
+
 Queue = queue.Queue
-Thread = mt.Thread
+Thread = threading.Thread
 
 
 class SimulationManager(Thread):
@@ -74,8 +58,8 @@ class SimulationManager(Thread):
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
     global_timer: Float
-    _stop_event: EventProtocol
-    pause_event: EventProtocol
+    _run_event: threading.Event
+    _state: SimulationState
 
     def __init__(
         self,
@@ -89,7 +73,6 @@ class SimulationManager(Thread):
         buffer_capacity: Optional[int] = None,
         name: Optional[str] = None,
         seed: Optional[int] = None,
-        pause_event: Optional[EventProtocol] = None,
     ) -> None:
         super().__init__()
         if name is not None:
@@ -112,19 +95,15 @@ class SimulationManager(Thread):
         self.data_buffer = SimulationDataBuffer.allocate(effective_capacity, effective_capacity, effective_capacity)
         if seed is not None:
             self.propagator.rng = np.random.default_rng(seed)
-            for src in self.active_sources:
-                src.rng = self.propagator.rng
+            for source_node in self.active_sources:
+                source_node.rng = self.propagator.rng
         self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
         self.global_timer = Float(start_time)
 
         self._state: SimulationState = SimulationState.IDLE
-        self._stop_event = mt.Event()
-        if pause_event is not None:
-            self.pause_event = pause_event
-        else:
-            self.pause_event = mt.Event()
-            self.pause_event.set()
+        self._run_event: threading.Event = threading.Event()
+        self._run_event.set()
 
         try:
             signal(SIGINT, self.sigint_handler)
@@ -133,30 +112,50 @@ class SimulationManager(Thread):
 
     @property
     def state(self) -> SimulationState:
+        """Текущее состояние процесса моделирования."""
         return self._state
+
+    @property
+    def is_stopped(self) -> bool:
+        """Флаг завершения или кооперативной остановки моделирования."""
+        return self._state == SimulationState.STOPPED
+
+    @property
+    def has_active_particles(self) -> bool:
+        """Проверяет наличие активных частиц, находящихся в процессе переноса."""
+        return bool(np.any(self.bank.state.is_active))
+
+    @property
+    def has_pending_sources(self) -> bool:
+        """Проверяет наличие активных источников частиц до достижения лимита времени."""
+        return bool(self.active_sources and self.global_timer < self.stop_time)
 
     def pause(self) -> None:
         """Приостанавливает выполнение моделирования."""
-        self.pause_event.clear()
+        if self._state == SimulationState.STOPPED:
+            return
         self._state = SimulationState.PAUSED
+        self._run_event.clear()
 
     def resume(self) -> None:
         """Возобновляет приостановленное моделирование."""
+        if self._state == SimulationState.STOPPED:
+            return
         self._state = SimulationState.RUNNING
-        self.pause_event.set()
+        self._run_event.set()
 
     def stop(self) -> None:
         """Кооперативно останавливает процесс моделирования."""
-        self._stop_event.set()
-        self.pause_event.set()
         self._state = SimulationState.STOPPED
+        self._run_event.set()
 
     def step_once(self) -> None:
         """Выполняет один шаг моделирования для покадрового анализа."""
         self.next_step()
         self.flush_all()
 
-    def sigint_handler(self, signal, frame):
+    def sigint_handler(self, signum: int, frame: Any) -> None:
+        """Обработчик сигнала прерывания SIGINT."""
         _logger.error(f'{self.name} interrupted at {timedelta(seconds=self.global_timer/units.second)}')
         self.stop()
 
@@ -231,8 +230,8 @@ class SimulationManager(Thread):
         return self.bank.state.energy[active_indices] < self.min_energy
 
     def _invalidate_by_volume(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
-        nav = self.bank.navigation_state
-        return (nav.current_volume[active_indices] < 0) & (nav.boundary_distance[active_indices] > 0.0)
+        navigation_state = self.bank.navigation_state
+        return (navigation_state.current_volume[active_indices] < 0) & (navigation_state.boundary_distance[active_indices] > 0.0)
 
     def _apply_invalidators(self, active_indices: NDArray[Index]) -> NDArray[Index]:
         dead_mask = np.zeros(len(active_indices), dtype=np.bool_)
@@ -250,36 +249,36 @@ class SimulationManager(Thread):
     MIN_TIME_STEP = Float(1e-9)
 
     def _calculate_time_step(self, num_to_inject: int) -> Float:
-        total_act = sum(src.get_activity(self.global_timer) for src in self.active_sources)
-        if total_act <= 0:
+        total_activity = sum(source_node.get_activity(self.global_timer) for source_node in self.active_sources)
+        if total_activity <= 0:
             return Float(self.stop_time - self.global_timer)
 
-        # Initial guess: linear approximation
-        dt = Float(num_to_inject / total_act)
+        # Начальное приближение: линейная экстраполяция
+        delta_time = Float(num_to_inject / total_activity)
 
-        def objective_func(current_dt: Float) -> float:
-            return sum(src.get_activity(self.global_timer) * src._get_effective_dt(current_dt) for src in self.active_sources) - num_to_inject
+        def objective_func(current_delta_time: Float) -> float:
+            return sum(source_node.get_activity(self.global_timer) * source_node._get_effective_dt(current_delta_time) for source_node in self.active_sources) - num_to_inject
 
-        def derivative_func(current_dt: Float) -> float:
-            return sum(src.get_activity(self.global_timer + current_dt) for src in self.active_sources)
+        def derivative_func(current_delta_time: Float) -> float:
+            return sum(source_node.get_activity(self.global_timer + current_delta_time) for source_node in self.active_sources)
 
-        # Newton-Raphson
+        # Метод Ньютона-Рафсона
         for _ in range(self.MAX_NEWTON_ITERATIONS):
-            func_val = objective_func(dt)
-            deriv_val = derivative_func(dt)
-            if deriv_val == 0:
+            function_value = objective_func(delta_time)
+            derivative_value = derivative_func(delta_time)
+            if derivative_value == 0:
                 break
-            dt = dt - Float(func_val / deriv_val)
-            if abs(func_val) < self.NEWTON_TARGET_PRECISION:
+            delta_time = delta_time - Float(function_value / derivative_value)
+            if abs(function_value) < self.NEWTON_TARGET_PRECISION:
                 break
 
-        dt = max(dt, self.MIN_TIME_STEP)
+        delta_time = max(delta_time, self.MIN_TIME_STEP)
 
-        # Clamp dt to not exceed simulation stop_time
-        return min(dt, Float(self.stop_time - self.global_timer))
+        # Ограничение delta_time, чтобы не превысить время завершения симуляции stop_time
+        return min(delta_time, Float(self.stop_time - self.global_timer))
 
-    def _distribute_quotas(self, target_time: Float, num_to_inject: int):
-        expected = np.array([src.get_expected_particles(self.global_timer, target_time) for src in self.active_sources])
+    def _distribute_quotas(self, target_time: Float, num_to_inject: int) -> None:
+        expected = np.array([source_node.get_expected_particles(self.global_timer, target_time) for source_node in self.active_sources])
         target_total = min(num_to_inject, int(np.round(np.sum(expected))))
 
         quotas = np.floor(expected).astype(int)
@@ -288,22 +287,22 @@ class SimulationManager(Thread):
         shortfall = target_total - np.sum(quotas)
         if shortfall > 0:
             indices = np.argsort(remainders)[::-1]
-            for i in range(int(shortfall)):
-                quotas[indices[i % len(indices)]] += 1
+            for shortfall_idx in range(int(shortfall)):
+                quotas[indices[shortfall_idx % len(indices)]] += 1
 
         for source_obj, quota_count in zip(self.active_sources, quotas):
             if quota_count > 0:
                 source_obj.inject(self.bank, quota_count, self.global_timer, target_time)
 
-    def _replenish_bank(self):
+    def _replenish_bank(self) -> None:
         num_active = np.count_nonzero(self.bank.state.is_active)
         num_to_inject = self.bank.capacity - num_active
 
         if num_to_inject <= 0 or not self.active_sources or self.global_timer >= self.stop_time:
             return
 
-        dt = self._calculate_time_step(num_to_inject)
-        target_time = self.global_timer + dt
+        delta_time = self._calculate_time_step(num_to_inject)
+        target_time = self.global_timer + delta_time
 
         self._distribute_quotas(target_time, num_to_inject)
 
@@ -353,30 +352,30 @@ class SimulationManager(Thread):
         if not np.any(escaped_mask):
             return
 
-        esc_idx = dead_indices[escaped_mask]
-        birth_x = self.bank.initial_state.emission_position.x[esc_idx]
-        birth_y = self.bank.initial_state.emission_position.y[esc_idx]
-        birth_z = self.bank.initial_state.emission_position.z[esc_idx]
-        esc_x = self.bank.state.position.x[esc_idx]
-        esc_y = self.bank.state.position.y[esc_idx]
-        esc_z = self.bank.state.position.z[esc_idx]
-        esc_pids = self.bank.initial_state.ID[esc_idx]
-        has_interacted = self.bank.initial_state.has_interacted[esc_idx]
+        escaped_indices = dead_indices[escaped_mask]
+        birth_x = self.bank.initial_state.emission_position.x[escaped_indices]
+        birth_y = self.bank.initial_state.emission_position.y[escaped_indices]
+        birth_z = self.bank.initial_state.emission_position.z[escaped_indices]
+        escaped_x = self.bank.state.position.x[escaped_indices]
+        escaped_y = self.bank.state.position.y[escaped_indices]
+        escaped_z = self.bank.state.position.z[escaped_indices]
+        escaped_particle_ids = self.bank.initial_state.ID[escaped_indices]
+        has_interacted = self.bank.initial_state.has_interacted[escaped_indices]
 
-        esc_chunk = {
+        escaped_chunk = {
             'type': 'escaped_particles',
             'data': {
                 'birth_x': np.array(birth_x, copy=True),
                 'birth_y': np.array(birth_y, copy=True),
                 'birth_z': np.array(birth_z, copy=True),
-                'pos_x': np.array(esc_x, copy=True),
-                'pos_y': np.array(esc_y, copy=True),
-                'pos_z': np.array(esc_z, copy=True),
-                'particle_id': np.array(esc_pids, copy=True),
+                'pos_x': np.array(escaped_x, copy=True),
+                'pos_y': np.array(escaped_y, copy=True),
+                'pos_z': np.array(escaped_z, copy=True),
+                'particle_id': np.array(escaped_particle_ids, copy=True),
                 'has_interacted': np.array(has_interacted, copy=True),
             }
         }
-        self.send_data(esc_chunk)
+        self.send_data(escaped_chunk)
 
     def _handle_dead_particles(self, dead_indices: np.ndarray) -> None:
         """
@@ -400,24 +399,21 @@ class SimulationManager(Thread):
         """Запуск цикла симуляции в рабочем потоке."""
         self._run()
 
-    def _run(self):
+    def _run(self) -> None:
         _logger.warning(f'{self.name} started from {timedelta(seconds=self.global_timer/units.second)} to {timedelta(seconds=self.stop_time/units.second)}')
         start_timepoint = datetime.now()
-        self._state = SimulationState.RUNNING
-        self._stop_event.clear()
+        if self._state != SimulationState.STOPPED and self._state != SimulationState.PAUSED:
+            self._state = SimulationState.RUNNING
 
-        while (np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.global_timer < self.stop_time)) and not self._stop_event.is_set():
-            if not self.pause_event.is_set():
-                self._state = SimulationState.PAUSED
-                self.pause_event.wait()
-                if self._stop_event.is_set():
-                    break
-                self._state = SimulationState.RUNNING
+        while (self.has_active_particles or self.has_pending_sources) and not self.is_stopped:
+            self._run_event.wait()
+            if self.is_stopped:
+                break
 
             self.next_step()
             _logger.debug(f'Global timer of {self.name} at {timedelta(seconds=self.global_timer/units.second)}')
 
-        # Final flush
+        # Финальный сброс телеметрии
         self.flush_all()
         self.queue.put('stop')
         self._state = SimulationState.STOPPED

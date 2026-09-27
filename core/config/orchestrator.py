@@ -1,5 +1,6 @@
 import itertools
 import re
+import threading
 from copy import deepcopy
 from typing import Dict, List, Any, Tuple, Optional, Callable
 import numpy as np
@@ -16,7 +17,7 @@ from core.config.builder import SceneBuilder
 from core.scene.nodes import SpatialNode, CompositeNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.source.sources import Source
-from core.transport.simulation_managers import SimulationManager
+from core.transport.simulation_managers import SimulationManager, SimulationState
 from core.transport.propagator import ParticlePropagator
 from core.data.data_manager import DataManager
 from core.data.data_handlers import (
@@ -61,6 +62,47 @@ def _find_gamma_cameras(node: Any) -> List[GammaCamera]:
         for child in node.childs:
             cameras.extend(_find_gamma_cameras(child))
     return cameras
+
+
+class IpcPauseBridge(threading.Thread):
+    """
+    Легковесный фоновый поток-адаптер для трансляции межпроцессных сигналов паузы (IPC Event)
+    в публичные вызовы методов SimulationManager.pause() и SimulationManager.resume().
+    Обеспечивает полную изоляцию расчетного ядра от подсистем multiprocessing и IPC.
+    """
+
+    def __init__(
+        self,
+        manager: SimulationManager,
+        ipc_event: Any,
+        poll_interval_seconds: float = 0.02,
+    ) -> None:
+        super().__init__(name="IpcPauseBridge", daemon=True)
+        self.manager = manager
+        self.ipc_event = ipc_event
+        self.poll_interval_seconds = poll_interval_seconds
+        self._stop_event = threading.Event()
+        self._last_state_was_set: bool = bool(ipc_event.is_set())
+
+    def stop_bridge(self) -> None:
+        """Останавливает рабочий цикл потока-адаптера."""
+        self._stop_event.set()
+
+    def run(self) -> None:
+        while not self._stop_event.is_set():
+            if self.manager.state == SimulationState.STOPPED:
+                break
+
+            current_is_set = bool(self.ipc_event.is_set())
+            if current_is_set != self._last_state_was_set:
+                self._last_state_was_set = current_is_set
+                if current_is_set:
+                    self.manager.resume()
+                else:
+                    self.manager.pause()
+
+            self._stop_event.wait(timeout=self.poll_interval_seconds)
+
 
 def _worker_function(payload: Tuple[Any, ...]) -> Any:
     task_dict = payload[0]
@@ -140,7 +182,6 @@ def _worker_function(payload: Tuple[Any, ...]) -> Any:
 
     # 5. Instantiate Managers
     sim_config = final_config.simulation_manager
-    pause_event = task_dict.get('_pause_event')
     manager = SimulationManager(
         scene=root_scene,
         propagator=propagator,
@@ -151,8 +192,19 @@ def _worker_function(payload: Tuple[Any, ...]) -> Any:
         buffer_capacity=final_config.data_manager.buffer_capacity,
         name=f"Task_seed_{seed}",
         seed=seed,
-        pause_event=pause_event,
     )
+
+    ipc_pause_event = task_dict.get('_run_event', task_dict.get('_pause_event'))
+    pause_bridge: Optional[IpcPauseBridge] = None
+    if ipc_pause_event is not None:
+        if not bool(ipc_pause_event.is_set()):
+            manager.pause()
+        pause_bridge = IpcPauseBridge(
+            manager=manager,
+            ipc_event=ipc_pause_event,
+            poll_interval_seconds=0.02,
+        )
+        pause_bridge.start()
 
     data_manager = DataManager(
         filename=final_config.data_manager.filename,
@@ -187,6 +239,10 @@ def _worker_function(payload: Tuple[Any, ...]) -> Any:
             except (ValueError, OSError):
                 pass
         raise
+    finally:
+        if pause_bridge is not None:
+            pause_bridge.stop_bridge()
+            pause_bridge.join(timeout=1.0)
 
 
 class Orchestrator:

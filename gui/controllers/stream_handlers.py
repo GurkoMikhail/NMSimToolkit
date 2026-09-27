@@ -436,15 +436,18 @@ def create_gui_stream_handler(
     """
     is_focused = (focused_job_index is None or task_id == focused_job_index)
 
-    # Настройка межпроцессных событий паузы для процесса
+    # Настройка межпроцессных событий хода/паузы для процесса
     if global_pause_event is not None:
         if is_focused and focused_pause_event is not None and step_trigger_event is not None:
-            task_dict['_pause_event'] = FocusedPauseProxy(
+            proxy_event = FocusedPauseProxy(
                 global_pause_event=global_pause_event,
                 focused_pause_event=focused_pause_event,
                 step_trigger_event=step_trigger_event,
             )
+            task_dict['_run_event'] = proxy_event
+            task_dict['_pause_event'] = proxy_event
         else:
+            task_dict['_run_event'] = global_pause_event
             task_dict['_pause_event'] = global_pause_event
 
     if focused_shm_name and is_focused:

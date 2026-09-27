@@ -1,6 +1,8 @@
 import os
 import queue
 import tempfile
+import threading
+import time
 import unittest
 from multiprocessing import Queue
 
@@ -8,6 +10,7 @@ import numpy as np
 
 from core.config.exporter import SceneExporter
 from core.config.models import SimulationConfig
+from core.config.orchestrator import IpcPauseBridge
 from core.data.data_manager import DataManager
 from gui.controllers.stream_handlers import GuiStreamDataHandler
 from core.geometry.geometries import Box
@@ -22,18 +25,35 @@ class TestStage1Core(unittest.TestCase):
         """Проверка состояний и методов управления SimulationManager."""
         # Создаем минимальный узел сцены
         scene = CompositeNode()
-        mgr = SimulationManager(scene=scene, particles_number=10)
-        self.assertEqual(mgr.state, SimulationState.IDLE)
+        manager = SimulationManager(scene=scene, particles_number=10)
+        self.assertEqual(manager.state, SimulationState.IDLE)
+        self.assertFalse(manager.is_stopped)
+        self.assertFalse(manager.has_active_particles)
+        self.assertFalse(manager.has_pending_sources)
 
-        mgr.pause()
-        self.assertEqual(mgr.state, SimulationState.PAUSED)
+        manager.pause()
+        self.assertEqual(manager.state, SimulationState.PAUSED)
+        self.assertFalse(manager.is_stopped)
 
-        mgr.resume()
-        self.assertEqual(mgr.state, SimulationState.RUNNING)
+        manager.resume()
+        self.assertEqual(manager.state, SimulationState.RUNNING)
+        self.assertFalse(manager.is_stopped)
 
-        mgr.stop()
-        self.assertEqual(mgr.state, SimulationState.STOPPED)
-        self.assertTrue(mgr._stop_event.is_set())
+        manager.step_once()
+        self.assertEqual(manager.state, SimulationState.RUNNING)
+        self.assertFalse(manager.is_stopped)
+
+        manager.stop()
+        self.assertEqual(manager.state, SimulationState.STOPPED)
+        self.assertTrue(manager.is_stopped)
+
+        # Проверка терминальности STOPPED: pause/resume не могут перевести в PAUSED/RUNNING
+        manager.pause()
+        self.assertEqual(manager.state, SimulationState.STOPPED)
+        self.assertTrue(manager.is_stopped)
+        manager.resume()
+        self.assertEqual(manager.state, SimulationState.STOPPED)
+        self.assertTrue(manager.is_stopped)
 
     def test_gui_stream_data_handler(self):
         """Проверка GuiStreamDataHandler с очередью и разделяемой памятью."""
@@ -221,6 +241,34 @@ class TestStage1Core(unittest.TestCase):
 
         chunk_types = [c['type'] for c in received_chunks if isinstance(c, dict)]
         self.assertEqual(chunk_types, ['initial_states', 'interactions', 'dead_particles'])
+
+    def test_ipc_pause_bridge(self):
+        """Проверка адаптера межпроцессной паузы IpcPauseBridge."""
+        scene = CompositeNode()
+        manager = SimulationManager(scene=scene, particles_number=10)
+        ipc_event = threading.Event()
+        ipc_event.set()
+
+        bridge = IpcPauseBridge(manager=manager, ipc_event=ipc_event, poll_interval_seconds=0.01)
+        bridge.start()
+
+        try:
+            # Исходно менеджер не на паузе
+            self.assertEqual(manager.state, SimulationState.IDLE)
+
+            # Симулируем сигнал паузы из другого процесса
+            ipc_event.clear()
+            time.sleep(0.04)
+            self.assertEqual(manager.state, SimulationState.PAUSED)
+
+            # Симулируем снятие паузы
+            ipc_event.set()
+            time.sleep(0.04)
+            self.assertEqual(manager.state, SimulationState.RUNNING)
+        finally:
+            bridge.stop_bridge()
+            bridge.join(timeout=1.0)
+            self.assertFalse(bridge.is_alive())
 
 
 if __name__ == '__main__':
