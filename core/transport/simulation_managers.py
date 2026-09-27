@@ -54,7 +54,7 @@ class SimulationManager(Thread):
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
     global_timer: Float
-    pause_event: Optional[Any]
+    pause_event: Any
 
     def __init__(
         self,
@@ -99,10 +99,11 @@ class SimulationManager(Thread):
 
         self._state: SimulationState = SimulationState.IDLE
         self._stop_event = mt.Event()
-        self.pause_event = pause_event
-        self._pause_event = pause_event if pause_event is not None else mt.Event()
-        if self.pause_event is None:
-            self._pause_event.set()
+        if pause_event is not None:
+            self.pause_event = pause_event
+        else:
+            self.pause_event = mt.Event()
+            self.pause_event.set()
 
         try:
             signal(SIGINT, self.sigint_handler)
@@ -115,18 +116,18 @@ class SimulationManager(Thread):
 
     def pause(self) -> None:
         """Приостанавливает выполнение моделирования."""
-        self._pause_event.clear()
+        self.pause_event.clear()
         self._state = SimulationState.PAUSED
 
     def resume(self) -> None:
         """Возобновляет приостановленное моделирование."""
         self._state = SimulationState.RUNNING
-        self._pause_event.set()
+        self.pause_event.set()
 
     def stop(self) -> None:
         """Кооперативно останавливает процесс моделирования."""
         self._stop_event.set()
-        self._pause_event.set()
+        self.pause_event.set()
         self._state = SimulationState.STOPPED
 
     def step_once(self) -> None:
@@ -382,15 +383,13 @@ class SimulationManager(Thread):
         _logger.warning(f'{self.name} started from {timedelta(seconds=self.global_timer/units.second)} to {timedelta(seconds=self.stop_time/units.second)}')
         start_timepoint = datetime.now()
         self._state = SimulationState.RUNNING
-        if self.pause_event is None:
-            self._pause_event.set()
         self._stop_event.clear()
 
         while (np.count_nonzero(self.bank.state.is_active) > 0 or (self.active_sources and self.global_timer < self.stop_time)) and not self._stop_event.is_set():
-            if not self._pause_event.is_set():
+            if not self.pause_event.is_set():
                 self._state = SimulationState.PAUSED
-                while not self._pause_event.is_set() and not self._stop_event.is_set():
-                    self._pause_event.wait(timeout=0.05)
+                while not self.pause_event.is_set() and not self._stop_event.is_set():
+                    self.pause_event.wait(timeout=0.05)
                 if self._stop_event.is_set():
                     break
                 self._state = SimulationState.RUNNING
