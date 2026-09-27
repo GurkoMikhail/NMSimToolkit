@@ -131,9 +131,7 @@ class SimulationManager(Thread):
     def step_once(self) -> None:
         """Выполняет один шаг моделирования для покадрового анализа."""
         self.next_step()
-        self.flush_initial_states()
-        self.flush_interactions()
-        self.flush_dead_particles()
+        self.flush_all()
 
     def sigint_handler(self, signal, frame):
         _logger.error(f'{self.name} interrupted at {timedelta(seconds=self.global_timer/units.second)}')
@@ -171,11 +169,8 @@ class SimulationManager(Thread):
         if dead_count == 0:
             return
 
-        if self.data_buffer.initial_states.cursor_value > 0:
-            self.flush_initial_states()
-
-        if self.data_buffer.interactions.cursor_value > 0:
-            self.flush_interactions()
+        self.flush_initial_states()
+        self.flush_interactions()
 
         _logger.debug(f'{self.name} flushing {dead_count} dead particles')
         chunk = {
@@ -199,6 +194,15 @@ class SimulationManager(Thread):
             'data': self.data_buffer.initial_states.flush_to_dict(clear=True)
         }
         self.send_data(chunk)
+
+    def flush_all(self) -> None:
+        """
+        Выполняет полный сброс всех буферов телеметрии в строгом причинно-следственном порядке:
+        initial_states → interactions → dead_particles.
+        """
+        self.flush_initial_states()
+        self.flush_interactions()
+        self.flush_dead_particles()
 
     def _invalidate_by_energy(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
         return self.bank.state.energy[active_indices] < self.min_energy
@@ -394,9 +398,7 @@ class SimulationManager(Thread):
             _logger.debug(f'Global timer of {self.name} at {timedelta(seconds=self.global_timer/units.second)}')
 
         # Final flush
-        self.flush_initial_states()
-        self.flush_interactions()
-        self.flush_dead_particles()
+        self.flush_all()
         self.queue.put('stop')
         self._state = SimulationState.STOPPED
 

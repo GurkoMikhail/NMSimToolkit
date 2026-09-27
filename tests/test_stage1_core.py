@@ -197,6 +197,31 @@ class TestStage1Core(unittest.TestCase):
         chunk_types = [c['type'] for c in received_chunks if isinstance(c, dict)]
         self.assertEqual(chunk_types, ['initial_states', 'interactions', 'dead_particles'])
 
+    def test_flush_all_ordering(self):
+        """Проверка причинно-следственного порядка сброса через flush_all: initial_states -> interactions -> dead_particles."""
+        scene = CompositeNode()
+        received_chunks = []
+        test_queue = queue.Queue()
+        mgr = SimulationManager(scene=scene, particles_number=10, buffer_capacity=10, queue=test_queue)
+
+        # Заполняем буферы данными
+        mgr.data_buffer.initial_states.particle_ID[0] = 42
+        mgr.data_buffer.initial_states.cursor[0] = 1
+
+        mgr.data_buffer.interactions.particle_ID[0] = 42
+        mgr.data_buffer.interactions.cursor[0] = 1
+
+        mgr.data_buffer.dead_particles.append(np.array([42], dtype=np.int32))
+
+        # Вызов flush_all должен произвести сброс всех трех буферов в правильном порядке
+        mgr.flush_all()
+
+        while not test_queue.empty():
+            received_chunks.append(test_queue.get())
+
+        chunk_types = [c['type'] for c in received_chunks if isinstance(c, dict)]
+        self.assertEqual(chunk_types, ['initial_states', 'interactions', 'dead_particles'])
+
 
 if __name__ == '__main__':
     unittest.main()
