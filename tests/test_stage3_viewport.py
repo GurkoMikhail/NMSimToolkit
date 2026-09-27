@@ -829,6 +829,134 @@ class TestStage3Viewport(unittest.TestCase):
         # 200 * 0.28 = 56.0
         self.assertAlmostEqual(size_ortho, 56.0, places=1)
 
+    def test_transform_gizmo_negative_scale_reflections(self):
+        """Проверка сохранения истинных направлений осей при отрицательном масштабировании (зеркалировании)."""
+        from gui.viewport_3d.transform_gizmo import TransformGizmo
+
+        # 1. Отражение по оси X (scale_x = -1.0)
+        matrix_reflect_x = np.diag([-1.0, 1.0, 1.0, 1.0])
+        direction_x, direction_y, direction_z = TransformGizmo._extract_orthonormal_basis(matrix_reflect_x)
+        self.assertTrue(np.allclose(direction_x, [-1.0, 0.0, 0.0]))
+        self.assertTrue(np.allclose(direction_y, [0.0, 1.0, 0.0]))
+        self.assertTrue(np.allclose(direction_z, [0.0, 0.0, 1.0]))
+        self.assertAlmostEqual(float(np.dot(direction_x, direction_y)), 0.0, places=6)
+        self.assertAlmostEqual(float(np.dot(direction_x, direction_z)), 0.0, places=6)
+        self.assertAlmostEqual(float(np.dot(direction_y, direction_z)), 0.0, places=6)
+
+        # 2. Отражение по оси Y (scale_y = -1.0)
+        matrix_reflect_y = np.diag([1.0, -1.0, 1.0, 1.0])
+        direction_x, direction_y, direction_z = TransformGizmo._extract_orthonormal_basis(matrix_reflect_y)
+        self.assertTrue(np.allclose(direction_x, [1.0, 0.0, 0.0]))
+        self.assertTrue(np.allclose(direction_y, [0.0, -1.0, 0.0]))
+        self.assertTrue(np.allclose(direction_z, [0.0, 0.0, 1.0]))
+
+        # 3. Отражение по оси Z (scale_z = -1.0)
+        matrix_reflect_z = np.diag([1.0, 1.0, -1.0, 1.0])
+        direction_x, direction_y, direction_z = TransformGizmo._extract_orthonormal_basis(matrix_reflect_z)
+        self.assertTrue(np.allclose(direction_x, [1.0, 0.0, 0.0]))
+        self.assertTrue(np.allclose(direction_y, [0.0, 1.0, 0.0]))
+        self.assertTrue(np.allclose(direction_z, [0.0, 0.0, -1.0]))
+
+    def test_transform_gizmo_local_drag_translation_with_rotated_node(self):
+        """Проверка точности перемещения вдоль локальной стрелки при повернутом целевом узле."""
+        from gui.viewport_3d.transform_gizmo import TransformGizmo, GizmoSpace, GizmoAxis
+        from core.scene.nodes import SpatialNode
+        from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+
+        core_node = SpatialNode(name="RotatedTarget")
+        node_vm = NodeViewModel(core_node)
+
+        # Поворот узла на 90 градусов вокруг Z: локальный X направлен по мировому Y
+        node_vm.local_matrix = np.array([
+            [0.0, -1.0, 0.0, 0.0],
+            [1.0,  0.0, 0.0, 0.0],
+            [0.0,  0.0, 1.0, 0.0],
+            [0.0,  0.0, 0.0, 1.0]
+        ], dtype=np.float64)
+
+        gizmo = TransformGizmo(viewport=None, target_node=node_vm, grid_snap_step=0.0)
+        gizmo.space = GizmoSpace.LOCAL
+        gizmo._active_axis = GizmoAxis.X
+        gizmo._initial_drag_matrix = node_vm.local_matrix.copy()
+
+        # Тянем стрелку X на +15 мм (в мировом пространстве это смещение по Y)
+        gizmo._apply_drag_translation(np.array([0.0, 15.0, 0.0], dtype=np.float64), shift_modifier=True)
+
+        result_position = node_vm.local_matrix[0:3, 3]
+        # Позиция должна быть строго [0.0, 15.0, 0.0], а не [15.0, 0.0, 0.0]
+        self.assertAlmostEqual(result_position[0], 0.0, places=5)
+        self.assertAlmostEqual(result_position[1], 15.0, places=5)
+        self.assertAlmostEqual(result_position[2], 0.0, places=5)
+
+    def test_transform_gizmo_camera_interaction_zoom_updates_size(self):
+        """Проверка динамического обновления размера манипулятора при перемещении камеры."""
+        from gui.viewport_3d.transform_gizmo import TransformGizmo
+        from core.scene.nodes import SpatialNode
+        from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+
+        class DynamicCamera:
+            def __init__(self, position):
+                self._position = position
+
+            def GetParallelProjection(self):
+                return 0
+
+            def GetPosition(self):
+                return self._position
+
+            def GetViewAngle(self):
+                return 60.0
+
+            def set_position(self, new_pos):
+                self._position = new_pos
+
+        camera_obj = DynamicCamera(position=(0.0, 0.0, 1000.0))
+
+        class DynamicRenderer:
+            def GetActiveCamera(self):
+                return camera_obj
+
+        class DynamicPlotter:
+            def __init__(self):
+                self.renderer = DynamicRenderer()
+
+        class DynamicViewport:
+            def __init__(self):
+                self.plotter = DynamicPlotter()
+                self.render_count = 0
+
+            def render(self):
+                self.render_count += 1
+
+            def add_mesh_actor(self, *args, **kwargs):
+                return None
+
+            def remove_actor(self, *args, **kwargs):
+                pass
+
+        viewport_instance = DynamicViewport()
+        core_node = SpatialNode(name="ZoomTarget")
+        node_viewmodel = NodeViewModel(core_node)
+
+        gizmo = TransformGizmo(
+            viewport=viewport_instance,
+            target_node=node_viewmodel,
+            min_gizmo_size=10.0,
+            max_gizmo_size=500.0
+        )
+
+        initial_size = gizmo._last_built_size
+        self.assertGreater(initial_size, 0.0)
+
+        # Приближаем камеру в 2 раза (с 1000 до 500 мм)
+        camera_obj.set_position((0.0, 0.0, 500.0))
+        gizmo._on_camera_view_changed(None, 'EndInteractionEvent')
+
+        new_size = gizmo._last_built_size
+        # Размер манипулятора должен уменьшиться пропорционально дистанции камеры (~ в 2 раза)
+        self.assertLess(new_size, initial_size * 0.7)
+        self.assertAlmostEqual(new_size, initial_size * 0.5, delta=5.0)
+
 
 if __name__ == '__main__':
     unittest.main()

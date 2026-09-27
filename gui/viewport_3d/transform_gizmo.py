@@ -118,6 +118,7 @@ class TransformGizmo(QObject):
         self._accumulated_world_delta: np.ndarray = np.zeros(3, dtype=np.float64)
         self._accumulated_angle_deg: float = 0.0
         self._accumulated_scale_factor: float = 1.0
+        self._last_built_size: float = float(gizmo_size)
         self._last_mouse_pos: Optional[Tuple[int, int]] = None
         self._hovered_actor_name: Optional[str] = None
         self._observer_tags: Dict[str, int] = {}
@@ -370,19 +371,21 @@ class TransformGizmo(QObject):
         current_pos = current_matrix[0:3, 3].copy()
 
         if self._space == GizmoSpace.LOCAL:
-            # Преобразование дельты из локального базиса объекта в родительский базис
-            dir_x, dir_y, dir_z = self._extract_orthonormal_basis(current_matrix)
+            dir_x, dir_y, dir_z = self._extract_orthonormal_basis(self._target_node.global_matrix)
             rotation_basis = np.column_stack([dir_x, dir_y, dir_z])
-            effective_delta = rotation_basis @ delta_vector
+            world_delta = rotation_basis @ delta_vector
         else:
-            if self._target_node.parent_vm is not None:
-                parent_dir_x, parent_dir_y, parent_dir_z = self._extract_orthonormal_basis(
-                    self._target_node.parent_vm.global_matrix
-                )
-                parent_basis = np.column_stack([parent_dir_x, parent_dir_y, parent_dir_z])
-                effective_delta = parent_basis.T @ delta_vector
-            else:
-                effective_delta = delta_vector
+            world_delta = delta_vector
+
+        # Преобразование мирового смещения в систему координат родительского узла
+        if self._target_node.parent_vm is not None:
+            parent_dir_x, parent_dir_y, parent_dir_z = self._extract_orthonormal_basis(
+                self._target_node.parent_vm.global_matrix
+            )
+            parent_basis = np.column_stack([parent_dir_x, parent_dir_y, parent_dir_z])
+            effective_delta = parent_basis.T @ world_delta
+        else:
+            effective_delta = world_delta
 
         target_pos = current_pos + effective_delta
         snapped_target_pos = self.snap_translation_vector(target_pos, shift_modifier=shift_modifier)
@@ -516,38 +519,45 @@ class TransformGizmo(QObject):
         matrix_4x4: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Извлекает строго ортонормированный 3D-базис (dir_x, dir_y, dir_z) из матрицы трансформации.
-        Гарантирует, что направления осей имеют единичную длину (1.0), взаимно ортогональны
-        и полностью очищены от внутреннего масштаба (scale) и деформаций целевого узла.
+        Извлекает строго ортонормированный 3D-базис (direction_x, direction_y, direction_z) из матрицы трансформации.
+        Гарантирует, что направления осей имеют строго единичную длину (1.0), взаимно ортогональны
+        и сохраняют истинные направления локальных осей объекта даже при отрицательных масштабах (зеркалировании),
+        деформациях или скосах матрицы целевого узла.
         """
         sub_matrix_3x3 = np.asarray(matrix_4x4[0:3, 0:3], dtype=np.float64)
-        try:
-            u_matrix, singular_values, vt_matrix = np.linalg.svd(sub_matrix_3x3)
-            if np.any(singular_values < 1e-9):
-                raise ValueError("Матрица ориентации вырождена")
-            rotation_matrix = u_matrix @ vt_matrix
-            if float(np.linalg.det(rotation_matrix)) < 0.0:
-                u_matrix_copy = u_matrix.copy()
-                u_matrix_copy[:, -1] *= -1.0
-                rotation_matrix = u_matrix_copy @ vt_matrix
-            direction_x = rotation_matrix[:, 0]
-            direction_y = rotation_matrix[:, 1]
-            direction_z = rotation_matrix[:, 2]
-        except Exception:
-            # Fallback на модифицированный процесс Грама-Шмидта
-            col_x = sub_matrix_3x3[:, 0].copy()
-            norm_x = float(np.linalg.norm(col_x))
-            direction_x = col_x / norm_x if norm_x > 1e-12 else np.array([1.0, 0.0, 0.0], dtype=np.float64)
 
-            col_y = sub_matrix_3x3[:, 1].copy()
-            col_y = col_y - np.dot(col_y, direction_x) * direction_x
-            norm_y = float(np.linalg.norm(col_y))
-            direction_y = col_y / norm_y if norm_y > 1e-12 else np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        column_x = sub_matrix_3x3[:, 0].copy()
+        column_y = sub_matrix_3x3[:, 1].copy()
+        column_z = sub_matrix_3x3[:, 2].copy()
 
-            direction_z = np.cross(direction_x, direction_y)
-            norm_z = float(np.linalg.norm(direction_z))
-            if norm_z > 1e-12:
-                direction_z = direction_z / norm_z
+        norm_x = float(np.linalg.norm(column_x))
+        norm_y = float(np.linalg.norm(column_y))
+        norm_z = float(np.linalg.norm(column_z))
+
+        direction_x = column_x / norm_x if norm_x > 1e-9 else np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        direction_y = column_y / norm_y if norm_y > 1e-9 else np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        direction_z = column_z / norm_z if norm_z > 1e-9 else np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+        # Модифицированный процесс Грама-Шмидта для устранения скосов и деформаций
+        direction_y = direction_y - float(np.dot(direction_y, direction_x)) * direction_x
+        norm_y_ortho = float(np.linalg.norm(direction_y))
+        if norm_y_ortho > 1e-9:
+            direction_y = direction_y / norm_y_ortho
+        else:
+            candidate_vector = np.array([0.0, 1.0, 0.0], dtype=np.float64) if abs(direction_x[1]) < 0.9 else np.array([1.0, 0.0, 0.0], dtype=np.float64)
+            direction_y = candidate_vector - float(np.dot(candidate_vector, direction_x)) * direction_x
+            direction_y /= float(np.linalg.norm(direction_y))
+
+        direction_z = direction_z - float(np.dot(direction_z, direction_x)) * direction_x - float(np.dot(direction_z, direction_y)) * direction_y
+        norm_z_ortho = float(np.linalg.norm(direction_z))
+        if norm_z_ortho > 1e-9:
+            direction_z = direction_z / norm_z_ortho
+        else:
+            determinant_value = float(np.linalg.det(sub_matrix_3x3))
+            cross_vector = np.cross(direction_x, direction_y)
+            cross_norm = float(np.linalg.norm(cross_vector))
+            if cross_norm > 1e-9:
+                direction_z = (cross_vector / cross_norm) * (-1.0 if determinant_value < -1e-9 else 1.0)
             else:
                 direction_z = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
@@ -639,6 +649,7 @@ class TransformGizmo(QObject):
             dir_z = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
         size = self._compute_gizmo_size(gizmo_center)
+        self._last_built_size = size
 
         try:
             if self._mode == GizmoMode.TRANSLATE:
@@ -796,6 +807,9 @@ class TransformGizmo(QObject):
         if mesh_actor is not None:
             try:
                 mesh_actor.SetPickable(1)
+                actor_property = mesh_actor.GetProperty()
+                if actor_property is not None:
+                    actor_property.BackfaceCullingOff()
             except (AttributeError, TypeError):
                 pass
             self._mesh_actors[actor_name] = mesh_actor
@@ -842,6 +856,15 @@ class TransformGizmo(QObject):
             )
             self._observer_tags['KeyPressEvent'] = interactor.AddObserver(
                 'KeyPressEvent', self._on_key_press, 10.0
+            )
+            self._observer_tags['EndInteractionEvent'] = interactor.AddObserver(
+                'EndInteractionEvent', self._on_camera_view_changed, 0.0
+            )
+            self._observer_tags['MouseWheelForwardEvent'] = interactor.AddObserver(
+                'MouseWheelForwardEvent', self._on_camera_view_changed, 0.0
+            )
+            self._observer_tags['MouseWheelBackwardEvent'] = interactor.AddObserver(
+                'MouseWheelBackwardEvent', self._on_camera_view_changed, 0.0
             )
         except (AttributeError, TypeError) as setup_err:
             _logger.debug(f"Не удалось подключить обработчики VTK к interactor: {setup_err}")
@@ -993,6 +1016,18 @@ class TransformGizmo(QObject):
             self._abort_event(interactor_obj, 'KeyPressEvent')
             self.update_visuals(render=True)
 
+    def _on_camera_view_changed(self, interactor_obj: Any, event_name: str) -> None:
+        """Обновление размера манипулятора при зуме или завершении движения камеры во вьюпорте."""
+        if self._target_node is None or self._is_dragging or not self._adaptive_size:
+            return
+        gizmo_center = self._target_node.global_matrix[0:3, 3]
+        new_size = self._compute_gizmo_size(gizmo_center)
+        if self._last_built_size > 0.0:
+            relative_difference = abs(new_size - self._last_built_size) / self._last_built_size
+            if relative_difference < 0.05:
+                return
+        self.update_visuals(render=True)
+
     def _process_drag(
         self,
         last_x: int,
@@ -1126,8 +1161,7 @@ class TransformGizmo(QObject):
         start_pos = initial_matrix[0:3, 3].copy()
 
         if self._space == GizmoSpace.LOCAL:
-            dir_x, dir_y, dir_z = self._extract_orthonormal_basis(initial_matrix)
-            rotation_basis = np.column_stack([dir_x, dir_y, dir_z])
+            dir_x, dir_y, dir_z = self._extract_orthonormal_basis(self._target_node.global_matrix)
             axis_x = dir_x
             axis_y = dir_y
             axis_z = dir_z
@@ -1151,18 +1185,15 @@ class TransformGizmo(QObject):
         else:
             projected_delta = total_world_delta
 
-        if self._space == GizmoSpace.LOCAL:
-            local_delta = rotation_basis.T @ projected_delta
-            effective_delta = local_delta
+        # Преобразование мирового смещения в систему координат родительского узла
+        if self._target_node.parent_vm is not None:
+            parent_dir_x, parent_dir_y, parent_dir_z = self._extract_orthonormal_basis(
+                self._target_node.parent_vm.global_matrix
+            )
+            parent_basis = np.column_stack([parent_dir_x, parent_dir_y, parent_dir_z])
+            effective_delta = parent_basis.T @ projected_delta
         else:
-            if self._target_node.parent_vm is not None:
-                parent_dir_x, parent_dir_y, parent_dir_z = self._extract_orthonormal_basis(
-                    self._target_node.parent_vm.global_matrix
-                )
-                parent_basis = np.column_stack([parent_dir_x, parent_dir_y, parent_dir_z])
-                effective_delta = parent_basis.T @ projected_delta
-            else:
-                effective_delta = projected_delta
+            effective_delta = projected_delta
 
         target_pos = start_pos + effective_delta
         snapped_target_pos = self.snap_translation_vector(target_pos, shift_modifier=shift_modifier)
