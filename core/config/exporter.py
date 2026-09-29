@@ -1,5 +1,6 @@
 import math
 import logging
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -28,6 +29,7 @@ from core.config.models import (
     VolumeConfig,
     WoodcockVoxelVolumeConfig,
     DoseGridNodeConfig,
+    GantryConfig,
     RawDistributionConfig,
 )
 from core.config.yaml_dumper import dump_simulation_config
@@ -41,6 +43,7 @@ from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.scene.dose_grid_node import DoseGridNode
+from core.scene.gantry_node import GantryNode
 from core.source.sources import Source
 
 logger = logging.getLogger(__name__)
@@ -62,25 +65,27 @@ class SceneExporter:
             return transforms
 
         # 1. Извлечение трансляции
-        tx = float(matrix[0, 3])
-        ty = float(matrix[1, 3])
-        tz = float(matrix[2, 3])
-        if not (math.isclose(tx, 0.0, abs_tol=1e-6) and math.isclose(ty, 0.0, abs_tol=1e-6) and math.isclose(tz, 0.0, abs_tol=1e-6)):
-            transforms.append(TranslateConfig(x=tx, y=ty, z=tz))
+        translation_x = float(matrix[0, 3])
+        translation_y = float(matrix[1, 3])
+        translation_z = float(matrix[2, 3])
+        if not (math.isclose(translation_x, 0.0, abs_tol=1e-6) and math.isclose(translation_y, 0.0, abs_tol=1e-6) and math.isclose(translation_z, 0.0, abs_tol=1e-6)):
+            transforms.append(TranslateConfig(x=translation_x, y=translation_y, z=translation_z))
 
         # 2. Извлечение вращения
         rot_mat = matrix[:3, :3]
         if not np.allclose(rot_mat, np.eye(3), atol=1e-5):
             try:
-                r = Rotation.from_matrix(rot_mat)
-                euler = r.as_euler('xyz', degrees=False)
+                rotation_obj = Rotation.from_matrix(rot_mat)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', message='.*Gimbal lock detected.*')
+                    euler = rotation_obj.as_euler('zyx', degrees=False)
                 transforms.append(RotateConfig(
                     alpha=float(euler[0]),
                     beta=float(euler[1]),
                     gamma=float(euler[2])
                 ))
-            except ValueError as e:
-                logger.warning(f"Ошибка при декомпозиции матрицы вращения: {e}")
+            except ValueError as error:
+                logger.warning(f"Ошибка при декомпозиции матрицы вращения: {error}")
 
         return transforms
 
@@ -141,7 +146,7 @@ class SceneExporter:
                 dist_cfg = distribution_registry.get(node)
             if dist_cfg is None:
                 dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'phantom'}.npy")
-            children_cfgs = [cls.export_node(c, distribution_registry=distribution_registry) for c in node.childs]
+            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry) for child_node in node.childs]
             return WoodcockVoxelVolumeConfig(
                 name=node_name,
                 transformations=transforms,
@@ -159,7 +164,7 @@ class SceneExporter:
                 geo_cfg = BoxConfig(x=float(node.size[0]), y=float(node.size[1]), z=float(node.size[2]))
 
             mat_name = node.material.name
-            children_cfgs = [cls.export_node(c, distribution_registry=distribution_registry) for c in node.childs]
+            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry) for child_node in node.childs]
 
             return VolumeConfig(
                 name=node_name,
@@ -178,13 +183,13 @@ class SceneExporter:
                 dist_cfg = distribution_registry.get(node)
             if dist_cfg is None:
                 dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'source_dist'}.npy")
-            children_cfgs = [cls.export_node(c, distribution_registry=distribution_registry) for c in node.childs]
+            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry) for child_node in node.childs]
             half_life = float(node.half_life)
             rad_type = node.radiation_type
             if len(node.energy) == 1:
                 energy_val: Union[float, List[List[float]]] = float(node.energy["energy"][0])
             else:
-                energy_val = [[float(e), float(p)] for e, p in zip(node.energy["energy"], node.energy["probability"])]
+                energy_val = [[float(energy_value), float(probability_value)] for energy_value, probability_value in zip(node.energy["energy"], node.energy["probability"])]
             return SourceConfig(
                 name=node_name,
                 transformations=transforms,
@@ -199,7 +204,7 @@ class SceneExporter:
 
         # 7. DoseGridNode
         if isinstance(node, DoseGridNode):
-            children_cfgs = [cls.export_node(c, distribution_registry=distribution_registry) for c in node.childs]
+            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry) for child_item in node.childs]
             return DoseGridNodeConfig(
                 name=node_name,
                 transformations=transforms,
@@ -209,9 +214,18 @@ class SceneExporter:
                 children=children_cfgs,
             )
 
+        # 7.1. GantryNode
+        if isinstance(node, GantryNode):
+            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry) for child_item in node.childs]
+            return GantryConfig(
+                name=node_name,
+                transformations=transforms,
+                children=children_cfgs,
+            )
+
         # 8. CompositeNode
         if isinstance(node, CompositeNode):
-            children_cfgs = [cls.export_node(c, distribution_registry=distribution_registry) for c in node.childs]
+            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry) for child_item in node.childs]
             return BaseCompositeNodeConfig(
                 name=node_name,
                 transformations=transforms,

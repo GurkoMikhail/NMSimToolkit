@@ -5,7 +5,7 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal
 import pyvista as pv
 
-from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from core.geometry.gamma_cameras import GammaCamera
 
 _logger = logging.getLogger(__name__)
 
@@ -93,8 +93,13 @@ class SPECTManipulator(QObject):
         Возвращает матрицу трансформации 4x4, ориентирующую гамма-камеру к центру вращения
         с учетом радиуса орбиты до лицевой поверхности гамма-камеры.
         """
-        h = self.half_thickness if half_thickness is None else float(half_thickness)
-        return GammaCameraViewModel.compute_orbit_matrix(self.radius, self.angle_deg, self.z_pos, half_thickness=h)
+        thickness_val = self.half_thickness if half_thickness is None else float(half_thickness)
+        return GammaCamera.compute_orbit_matrix(
+            radius=self.radius,
+            angle_deg=self.angle_deg,
+            z=self.z_pos,
+            half_thickness=thickness_val,
+        )
 
     def update_visuals(self, render: bool = False) -> None:
         """

@@ -135,6 +135,7 @@ class MainWindow(QMainWindow):
 
         # Модели процедур и диспетчера данных
         self.procedure_vm = SpectProcedureViewModel()
+        self.viewport_controller.procedure_vm = self.procedure_vm
         self.data_manager_vm = DataManagerViewModel()
         self.data_manager_vm.min_buffer_capacity = self.sim_settings.particles_number
 
@@ -457,6 +458,7 @@ class MainWindow(QMainWindow):
         if self.viewport_controller is not None and self.viewport_controller.transform_gizmo is not None:
             self.viewport_controller.transform_gizmo.mode_changed.connect(self._on_gizmo_mode_changed)
             self.viewport_controller.transform_gizmo.space_changed.connect(self._on_gizmo_space_changed)
+            self.viewport_controller.transform_gizmo.status_message_requested.connect(self.lbl_status.setText)
 
         # Начальная отрисовка сцены во вьюпорте и генерация задач
         self.viewport_controller.sync_viewport_scene()
@@ -518,6 +520,7 @@ class MainWindow(QMainWindow):
         Смена активной процедуры сканирования.
         """
         self.procedure_vm = proc_vm
+        self.viewport_controller.on_procedure_changed(proc_vm)
         self.orchestrator_session.procedure_vm = proc_vm
         self.property_inspector.set_target_viewmodel(proc_vm)
         if isinstance(proc_vm, SpectProcedureViewModel):

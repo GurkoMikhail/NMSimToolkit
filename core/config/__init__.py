@@ -5,6 +5,8 @@
 from core.config.builder import SceneBuilder
 from core.config.exporter import SceneExporter
 from core.config.orchestrator import Orchestrator
+from core.config.sweep_compiler import SweepCompiler
+from core.config.simulation_worker import simulation_worker_task
 from core.config.yaml_loader import load_simulation_config
 from core.config.yaml_dumper import dump_simulation_config
 from core.config.models import (
@@ -23,6 +25,7 @@ from core.config.models import (
     SourceConfig,
     GammaCameraConfig,
     DoseGridNodeConfig,
+    GantryConfig,
     TransformConfig,
     TranslateConfig,
     RotateConfig,
@@ -40,6 +43,8 @@ __all__ = [
     'SceneBuilder',
     'SceneExporter',
     'Orchestrator',
+    'SweepCompiler',
+    'simulation_worker_task',
     'load_simulation_config',
     'dump_simulation_config',
     'SimulationConfig',
@@ -57,6 +62,7 @@ __all__ = [
     'SourceConfig',
     'GammaCameraConfig',
     'DoseGridNodeConfig',
+    'GantryConfig',
     'TransformConfig',
     'TranslateConfig',
     'RotateConfig',

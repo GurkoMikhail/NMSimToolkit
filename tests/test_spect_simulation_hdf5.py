@@ -9,6 +9,7 @@ from core.scene.dose_grid_node import DoseGridNode
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
 from core.geometry.gamma_cameras import GammaCamera
+from core.geometry.spect_kinematics import compute_spect_poses
 from core.materials.materials import Material
 from core.config.models import SpectProtocolConfig, StepAndShootProtocolConfig
 from core.config.orchestrator import Orchestrator
@@ -60,7 +61,7 @@ class TestSpectSimulationHDF5(unittest.TestCase):
         self.assertEqual(spect_proto.gamma_cameras, 4)
         self.assertEqual(len(spect_proto.head_angles), 4)
 
-        poses = Orchestrator.compute_spect_poses(spect_proto)
+        poses = compute_spect_poses(spect_proto)
         self.assertEqual(len(poses), 4)
         self.assertEqual(len(poses[0]), 4)
 

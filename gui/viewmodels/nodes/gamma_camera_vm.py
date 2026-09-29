@@ -1,4 +1,5 @@
 import logging
+import math
 from typing import Optional, Sequence
 import numpy as np
 
@@ -64,11 +65,11 @@ class GammaCameraViewModel(VolumeViewModel):
         return 1.0
 
     @gap.setter
-    def gap(self, val: float) -> None:
+    def gap(self, gap_value: float) -> None:
         if isinstance(self.core_node, GammaCamera):
-            gap_val = float(val)
-            self.core_node.gap = Float(gap_val)
-            self.property_changed.emit('gap', gap_val)
+            numeric_gap = float(gap_value)
+            self.core_node.gap = Float(numeric_gap)
+            self.property_changed.emit('gap', numeric_gap)
             self.property_changed.emit('size', self.size)
 
     @property
@@ -79,11 +80,11 @@ class GammaCameraViewModel(VolumeViewModel):
         return 20.0
 
     @shielding_thickness.setter
-    def shielding_thickness(self, val: float) -> None:
+    def shielding_thickness(self, thickness_value: float) -> None:
         if isinstance(self.core_node, GammaCamera):
-            shielding_val = float(val)
-            self.core_node.shielding_thickness = Float(shielding_val)
-            self.property_changed.emit('shielding_thickness', shielding_val)
+            numeric_thickness = float(thickness_value)
+            self.core_node.shielding_thickness = Float(numeric_thickness)
+            self.property_changed.emit('shielding_thickness', numeric_thickness)
             self.property_changed.emit('size', self.size)
 
     @property
@@ -94,11 +95,11 @@ class GammaCameraViewModel(VolumeViewModel):
         return 50.0
 
     @glass_backend_thickness.setter
-    def glass_backend_thickness(self, val: float) -> None:
+    def glass_backend_thickness(self, thickness_value: float) -> None:
         if isinstance(self.core_node, GammaCamera):
-            glass_val = float(val)
-            self.core_node.glass_backend_thickness = Float(glass_val)
-            self.property_changed.emit('glass_backend_thickness', glass_val)
+            numeric_thickness = float(thickness_value)
+            self.core_node.glass_backend_thickness = Float(numeric_thickness)
+            self.property_changed.emit('glass_backend_thickness', numeric_thickness)
             self.property_changed.emit('size', self.size)
 
     def _sync_orbit_params_from_matrix(self) -> None:
@@ -161,12 +162,29 @@ class GammaCameraViewModel(VolumeViewModel):
         """
         return GammaCamera.compute_orbit_matrix(radius=radius, angle_deg=angle_deg, z=z, half_thickness=half_thickness)
 
-    def set_orbit_position(self, radius: float, angle_deg: float, z: float = 0.0) -> None:
+    def set_orbit_position(self, radius: float, angle_deg: float, z: float = 0.0, preserve_roll: bool = True) -> None:
         """
         Установка положения гамма-камеры на круговой орбите (ОФЭКТ манипулятор).
         Радиус орбиты задается до лицевой поверхности гамма-камеры.
+        При preserve_roll=True сохраняет текущую ориентацию детектора в собственной плоскости (Landscape/Portrait).
         """
         self.orbit_radius = float(radius)
         self.orbit_angle = float(angle_deg % 360.0)
         self.orbit_z = float(z)
-        self.local_matrix = self.compute_orbit_matrix(radius, angle_deg, z, half_thickness=self.half_thickness)
+        new_matrix = self.compute_orbit_matrix(radius, angle_deg, z, half_thickness=self.half_thickness)
+        if preserve_roll and self.local_matrix is not None:
+            initial_dir_z = self.local_matrix[0:3, 2]
+            initial_dir_y = self.local_matrix[0:3, 1]
+            cos_roll = float(np.clip(np.dot(initial_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
+            sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), initial_dir_y), initial_dir_z))
+            roll_angle_deg = math.degrees(math.atan2(sin_roll, cos_roll))
+            if abs(roll_angle_deg) > 1e-3:
+                roll_rad = math.radians(roll_angle_deg)
+                roll_mat = np.array([
+                    [math.cos(roll_rad), -math.sin(roll_rad), 0.0],
+                    [math.sin(roll_rad), math.cos(roll_rad), 0.0],
+                    [0.0, 0.0, 1.0],
+                ], dtype=np.float64)
+                new_matrix = new_matrix.copy()
+                new_matrix[0:3, 0:3] = new_matrix[0:3, 0:3] @ roll_mat
+        self.local_matrix = new_matrix

@@ -3,6 +3,7 @@ from typing import Optional
 
 from core.scene.nodes import SpatialNode
 from core.scene.dose_grid_node import DoseGridNode
+from core.scene.gantry_node import GantryNode
 from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.geometry.gamma_cameras import GammaCamera
@@ -21,6 +22,7 @@ from gui.viewmodels.nodes.volume_vm import (
 )
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.gantry_vm import GantryViewModel
 from gui.viewmodels.nodes.source_vm import SourceViewModel
 from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
 from gui.viewmodels.nodes.pet_scanner_vm import PetScannerViewModel
@@ -35,6 +37,8 @@ def create_node_viewmodel(core_node: SpatialNode, parent_vm: Optional[NodeViewMo
     """
     if isinstance(core_node, DoseGridNode):
         return DoseGridViewModel(core_node, parent_vm)
+    if isinstance(core_node, GantryNode):
+        return GantryViewModel(core_node, parent_vm)
     if isinstance(core_node, ParametricParallelCollimator):
         return ParametricParallelCollimatorViewModel(core_node, parent_vm)
     if isinstance(core_node, ParametricParallelSquareCollimator):

@@ -8,8 +8,7 @@ import pyvista as pv
 import vtk
 from PySide6.QtCore import QObject, Signal
 
-from gui.viewmodels.nodes.base_node_vm import NodeViewModel
-from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from core.geometry.volumes import Volume
 
 _logger = logging.getLogger(__name__)
 
@@ -41,29 +40,8 @@ class IViewport(Protocol):
     def render(self) -> None: ...
 
 
-class GizmoMode(Enum):
-    """Режим трансформации 3D-манипулятора."""
-    TRANSLATE = "translate"
-    ROTATE = "rotate"
-    SCALE = "scale"
+from gui.viewport_3d.gizmo_types import GizmoAxis, GizmoMode, GizmoSpace
 
-
-class GizmoSpace(Enum):
-    """Система координат трансформации."""
-    WORLD = "world"
-    LOCAL = "local"
-
-
-class GizmoAxis(Enum):
-    """Активная ось или плоскость взаимодействия."""
-    NONE = "none"
-    X = "x"
-    Y = "y"
-    Z = "z"
-    XY = "xy"
-    XZ = "xz"
-    YZ = "yz"
-    XYZ = "xyz"
 
 
 class TransformGizmo(QObject):
@@ -83,6 +61,7 @@ class TransformGizmo(QObject):
     transform_started = Signal()
     transform_changed = Signal(object)   # np.ndarray (новая локальная матрица)
     transform_ended = Signal()
+    status_message_requested = Signal(str)
 
     def __init__(
         self,
@@ -100,6 +79,7 @@ class TransformGizmo(QObject):
         super().__init__(parent)
         self.viewport = viewport
         self._target_node: Optional[NodeViewModel] = target_node
+        self._constraint: Optional[Any] = None
         self._mode: GizmoMode = GizmoMode.TRANSLATE
         self._space: GizmoSpace = GizmoSpace.WORLD
 
@@ -118,6 +98,7 @@ class TransformGizmo(QObject):
         self._accumulated_world_delta: np.ndarray = np.zeros(3, dtype=np.float64)
         self._accumulated_angle_deg: float = 0.0
         self._accumulated_scale_factor: float = 1.0
+        self._last_changed_data: Optional[Dict[str, Any]] = None
         self._last_built_size: float = float(gizmo_size)
         self._last_mouse_pos: Optional[Tuple[int, int]] = None
         self._hovered_actor_name: Optional[str] = None
@@ -165,11 +146,51 @@ class TransformGizmo(QObject):
         return self._target_node
 
     @property
+    def constraint(self) -> Optional[Any]:
+        """Кинематическое ограничение манипулятора."""
+        return self._constraint
+
+    @constraint.setter
+    def constraint(self, new_constraint: Optional[Any]) -> None:
+        self.set_constraint(new_constraint)
+
+    def set_constraint(self, constraint: Optional[Any]) -> None:
+        """
+        Устанавливает кинематическое ограничение степеней свободы манипулятора.
+        При наличии принудительной системы координат принудительно переключает space.
+        При запрете масштабирования сбрасывает текущий режим в TRANSLATE.
+        """
+        if self._is_dragging:
+            self._is_dragging = False
+            self._active_axis = GizmoAxis.NONE
+            self._last_mouse_pos = None
+            self._initial_drag_matrix = None
+            self._accumulated_world_delta = np.zeros(3, dtype=np.float64)
+            self._accumulated_angle_deg = 0.0
+            self._accumulated_scale_factor = 1.0
+            self._last_changed_data = None
+            self.transform_ended.emit()
+            self._reset_highlight()
+
+        self._constraint = constraint
+        if self._constraint is not None:
+            forced_space = self._constraint.get_forced_space()
+            if forced_space is not None and self._space != forced_space:
+                self._space = forced_space
+                self.space_changed.emit(self._space)
+            if not self._constraint.is_scale_allowed() and self._mode == GizmoMode.SCALE:
+                self._mode = GizmoMode.TRANSLATE
+                self.mode_changed.emit(self._mode)
+        self.update_visuals(render=True)
+
+    @property
     def mode(self) -> GizmoMode:
         return self._mode
 
     @mode.setter
     def mode(self, new_mode: GizmoMode) -> None:
+        if self._constraint is not None and not self._constraint.is_scale_allowed() and new_mode == GizmoMode.SCALE:
+            return
         if self._mode != new_mode:
             self._mode = new_mode
             self.mode_changed.emit(self._mode)
@@ -181,6 +202,10 @@ class TransformGizmo(QObject):
 
     @space.setter
     def space(self, new_space: GizmoSpace) -> None:
+        if self._constraint is not None:
+            forced_space = self._constraint.get_forced_space()
+            if forced_space is not None and new_space != forced_space:
+                return
         if self._space != new_space:
             self._space = new_space
             self.space_changed.emit(self._space)
@@ -276,6 +301,7 @@ class TransformGizmo(QObject):
             self._setup_interactor()
             self.update_visuals(render=True)
         else:
+            self._constraint = None
             self.remove_visuals()
             if self.viewport is not None:
                 self.viewport.render()
@@ -286,6 +312,7 @@ class TransformGizmo(QObject):
             self._is_dragging = False
             self._active_axis = GizmoAxis.NONE
             self.transform_ended.emit()
+        self._constraint = None
         self.set_target_node(None)
 
     def close(self) -> None:
@@ -367,6 +394,34 @@ class TransformGizmo(QObject):
         if self._target_node is None:
             return None
 
+        if self._constraint is not None:
+            initial_matrix = self._target_node.local_matrix.copy()
+            if self._space == GizmoSpace.LOCAL:
+                dir_x, dir_y, dir_z = self._extract_orthonormal_basis(self._target_node.global_matrix)
+                rotation_basis = np.column_stack([dir_x, dir_y, dir_z])
+                world_delta = rotation_basis @ delta_vector
+            else:
+                world_delta = delta_vector
+
+            filtered_delta, changed_data = self._constraint.filter_translation(
+                self._target_node,
+                world_delta,
+                initial_matrix,
+            )
+            if 'matrix' in changed_data:
+                new_matrix = changed_data['matrix']
+            else:
+                new_matrix = initial_matrix.copy()
+                new_matrix[0:3, 3] = initial_matrix[0:3, 3] + filtered_delta
+            self._target_node.local_matrix = new_matrix
+            self.transform_changed.emit(new_matrix)
+            self._constraint.on_transform_changed(self._target_node, changed_data)
+            self._constraint.on_transform_committed(self._target_node, changed_data)
+            if 'status_message' in changed_data:
+                self.status_message_requested.emit(str(changed_data['status_message']))
+            self.update_visuals()
+            return new_matrix
+
         current_matrix = self._target_node.local_matrix.copy()
         current_pos = current_matrix[0:3, 3].copy()
 
@@ -407,6 +462,30 @@ class TransformGizmo(QObject):
         """
         if self._target_node is None:
             return None
+
+        if self._constraint is not None:
+            initial_matrix = self._target_node.local_matrix.copy()
+            dir_x, dir_y, dir_z = self._extract_orthonormal_basis(self._target_node.global_matrix)
+            axis_map = {'x': dir_x, 'y': dir_y, 'z': dir_z}
+            axis_vec = axis_map.get(axis_name.lower(), dir_z)
+            filtered_axis, filtered_angle, changed_data = self._constraint.filter_rotation(
+                self._target_node,
+                axis_vec,
+                angle_deg,
+                initial_matrix,
+            )
+            if 'matrix' in changed_data:
+                new_matrix = changed_data['matrix']
+            else:
+                new_matrix = initial_matrix.copy()
+            self._target_node.local_matrix = new_matrix
+            self.transform_changed.emit(new_matrix)
+            self._constraint.on_transform_changed(self._target_node, changed_data)
+            self._constraint.on_transform_committed(self._target_node, changed_data)
+            if 'status_message' in changed_data:
+                self.status_message_requested.emit(str(changed_data['status_message']))
+            self.update_visuals()
+            return new_matrix
 
         snapped_angle_deg = self.snap_angle(angle_deg, shift_modifier=shift_modifier)
         angle_rad = math.radians(snapped_angle_deg)
@@ -471,6 +550,9 @@ class TransformGizmo(QObject):
         if self._target_node is None:
             return None
 
+        if self._constraint is not None and not self._constraint.is_scale_allowed():
+            return None
+
         snapped_multipliers = self.snap_scale_vector(scale_multipliers, shift_modifier=shift_modifier)
         current_matrix = self._target_node.local_matrix.copy()
 
@@ -503,9 +585,13 @@ class TransformGizmo(QObject):
             self.mode = GizmoMode.ROTATE
             return True
         elif key_upper in ('R', 'К'):
+            if self._constraint is not None and not self._constraint.is_scale_allowed():
+                return False
             self.mode = GizmoMode.SCALE
             return True
         elif key_upper in ('Q', 'Й'):
+            if self._constraint is not None and self._constraint.get_forced_space() is not None:
+                return False
             self.space = GizmoSpace.WORLD if self._space == GizmoSpace.LOCAL else GizmoSpace.LOCAL
             return True
         return False
@@ -603,12 +689,18 @@ class TransformGizmo(QObject):
                     _logger.debug(f"Ошибка вычисления размера манипулятора по камере: {camera_err}")
                     camera_size = None
 
+        target_volume: Optional[Volume] = None
+        if isinstance(self._target_node, Volume):
+            target_volume = self._target_node
+        elif self._target_node is not None and isinstance(self._target_node.core_node, Volume):
+            target_volume = self._target_node.core_node
+
         if camera_size is not None and camera_size > 0.0:
             target_size = camera_size
-        elif isinstance(self._target_node, VolumeViewModel):
+        elif target_volume is not None:
             # 2. Адаптивный режим по геометрическим габаритам объема.
             # Внимание: берется чистый local_bound геометрии (без домножения на scale матрицы трансформации объекта).
-            local_dimensions = self._target_node.local_bound
+            local_dimensions = target_volume.local_bound
             max_dimension = float(np.max(local_dimensions))
             if max_dimension > 0.0:
                 half_extent = max_dimension * 0.5
@@ -673,58 +765,70 @@ class TransformGizmo(QObject):
         size: float
     ) -> None:
         """Построение 3 осевых стрелок и 3 координатных плоскостей перемещения."""
+        allowed_axes: Set[GizmoAxis] = (
+            self._constraint.get_allowed_axes(GizmoMode.TRANSLATE)
+            if self._constraint is not None
+            else {GizmoAxis.X, GizmoAxis.Y, GizmoAxis.Z, GizmoAxis.XY, GizmoAxis.XZ, GizmoAxis.YZ}
+        )
+
         arrow_shaft_radius = size * 0.03
         arrow_tip_length = size * 0.25
         arrow_tip_radius = size * 0.08
 
         # Стрелка X
-        arrow_x = pv.Arrow(
-            start=center,
-            direction=dir_x,
-            tip_length=arrow_tip_length / size,
-            tip_radius=arrow_tip_radius / size,
-            shaft_radius=arrow_shaft_radius / size,
-            scale=size
-        )
-        self._add_gizmo_mesh("gizmo_translate_x", arrow_x, self._colors[GizmoAxis.X])
+        if GizmoAxis.X in allowed_axes:
+            arrow_x = pv.Arrow(
+                start=center,
+                direction=dir_x,
+                tip_length=arrow_tip_length / size,
+                tip_radius=arrow_tip_radius / size,
+                shaft_radius=arrow_shaft_radius / size,
+                scale=size
+            )
+            self._add_gizmo_mesh("gizmo_translate_x", arrow_x, self._colors[GizmoAxis.X])
 
         # Стрелка Y
-        arrow_y = pv.Arrow(
-            start=center,
-            direction=dir_y,
-            tip_length=arrow_tip_length / size,
-            tip_radius=arrow_tip_radius / size,
-            shaft_radius=arrow_shaft_radius / size,
-            scale=size
-        )
-        self._add_gizmo_mesh("gizmo_translate_y", arrow_y, self._colors[GizmoAxis.Y])
+        if GizmoAxis.Y in allowed_axes:
+            arrow_y = pv.Arrow(
+                start=center,
+                direction=dir_y,
+                tip_length=arrow_tip_length / size,
+                tip_radius=arrow_tip_radius / size,
+                shaft_radius=arrow_shaft_radius / size,
+                scale=size
+            )
+            self._add_gizmo_mesh("gizmo_translate_y", arrow_y, self._colors[GizmoAxis.Y])
 
         # Стрелка Z
-        arrow_z = pv.Arrow(
-            start=center,
-            direction=dir_z,
-            tip_length=arrow_tip_length / size,
-            tip_radius=arrow_tip_radius / size,
-            shaft_radius=arrow_shaft_radius / size,
-            scale=size
-        )
-        self._add_gizmo_mesh("gizmo_translate_z", arrow_z, self._colors[GizmoAxis.Z])
+        if GizmoAxis.Z in allowed_axes:
+            arrow_z = pv.Arrow(
+                start=center,
+                direction=dir_z,
+                tip_length=arrow_tip_length / size,
+                tip_radius=arrow_tip_radius / size,
+                shaft_radius=arrow_shaft_radius / size,
+                scale=size
+            )
+            self._add_gizmo_mesh("gizmo_translate_z", arrow_z, self._colors[GizmoAxis.Z])
 
         # Плоскости XY, XZ, YZ
         plane_size = size * 0.25
         plane_offset = size * 0.2
 
-        center_xy = center + dir_x * plane_offset + dir_y * plane_offset
-        plane_xy = pv.Plane(center=center_xy, direction=dir_z, i_size=plane_size, j_size=plane_size)
-        self._add_gizmo_mesh("gizmo_translate_xy", plane_xy, self._colors[GizmoAxis.XY], opacity=0.45)
+        if GizmoAxis.XY in allowed_axes:
+            center_xy = center + dir_x * plane_offset + dir_y * plane_offset
+            plane_xy = pv.Plane(center=center_xy, direction=dir_z, i_size=plane_size, j_size=plane_size)
+            self._add_gizmo_mesh("gizmo_translate_xy", plane_xy, self._colors[GizmoAxis.XY], opacity=0.45)
 
-        center_xz = center + dir_x * plane_offset + dir_z * plane_offset
-        plane_xz = pv.Plane(center=center_xz, direction=dir_y, i_size=plane_size, j_size=plane_size)
-        self._add_gizmo_mesh("gizmo_translate_xz", plane_xz, self._colors[GizmoAxis.XZ], opacity=0.45)
+        if GizmoAxis.XZ in allowed_axes:
+            center_xz = center + dir_x * plane_offset + dir_z * plane_offset
+            plane_xz = pv.Plane(center=center_xz, direction=dir_y, i_size=plane_size, j_size=plane_size)
+            self._add_gizmo_mesh("gizmo_translate_xz", plane_xz, self._colors[GizmoAxis.XZ], opacity=0.45)
 
-        center_yz = center + dir_y * plane_offset + dir_z * plane_offset
-        plane_yz = pv.Plane(center=center_yz, direction=dir_x, i_size=plane_size, j_size=plane_size)
-        self._add_gizmo_mesh("gizmo_translate_yz", plane_yz, self._colors[GizmoAxis.YZ], opacity=0.45)
+        if GizmoAxis.YZ in allowed_axes:
+            center_yz = center + dir_y * plane_offset + dir_z * plane_offset
+            plane_yz = pv.Plane(center=center_yz, direction=dir_x, i_size=plane_size, j_size=plane_size)
+            self._add_gizmo_mesh("gizmo_translate_yz", plane_yz, self._colors[GizmoAxis.YZ], opacity=0.45)
 
     def _build_rotate_visuals(
         self,
@@ -735,21 +839,30 @@ class TransformGizmo(QObject):
         size: float
     ) -> None:
         """Построение 3 круговых колец вращения вокруг осей X, Y, Z."""
+        allowed_axes: Set[GizmoAxis] = (
+            self._constraint.get_allowed_axes(GizmoMode.ROTATE)
+            if self._constraint is not None
+            else {GizmoAxis.X, GizmoAxis.Y, GizmoAxis.Z}
+        )
+
         ring_radius = size * 0.9
         inner_r = ring_radius * 0.96
         outer_r = ring_radius * 1.04
 
         # Кольцо вокруг X
-        ring_x = pv.Disc(center=center, inner=inner_r, outer=outer_r, normal=dir_x, r_res=1, c_res=48)
-        self._add_gizmo_mesh("gizmo_rotate_x", ring_x, self._colors[GizmoAxis.X], opacity=0.85)
+        if GizmoAxis.X in allowed_axes:
+            ring_x = pv.Disc(center=center, inner=inner_r, outer=outer_r, normal=dir_x, r_res=1, c_res=48)
+            self._add_gizmo_mesh("gizmo_rotate_x", ring_x, self._colors[GizmoAxis.X], opacity=0.85)
 
         # Кольцо вокруг Y
-        ring_y = pv.Disc(center=center, inner=inner_r, outer=outer_r, normal=dir_y, r_res=1, c_res=48)
-        self._add_gizmo_mesh("gizmo_rotate_y", ring_y, self._colors[GizmoAxis.Y], opacity=0.85)
+        if GizmoAxis.Y in allowed_axes:
+            ring_y = pv.Disc(center=center, inner=inner_r, outer=outer_r, normal=dir_y, r_res=1, c_res=48)
+            self._add_gizmo_mesh("gizmo_rotate_y", ring_y, self._colors[GizmoAxis.Y], opacity=0.85)
 
         # Кольцо вокруг Z
-        ring_z = pv.Disc(center=center, inner=inner_r, outer=outer_r, normal=dir_z, r_res=1, c_res=48)
-        self._add_gizmo_mesh("gizmo_rotate_z", ring_z, self._colors[GizmoAxis.Z], opacity=0.85)
+        if GizmoAxis.Z in allowed_axes:
+            ring_z = pv.Disc(center=center, inner=inner_r, outer=outer_r, normal=dir_z, r_res=1, c_res=48)
+            self._add_gizmo_mesh("gizmo_rotate_z", ring_z, self._colors[GizmoAxis.Z], opacity=0.85)
 
     def _build_scale_visuals(
         self,
@@ -760,6 +873,8 @@ class TransformGizmo(QObject):
         size: float
     ) -> None:
         """Построение осевых кубиков масштабирования и центрального кубика (XYZ)."""
+        if self._constraint is not None and not self._constraint.is_scale_allowed():
+            return
         box_edge = size * 0.12
         axis_len = size * 0.85
         shaft_rad = size * 0.02
@@ -966,6 +1081,7 @@ class TransformGizmo(QObject):
             self._accumulated_world_delta = np.zeros(3, dtype=np.float64)
             self._accumulated_angle_deg = 0.0
             self._accumulated_scale_factor = 1.0
+            self._last_changed_data = None
             self.transform_started.emit()
             self._abort_event(interactor_obj, 'LeftButtonPressEvent')
 
@@ -993,6 +1109,9 @@ class TransformGizmo(QObject):
     def _on_left_button_release(self, interactor_obj: Any, event_name: str) -> None:
         """Обработка отпускания левой кнопки мыши."""
         if self._is_dragging:
+            if self._constraint is not None and self._last_changed_data is not None and self._target_node is not None:
+                self._constraint.on_transform_committed(self._target_node, self._last_changed_data)
+                self._last_changed_data = None
             self._is_dragging = False
             self._active_axis = GizmoAxis.NONE
             self._last_mouse_pos = None
@@ -1157,6 +1276,28 @@ class TransformGizmo(QObject):
         if self._initial_drag_matrix is None or self._target_node is None:
             return
 
+        if self._constraint is not None:
+            filtered_delta, changed_data = self._constraint.filter_translation(
+                self._target_node,
+                total_world_delta,
+                self._initial_drag_matrix,
+                active_axis=self._active_axis,
+            )
+            self._last_changed_data = changed_data
+            if 'matrix' in changed_data:
+                new_matrix = changed_data['matrix']
+            else:
+                new_matrix = self._initial_drag_matrix.copy()
+                new_matrix[0:3, 3] = self._initial_drag_matrix[0:3, 3] + filtered_delta
+
+            self._target_node.local_matrix = new_matrix
+            self.transform_changed.emit(new_matrix)
+            self._constraint.on_transform_changed(self._target_node, changed_data)
+            if 'status_message' in changed_data:
+                self.status_message_requested.emit(str(changed_data['status_message']))
+            self.update_visuals()
+            return
+
         initial_matrix = self._initial_drag_matrix.copy()
         start_pos = initial_matrix[0:3, 3].copy()
 
@@ -1207,6 +1348,35 @@ class TransformGizmo(QObject):
     def _apply_drag_rotation(self, total_angle_deg: float, shift_modifier: bool) -> None:
         """Применение суммарного поворота вокруг выбранной оси относительно начальной матрицы."""
         if self._initial_drag_matrix is None or self._target_node is None:
+            return
+
+        if self._constraint is not None:
+            dir_x, dir_y, dir_z = self._extract_orthonormal_basis(self._target_node.global_matrix)
+            if self._active_axis == GizmoAxis.X:
+                axis_vec = dir_x if self._space == GizmoSpace.LOCAL else np.array([1.0, 0.0, 0.0], dtype=np.float64)
+            elif self._active_axis == GizmoAxis.Y:
+                axis_vec = dir_y if self._space == GizmoSpace.LOCAL else np.array([0.0, 1.0, 0.0], dtype=np.float64)
+            else:
+                axis_vec = dir_z if self._space == GizmoSpace.LOCAL else np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+            filtered_axis, filtered_angle, changed_data = self._constraint.filter_rotation(
+                self._target_node,
+                axis_vec,
+                total_angle_deg,
+                self._initial_drag_matrix,
+            )
+            self._last_changed_data = changed_data
+            if 'matrix' in changed_data:
+                new_matrix = changed_data['matrix']
+            else:
+                new_matrix = self._initial_drag_matrix.copy()
+
+            self._target_node.local_matrix = new_matrix
+            self.transform_changed.emit(new_matrix)
+            self._constraint.on_transform_changed(self._target_node, changed_data)
+            if 'status_message' in changed_data:
+                self.status_message_requested.emit(str(changed_data['status_message']))
+            self.update_visuals()
             return
 
         snapped_angle_deg = self.snap_angle(total_angle_deg, shift_modifier=shift_modifier)
@@ -1305,3 +1475,15 @@ class TransformGizmo(QObject):
                 rgb = pv.Color(color_hex).float_rgb
                 self._mesh_actors[self._hovered_actor_name].GetProperty().SetColor(rgb[0], rgb[1], rgb[2])
             self._hovered_actor_name = None
+
+
+
+
+__all__ = [
+    'IViewport',
+    'GizmoMode',
+    'GizmoSpace',
+    'GizmoAxis',
+    'TransformGizmo',
+]
+

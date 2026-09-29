@@ -11,6 +11,30 @@ from gui.viewport_3d.dicom_colormaps import (
 from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.viewport_3d.pet_manipulator import PETManipulator
 from gui.viewport_3d.track_renderer import TrackRenderer
+from core.geometry.geometries import Box
+from core.geometry.volumes import Volume
+from core.materials.materials import Material
+from core.geometry.gamma_cameras import GammaCamera
+from core.scene.nodes import SpatialNode
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.procedure_viewmodel import (
+    BaseProcedureViewModel,
+    SpectProcedureViewModel,
+    PetProcedureViewModel,
+)
+from gui.viewport_3d.kinematic_constraints import (
+    IKinematicConstraint,
+    SpectOrbitKinematicConstraint,
+)
+from gui.viewport_3d.transform_gizmo import (
+    GizmoAxis,
+    GizmoMode,
+    GizmoSpace,
+    TransformGizmo,
+)
+from gui.controllers.viewport_controller import SceneViewportController
+from gui.viewmodels.scene_viewmodel import SceneViewModel
 
 
 class TestStage3Viewport(unittest.TestCase):
@@ -956,6 +980,515 @@ class TestStage3Viewport(unittest.TestCase):
         # Размер манипулятора должен уменьшиться пропорционально дистанции камеры (~ в 2 раза)
         self.assertLess(new_size, initial_size * 0.7)
         self.assertAlmostEqual(new_size, initial_size * 0.5, delta=5.0)
+
+    @staticmethod
+    def _create_test_camera_vm(name: str = "TestCamera") -> GammaCameraViewModel:
+        """Создает тестовую ViewModel гамма-камеры со сборкой коллиматора и детектора."""
+        collimator_volume = Volume(
+            geometry=Box(400.0, 400.0, 30.0),
+            material=Material(name='Lead'),
+            name=f"Collimator_{name}"
+        )
+        detector_volume = Volume(
+            geometry=Box(400.0, 400.0, 10.0),
+            material=Material(name='NaI'),
+            name=f"Detector_{name}"
+        )
+        camera_core = GammaCamera(
+            collimator=collimator_volume,
+            detector=detector_volume,
+            name=name
+        )
+        return GammaCameraViewModel(camera_core)
+
+    @staticmethod
+    def _create_mock_viewport() -> Any:
+        """Создает облегченный мок-вьюпорт для тестов манипулятора."""
+        class _MockSignal:
+            def connect(self, slot: Any) -> None:
+                pass
+
+            def disconnect(self, slot: Any = None) -> None:
+                pass
+
+            def emit(self, *args: Any) -> None:
+                pass
+
+        class _MockPlotter:
+            def __init__(self) -> None:
+                self.renderer = None
+
+        class _MockViewport:
+            def __init__(self) -> None:
+                self.plotter = _MockPlotter()
+                self.interactor = None
+                self.render_count = 0
+                self._actors: dict[str, Any] = {}
+                self.camera_interaction_started = _MockSignal()
+                self.camera_interaction_ended = _MockSignal()
+                self.camera_moved = _MockSignal()
+
+            def render(self) -> None:
+                self.render_count += 1
+
+            def add_mesh_actor(self, *args: Any, **kwargs: Any) -> Any:
+                actor_name = args[0] if args else kwargs.get('name', 'mesh')
+                self._actors[str(actor_name)] = True
+                return None
+
+            def update_actor_transform(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+            def remove_actor(self, *args: Any, **kwargs: Any) -> None:
+                actor_name = args[0] if args else kwargs.get('name')
+                if actor_name is not None and str(actor_name) in self._actors:
+                    del self._actors[str(actor_name)]
+
+        return _MockViewport()
+
+    def test_procedure_provides_kinematic_constraint_for_gamma_camera(self) -> None:
+        """Проверка предоставления кинематического ограничения активной процедурой."""
+        spect_procedure = SpectProcedureViewModel()
+        camera_vm = self._create_test_camera_vm("Cam1")
+        generic_node_vm = NodeViewModel(SpatialNode(name="GenericNode"))
+
+        # Для гамма-камеры процедура ОФЭКТ возвращает SpectOrbitKinematicConstraint
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
+        self.assertIsNotNone(constraint)
+        self.assertIsInstance(constraint, SpectOrbitKinematicConstraint)
+        self.assertIsInstance(constraint, IKinematicConstraint)
+
+        # Для обычных узлов сцены ограничение отсутствует (None -> свободный 6-DOF)
+        generic_constraint = spect_procedure.get_kinematic_constraint_for_node(generic_node_vm)
+        self.assertIsNone(generic_constraint)
+
+        # Базовая процедура не накладывает ограничений
+        base_procedure = BaseProcedureViewModel()
+        self.assertIsNone(base_procedure.get_kinematic_constraint_for_node(camera_vm))
+
+        # ПЭТ процедура не накладывает круговую орбиту на единичную камеру
+        pet_procedure = PetProcedureViewModel()
+        self.assertIsNone(pet_procedure.get_kinematic_constraint_for_node(camera_vm))
+
+    def test_spect_kinematic_constraint_forced_local_space(self) -> None:
+        """Проверка принудительной локальной СК (GizmoSpace.LOCAL) и блокировки Q."""
+        spect_procedure = SpectProcedureViewModel()
+        camera_vm = self._create_test_camera_vm("CamLocal")
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
+        self.assertIsNotNone(constraint)
+        self.assertEqual(constraint.get_forced_space(), GizmoSpace.LOCAL)
+
+        mock_viewport = self._create_mock_viewport()
+        gizmo = TransformGizmo(viewport=mock_viewport)
+        self.assertEqual(gizmo.space, GizmoSpace.WORLD)
+
+        gizmo.set_constraint(constraint)
+        gizmo.set_target_node(camera_vm)
+        self.assertEqual(gizmo.space, GizmoSpace.LOCAL)
+
+        # Клавиша Q (переключение СК) заблокирована
+        key_result = gizmo.handle_key_action('Q')
+        self.assertFalse(key_result)
+        self.assertEqual(gizmo.space, GizmoSpace.LOCAL)
+
+        # Прямая установка space также игнорируется при принудительной СК
+        gizmo.space = GizmoSpace.WORLD
+        self.assertEqual(gizmo.space, GizmoSpace.LOCAL)
+
+    def test_spect_kinematic_constraint_radial_translation_updates_radius(self) -> None:
+        """Верификация радиального перемещения (стрелка Z) и ориентации на изоцентр."""
+        spect_procedure = SpectProcedureViewModel(radius=250.0)
+        camera_vm = self._create_test_camera_vm("CamRadial")
+        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        initial_matrix = camera_vm.local_matrix.copy()
+
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
+        self.assertIsNotNone(constraint)
+
+        # Смещение наружу от центра (+50 мм вдоль радиального направления)
+        radial_delta = np.array([50.0, 0.0, 0.0], dtype=np.float64)
+        filtered_delta, changed_data = constraint.filter_translation(
+            camera_vm,
+            radial_delta,
+            initial_matrix,
+            active_axis=GizmoAxis.Z,
+        )
+
+        self.assertAlmostEqual(changed_data['radius'], 300.0, delta=1e-5)
+        new_matrix = changed_data['matrix']
+
+        # Проверка сохранения ориентации нормали лицевой поверхности на изоцентр
+        dir_z_normal = new_matrix[0:3, 2]
+        center_position = new_matrix[0:3, 3]
+        expected_normal = -center_position / np.linalg.norm(center_position)
+        np.testing.assert_allclose(dir_z_normal[0:2], expected_normal[0:2], atol=1e-5)
+
+    def test_spect_kinematic_constraint_tangential_translation_updates_angle(self) -> None:
+        """Верификация тангенциального перемещения (стрелка X) вдоль круговой орбиты."""
+        spect_procedure = SpectProcedureViewModel(radius=250.0)
+        camera_vm = self._create_test_camera_vm("CamTangential")
+        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        initial_matrix = camera_vm.local_matrix.copy()
+
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
+        self.assertIsNotNone(constraint)
+
+        # 1. Смещение по касательной дуге в направлении увеличения угла (+Y при угле 0)
+        effective_orbit_radius = 250.0 + camera_vm.half_thickness
+        tangent_arc_length = float(np.radians(45.0)) * effective_orbit_radius
+        tangent_direction = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        tangential_delta = tangent_direction * tangent_arc_length
+
+        filtered_delta, changed_data = constraint.filter_translation(
+            camera_vm,
+            tangential_delta,
+            initial_matrix,
+            active_axis=GizmoAxis.X,
+        )
+
+        self.assertAlmostEqual(changed_data['angle'], 45.0, delta=1.0)
+        new_matrix = changed_data['matrix']
+        self.assertGreater(filtered_delta[1], 0.0)
+        self.assertGreater(float(np.dot(filtered_delta, tangential_delta)), 0.0)
+
+        # Нормаль коллиматора по-прежнему направлена строго в изоцентр (0, 0, 0)
+        dir_z_normal = new_matrix[0:3, 2]
+        center_position = new_matrix[0:3, 3]
+        expected_normal = -center_position / np.linalg.norm(center_position)
+        np.testing.assert_allclose(dir_z_normal[0:2], expected_normal[0:2], atol=1e-5)
+
+        # 2. Смещение в противоположную сторону (-Y) уменьшает угол (315 градусов)
+        reverse_delta = -tangential_delta
+        filtered_rev, changed_rev = constraint.filter_translation(
+            camera_vm,
+            reverse_delta,
+            initial_matrix,
+            active_axis=GizmoAxis.X,
+        )
+        self.assertAlmostEqual(changed_rev['angle'], 315.0, delta=1.0)
+        self.assertLess(filtered_rev[1], 0.0)
+        self.assertGreater(float(np.dot(filtered_rev, reverse_delta)), 0.0)
+
+    def test_spect_kinematic_constraint_blocks_scale(self) -> None:
+        """Проверка запрета масштабирования для гамма-камер ОФЭКТ."""
+        spect_procedure = SpectProcedureViewModel()
+        camera_vm = self._create_test_camera_vm("CamScaleBlocked")
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
+        self.assertIsNotNone(constraint)
+
+        self.assertFalse(constraint.is_scale_allowed())
+        self.assertEqual(len(constraint.get_allowed_axes(GizmoMode.SCALE)), 0)
+
+        mock_viewport = self._create_mock_viewport()
+        gizmo = TransformGizmo(viewport=mock_viewport)
+        gizmo.set_constraint(constraint)
+        gizmo.set_target_node(camera_vm)
+
+        # Переключение режима клавишей R заблокировано
+        key_result = gizmo.handle_key_action('R')
+        self.assertFalse(key_result)
+        self.assertNotEqual(gizmo.mode, GizmoMode.SCALE)
+
+        # Прямая установка mode = SCALE игнорируется
+        gizmo.mode = GizmoMode.SCALE
+        self.assertNotEqual(gizmo.mode, GizmoMode.SCALE)
+
+        # Вызов apply_scale возвращает None
+        scale_result = gizmo.apply_scale(np.array([2.0, 2.0, 2.0], dtype=np.float64))
+        self.assertIsNone(scale_result)
+
+    def test_spect_kinematic_constraint_single_rotation_axis(self) -> None:
+        """Проверка сокрытия паразитных колец вращения и сохранения только кольца Z (In-plane roll)."""
+        spect_procedure = SpectProcedureViewModel()
+        camera_vm = self._create_test_camera_vm("CamRotateSingle")
+        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
+        self.assertIsNotNone(constraint)
+
+        # В режиме вращения разрешено только кольцо Z
+        allowed_rotate_axes = constraint.get_allowed_axes(GizmoMode.ROTATE)
+        self.assertEqual(allowed_rotate_axes, {GizmoAxis.Z})
+
+        # Попытка наклона вокруг локальной оси X (Pitch) блокируется
+        axis_pitch = camera_vm.local_matrix[0:3, 0]
+        filtered_axis, filtered_angle, data_pitch = constraint.filter_rotation(
+            camera_vm, axis_pitch, 30.0, camera_vm.local_matrix
+        )
+        self.assertEqual(filtered_angle, 0.0)
+        self.assertEqual(len(data_pitch), 0)
+
+        # Попытка крена вокруг локальной оси Y (Tilt) блокируется
+        axis_tilt = camera_vm.local_matrix[0:3, 1]
+        filtered_axis, filtered_angle, data_tilt = constraint.filter_rotation(
+            camera_vm, axis_tilt, 30.0, camera_vm.local_matrix
+        )
+        self.assertEqual(filtered_angle, 0.0)
+        self.assertEqual(len(data_tilt), 0)
+
+        # Вращение вокруг нормали Z разрешено и снаппится к 90 градусам (портрет/альбом)
+        axis_z = camera_vm.local_matrix[0:3, 2]
+        filtered_axis, filtered_angle, data_roll = constraint.filter_rotation(
+            camera_vm, axis_z, 92.0, camera_vm.local_matrix
+        )
+        self.assertEqual(filtered_angle, 90.0)
+        self.assertIn('matrix', data_roll)
+        self.assertEqual(data_roll['orientation'], 'Книжная (Portrait)')
+        new_matrix = data_roll['matrix']
+        np.testing.assert_allclose(new_matrix[0:3, 2], axis_z, atol=1e-5)
+        np.testing.assert_allclose(new_matrix[0:3, 3], camera_vm.local_matrix[0:3, 3], atol=1e-5)
+
+    def test_spect_multi_camera_radius_sync_via_gizmo(self) -> None:
+        """Проверка синхронного изменения радиуса второй гамма-камеры при перемещении первой."""
+        root_node = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        scene_viewmodel = SceneViewModel(root_core_node=root_node)
+        self.assertIsNotNone(scene_viewmodel.root_vm)
+        camera_vm_1 = self._create_test_camera_vm("CamHead1")
+        camera_vm_2 = self._create_test_camera_vm("CamHead2")
+        scene_viewmodel.add_node(scene_viewmodel.root_vm, camera_vm_1)
+        scene_viewmodel.add_node(scene_viewmodel.root_vm, camera_vm_2)
+
+        spect_procedure = SpectProcedureViewModel(
+            gamma_cameras=2,
+            radius=250.0,
+            head_angles=[0.0, 180.0],
+        )
+        spect_procedure.sync_cameras([camera_vm_1, camera_vm_2])
+
+        self.assertEqual(camera_vm_1.orbit_radius, 250.0)
+        self.assertEqual(camera_vm_2.orbit_radius, 250.0)
+
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm_1)
+        self.assertIsNotNone(constraint)
+
+        # Фаза continuous drag (on_transform_changed): синхронизация предпросмотра
+        constraint.on_transform_changed(camera_vm_1, {'radius': 330.0, 'angle': 0.0})
+        self.assertEqual(camera_vm_2.orbit_radius, 330.0)
+        self.assertEqual(spect_procedure.radius, 250.0)
+
+        # Фаза LMB release (on_transform_committed): фиксация в процедуре
+        constraint.on_transform_committed(camera_vm_1, {'radius': 330.0, 'angle': 0.0})
+        self.assertEqual(spect_procedure.radius, 330.0)
+        self.assertEqual(camera_vm_1.orbit_radius, 330.0)
+        self.assertEqual(camera_vm_2.orbit_radius, 330.0)
+        self.assertEqual(camera_vm_2.orbit_angle, 180.0)
+
+    def test_procedure_change_dynamically_updates_gizmo_constraint(self) -> None:
+        """Проверка динамического обновления ограничений манипулятора при смене активной процедуры."""
+        root_node = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        scene_viewmodel = SceneViewModel(root_core_node=root_node)
+        self.assertIsNotNone(scene_viewmodel.root_vm)
+        camera_vm = self._create_test_camera_vm("CamDynamicTest")
+        scene_viewmodel.add_node(scene_viewmodel.root_vm, camera_vm)
+
+        mock_viewport = self._create_mock_viewport()
+        viewport_controller = SceneViewportController(
+            viewport=mock_viewport,
+            scene_vm=scene_viewmodel,
+        )
+        spect_procedure = SpectProcedureViewModel(radius=250.0)
+        viewport_controller.procedure_vm = spect_procedure
+        viewport_controller.on_node_selected(camera_vm)
+
+        gizmo = viewport_controller.transform_gizmo
+        self.assertIsNotNone(gizmo.constraint)
+        self.assertIsInstance(gizmo.constraint, SpectOrbitKinematicConstraint)
+        self.assertEqual(gizmo.space, GizmoSpace.LOCAL)
+        self.assertFalse(gizmo.handle_key_action('Q'))
+
+        # Переключаем процедуру на ПЭТ
+        pet_procedure = PetProcedureViewModel()
+        viewport_controller.on_procedure_changed(pet_procedure)
+
+        self.assertIsNone(gizmo.constraint)
+        # Переключение World/Local теперь разрешено
+        self.assertTrue(gizmo.handle_key_action('Q'))
+        self.assertEqual(gizmo.space, GizmoSpace.WORLD)
+
+    def test_transform_changed_vs_committed_lifecycle(self) -> None:
+        """Проверка разделения фаз инкрементального предпросмотра и финальной фиксации."""
+        spect_procedure = SpectProcedureViewModel(radius=250.0, start_angle=0.0)
+        camera_vm = self._create_test_camera_vm("CamLifecycleTest")
+        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
+        self.assertIsNotNone(constraint)
+
+        recorded_events = []
+        spect_procedure.parameter_changed.connect(
+            lambda name, val: recorded_events.append((name, val))
+        )
+
+        # 1. При перетаскивании (on_transform_changed) процедура не фиксирует значения
+        constraint.on_transform_changed(camera_vm, {'radius': 280.0, 'angle': 30.0})
+        self.assertEqual(spect_procedure.radius, 250.0)
+        self.assertEqual(spect_procedure.start_angle, 0.0)
+        self.assertEqual(len(recorded_events), 0)
+
+        # 2. При отпускании мыши (on_transform_committed) параметры фиксируются и эмитируются сигналы
+        constraint.on_transform_committed(camera_vm, {'radius': 280.0, 'angle': 30.0})
+        self.assertEqual(spect_procedure.radius, 280.0)
+        self.assertEqual(spect_procedure.start_angle, 30.0)
+        self.assertTrue(any(param_name == 'radius' for param_name, _ in recorded_events))
+
+    def test_spect_kinematic_constraint_portrait_mode_translation(self) -> None:
+        """Проверка работы перемещений стрелками при повернутом на 90 градусов детекторе (Portrait mode)."""
+        spect_procedure = SpectProcedureViewModel(radius=250.0)
+        camera_vm = self._create_test_camera_vm("CamPortraitTest")
+        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
+        self.assertIsNotNone(constraint)
+
+        # 1. Поворачиваем детектор в книжную ориентацию (Portrait, roll = 90 deg)
+        axis_z = camera_vm.local_matrix[0:3, 2]
+        _, _, data_roll = constraint.filter_rotation(camera_vm, axis_z, 90.0, camera_vm.local_matrix)
+        camera_vm.local_matrix = data_roll['matrix']
+        portrait_matrix = camera_vm.local_matrix.copy()
+
+        # 2. В портретном режиме локальная ось X направлена вдоль стола (+Z), а Y - тангенциально
+        # Перетаскивание стрелки X должно менять координату Z (вдоль стола)
+        axial_delta = np.array([0.0, 0.0, 30.0], dtype=np.float64)
+        filtered_axial, changed_axial = constraint.filter_translation(
+            camera_vm,
+            axial_delta,
+            portrait_matrix,
+            active_axis=GizmoAxis.X,
+        )
+        self.assertAlmostEqual(changed_axial['z'], 30.0, delta=1.0)
+        self.assertAlmostEqual(changed_axial['radius'], 250.0, delta=1e-5)
+        # Проверяем, что поворот 90 градусов сохранился в новой матрице
+        mat_after_axial = changed_axial['matrix']
+        np.testing.assert_allclose(mat_after_axial[0:3, 0], np.array([0.0, 0.0, 1.0]), atol=1e-5)
+
+        # 3. Перетаскивание стрелки Y (которая теперь тангенциальна) должно вращать гантри (угол theta)
+        effective_r = 250.0 + camera_vm.half_thickness
+        tangent_arc = float(np.radians(30.0)) * effective_r
+        tangent_delta = np.array([0.0, 1.0, 0.0], dtype=np.float64) * tangent_arc
+        filtered_tangent, changed_tangent = constraint.filter_translation(
+            camera_vm,
+            tangent_delta,
+            portrait_matrix,
+            active_axis=GizmoAxis.Y,
+        )
+        self.assertAlmostEqual(changed_tangent['angle'], 30.0, delta=1.0)
+        self.assertAlmostEqual(changed_tangent['radius'], 250.0, delta=1e-5)
+
+        # 4. Перетаскивание стрелки Z по-прежнему меняет радиус
+        radial_delta = np.array([40.0, 0.0, 0.0], dtype=np.float64)
+        filtered_radial, changed_radial = constraint.filter_translation(
+            camera_vm,
+            radial_delta,
+            portrait_matrix,
+            active_axis=GizmoAxis.Z,
+        )
+        self.assertAlmostEqual(changed_radial['radius'], 290.0, delta=1.0)
+
+    def test_spect_rotation_commit_preserves_portrait_orientation(self) -> None:
+        """Проверка того, что отпускание кнопки мыши (LMB release) не сбрасывает поворот в Portrait."""
+        spect_procedure = SpectProcedureViewModel(radius=250.0)
+        camera_vm = self._create_test_camera_vm("CamRollCommitTest")
+        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
+        self.assertIsNotNone(constraint)
+
+        # Поворот на 90 градусов
+        axis_z = camera_vm.local_matrix[0:3, 2]
+        _, _, data_roll = constraint.filter_rotation(camera_vm, axis_z, 90.0, camera_vm.local_matrix)
+        camera_vm.local_matrix = data_roll['matrix']
+
+        # Вызов on_transform_committed при отпускании мыши
+        constraint.on_transform_committed(camera_vm, data_roll)
+
+        # Проверяем, что матрица осталась повернутой на 90 градусов (не сбросилась в Landscape)
+        col_0 = camera_vm.local_matrix[0:3, 0]
+        np.testing.assert_allclose(col_0, np.array([0.0, 0.0, 1.0]), atol=1e-5)
+
+    def test_spect_multi_camera_radius_sync_preserves_roll(self) -> None:
+        """Проверка сохранения книжной ориентации головки 1 при изменении радиуса через головку 2."""
+        root_node = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        scene_viewmodel = SceneViewModel(root_core_node=root_node)
+        camera_vm_1 = self._create_test_camera_vm("CamDualRoll1")
+        camera_vm_2 = self._create_test_camera_vm("CamDualRoll2")
+        scene_viewmodel.add_node(scene_viewmodel.root_vm, camera_vm_1)
+        scene_viewmodel.add_node(scene_viewmodel.root_vm, camera_vm_2)
+
+        spect_procedure = SpectProcedureViewModel(gamma_cameras=2, radius=250.0, head_angles=[0.0, 180.0])
+        spect_procedure.sync_cameras([camera_vm_1, camera_vm_2])
+
+        # Поворачиваем головку 1 в книжную ориентацию (Portrait, roll = 90 deg)
+        constraint_1 = spect_procedure.get_kinematic_constraint_for_node(camera_vm_1)
+        self.assertIsNotNone(constraint_1)
+        axis_z = camera_vm_1.local_matrix[0:3, 2]
+        _, _, data_roll = constraint_1.filter_rotation(camera_vm_1, axis_z, 90.0, camera_vm_1.local_matrix)
+        camera_vm_1.local_matrix = data_roll['matrix']
+
+        # Изменяем радиус через манипулятор головки 2
+        constraint_2 = spect_procedure.get_kinematic_constraint_for_node(camera_vm_2)
+        self.assertIsNotNone(constraint_2)
+        constraint_2.on_transform_changed(camera_vm_2, {'radius': 320.0, 'angle': 180.0})
+        constraint_2.on_transform_committed(camera_vm_2, {'radius': 320.0, 'angle': 180.0})
+
+        # Проверяем, что у головки 1 обновился радиус, но сохранился поворот 90 градусов
+        self.assertEqual(camera_vm_1.orbit_radius, 320.0)
+        col_0 = camera_vm_1.local_matrix[0:3, 0]
+        np.testing.assert_allclose(col_0, np.array([0.0, 0.0, 1.0]), atol=1e-5)
+
+    def test_procedure_change_during_drag_terminates_cleanly(self) -> None:
+        """Проверка безопасного сброса состояния перетаскивания манипулятора при смене процедуры на лету."""
+        root_node = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        scene_viewmodel = SceneViewModel(root_core_node=root_node)
+        camera_vm = self._create_test_camera_vm("CamDragSwitch")
+        scene_viewmodel.add_node(scene_viewmodel.root_vm, camera_vm)
+
+        mock_viewport = self._create_mock_viewport()
+        viewport_controller = SceneViewportController(viewport=mock_viewport, scene_vm=scene_viewmodel)
+        spect_proc = SpectProcedureViewModel(radius=250.0)
+        viewport_controller.procedure_vm = spect_proc
+        viewport_controller.on_node_selected(camera_vm)
+
+        gizmo = viewport_controller.transform_gizmo
+        self.assertIsNotNone(gizmo)
+
+        # Имитируем активное перетаскивание
+        gizmo._is_dragging = True
+        gizmo._active_axis = GizmoAxis.Z
+
+        ended_events = []
+        gizmo.transform_ended.connect(lambda: ended_events.append(True))
+
+        # Переключаем процедуру на ПЭТ
+        pet_proc = PetProcedureViewModel()
+        viewport_controller.on_procedure_changed(pet_proc)
+
+        self.assertFalse(gizmo.is_dragging)
+        self.assertEqual(gizmo.active_axis, GizmoAxis.NONE)
+        self.assertEqual(len(ended_events), 1)
+
+    def test_procedure_change_updates_manipulator_visuals(self) -> None:
+        """Проверка корректного обновления и скрытия направляющих ОФЭКТ при переключении процедур."""
+        root_node = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        scene_viewmodel = SceneViewModel(root_core_node=root_node)
+        camera_vm = self._create_test_camera_vm("CamVisualProcTest")
+        scene_viewmodel.add_node(scene_viewmodel.root_vm, camera_vm)
+
+        mock_viewport = self._create_mock_viewport()
+        viewport_controller = SceneViewportController(viewport=mock_viewport, scene_vm=scene_viewmodel)
+        spect_proc = SpectProcedureViewModel(radius=280.0)
+        viewport_controller.procedure_vm = spect_proc
+        spect_proc.sync_cameras([camera_vm])
+        viewport_controller.on_node_selected(camera_vm)
+
+        # В ОФЭКТ направляющая создана и настроена
+        self.assertEqual(viewport_controller.spect_manipulator.radius, 280.0)
+
+        # Переключаем на ПЭТ - направляющая ОФЭКТ скрывается
+        pet_proc = PetProcedureViewModel()
+        viewport_controller.on_procedure_changed(pet_proc)
+        self.assertNotIn(viewport_controller.spect_manipulator.orbit_actor_name, mock_viewport._actors)
+
+        # Переключаем обратно на ОФЭКТ - направляющая восстанавливается
+        viewport_controller.on_procedure_changed(spect_proc)
+        self.assertEqual(viewport_controller.spect_manipulator.radius, 280.0)
+        self.assertIn(viewport_controller.spect_manipulator.orbit_actor_name, mock_viewport._actors)
 
 
 if __name__ == '__main__':

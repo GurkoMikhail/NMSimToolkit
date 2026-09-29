@@ -17,10 +17,17 @@ from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.nodes.source_vm import SourceViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.gantry_vm import GantryViewModel
 from gui.viewmodels.nodes.pet_scanner_vm import PetScannerViewModel
 from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
 from gui.viewmodels.procedure_viewmodel import BaseProcedureViewModel, SpectProcedureViewModel
-from core.config.orchestrator import Orchestrator
+from gui.viewport_3d.kinematic_constraints import (
+    GantryKinematicConstraint,
+    IKinematicConstraint,
+    SpectOrbitKinematicConstraint,
+)
+
+from core.geometry import compute_spect_poses
 
 _logger = logging.getLogger(__name__)
 
@@ -52,11 +59,13 @@ class SceneViewportController(QObject):
         self,
         viewport: VTKViewport,
         scene_vm: Optional[SceneViewModel] = None,
+        procedure_vm: Optional[BaseProcedureViewModel] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
         self.viewport = viewport
         self.scene_vm = scene_vm
+        self.procedure_vm = procedure_vm
 
         # Рендереры и манипуляторы вьюпорта
         self.track_renderer = TrackRenderer(self.viewport, render_as_lines=True)
@@ -177,11 +186,11 @@ class SceneViewportController(QObject):
         actor_name = f"mesh_{id(node_vm)}"
 
         if isinstance(node_vm, VolumeViewModel):
-            sz = node_vm.size
-            box = pv.Box(bounds=(-sz[0]/2, sz[0]/2, -sz[1]/2, sz[1]/2, -sz[2]/2, sz[2]/2))
+            volume_size = node_vm.size
+            box = pv.Box(bounds=(-volume_size[0]/2, volume_size[0]/2, -volume_size[1]/2, volume_size[1]/2, -volume_size[2]/2, volume_size[2]/2))
             color = node_vm.color
-            c = color[:3] if isinstance(color, tuple) and len(color) >= 3 else (0.2, 0.6, 1.0)
-            self.viewport.add_mesh_actor(actor_name, box, color=c, opacity=0.45)
+            rgb_color = color[:3] if isinstance(color, tuple) and len(color) >= 3 else (0.2, 0.6, 1.0)
+            self.viewport.add_mesh_actor(actor_name, box, color=rgb_color, opacity=0.45)
             self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
 
         elif isinstance(node_vm, VoxelVolumeViewModel):
@@ -247,10 +256,10 @@ class SceneViewportController(QObject):
         node_id = id(node_vm)
         if node_id not in self._node_connections:
             conn1 = node_vm.transform_changed.connect(
-                lambda n=node_vm: self.on_node_transform_changed(n)
+                lambda observed_node_vm=node_vm: self.on_node_transform_changed(observed_node_vm)
             )
             conn2 = node_vm.property_changed.connect(
-                lambda prop, val, n=node_vm: self.on_node_property_changed(n, prop, val)
+                lambda property_name, property_value, observed_node_vm=node_vm: self.on_node_property_changed(observed_node_vm, property_name, property_value)
             )
             self._node_connections[node_id] = (node_vm, [conn1, conn2])
 
@@ -259,11 +268,11 @@ class SceneViewportController(QObject):
         Отключение сигналов отслеживаемого узла и удаление из кэша соединений.
         """
         if node_id in self._node_connections:
-            node_vm, conns = self._node_connections.pop(node_id)
-            for conn in conns:
+            node_vm, connections = self._node_connections.pop(node_id)
+            for connection in connections:
                 try:
-                    conn.disconnect()
-                except Exception:
+                    QObject.disconnect(connection)
+                except (RuntimeError, TypeError):
                     pass
 
     def disconnect_all_nodes(self) -> None:
@@ -348,41 +357,120 @@ class SceneViewportController(QObject):
         _remove_recursive(node_vm)
         self.viewport.render()
 
-    def on_node_selected(self, vm: Optional[NodeViewModel]) -> None:
-        """Синхронизация ОФЭКТ/ПЭТ-манипулятора и Transform Gizmo при выборе узла в сцене."""
-        if isinstance(vm, GammaCameraViewModel):
-            if self.transform_gizmo is not None:
-                self.transform_gizmo.detach()
-            self.spect_manipulator.half_thickness = vm.half_thickness
-            self.spect_manipulator.set_orbit_parameters(
-                vm.orbit_radius,
-                vm.orbit_angle,
-                z=vm.orbit_z,
-                render=True,
-                emit_signal=False
-            )
-            self.pet_manipulator.remove_visuals()
-        elif isinstance(vm, PetScannerViewModel):
-            if self.transform_gizmo is not None:
-                self.transform_gizmo.detach()
-            self.pet_manipulator.set_parameters(
-                diameter=float(vm.diameter),
-                axial_length=float(vm.axial_length),
-                num_sectors=int(vm.num_sectors),
-            )
-            self.spect_manipulator.remove_visuals()
-        elif vm is not None:
-            self.spect_manipulator.remove_visuals()
-            self.pet_manipulator.remove_visuals()
-            if self.transform_gizmo is not None:
-                self.transform_gizmo.set_target_node(vm)
+    def on_procedure_changed(self, new_procedure_vm: BaseProcedureViewModel) -> None:
+        """Смена активной процедуры: динамическое обновление кинематических ограничений."""
+        self.procedure_vm = new_procedure_vm
+        if self.scene_vm is not None:
+            for scene_node_vm in self.scene_vm.all_nodes():
+                if isinstance(scene_node_vm, GantryViewModel):
+                    scene_node_vm.procedure_vm = self.procedure_vm
+
+        if self.transform_gizmo is not None and self.transform_gizmo.target_node is not None:
+            current_target = self.transform_gizmo.target_node
+            new_constraint = current_target.get_effective_kinematic_constraint()
+            if new_constraint is None and self.procedure_vm is not None:
+                new_constraint = self.procedure_vm.get_kinematic_constraint_for_node(current_target)
+
+            if isinstance(new_constraint, SpectOrbitKinematicConstraint):
+                new_constraint.spect_manipulator = self.spect_manipulator
+            if isinstance(new_constraint, (SpectOrbitKinematicConstraint, GantryKinematicConstraint)):
+                if new_constraint.procedure_vm is None and self.procedure_vm is not None:
+                    new_constraint.procedure_vm = self.procedure_vm
+
+            self.transform_gizmo.set_constraint(new_constraint)
+            if new_constraint is not None:
+                forced_space = new_constraint.get_forced_space()
+                if forced_space is not None:
+                    self.transform_gizmo.space = forced_space
+            self.transform_gizmo.update_visuals()
+
+            # Обновление направляющих манипуляторов ОФЭКТ/ПЭТ
+            if isinstance(current_target, GammaCameraViewModel) and isinstance(self.procedure_vm, SpectProcedureViewModel):
+                self.spect_manipulator.half_thickness = current_target.half_thickness
+                self.spect_manipulator.set_orbit_parameters(
+                    current_target.orbit_radius,
+                    current_target.orbit_angle,
+                    z=current_target.orbit_z,
+                    render=False,
+                    emit_signal=False,
+                )
+                self.pet_manipulator.remove_visuals()
+            elif isinstance(current_target, PetScannerViewModel):
+                self.spect_manipulator.remove_visuals()
+                self.pet_manipulator.set_parameters(
+                    diameter=float(current_target.diameter),
+                    axial_length=float(current_target.axial_length),
+                    num_sectors=int(current_target.num_sectors),
+                )
+            else:
+                self.spect_manipulator.remove_visuals()
+                self.pet_manipulator.remove_visuals()
+
             self.viewport.render()
+
+    def on_node_selected(self, selected_node_vm: Optional[NodeViewModel]) -> None:
+        """Синхронизация ОФЭКТ/ПЭТ-манипулятора и Transform Gizmo при выборе узла в сцене."""
+        if selected_node_vm is None:
+            if self.transform_gizmo is not None:
+                self.transform_gizmo.detach()
+            self.spect_manipulator.remove_visuals()
+            self.pet_manipulator.remove_visuals()
+            self.viewport.render()
+            return
+
+        # 1. Запрашиваем кинематическое ограничение:
+        # Первичный источник: граф сцены (узел сам или через родителя знает свои ограничения)
+        constraint: Optional[IKinematicConstraint] = selected_node_vm.get_effective_kinematic_constraint()
+        if constraint is None and self.procedure_vm is not None:
+            # Fallback для обратной совместимости с внешними процедурами
+            constraint = self.procedure_vm.get_kinematic_constraint_for_node(selected_node_vm)
+
+        if isinstance(constraint, SpectOrbitKinematicConstraint):
+            constraint.spect_manipulator = self.spect_manipulator
+
+        if isinstance(constraint, (SpectOrbitKinematicConstraint, GantryKinematicConstraint)):
+            if constraint.procedure_vm is None and self.procedure_vm is not None:
+                constraint.procedure_vm = self.procedure_vm
+
+        # Если выбран GantryViewModel или его дочерний узел, гарантируем привязку procedure_vm
+        if isinstance(selected_node_vm, GantryViewModel) and selected_node_vm.procedure_vm is None:
+            selected_node_vm.procedure_vm = self.procedure_vm
+        elif isinstance(selected_node_vm.parent_vm, GantryViewModel) and selected_node_vm.parent_vm.procedure_vm is None:
+            selected_node_vm.parent_vm.procedure_vm = self.procedure_vm
+
+        # 2. Настраиваем манипулятор TransformGizmo:
+        if self.transform_gizmo is not None:
+            self.transform_gizmo.set_constraint(constraint)
+            if constraint is not None:
+                forced_space = constraint.get_forced_space()
+                if forced_space is not None:
+                    self.transform_gizmo.space = forced_space
+            self.transform_gizmo.set_target_node(selected_node_vm)
+
+        # 3. Визуальные направляющие ОФЭКТ (круговая орбита):
+        if isinstance(selected_node_vm, GammaCameraViewModel) and isinstance(self.procedure_vm, SpectProcedureViewModel):
+            self.spect_manipulator.half_thickness = selected_node_vm.half_thickness
+            self.spect_manipulator.set_orbit_parameters(
+                selected_node_vm.orbit_radius,
+                selected_node_vm.orbit_angle,
+                z=selected_node_vm.orbit_z,
+                render=False,
+                emit_signal=False,
+            )
+            self.pet_manipulator.remove_visuals()
+        elif isinstance(selected_node_vm, PetScannerViewModel):
+            self.spect_manipulator.remove_visuals()
+            self.pet_manipulator.set_parameters(
+                diameter=float(selected_node_vm.diameter),
+                axial_length=float(selected_node_vm.axial_length),
+                num_sectors=int(selected_node_vm.num_sectors),
+            )
         else:
             self.spect_manipulator.remove_visuals()
             self.pet_manipulator.remove_visuals()
-            if self.transform_gizmo is not None:
-                self.transform_gizmo.detach()
-            self.viewport.render()
+
+        self.viewport.render()
+
 
     def on_spect_manipulator_changed(self, radius: float, angle_deg: float, z_pos: float) -> None:
         """Обработка перемещения ОФЭКТ-манипулятора в 3D-пространстве."""
@@ -398,27 +486,27 @@ class SceneViewportController(QObject):
         if self.scene_vm is None:
             return
 
-        cam_vms = [n for n in self.scene_vm.all_nodes() if isinstance(n, GammaCameraViewModel)]
-        if not cam_vms:
+        camera_vms = [node for node in self.scene_vm.all_nodes() if isinstance(node, GammaCameraViewModel)]
+        if not camera_vms:
             return
 
         radius = 250.0
         if isinstance(procedure_vm, SpectProcedureViewModel):
             radius = float(procedure_vm.radius)
 
-        for i, cam_vm in enumerate(cam_vms):
-            ang = context.get(f"head_{i}_angle")
-            if ang is None:
-                ang = context.get("current_angle")
-            if ang is not None:
-                cam_vm.set_orbit_position(radius, float(ang), cam_vm.orbit_z)
+        for camera_index, camera_view_model in enumerate(camera_vms):
+            angle_val = context.get(f"head_{camera_index}_angle")
+            if angle_val is None:
+                angle_val = context.get("current_angle")
+            if angle_val is not None:
+                camera_view_model.set_orbit_position(radius, float(angle_val), camera_view_model.orbit_z)
 
         if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
-            sel = self.scene_vm.selected_node
+            selected_camera = self.scene_vm.selected_node
             self.spect_manipulator.set_orbit_parameters(
-                sel.orbit_radius,
-                sel.orbit_angle,
-                z=sel.orbit_z,
+                selected_camera.orbit_radius,
+                selected_camera.orbit_angle,
+                z=selected_camera.orbit_z,
                 render=False,
                 emit_signal=False
             )
@@ -437,40 +525,61 @@ class SceneViewportController(QObject):
         if self.scene_vm is None:
             return 0.0
 
-        view_idx = max(0, view_number_1based - 1)
-        cam_vms = [n for n in self.scene_vm.all_nodes() if isinstance(n, GammaCameraViewModel)]
-        if not cam_vms:
+        view_index = max(0, view_number_1based - 1)
+        camera_vms = [node for node in self.scene_vm.all_nodes() if isinstance(node, GammaCameraViewModel)]
+        if not camera_vms:
             return 0.0
 
         base_angle = 0.0
-        if isinstance(procedure_vm, SpectProcedureViewModel):
-            radius = float(procedure_vm.radius)
-            poses = Orchestrator.compute_spect_poses(
-                views_or_protocol=procedure_vm.to_config(),
-                gamma_cameras=procedure_vm.gamma_cameras,
-                start_angle_deg=procedure_vm.start_angle,
-                end_angle_deg=procedure_vm.end_angle,
-                head_angle_offsets=procedure_vm.head_angles if procedure_vm.head_angles else None,
-                endpoint=procedure_vm.endpoint,
-            )
-            pose_idx = min(view_idx, len(poses) - 1) if poses else 0
-            angles = poses[pose_idx] if poses else [0.0] * len(cam_vms)
-            for i, cam_vm in enumerate(cam_vms):
-                ang = angles[i] if i < len(angles) else angles[0]
-                cam_vm.set_orbit_position(radius, float(ang), cam_vm.orbit_z)
-            base_angle = angles[0] if angles else 0.0
-
-            if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
-                sel = self.scene_vm.selected_node
-                self.spect_manipulator.set_orbit_parameters(
-                    sel.orbit_radius,
-                    sel.orbit_angle,
-                    z=sel.orbit_z,
-                    render=False,
-                    emit_signal=False
+        active_procedure = procedure_vm if procedure_vm is not None else self.procedure_vm
+        if isinstance(active_procedure, SpectProcedureViewModel):
+            previous_sync_state = active_procedure._is_syncing_with_scene
+            active_procedure._is_syncing_with_scene = True
+            try:
+                radius = float(active_procedure.radius)
+                calculated_poses = compute_spect_poses(
+                    views_or_protocol=active_procedure.to_config(),
+                    gamma_cameras=active_procedure.gamma_cameras,
+                    start_angle_deg=active_procedure.start_angle,
+                    end_angle_deg=active_procedure.end_angle,
+                    head_angle_offsets=active_procedure.head_angles if active_procedure.head_angles else None,
+                    endpoint=active_procedure.endpoint,
                 )
+                pose_index = min(view_index, len(calculated_poses) - 1) if calculated_poses else 0
+                angles = calculated_poses[pose_index] if calculated_poses else [0.0] * len(camera_vms)
+                base_angle = angles[0] if angles else 0.0
 
-            self.viewport.render()
+                gantry_vms = [node for node in self.scene_vm.all_nodes() if isinstance(node, GantryViewModel)]
+                if gantry_vms and any(cam_vm.parent_vm in gantry_vms for cam_vm in camera_vms):
+                    gantry_vm = gantry_vms[0]
+                    head_offset_0 = active_procedure.head_angles[0] if active_procedure.head_angles else 0.0
+                    gantry_rot_angle = (angles[0] - head_offset_0) % 360.0
+                    gantry_vm.gantry_angle_deg = gantry_rot_angle
+                    for camera_index, cam_vm in enumerate(camera_vms):
+                        head_offset = (
+                            active_procedure.head_angles[camera_index]
+                            if camera_index < len(active_procedure.head_angles)
+                            else (360.0 / max(1, len(camera_vms))) * camera_index
+                        )
+                        cam_vm.set_orbit_position(radius, float(head_offset), cam_vm.orbit_z)
+                else:
+                    for camera_index, cam_vm in enumerate(camera_vms):
+                        angle_val = angles[camera_index] if camera_index < len(angles) else angles[0]
+                        cam_vm.set_orbit_position(radius, float(angle_val), cam_vm.orbit_z)
+
+                if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
+                    selected_camera = self.scene_vm.selected_node
+                    self.spect_manipulator.set_orbit_parameters(
+                        selected_camera.orbit_radius,
+                        selected_camera.orbit_angle,
+                        z=selected_camera.orbit_z,
+                        render=False,
+                        emit_signal=False
+                    )
+
+                self.viewport.render()
+            finally:
+                active_procedure._is_syncing_with_scene = previous_sync_state
         return base_angle
 
     def on_dose_volume_received(

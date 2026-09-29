@@ -14,8 +14,16 @@ from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
 import settings.database_setting as database_setting
+from core.scene.gantry_node import GantryNode
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.gantry_vm import GantryViewModel
+from gui.viewport_3d.kinematic_constraints import (
+    IKinematicConstraint,
+    SpectOrbitKinematicConstraint,
+    CameraMountKinematicConstraint,
+    GantryKinematicConstraint,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -60,6 +68,16 @@ class BaseProcedureViewModel(QObject):
         """Синхронизация параметров процедуры с геометрией сцены (SceneViewModel)."""
         pass
 
+    def get_kinematic_constraint_for_node(
+        self,
+        node_vm: NodeViewModel
+    ) -> Optional[IKinematicConstraint]:
+        """
+        Возвращает кинематическое ограничение для выбранного узла в контексте
+        данной процедуры. По умолчанию ограничений нет (возвращается None -> свободный 6-DOF).
+        """
+        return None
+
 
 class SpectProcedureViewModel(BaseProcedureViewModel):
     """
@@ -92,9 +110,101 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         self._head_mode: str = head_mode
         self._head_angles: List[float] = list(head_angles) if head_angles is not None else []
         self._endpoint: bool = bool(endpoint)
+        self._observed_gantry: Optional[Any] = None
+        self._observed_cameras: List[Any] = []
+        self._observed_scene: Optional[Any] = None
+        self._is_syncing_with_scene: bool = False
 
         if not self._head_angles:
             self._recalculate_head_angles()
+
+    def _disconnect_scene_observers(self) -> None:
+        """Отсоединение слушателей от предыдущей сцены и станины."""
+        if self._observed_scene is not None:
+            try:
+                self._observed_scene.node_removed.disconnect(self._on_scene_node_removed)
+            except (RuntimeError, TypeError):
+                pass
+            self._observed_scene = None
+
+        if self._observed_gantry is not None:
+            try:
+                self._observed_gantry.property_changed.disconnect(self._on_gantry_property_changed)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                self._observed_gantry.child_added.disconnect(self._on_gantry_child_added)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                self._observed_gantry.child_removed.disconnect(self._on_gantry_child_removed)
+            except (RuntimeError, TypeError):
+                pass
+            self._observed_gantry = None
+
+        for camera_view_model in self._observed_cameras:
+            try:
+                camera_view_model.property_changed.disconnect(self._on_camera_property_changed)
+            except (RuntimeError, TypeError):
+                pass
+        self._observed_cameras.clear()
+
+    def _on_scene_node_removed(self, removed_node_vm: Any) -> None:
+        """Слушатель удаления узлов из дерева сцены."""
+        if removed_node_vm is self._observed_gantry:
+            self._disconnect_scene_observers()
+
+    def _on_gantry_property_changed(self, property_name: str, property_value: Any) -> None:
+        """Слушатель (Observer) изменений свойств узла станины GantryViewModel."""
+        if self._is_syncing_with_scene:
+            return
+        if property_name == "gantry_angle_deg":
+            angle_degrees = float(property_value)
+            if abs(self._start_angle - angle_degrees) > 1e-4:
+                self._is_syncing_with_scene = True
+                try:
+                    self._start_angle = angle_degrees
+                    self.changed.emit()
+                    self.parameter_changed.emit("start_angle", angle_degrees)
+                finally:
+                    self._is_syncing_with_scene = False
+
+    def _on_camera_property_changed(self, property_name: str, property_value: Any) -> None:
+        """Слушатель (Observer) изменений свойств дочерних гамма-камер GammaCameraViewModel."""
+        if self._is_syncing_with_scene:
+            return
+        if property_name == "orbit_radius":
+            new_radius = float(property_value)
+            if abs(self._radius - new_radius) > 1e-4:
+                self._is_syncing_with_scene = True
+                try:
+                    self._radius = new_radius
+                    for other_camera_vm in self._observed_cameras:
+                        if abs(other_camera_vm.orbit_radius - new_radius) > 1e-4:
+                            other_camera_vm.set_orbit_position(
+                                new_radius,
+                                other_camera_vm.orbit_angle,
+                                other_camera_vm.orbit_z,
+                            )
+                    self.changed.emit()
+                    self.parameter_changed.emit("radius", new_radius)
+                finally:
+                    self._is_syncing_with_scene = False
+
+    def _on_gantry_child_added(self, child_node_vm: Any) -> None:
+        """Слушатель добавления узлов на станину."""
+        if isinstance(child_node_vm.core_node, GammaCamera) and child_node_vm not in self._observed_cameras:
+            child_node_vm.property_changed.connect(self._on_camera_property_changed)
+            self._observed_cameras.append(child_node_vm)
+
+    def _on_gantry_child_removed(self, child_node_vm: Any) -> None:
+        """Слушатель удаления узлов со станины."""
+        if child_node_vm in self._observed_cameras:
+            try:
+                child_node_vm.property_changed.disconnect(self._on_camera_property_changed)
+            except (RuntimeError, TypeError):
+                pass
+            self._observed_cameras.remove(child_node_vm)
 
     def _recalculate_head_angles(self) -> None:
         """Автоматический пересчет смещений головок в зависимости от выбранного режима."""
@@ -147,6 +257,17 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         validated_radius = max(10.0, float(new_radius))
         if self._radius != validated_radius:
             self._radius = validated_radius
+            if self._observed_cameras and not self._is_syncing_with_scene:
+                self._is_syncing_with_scene = True
+                try:
+                    for camera_view_model in self._observed_cameras:
+                        camera_view_model.set_orbit_position(
+                            validated_radius,
+                            camera_view_model.orbit_angle,
+                            camera_view_model.orbit_z,
+                        )
+                finally:
+                    self._is_syncing_with_scene = False
             self.changed.emit()
             self.parameter_changed.emit("radius", validated_radius)
 
@@ -173,8 +294,21 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         angle_value = float(new_angle)
         if self._start_angle != angle_value:
             self._start_angle = angle_value
+            if self._observed_gantry is not None and not self._is_syncing_with_scene:
+                self._is_syncing_with_scene = True
+                try:
+                    self._observed_gantry.gantry_angle_deg = angle_value
+                finally:
+                    self._is_syncing_with_scene = False
+            elif self._observed_cameras and not self._is_syncing_with_scene:
+                self._is_syncing_with_scene = True
+                try:
+                    self.sync_cameras(self._observed_cameras)
+                finally:
+                    self._is_syncing_with_scene = False
             self.changed.emit()
             self.parameter_changed.emit("start_angle", angle_value)
+
 
     @property
     def end_angle(self) -> float:
@@ -199,6 +333,12 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         if self._head_mode != new_mode:
             self._head_mode = str(new_mode)
             self._recalculate_head_angles()
+            if self._observed_cameras and not self._is_syncing_with_scene and len(self._observed_cameras) == len(self._head_angles):
+                self._is_syncing_with_scene = True
+                try:
+                    self.sync_cameras(self._observed_cameras)
+                finally:
+                    self._is_syncing_with_scene = False
             self.changed.emit()
             self.parameter_changed.emit("head_mode", self._head_mode)
 
@@ -211,6 +351,12 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
     def head_angles(self, new_head_angles: List[float]) -> None:
         self._head_angles = [float(angle_deg) for angle_deg in new_head_angles]
         self._gamma_cameras = max(1, len(self._head_angles))
+        if self._observed_cameras and not self._is_syncing_with_scene and len(self._observed_cameras) == len(self._head_angles):
+            self._is_syncing_with_scene = True
+            try:
+                self.sync_cameras(self._observed_cameras)
+            finally:
+                self._is_syncing_with_scene = False
         self.changed.emit()
         self.parameter_changed.emit("head_angles", self._head_angles)
 
@@ -242,9 +388,12 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         """
         Прямая синхронизация списка детекторных камер со свойствами процедуры.
         """
-        for i, cam_vm in enumerate(camera_vms):
-            offset = self._head_angles[i] if i < len(self._head_angles) else (360.0 / max(1, len(camera_vms)) * i)
-            cam_vm.set_orbit_position(self._radius, (self._start_angle + offset) % 360.0, cam_vm.orbit_z)
+        for camera_idx, cam_vm in enumerate(camera_vms):
+            offset = self._head_angles[camera_idx] if camera_idx < len(self._head_angles) else (360.0 / max(1, len(camera_vms)) * camera_idx)
+            if isinstance(cam_vm.parent_vm, GantryViewModel):
+                cam_vm.set_orbit_position(self._radius, offset % 360.0, cam_vm.orbit_z)
+            else:
+                cam_vm.set_orbit_position(self._radius, (self._start_angle + offset) % 360.0, cam_vm.orbit_z)
 
 
     def to_config(self) -> SpectProtocolConfig:
@@ -280,45 +429,118 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
             parent=parent,
         )
 
-    def sync_with_scene(self, scene_vm: Any) -> None:
+    def sync_with_scene(self, scene_view_model: Any) -> None:
         """
         Реактивная синхронизация количества и пространственного расположения гамма-камер в сцене.
-        Процедура выступает ведущей: создает недостающие или удаляет избыточные камеры,
-        а также задает радиус орбиты и угловые смещения.
+        Процедура выступает ведущей: монтирует детекторы внутрь GantryViewModel,
+        создает недостающие или удаляет избыточные камеры, задает радиус и начальный угол поворота.
+        Также устанавливает двустороннее наблюдение (Observer) за перемещением станины и кареток камер.
         """
-        if scene_vm is None or scene_vm.root_vm is None:
+        self._disconnect_scene_observers()
+
+        if scene_view_model is None or scene_view_model.root_vm is None:
             return
 
-        all_nodes = scene_vm.all_nodes()
-        camera_vms: List[GammaCameraViewModel] = [n for n in all_nodes if isinstance(n, GammaCameraViewModel)]
+        all_nodes = scene_view_model.all_nodes()
+        camera_view_models: List[GammaCameraViewModel] = [
+            camera_node for camera_node in all_nodes
+            if isinstance(camera_node, GammaCameraViewModel)
+        ]
 
         # Если в сцене отсутствуют гамма-камеры, процедура не создает их самовольно
-        if not camera_vms:
+        if not camera_view_models:
             return
 
-        # 1. Приведение количества камер к требуемому
-        needed = self._gamma_cameras
-        if len(camera_vms) < needed:
-            lead_mat = database_setting.material_database.get('Pb', Material(name='Lead'))
-            nai_mat = database_setting.material_database.get('Sodium Iodide', Material(name='NaI'))
-            for i in range(len(camera_vms), needed):
-                cam_name = f"GammaCamera_{i + 1}"
-                col = Volume(geometry=Box(400.0, 400.0, 30.0), material=lead_mat, name=f"Collimator_{cam_name}")
-                det = Volume(geometry=Box(400.0, 400.0, 10.0), material=nai_mat, name=f"Detector_{cam_name}")
-                cam = GammaCamera(collimator=col, detector=det, name=cam_name)
-                cam_vm = GammaCameraViewModel(cam)
-                scene_vm.add_node(scene_vm.root_vm, cam_vm)
-                camera_vms.append(cam_vm)
-        elif len(camera_vms) > needed:
-            for extra_vm in camera_vms[needed:]:
-                scene_vm.remove_node(extra_vm)
-            camera_vms = camera_vms[:needed]
+        # Поиск или создание узла станины GantryViewModel
+        gantry_view_models: List[GantryViewModel] = [
+            node for node in all_nodes
+            if isinstance(node, GantryViewModel)
+        ]
+        if gantry_view_models:
+            gantry_view_model = gantry_view_models[0]
+        else:
+            gantry_core = GantryNode(name="Gantry")
+            gantry_view_model = GantryViewModel(gantry_core)
+            scene_view_model.add_node(scene_view_model.root_vm, gantry_view_model)
 
-        # 2. Обновление параметров орбит и позиционирование каждой камеры вокруг оси Z
-        for idx, cam_vm in enumerate(camera_vms):
-            offset_deg = self._head_angles[idx] if idx < len(self._head_angles) else (360.0 / needed) * idx
-            angle = (self._start_angle + offset_deg) % 360.0
-            cam_vm.set_orbit_position(self._radius, angle, cam_vm.orbit_z)
+        # Привязка ссылки на процедуру в узле станины для кинематических ограничений
+        self._observed_scene = scene_view_model
+        scene_view_model.node_removed.connect(self._on_scene_node_removed)
+        gantry_view_model.procedure_vm = self
+        self._observed_gantry = gantry_view_model
+        gantry_view_model.property_changed.connect(self._on_gantry_property_changed)
+        gantry_view_model.child_added.connect(self._on_gantry_child_added)
+        gantry_view_model.child_removed.connect(self._on_gantry_child_removed)
+
+        # Монтирование всех существующих камер внутрь gantry_view_model
+        for existing_camera_view_model in camera_view_models:
+            if existing_camera_view_model.parent_vm is not gantry_view_model:
+                gantry_view_model.add_child(existing_camera_view_model)
+
+        # 1. Приведение количества камер к требуемому
+        needed_camera_count = self._gamma_cameras
+        if len(camera_view_models) < needed_camera_count:
+            lead_material = database_setting.material_database.get('Pb', Material(name='Lead'))
+            sodium_iodide_material = database_setting.material_database.get('Sodium Iodide', Material(name='NaI'))
+            for new_camera_index in range(len(camera_view_models), needed_camera_count):
+                camera_name = f"GammaCamera_{new_camera_index + 1}"
+                collimator_volume = Volume(
+                    geometry=Box(400.0, 400.0, 30.0),
+                    material=lead_material,
+                    name=f"Collimator_{camera_name}",
+                )
+                detector_volume = Volume(
+                    geometry=Box(400.0, 400.0, 10.0),
+                    material=sodium_iodide_material,
+                    name=f"Detector_{camera_name}",
+                )
+                camera_core = GammaCamera(
+                    collimator=collimator_volume,
+                    detector=detector_volume,
+                    name=camera_name,
+                )
+                created_camera_view_model = GammaCameraViewModel(camera_core)
+                scene_view_model.add_node(gantry_view_model, created_camera_view_model)
+                camera_view_models.append(created_camera_view_model)
+        elif len(camera_view_models) > needed_camera_count:
+            for extra_camera_view_model in camera_view_models[needed_camera_count:]:
+                scene_view_model.remove_node(extra_camera_view_model)
+            camera_view_models = camera_view_models[:needed_camera_count]
+
+        # Подключение слушателей изменений параметров для всех активных камер
+        for camera_view_model in camera_view_models:
+            if camera_view_model not in self._observed_cameras:
+                camera_view_model.property_changed.connect(self._on_camera_property_changed)
+                self._observed_cameras.append(camera_view_model)
+
+        # 2. Обновление угла станины и локальных параметров камер с подавлением эхо-сигналов
+        self._is_syncing_with_scene = True
+        try:
+            gantry_view_model.gantry_angle_deg = self._start_angle
+            self.sync_cameras(camera_view_models)
+        finally:
+            self._is_syncing_with_scene = False
+
+    def get_kinematic_constraint_for_node(
+        self,
+        node_view_model: NodeViewModel
+    ) -> Optional[IKinematicConstraint]:
+        """
+        Возвращает специализированное кинематическое ограничение:
+        - опрашивает граф сцены на наличие эффективного ограничения узла
+        - для GantryViewModel -> GantryKinematicConstraint (fallback)
+        - для GammaCameraViewModel -> CameraMountKinematicConstraint (fallback)
+        - для фантомов, стола и источников -> None (свободный 6-DOF)
+        """
+        effective_constraint = node_view_model.get_effective_kinematic_constraint()
+        if effective_constraint is not None:
+            return effective_constraint
+
+        if isinstance(node_view_model, GantryViewModel):
+            return GantryKinematicConstraint(procedure_vm=self, gantry_vm=node_view_model)
+        if isinstance(node_view_model, GammaCameraViewModel):
+            return CameraMountKinematicConstraint(procedure_vm=self, camera_vm=node_view_model)
+        return None
 
 
 class PetProcedureViewModel(BaseProcedureViewModel):
@@ -344,12 +566,12 @@ class PetProcedureViewModel(BaseProcedureViewModel):
         return self._ring_radius
 
     @ring_radius.setter
-    def ring_radius(self, val: float) -> None:
-        r = max(50.0, float(val))
-        if self._ring_radius != r:
-            self._ring_radius = r
+    def ring_radius(self, radius_value: float) -> None:
+        new_ring_radius = max(50.0, float(radius_value))
+        if self._ring_radius != new_ring_radius:
+            self._ring_radius = new_ring_radius
             self.changed.emit()
-            self.parameter_changed.emit("ring_radius", r)
+            self.parameter_changed.emit("ring_radius", new_ring_radius)
 
     @property
     def detector_heads(self) -> int:
@@ -430,12 +652,12 @@ def create_procedure_viewmodel(procedure_type: str = "SPECT") -> BaseProcedureVi
     """
     Фабрика создания моделей представления процедур по их идентификатору типа.
     """
-    pt = procedure_type.upper().replace(" ", "").replace("_", "").strip()
-    if pt in ("SPECT", "ОФЭКТ"):
+    procedure_type_normalized = procedure_type.upper().replace(" ", "").replace("_", "").strip()
+    if procedure_type_normalized in ("SPECT", "ОФЭКТ"):
         return SpectProcedureViewModel()
-    elif pt in ("PET", "ПЭТ"):
+    elif procedure_type_normalized in ("PET", "ПЭТ"):
         return PetProcedureViewModel()
-    elif pt in ("CUSTOMSWEEP", "CUSTOM", "ПОЛЬЗОВАТЕЛЬСКИЙ", "ПОЛЬЗОВАТЕЛЬСКАЯ"):
+    elif procedure_type_normalized in ("CUSTOMSWEEP", "CUSTOM", "ПОЛЬЗОВАТЕЛЬСКИЙ", "ПОЛЬЗОВАТЕЛЬСКАЯ"):
         return CustomSweepProcedureViewModel()
     else:
         raise ValueError(f"Неизвестный тип процедуры: {procedure_type}")

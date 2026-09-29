@@ -106,6 +106,9 @@ class DoseGridNodeConfig(CompositeNodeConfig):
     dose_voxel_size: LengthConfig = 5.0 * units.mm
     is_active: bool = True
 
+class GantryConfig(CompositeNodeConfig):
+    type: Literal['Gantry'] = 'Gantry'
+
 class BaseSpatialNodeConfig(SpatialNodeConfig):
     type: Literal['SpatialNode'] = 'SpatialNode'
 
@@ -123,6 +126,7 @@ AnyNodeConfig = Annotated[
         ParametricParallelSquareCollimatorConfig,
         SourceConfig,
         DoseGridNodeConfig,
+        GantryConfig,
     ],
     Field(discriminator='type')
 ]
@@ -135,6 +139,7 @@ ParametricParallelCollimatorConfig.model_rebuild()
 ParametricParallelSquareCollimatorConfig.model_rebuild()
 SourceConfig.model_rebuild()
 DoseGridNodeConfig.model_rebuild()
+GantryConfig.model_rebuild()
 
 class DirectStreamHandlerConfig(BaseModel):
     type: Literal['DirectStreamHandler'] = 'DirectStreamHandler'
@@ -186,7 +191,7 @@ class CustomSweepProtocolConfig(BaseProtocolConfig):
     @model_validator(mode='after')
     def check_zipped_lengths(self) -> 'CustomSweepProtocolConfig':
         if self.zipped_variables:
-            lengths = {len(v) for v in self.zipped_variables.values()}
+            lengths = {len(var_values) for var_values in self.zipped_variables.values()}
             if len(lengths) > 1:
                 raise ValueError("All arrays in 'zipped_variables' must have the exact same length.")
         return self

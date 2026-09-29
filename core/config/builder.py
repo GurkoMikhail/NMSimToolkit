@@ -9,7 +9,7 @@ from core.config.models import (
     ParametricParallelCollimatorConfig, ParametricParallelSquareCollimatorConfig,
     SourceConfig, BoxConfig, SimulationConfig, TranslateConfig, RotateConfig,
     NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig,
-    DoseGridNodeConfig
+    DoseGridNodeConfig, GantryConfig, CompositeNodeConfig
 )
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
@@ -20,6 +20,7 @@ from core.materials.materials import MaterialArray
 from core.source.sources import Source
 from core.scene.nodes import SpatialNode, CompositeNode
 from core.scene.dose_grid_node import DoseGridNode
+from core.scene.gantry_node import GantryNode
 
 class SceneBuilder:
     def __init__(self, base_dir: Optional[Any] = None):
@@ -34,7 +35,9 @@ class SceneBuilder:
             'ParametricParallelCollimator': self._build_parametric_parallel_collimator,
             'ParametricParallelSquareCollimator': self._build_parametric_parallel_square_collimator,
             'Source': self._build_source,
-            'DoseGridNode': self._build_dose_grid_node
+            'DoseGridNode': self._build_dose_grid_node,
+            'Gantry': self._build_gantry,
+            'GantryNode': self._build_gantry,
         }
         self.node_cache: Dict[str, SpatialNode] = {}
 
@@ -90,13 +93,14 @@ class SceneBuilder:
                 alpha = self._to_float(transform.alpha)
                 beta = self._to_float(transform.beta)
                 gamma = self._to_float(transform.gamma)
-                rot_center = tuple(self._to_float(c) for c in transform.rotation_center)
+                rot_center = tuple(self._to_float(coord_val) for coord_val in transform.rotation_center)
                 node.rotate(alpha, beta, gamma, rot_center, transform.in_local)
 
         # Build children
-        for child_config in config.children:
-            child_node = self._build_node(child_config)
-            node.add_child(child_node)
+        if isinstance(config, CompositeNodeConfig) and isinstance(node, CompositeNode):
+            for child_config in config.children:
+                child_node = self._build_node(child_config)
+                node.add_child(child_node)
 
         return node
 
@@ -218,7 +222,7 @@ class SceneBuilder:
 
     def _build_parametric_parallel_collimator(self, config: ParametricParallelCollimatorConfig) -> ParametricParallelCollimator:
         material = self._get_material(config.material)
-        size = [self._to_float(s, check_positive=True) for s in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
+        size = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
         hole_diameter = self._to_float(config.hole_diameter, check_positive=True)
         septa = self._to_float(config.septa_thickness, check_positive=True)
         return ParametricParallelCollimator(
@@ -231,9 +235,9 @@ class SceneBuilder:
 
     def _build_parametric_parallel_square_collimator(self, config: ParametricParallelSquareCollimatorConfig) -> ParametricParallelSquareCollimator:
         material = self._get_material(config.material)
-        size = [self._to_float(s, check_positive=True) for s in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
-        hole_size = [self._to_float(s, check_positive=True) for s in config.hole_size] if isinstance(config.hole_size, (list, tuple)) else self._to_float(config.hole_size, check_positive=True)
-        septa = [self._to_float(s, check_positive=True) for s in config.septa_thickness] if isinstance(config.septa_thickness, (list, tuple)) else self._to_float(config.septa_thickness, check_positive=True)
+        size = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
+        hole_size = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.hole_size] if isinstance(config.hole_size, (list, tuple)) else self._to_float(config.hole_size, check_positive=True)
+        septa = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.septa_thickness] if isinstance(config.septa_thickness, (list, tuple)) else self._to_float(config.septa_thickness, check_positive=True)
         return ParametricParallelSquareCollimator(
             size=size,
             hole_width=hole_size,
@@ -298,3 +302,8 @@ class SceneBuilder:
             is_active=config.is_active,
         )
         return node
+
+    def _build_gantry(self, config: GantryConfig) -> GantryNode:
+        """Сборка поворотной станины томографа GantryNode."""
+        return GantryNode(name=config.name)
+

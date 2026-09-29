@@ -13,6 +13,7 @@ from core.geometry.parametric_collimators import (
 )
 from core.geometry.navigation_state import NavigationState
 from core.geometry.geometry_compiler import GeometryCompiler
+from core.geometry.spect_kinematics import compute_spect_poses
 
 __all__ = [
     'Geometry',
@@ -26,4 +27,5 @@ __all__ = [
     'ParametricParallelSquareCollimator',
     'NavigationState',
     'GeometryCompiler',
+    'compute_spect_poses',
 ]

@@ -2,6 +2,7 @@
 
 В этой директории собраны планы архитектуры, спецификации, аудиты и чеклисты проекта:
 
+- **[ORCHESTRATOR_GANTRY_REFACTORING_PLAN.md](ORCHESTRATOR_GANTRY_REFACTORING_PLAN.md)** — Архитектурный план декомпозиции оркестратора, выделения IPC/компилятора и интеграции узла Gantry.
 - **[TELEMETRY_BUGFIX_PLAN.md](TELEMETRY_BUGFIX_PLAN.md)** — План устранения проблем физической телеметрии, масштабирования спектра и связи с детекторами.
 - **[DOSE_ACCUMULATION_PLAN.md](DOSE_ACCUMULATION_PLAN.md)** — Архитектурный план и спецификация накопления 3D-дозы и интеграции визуализации объема.
 - **[GUI_IMPLEMENTATION_PLAN.md](GUI_IMPLEMENTATION_PLAN.md)** — Исходный план реализации интерактивного 3D GUI и интеграции подсистем.

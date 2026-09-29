@@ -84,6 +84,7 @@ class TestOrchestrator(unittest.TestCase):
         # Test protocol compilation
         sweep_config = orchestrator.compile_protocol()
         self.assertEqual(sweep_config.type, "CustomSweep")
+        self.assertIn("gantry_angle", sweep_config.zipped_variables)
         self.assertIn("current_angle", sweep_config.zipped_variables)
         self.assertIn("current_time", sweep_config.zipped_variables)
 
@@ -107,9 +108,80 @@ class TestOrchestrator(unittest.TestCase):
 
         # Verify the 2nd task (which should be 90 deg / pi/2 rad)
         context, final_config = results[1]
+        self.assertTrue(np.isclose(context["gantry_angle"], np.pi / 2))
         self.assertTrue(np.isclose(context["current_angle"], np.pi / 2))
         self.assertTrue(np.isclose(final_config.scene.transformations[0].alpha, np.pi / 2))
         self.assertTrue(np.isclose(final_config.simulation_manager.stop_time, 1e10))
+
+    def test_orchestrator_gantry_end_to_end(self):
+        """Сквозной тест симуляции с узлом Gantry и автоматической интерполяцией gantry_angle."""
+        gantry_config_dict = {
+            "protocol": {
+                "type": "SPECT",
+                "views": 4,
+                "gamma_cameras": 2,
+                "start_angle": "0 deg",
+                "end_angle": "180 deg",
+                "time_per_view": "2 s",
+                "endpoint": False,
+            },
+            "simulation_manager": {
+                "stop_time": "${current_time}",
+                "particles_number": 100,
+                "min_energy": "0.1 MeV",
+            },
+            "data_manager": {
+                "filename": "gantry_sim.h5",
+                "handlers": [],
+            },
+            "scene": {
+                "type": "CompositeNode",
+                "name": "World",
+                "children": [
+                    {
+                        "type": "Gantry",
+                        "name": "ScannerGantry",
+                        "transformations": [
+                            {
+                                "type": "rotate",
+                                "alpha": "${gantry_angle}",
+                                "beta": 0.0,
+                                "gamma": 0.0,
+                            }
+                        ],
+                        "children": [
+                            {
+                                "type": "SpatialNode",
+                                "name": "MountedDetector",
+                                "transformations": [
+                                    {
+                                        "type": "translate",
+                                        "x": "250.0 mm",
+                                        "y": 0.0,
+                                        "z": 0.0,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+        orchestrator = Orchestrator(gantry_config_dict)
+        results = orchestrator.run()
+
+        # 4 views // 2 cameras = 2 positions
+        self.assertEqual(len(results), 2)
+        task_0_context, task_0_config = results[0]
+        task_1_context, task_1_config = results[1]
+
+        self.assertAlmostEqual(task_0_context["gantry_angle"], 0.0)
+        self.assertAlmostEqual(task_1_context["gantry_angle"], np.pi / 2)
+
+        # Проверка, что в task_1_config узел Gantry получил альфа = pi / 2
+        gantry_node_cfg = task_1_config.scene.children[0]
+        self.assertEqual(gantry_node_cfg.type, "Gantry")
+        self.assertAlmostEqual(gantry_node_cfg.transformations[0].alpha, np.pi / 2)
 
 if __name__ == '__main__':
     unittest.main()

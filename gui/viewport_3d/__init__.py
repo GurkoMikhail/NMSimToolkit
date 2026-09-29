@@ -17,6 +17,12 @@ from gui.viewport_3d.transform_gizmo import (
     GizmoSpace,
     GizmoAxis,
 )
+from gui.viewport_3d.kinematic_constraints import (
+    IKinematicConstraint,
+    SpectOrbitKinematicConstraint,
+    CameraMountKinematicConstraint,
+    GantryKinematicConstraint,
+)
 
 __all__ = [
     'get_available_colormaps',
@@ -34,4 +40,8 @@ __all__ = [
     'GizmoMode',
     'GizmoSpace',
     'GizmoAxis',
+    'IKinematicConstraint',
+    'SpectOrbitKinematicConstraint',
+    'CameraMountKinematicConstraint',
+    'GantryKinematicConstraint',
 ]

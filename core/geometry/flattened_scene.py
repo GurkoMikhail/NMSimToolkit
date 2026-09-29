@@ -35,9 +35,10 @@ class FlattenedScene:
                 current_index = len(self._flat_list)
                 self._flat_list.append((node, node.inverse_global_matrix, parent_index))
 
-            for child in node.childs:
-                # Traverse down, passing the current_index to link deeper Volumes to the closest Volume ancestor
-                child_count += dfs(child, current_index)
+            if isinstance(node, CompositeNode):
+                for child_node in node.childs:
+                    # Traverse down, passing the current_index to link deeper Volumes to the closest Volume ancestor
+                    child_count += dfs(child_node, current_index)
 
             return child_count + (1 if isinstance(node, volumes_mod.Volume) else 0)
 

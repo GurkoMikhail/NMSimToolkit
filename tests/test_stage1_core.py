@@ -10,7 +10,7 @@ import numpy as np
 
 from core.config.exporter import SceneExporter
 from core.config.models import SimulationConfig
-from core.config.orchestrator import IpcPauseBridge
+from core.transport import IpcPauseBridge
 from core.data.data_manager import DataManager
 from gui.controllers.stream_handlers import GuiStreamDataHandler
 from core.geometry.geometries import Box

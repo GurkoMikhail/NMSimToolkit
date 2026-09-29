@@ -25,10 +25,11 @@ class SourceCompiler:
         """
         has_source_children = False
 
-        for child in node.childs:
-            is_child_source = self._extract_sources(child)
-            if is_child_source:
-                has_source_children = True
+        if isinstance(node, CompositeNode):
+            for child_node in node.childs:
+                is_child_source = self._extract_sources(child_node)
+                if is_child_source:
+                    has_source_children = True
 
         if isinstance(node, Source):
             if not has_source_children:
