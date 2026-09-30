@@ -9,10 +9,12 @@ APP = QApplication.instance() or QApplication(sys.argv)
 from core.scene.nodes import SpatialNode, CompositeNode
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
-from core.materials.materials import Material
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
+from gui.viewmodels import create_default_gamma_camera_vm
+from core.geometry.spect_kinematics import compute_orbit_matrix
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
-from core.materials.materials import MaterialArray
+from core.materials.materials import Material, MaterialArray
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
@@ -101,22 +103,22 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         self.assertEqual(emitted[0], (350.0, 90.0, 20.0))
 
     def test_gamma_camera_viewmodel_initialization_from_matrix(self):
-        """Проверка извлечения orbit_radius, orbit_angle, orbit_z из local_matrix ядра."""
-        col = Volume(geometry=Box(100, 100, 30), material=Material(name="Lead"))
-        det = Volume(geometry=Box(100, 100, 10), material=Material(name="NaI"))
-        cam = GammaCamera(collimator=col, detector=det)
+        """Проверка позиционирования и half_thickness GammaCamera."""
+        cam_vm = create_default_gamma_camera_vm()
+        cam = cam_vm.core_node
 
         # Задаем камере матрицу трансформации: радиус лицевой поверхности 329.05, угол 90 град, z = 15.0
-        half_th = cam.size[2] / 2.0
-        target_mat = GammaCameraViewModel.compute_orbit_matrix(
+        half_th = cam_vm.half_thickness
+        target_mat = compute_orbit_matrix(
             radius=329.05, angle_deg=90.0, z=15.0, half_thickness=half_th
         )
         cam.local_matrix = target_mat
 
-        vm = GammaCameraViewModel(cam)
-        self.assertAlmostEqual(vm.orbit_radius, 329.05, places=2)
-        self.assertAlmostEqual(vm.orbit_angle, 90.0, places=2)
-        self.assertAlmostEqual(vm.orbit_z, 15.0, places=2)
+        cam_r = float(np.hypot(cam_vm.local_matrix[0, 3], cam_vm.local_matrix[1, 3])) - cam_vm.half_thickness
+        cam_ang = float(np.degrees(np.arctan2(cam_vm.local_matrix[1, 3], cam_vm.local_matrix[0, 3])) % 360.0)
+        self.assertAlmostEqual(cam_r, 329.05, places=2)
+        self.assertAlmostEqual(cam_ang, 90.0, places=2)
+        self.assertAlmostEqual(float(cam_vm.local_matrix[2, 3]), 15.0, places=2)
 
     def test_gamma_camera_kinematics_detector_normal_points_to_center(self):
         """
@@ -126,7 +128,7 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         for angle in [0.0, 30.0, 45.0, 90.0, 135.0, 180.0, 270.0, 315.0]:
             radius = 280.0
             z = 25.0
-            mat = GammaCameraViewModel.compute_orbit_matrix(radius=radius, angle_deg=angle, z=z)
+            mat = compute_orbit_matrix(radius=radius, angle_deg=angle, z=z)
 
             # 1. Позиция камеры
             cam_pos = mat[:3, 3]
@@ -152,13 +154,12 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
     def test_selection_does_not_mutate_camera_matrix(self):
         """Проверка: селекция GammaCamera в MainWindow не перезаписывает ее матрицу."""
         win = MainWindow()
-        col = Volume(geometry=Box(100, 100, 30), material=Material(name="Lead"))
-        det = Volume(geometry=Box(100, 100, 10), material=Material(name="NaI"))
-        cam = GammaCamera(collimator=col, detector=det)
+        cam, _ = create_default_gamma_camera()
+        temp_vm = GammaCameraViewModel(cam)
+        half_th = temp_vm.half_thickness
 
         # Камера на радиусе 400 мм (по лицевой поверхности) и угле 120 град
-        half_th = cam.size[2] / 2.0
-        expected_matrix = GammaCameraViewModel.compute_orbit_matrix(
+        expected_matrix = compute_orbit_matrix(
             radius=400.0, angle_deg=120.0, z=50.0, half_thickness=half_th
         )
         cam.local_matrix = np.copy(expected_matrix)
@@ -175,9 +176,11 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
 
         # Проверяем, что матрица НЕ изменилась
         np.testing.assert_allclose(cam_vm.local_matrix, expected_matrix, atol=1e-5)
-        self.assertAlmostEqual(cam_vm.orbit_radius, 400.0, places=2)
-        self.assertAlmostEqual(cam_vm.orbit_angle, 120.0, places=2)
-        self.assertAlmostEqual(cam_vm.orbit_z, 50.0, places=2)
+        cam_r = float(np.hypot(cam_vm.local_matrix[0, 3], cam_vm.local_matrix[1, 3])) - cam_vm.half_thickness
+        cam_ang = float(np.degrees(np.arctan2(cam_vm.local_matrix[1, 3], cam_vm.local_matrix[0, 3])) % 360.0)
+        self.assertAlmostEqual(cam_r, 400.0, places=2)
+        self.assertAlmostEqual(cam_ang, 120.0, places=2)
+        self.assertAlmostEqual(float(cam_vm.local_matrix[2, 3]), 50.0, places=2)
         win.close()
 
     # -------------------------------------------------------------------------
@@ -327,27 +330,24 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         self.assertIsNone(vol._geometry_buffer)
 
     def test_gamma_camera_zero_radius_and_angle_normalization(self):
-        """Проверка сохранения дефолтных параметров при r <= 1e-4 и нормализации углов."""
-        col = Volume(geometry=Box(100, 100, 30), material=Material(name="Lead"))
-        det = Volume(geometry=Box(100, 100, 10), material=Material(name="NaI"))
-        cam = GammaCamera(collimator=col, detector=det)
-        vm = GammaCameraViewModel(cam)
+        """Проверка вычисления матрицы орбиты при 360 градусах (нормализация к 0)."""
+        vm = create_default_gamma_camera_vm()
 
-        # Начальное положение камеры в начале координат - сохраняет дефолтный радиус 250 мм
-        self.assertAlmostEqual(vm.orbit_radius, 250.0, places=2)
-
-        # Перемещаем камеру вдоль оси Z (r = 0, z = 10)
-        vm.translate(z=10.0)
-        self.assertAlmostEqual(vm.orbit_radius, 250.0, places=2)
-        self.assertAlmostEqual(vm.orbit_z, 10.0, places=2)
-
-        # Проверяем нормализацию угла 360 градусов -> 0.0 на орбите
-        mat_360 = GammaCameraViewModel.compute_orbit_matrix(
+        # Проверяем нормализацию угла 360 градусов -> эквивалентно 0.0 на орбите
+        mat_360 = compute_orbit_matrix(
             radius=200.0, angle_deg=360.0, half_thickness=vm.half_thickness
         )
+        mat_0 = compute_orbit_matrix(
+            radius=200.0, angle_deg=0.0, half_thickness=vm.half_thickness
+        )
+        np.testing.assert_allclose(mat_360, mat_0, atol=1e-5)
         vm.local_matrix = mat_360
-        self.assertAlmostEqual(vm.orbit_radius, 200.0, places=2)
-        self.assertAlmostEqual(vm.orbit_angle, 0.0, places=5)
+        cam_r = float(np.hypot(vm.local_matrix[0, 3], vm.local_matrix[1, 3])) - vm.half_thickness
+        cam_ang = float(np.degrees(np.arctan2(vm.local_matrix[1, 3], vm.local_matrix[0, 3])) % 360.0)
+        if np.isclose(cam_ang, 360.0, atol=1e-4):
+            cam_ang = 0.0
+        self.assertAlmostEqual(cam_r, 200.0, places=2)
+        self.assertAlmostEqual(cam_ang, 0.0, places=5)
 
     def test_add_child_idempotency_and_core_reparenting(self):
         """Проверка идемпотентности add_child и очистки родителя ядра без parent_vm."""
@@ -441,11 +441,8 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         """Проверка рекурсивного добавления/удаления акторов и реакции на voxel_size в MainWindow."""
         win = MainWindow()
         world = Volume(geometry=Box(500, 500, 500), material=Material(name="Air"), name="World")
-        col = Volume(geometry=Box(100, 100, 30), material=Material(name="Lead"), name="Col")
-        det = Volume(geometry=Box(100, 100, 10), material=Material(name="NaI"), name="Det")
-        cam = GammaCamera(collimator=col, detector=det, name="Cam")
-
-        world.add_child(cam)
+        cam_vm = create_default_gamma_camera_vm(name="Cam")
+        world.add_child(cam_vm.core_node)
         win.scene_vm.load_scene(world)
 
         # Проверяем, что все дочерние узлы камеры получили акторы в вьюпорте
@@ -463,6 +460,128 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
 
         win.close()
 
+    def test_gamma_camera_physical_properties_and_rebuild(self):
+        """Проверка свойств активного поля и слоев GammaCamera с автоматическим пересчетом."""
+        camera = create_default_gamma_camera_vm(
+            detector_size=(500.0, 400.0),
+            detector_thickness=15.0,
+            collimator_thickness=35.0,
+            gap=2.0,
+            shielding_thickness=25.0,
+            glass_backend_thickness=60.0,
+            name="PhysicalCam"
+        )
+        # Проверяем размеры активного поля
+        np.testing.assert_allclose(camera.detector_size, [500.0, 400.0])
+        self.assertAlmostEqual(camera.detector_thickness, 15.0)
+        self.assertAlmostEqual(camera.collimator_thickness, 35.0)
+        self.assertAlmostEqual(camera.gap, 2.0)
+        self.assertAlmostEqual(camera.shielding_thickness, 25.0)
+        self.assertAlmostEqual(camera.glass_backend_thickness, 60.0)
+
+        # Проверяем габариты внешнего корпуса:
+        # X: 500 + 2 * 25 = 550
+        # Y: 400 + 2 * 25 = 450
+        # Z: (35 + 2 + 15 + 60) + 25 = 137
+        expected_size = np.array([550.0, 450.0, 137.0])
+        np.testing.assert_allclose(camera.size, expected_size)
+        self.assertAlmostEqual(camera.half_thickness, 137.0 / 2.0)
+
+        # Изменяем размер поля детектора
+        camera.detector_size = (600.0, 450.0)
+        np.testing.assert_allclose(camera.detector_size, [600.0, 450.0])
+        np.testing.assert_allclose(camera.detector_vm.size[0:2], [600.0, 450.0])
+        np.testing.assert_allclose(camera.collimator_vm.size[0:2], [600.0, 450.0])
+        np.testing.assert_allclose(camera.size, [650.0, 500.0, 137.0])
+
+        # Изменяем толщину кристалла
+        camera.detector_thickness = 20.0
+        self.assertAlmostEqual(camera.detector_thickness, 20.0)
+        self.assertAlmostEqual(camera.size[2], 142.0)
+
+        # Изменяем толщину коллиматора
+        camera.collimator_thickness = 40.0
+        self.assertAlmostEqual(camera.collimator_thickness, 40.0)
+        self.assertAlmostEqual(camera.size[2], 147.0)
+
+    def test_gamma_camera_size_validation(self):
+        """Проверка строгой валидации размеров и толщин в GammaCamera."""
+        camera = create_default_gamma_camera_vm(name="ValidationCam")
+
+        # Неверная длина вектора detector_size
+        with self.assertRaises(ValueError):
+            camera.detector_size = [400.0]
+
+        with self.assertRaises(ValueError):
+            camera.detector_size = [400.0, 400.0, 10.0]
+
+        # Неположительные размеры
+        with self.assertRaises(ValueError):
+            camera.detector_size = [0.0, 400.0]
+
+        with self.assertRaises(ValueError):
+            camera.detector_size = [400.0, -10.0]
+
+        # Неположительные толщины
+        with self.assertRaises(ValueError):
+            camera.detector_thickness = 0.0
+
+        with self.assertRaises(ValueError):
+            camera.detector_thickness = -5.0
+
+        with self.assertRaises(ValueError):
+            camera.collimator_thickness = 0.0
+
+        with self.assertRaises(ValueError):
+            camera.collimator_thickness = -2.0
+
+    def test_gamma_camera_viewmodel_reactivity_and_subcomponent_constraints(self):
+        from gui.viewport_3d.kinematic_constraints import FixedSubcomponentKinematicConstraint
+        from gui.viewport_3d.gizmo_types import GizmoMode
+
+        camera_vm = create_default_gamma_camera_vm(name="ReactCam")
+
+        emitted_signals = []
+        camera_vm.property_changed.connect(lambda name, val: emitted_signals.append((name, val)))
+
+        # Изменение detector_size
+        camera_vm.detector_size = (550.0, 450.0)
+        self.assertEqual(camera_vm.detector_size, (550.0, 450.0))
+        signal_names = [sig[0] for sig in emitted_signals]
+        self.assertIn('detector_size', signal_names)
+        self.assertIn('size', signal_names)
+        self.assertIn('housing_size', signal_names)
+
+        # Проверка фиксации всех внутренних подузлов
+        self.assertTrue(len(camera_vm.children) > 0)
+        for child_vm in camera_vm.children:
+            effective_constraint = child_vm.get_effective_kinematic_constraint()
+            self.assertIsInstance(effective_constraint, FixedSubcomponentKinematicConstraint)
+            self.assertFalse(effective_constraint.is_scale_allowed())
+            self.assertEqual(len(effective_constraint.get_allowed_axes(GizmoMode.TRANSLATE)), 0)
+            self.assertEqual(len(effective_constraint.get_allowed_axes(GizmoMode.ROTATE)), 0)
+
+    def test_spect_orbit_constraint_transform_changed_safe_fallback(self):
+        """Проверка безопасного вызова on_transform_changed без orbit_angle/orbit_z у ViewModel."""
+        from gui.viewport_3d.kinematic_constraints import SpectOrbitKinematicConstraint
+        from gui.viewport_3d.spect_manipulator import SPECTManipulator
+
+        camera_vm = create_default_gamma_camera_vm(name="ConstraintFallbackCam")
+        camera_vm.local_matrix = compute_orbit_matrix(radius=300.0, angle_deg=60.0, z=15.0)
+
+        manipulator = SPECTManipulator(viewport=None, initial_radius=300.0, initial_angle=60.0, initial_z=15.0)
+        constraint = SpectOrbitKinematicConstraint(camera_vm=camera_vm, spect_manipulator=manipulator)
+
+        # Вызов on_transform_changed только с радиусом (angle и z равны None)
+        # Не должен вызывать AttributeError: 'GammaCameraViewModel' object has no attribute 'orbit_angle'
+        changed_data = {'radius': 320.0}
+        constraint.on_transform_changed(camera_vm, changed_data)
+
+        self.assertAlmostEqual(manipulator.radius, 320.0)
+        self.assertAlmostEqual(manipulator.angle_deg, 60.0, places=4)
+        self.assertAlmostEqual(manipulator.z_pos, 15.0, places=4)
+
 
 if __name__ == '__main__':
     unittest.main()
+

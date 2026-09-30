@@ -7,8 +7,11 @@ import unittest
 import numpy as np
 from PySide6.QtWidgets import QApplication
 
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
+from gui.viewmodels import create_default_gamma_camera_vm
 from core.geometry.geometries import Box
+from core.geometry.spect_kinematics import compute_orbit_matrix
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.scene.gantry_node import GantryNode
@@ -69,10 +72,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         scene_vm = SceneViewModel(root_node)
 
         # Добавляем одну исходную камеру
-        collimator = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material, name="Collimator")
-        detector = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material, name="Detector")
-        camera = GammaCamera(collimator=collimator, detector=detector, name="InitialCamera")
-        cam_vm = GammaCameraViewModel(camera)
+        cam_vm = create_default_gamma_camera_vm(name="InitialCamera")
         scene_vm.add_node(scene_vm.root_vm, cam_vm)
 
         procedure = SpectProcedureViewModel(steps=32, gamma_cameras=2, radius=280.0, start_angle=30.0)
@@ -99,10 +99,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         core_gantry = GantryNode()
         gantry_vm = GantryViewModel(core_gantry)
 
-        collimator = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material)
-        detector = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material)
-        camera = GammaCamera(collimator=collimator, detector=detector)
-        cam_vm = GammaCameraViewModel(camera)
+        cam_vm = create_default_gamma_camera_vm()
 
         gantry_constraint = procedure.get_kinematic_constraint_for_node(gantry_vm)
         camera_constraint = procedure.get_kinematic_constraint_for_node(cam_vm)
@@ -156,10 +153,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         root_node = CompositeNode(name="World")
         scene_vm = SceneViewModel(root_node)
 
-        collimator_1 = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material)
-        detector_1 = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material)
-        camera_1 = GammaCamera(collimator=collimator_1, detector=detector_1, name="Camera_1")
-        cam1_vm = GammaCameraViewModel(camera_1)
+        cam1_vm = create_default_gamma_camera_vm(name="Camera_1")
         scene_vm.add_node(scene_vm.root_vm, cam1_vm)
 
         procedure = SpectProcedureViewModel(steps=32, gamma_cameras=2, radius=250.0, start_angle=0.0)
@@ -196,7 +190,8 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         constraint.on_transform_changed(cam1_target, changed_data)
 
         # Спаренная головка cam2 также синхронизирует радиус до 300 мм
-        self.assertAlmostEqual(cam2_sibling.orbit_radius, 300.0)
+        cam2_radius = float(np.hypot(cam2_sibling.local_matrix[0, 3], cam2_sibling.local_matrix[1, 3])) - cam2_sibling.half_thickness
+        self.assertAlmostEqual(cam2_radius, 300.0)
         self.assertAlmostEqual(procedure.radius, 300.0)
         # Станина не должна вращаться при радиальном смещении
         self.assertAlmostEqual(gantry_vm.gantry_angle_deg, 0.0)
@@ -210,10 +205,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         root_node = CompositeNode(name="World")
         scene_vm = SceneViewModel(root_node)
 
-        collimator_1 = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material)
-        detector_1 = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material)
-        camera_1 = GammaCamera(collimator=collimator_1, detector=detector_1, name="Camera_1")
-        cam1_vm = GammaCameraViewModel(camera_1)
+        cam1_vm = create_default_gamma_camera_vm(name="Camera_1")
         scene_vm.add_node(scene_vm.root_vm, cam1_vm)
 
         procedure = SpectProcedureViewModel(steps=32, gamma_cameras=2, radius=250.0, start_angle=0.0)
@@ -225,14 +217,16 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         cam2_sibling = camera_vms[1]
 
         # Исходные локальные углы монтажа: 0° и 180°
-        self.assertAlmostEqual(cam1_target.orbit_angle, 0.0)
-        self.assertAlmostEqual(cam2_sibling.orbit_angle, 180.0)
+        cam1_angle = float(np.degrees(np.arctan2(cam1_target.local_matrix[1, 3], cam1_target.local_matrix[0, 3])) % 360.0)
+        cam2_angle = float(np.degrees(np.arctan2(cam2_sibling.local_matrix[1, 3], cam2_sibling.local_matrix[0, 3])) % 360.0)
+        self.assertAlmostEqual(cam1_angle, 0.0)
+        self.assertAlmostEqual(cam2_angle, 180.0)
 
         constraint = procedure.get_kinematic_constraint_for_node(cam1_target)
 
         # Тангенциальное воздействие: смещение вдоль касательной Y для камеры на 0°
         # delta_y = radius * delta_rad => для ~20°: 270 мм * radians(20) ~ 94.2 мм
-        effective_radius = cam1_target.orbit_radius + cam1_target.half_thickness
+        effective_radius = float(np.hypot(cam1_target.local_matrix[0, 3], cam1_target.local_matrix[1, 3]))
         proposed_tangent_delta = np.array([0.0, effective_radius * np.radians(20.0), 0.0])
 
         initial_cam_matrix = cam1_target.local_matrix.copy()
@@ -249,7 +243,8 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         # КРИТИЧЕСКИЙ ИНВАРИАНТ: локальная матрица детектора НЕ должна повернуться внутри станины!
         # Ее угол должен остаться 0° (исходное место монтажа на рельсе).
         cam1_target.local_matrix = changed_data["matrix"]
-        self.assertAlmostEqual(cam1_target.orbit_angle, 0.0)
+        cam1_angle_after = float(np.degrees(np.arctan2(cam1_target.local_matrix[1, 3], cam1_target.local_matrix[0, 3])) % 360.0)
+        self.assertAlmostEqual(cam1_angle_after, 0.0)
 
         # Оповещение констрейнта транслирует перемещение в поворот станины
         constraint.on_transform_changed(cam1_target, changed_data)
@@ -284,10 +279,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         root_node = CompositeNode(name="World")
         scene_vm = SceneViewModel(root_node)
 
-        collimator_1 = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material)
-        detector_1 = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material)
-        camera_1 = GammaCamera(collimator=collimator_1, detector=detector_1, name="Camera_1")
-        cam1_vm = GammaCameraViewModel(camera_1)
+        cam1_vm = create_default_gamma_camera_vm(name="Camera_1")
         scene_vm.add_node(scene_vm.root_vm, cam1_vm)
 
         procedure = SpectProcedureViewModel(steps=32, gamma_cameras=2, radius=250.0, start_angle=0.0)
@@ -327,8 +319,10 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         procedure.sync_with_scene(scene_vm)
 
         # Проверяем углы монтажа на станине: 0° и 90°
-        self.assertAlmostEqual(cam1.orbit_angle, 0.0)
-        self.assertAlmostEqual(cam2.orbit_angle, 90.0)
+        cam1_angle = float(np.degrees(np.arctan2(cam1.local_matrix[1, 3], cam1.local_matrix[0, 3])) % 360.0)
+        cam2_angle = float(np.degrees(np.arctan2(cam2.local_matrix[1, 3], cam2.local_matrix[0, 3])) % 360.0)
+        self.assertAlmostEqual(cam1_angle, 0.0)
+        self.assertAlmostEqual(cam2_angle, 90.0)
 
         # Проверяем, что портретная ориентация сохранилась после переключения геометрии
         self.assertAlmostEqual(abs(float(np.dot(cam1.local_matrix[0:3, 1], [0.0, 0.0, 1.0]))), 0.0, places=3)
@@ -403,10 +397,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         self.assertIs(gantry_effective_constraint.gantry_vm, gantry_view_model)
 
         # Создаем гамма-камеру
-        collimator_volume = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material, name="Collimator")
-        detector_volume = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material, name="Detector")
-        camera_core = GammaCamera(collimator=collimator_volume, detector=detector_volume, name="MountedCamera")
-        camera_view_model = GammaCameraViewModel(camera_core)
+        camera_view_model = create_default_gamma_camera_vm(name="MountedCamera")
 
         # До монтирования на станину у камеры нет эффективного ограничения
         self.assertIsNone(camera_view_model.get_effective_kinematic_constraint())
@@ -437,10 +428,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         gantry_view_model = GantryViewModel(gantry_core)
         scene_view_model.add_node(scene_view_model.root_vm, gantry_view_model)
 
-        collimator_volume = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material, name="Collimator")
-        detector_volume = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material, name="Detector")
-        camera_core = GammaCamera(collimator=collimator_volume, detector=detector_volume, name="ChildCamera")
-        camera_view_model = GammaCameraViewModel(camera_core)
+        camera_view_model = create_default_gamma_camera_vm(name="ChildCamera")
         scene_view_model.add_node(gantry_view_model, camera_view_model)
 
         simple_volume = Volume(geometry=Box(200.0, 200.0, 200.0), material=self.material, name="SimplePhantom")
@@ -518,10 +506,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         root_core = CompositeNode(name="WorldRoot")
         scene_view_model = SceneViewModel(root_core)
 
-        collimator_volume = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material, name="Collimator_1")
-        detector_volume = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material, name="Detector_1")
-        camera_core = GammaCamera(collimator=collimator_volume, detector=detector_volume, name="Camera_Init")
-        initial_camera_view_model = GammaCameraViewModel(camera_core)
+        initial_camera_view_model = create_default_gamma_camera_vm(name="Camera_Init")
         scene_view_model.add_node(scene_view_model.root_vm, initial_camera_view_model)
 
         procedure = SpectProcedureViewModel(steps=32, gamma_cameras=2, radius=240.0, start_angle=10.0)
@@ -545,34 +530,41 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         self.assertAlmostEqual(gantry_view_model.gantry_angle_deg, 75.0)
 
         # 3. Изменение радиуса камеры -> обновление procedure.radius
-        camera_view_model_first.set_orbit_position(
+        cam1_angle = float(np.degrees(np.arctan2(camera_view_model_first.local_matrix[1, 3], camera_view_model_first.local_matrix[0, 3])) % 360.0)
+        camera_view_model_first.local_matrix = compute_orbit_matrix(
             radius=320.0,
-            angle_deg=camera_view_model_first.orbit_angle,
-            z=camera_view_model_first.orbit_z,
+            angle_deg=cam1_angle,
+            z=float(camera_view_model_first.local_matrix[2, 3]),
+            half_thickness=camera_view_model_first.half_thickness,
         )
         self.assertAlmostEqual(procedure.radius, 320.0)
 
         # 4. Изменение procedure.radius -> обновление радиуса обеих камер
         procedure.radius = 290.0
-        self.assertAlmostEqual(camera_view_model_first.orbit_radius, 290.0)
-        self.assertAlmostEqual(camera_view_model_second.orbit_radius, 290.0)
+        cam1_rad = float(np.hypot(camera_view_model_first.local_matrix[0, 3], camera_view_model_first.local_matrix[1, 3])) - camera_view_model_first.half_thickness
+        cam2_rad = float(np.hypot(camera_view_model_second.local_matrix[0, 3], camera_view_model_second.local_matrix[1, 3])) - camera_view_model_second.half_thickness
+        self.assertAlmostEqual(cam1_rad, 290.0)
+        self.assertAlmostEqual(cam2_rad, 290.0)
 
         # 5. Динамическое добавление 3-й камеры на станину
-        collimator_volume_3 = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material, name="Collimator_3")
-        detector_volume_3 = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material, name="Detector_3")
-        camera_core_3 = GammaCamera(collimator=collimator_volume_3, detector=detector_volume_3, name="Camera_3")
-        third_camera_view_model = GammaCameraViewModel(camera_core_3)
-        third_camera_view_model.set_orbit_position(radius=290.0, angle_deg=240.0, z=0.0)
+        third_camera_view_model = create_default_gamma_camera_vm(name="Camera_3")
+        third_camera_view_model.local_matrix = compute_orbit_matrix(
+            radius=290.0, angle_deg=240.0, z=0.0, half_thickness=third_camera_view_model.half_thickness
+        )
         scene_view_model.add_node(gantry_view_model, third_camera_view_model)
 
         # Изменение радиуса добавленной камеры обновляет процедуру
-        third_camera_view_model.set_orbit_position(radius=330.0, angle_deg=240.0, z=0.0)
+        third_camera_view_model.local_matrix = compute_orbit_matrix(
+            radius=330.0, angle_deg=240.0, z=0.0, half_thickness=third_camera_view_model.half_thickness
+        )
         self.assertAlmostEqual(procedure.radius, 330.0)
 
         # 6. Динамическое удаление камеры со станины отписывает её
         scene_view_model.remove_node(third_camera_view_model)
         # Изменение радиуса удаленной камеры больше не влияет на процедуру
-        third_camera_view_model.set_orbit_position(radius=150.0, angle_deg=240.0, z=0.0)
+        third_camera_view_model.local_matrix = compute_orbit_matrix(
+            radius=150.0, angle_deg=240.0, z=0.0, half_thickness=third_camera_view_model.half_thickness
+        )
         self.assertAlmostEqual(procedure.radius, 330.0)
 
 

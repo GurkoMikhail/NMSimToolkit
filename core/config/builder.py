@@ -5,15 +5,16 @@ import re
 
 import settings.database_setting as database_setting
 from core.config.models import (
-    AnyNodeConfig, VolumeConfig, GammaCameraConfig, WoodcockVoxelVolumeConfig,
+    AnyNodeConfig, VolumeConfig, GammaCameraConfig, GammaCameraSlotsConfig, WoodcockVoxelVolumeConfig,
     ParametricParallelCollimatorConfig, ParametricParallelSquareCollimatorConfig,
     SourceConfig, BoxConfig, SimulationConfig, TranslateConfig, RotateConfig,
+    MatrixTransformConfig,
     NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig,
     DoseGridNodeConfig, GantryConfig, CompositeNodeConfig
 )
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.geometry.parametric_collimators import ParametricParallelCollimator, ParametricParallelSquareCollimator
 from core.materials.materials import MaterialArray
@@ -26,6 +27,7 @@ class SceneBuilder:
     def __init__(self, base_dir: Optional[Any] = None):
         self.base_dir = Path(base_dir) if base_dir else None
         self.distribution_registry: Dict[SpatialNode, AnyDistributionConfig] = {}
+        self.slots_registry: Dict[SpatialNode, GammaCameraSlotsConfig] = {}
         self.factory_map: Dict[str, Callable[[AnyNodeConfig], SpatialNode]] = {
             'SpatialNode': self._build_spatial_node,
             'CompositeNode': self._build_composite_node,
@@ -95,6 +97,14 @@ class SceneBuilder:
                 gamma = self._to_float(transform.gamma)
                 rot_center = tuple(self._to_float(coord_val) for coord_val in transform.rotation_center)
                 node.rotate(alpha, beta, gamma, rot_center, transform.in_local)
+            elif isinstance(transform, MatrixTransformConfig):
+                mat = np.array(transform.matrix, dtype=float)
+                if transform.in_local:
+                    node.local_matrix = node.local_matrix @ mat
+                else:
+                    node.local_matrix = mat @ node.local_matrix
+                node.invalidate_matrix_cache()
+
 
         # Build children
         if isinstance(config, CompositeNodeConfig) and isinstance(node, CompositeNode):
@@ -193,32 +203,16 @@ class SceneBuilder:
         self.distribution_registry[node] = dist_config
         return node
 
-    def _build_gamma_camera(self, config: GammaCameraConfig) -> GammaCamera:
-        collimator = self._build_node(config.collimator)
-        detector = self._build_node(config.detector)
-        gap_raw = config.gap if config.gap is not None else 1.0
-        gap = self._to_float(gap_raw, check_positive=True)
-        shielding_raw = config.shielding_thickness if config.shielding_thickness is not None else 20.0
-        shielding = self._to_float(shielding_raw, check_positive=True)
-        glass_raw = config.glass_backend_thickness if config.glass_backend_thickness is not None else 50.0
-        glass = self._to_float(glass_raw, check_positive=True)
+    def _build_gamma_camera(self, config: GammaCameraConfig) -> GammaCameraNode:
+        slots_dict = {
+            slot_name: slot_value
+            for slot_name, slot_value in config.slots.model_dump().items()
+            if slot_value is not None
+        }
+        camera_node = GammaCameraNode(name=config.name, slots=slots_dict)
+        self.slots_registry[camera_node] = config.slots
+        return camera_node
 
-        mat_db = database_setting.material_database
-        shielding_mat = mat_db['Pb']
-        internal_medium = mat_db['Air, Dry (near sea level)']
-        glass_mat = mat_db['Glass, Borosilicate (Pyrex)']
-
-        return GammaCamera(
-            collimator=collimator,
-            detector=detector,
-            gap=gap,
-            shielding_thickness=shielding,
-            glass_backend_thickness=glass,
-            shielding_material=shielding_mat,
-            internal_medium=internal_medium,
-            glass_material=glass_mat,
-            name=config.name
-        )
 
     def _build_parametric_parallel_collimator(self, config: ParametricParallelCollimatorConfig) -> ParametricParallelCollimator:
         material = self._get_material(config.material)

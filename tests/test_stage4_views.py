@@ -79,7 +79,39 @@ class TestStage4Views(unittest.TestCase):
         self.assertIsNotNone(main_win.viewport)
         self.assertIsNotNone(main_win.dock_tree)
         self.assertIsNotNone(main_win.dock_inspector)
-        self.assertIsNotNone(main_win.dock_results)
+    def test_main_window_save_yaml_logic(self):
+        """Проверка логики сохранения конфигурации симуляции из MainWindow в YAML."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from core.config.yaml_loader import load_simulation_config
+
+        main_win = MainWindow()
+        root = CompositeNode(name="World")
+        main_win.scene_vm.load_scene(root)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            save_path = Path(tmp_dir) / "test_saved_config.yaml"
+            with patch("PySide6.QtWidgets.QFileDialog.getSaveFileName", return_value=(str(save_path), "YAML files (*.yaml *.yml)")):
+                with patch("PySide6.QtWidgets.QMessageBox.information"):
+                    main_win._on_save_yaml()
+
+            self.assertTrue(save_path.exists())
+            loaded_cfg = load_simulation_config(str(save_path))
+            self.assertIsNotNone(loaded_cfg.simulation_manager)
+            self.assertEqual(loaded_cfg.simulation_manager.particles_number, main_win.sim_settings.particles_number)
+
+    def test_main_window_load_yaml_logic(self):
+        """Проверка логики загрузки конфигурации симуляции из YAML в MainWindow."""
+        from unittest.mock import patch
+        main_win = MainWindow()
+        config_path = "simulation_config.yaml"
+
+        with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=(config_path, "YAML files (*.yaml *.yml)")):
+            main_win._on_open_yaml()
+
+        self.assertIsNotNone(main_win.scene_vm.root_vm)
+        self.assertEqual(main_win.scene_vm.root_vm.name, "Simulation_volume")
 
 
 if __name__ == '__main__':

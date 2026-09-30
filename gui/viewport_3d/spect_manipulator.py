@@ -5,7 +5,7 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal
 import pyvista as pv
 
-from core.geometry.gamma_cameras import GammaCamera
+from core.geometry.spect_kinematics import compute_orbit_matrix
 
 _logger = logging.getLogger(__name__)
 
@@ -81,12 +81,12 @@ class SPECTManipulator(QObject):
         Вычисляет декартовы координаты (X, Y, Z) центра гамма-камеры с учетом
         радиуса орбиты до лицевой поверхности.
         """
-        rad = np.radians(self.angle_deg)
-        h = self.half_thickness if half_thickness is None else float(half_thickness)
-        center_r = self.radius + h
-        x = center_r * np.cos(rad)
-        y = center_r * np.sin(rad)
-        return (float(x), float(y), float(self.z_pos))
+        angle_rad = np.radians(self.angle_deg)
+        camera_half_thickness = self.half_thickness if half_thickness is None else float(half_thickness)
+        center_radius = self.radius + camera_half_thickness
+        pos_x = center_radius * np.cos(angle_rad)
+        pos_y = center_radius * np.sin(angle_rad)
+        return (float(pos_x), float(pos_y), float(self.z_pos))
 
     def get_orientation_matrix(self, half_thickness: Optional[float] = None) -> np.ndarray:
         """
@@ -94,7 +94,7 @@ class SPECTManipulator(QObject):
         с учетом радиуса орбиты до лицевой поверхности гамма-камеры.
         """
         thickness_val = self.half_thickness if half_thickness is None else float(half_thickness)
-        return GammaCamera.compute_orbit_matrix(
+        return compute_orbit_matrix(
             radius=self.radius,
             angle_deg=self.angle_deg,
             z=self.z_pos,
@@ -137,8 +137,8 @@ class SPECTManipulator(QObject):
             if render:
                 self.viewport.render()
 
-        except Exception as e:
-            _logger.debug(f"Ошибка визуализации ОФЭКТ-манипулятора: {e}")
+        except (RuntimeError, ValueError) as error_msg:
+            _logger.debug(f"Ошибка визуализации ОФЭКТ-манипулятора: {error_msg}")
 
     def remove_visuals(self) -> None:
         """

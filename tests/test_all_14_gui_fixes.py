@@ -16,7 +16,6 @@ from settings.database_setting import material_database
 from core.source.sources import Source, PointSource
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.scene.dose_grid_node import DoseGridNode
-from core.geometry.gamma_cameras import GammaCamera
 from core.other.typing_definitions import Float
 
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel

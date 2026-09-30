@@ -8,7 +8,8 @@ from core.scene.nodes import CompositeNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from core.geometry.spect_kinematics import compute_spect_poses
 from core.materials.materials import Material
 from core.config.models import SpectProtocolConfig, StepAndShootProtocolConfig
@@ -80,10 +81,9 @@ class TestSpectSimulationHDF5(unittest.TestCase):
         mat_db = database_setting.material_database
 
         root = CompositeNode(name="WorldScene")
-        def _make_cam(name: str) -> GammaCamera:
-            col = Volume(geometry=Box(400.0, 400.0, 25.0), material=mat_db['Pb'], name=f"{name}_Col")
-            det = Volume(geometry=Box(400.0, 400.0, 10.0), material=mat_db['Water, Liquid'], name=f"{name}_Det")
-            return GammaCamera(collimator=col, detector=det, name=name)
+        def _make_cam(name: str) -> GammaCameraNode:
+            cam_node, _ = create_default_gamma_camera(name=name)
+            return cam_node
 
         cam1 = _make_cam("Head1")
         cam2 = _make_cam("Head2")

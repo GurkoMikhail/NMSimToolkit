@@ -21,7 +21,8 @@ from gui.viewmodels.scene_viewmodel import SceneViewModel
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from core.materials.materials import Material, MaterialArray
 from core.source.sources import Source, PointSource
 from core.scene.nodes import CompositeNode, SpatialNode
@@ -611,17 +612,14 @@ class SceneTreeWidget(QWidget):
         if self.scene_vm is None or parent is None:
             return
 
-        cam_name = self._get_unique_name("GammaCamera")
-        col_mat = database_setting.material_database.get('Pb', Material(name='Lead'))
-        det_mat = database_setting.material_database.get('Sodium Iodide', Material(name='NaI'))
-        col = Volume(geometry=Box(400.0, 400.0, 30.0), material=col_mat, name=f"Collimator_{cam_name}")
-        det = Volume(geometry=Box(400.0, 400.0, 10.0), material=det_mat, name=f"Detector_{cam_name}")
-        cam = GammaCamera(collimator=col, detector=det, name=cam_name)
-        vm = GammaCameraViewModel(cam)
+        camera_name = self._get_unique_name("GammaCamera")
+        camera_core, slots_cfg = create_default_gamma_camera(name=camera_name)
+        camera_vm = GammaCameraViewModel(camera_core, slots=slots_cfg)
+        self.scene_vm.slots_registry[camera_core] = slots_cfg
         try:
-            self.scene_vm.add_node(parent, vm)
-        except (TypeError, ValueError) as e:
-            QMessageBox.warning(self, "Ошибка добавления", str(e))
+            self.scene_vm.add_node(parent, camera_vm)
+        except (TypeError, ValueError) as exc:
+            QMessageBox.warning(self, "Ошибка добавления", str(exc))
 
     def _add_dose_grid_node(self, parent_vm: Optional[NodeViewModel] = None) -> None:
         """
@@ -632,11 +630,11 @@ class SceneTreeWidget(QWidget):
         if self.scene_vm is None or parent is None:
             return
 
-        if isinstance(parent, VolumeViewModel) and parent is not self.scene_vm.root_vm:
+        if isinstance(parent, (VolumeViewModel, GammaCameraViewModel)) and parent is not self.scene_vm.root_vm:
             b_size = parent.local_bound
             grid_size = [float(b_size[0]), float(b_size[1]), float(b_size[2])]
             grid_name = self._get_unique_name(f"DoseGrid_{parent.name}")
-        elif isinstance(parent, VolumeViewModel):
+        elif isinstance(parent, (VolumeViewModel, GammaCameraViewModel)):
             b_size = parent.local_bound
             grid_size = [float(b_size[0]), float(b_size[1]), float(b_size[2])]
             grid_name = self._get_unique_name("DoseGrid")

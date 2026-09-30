@@ -14,7 +14,9 @@ from gui.viewport_3d.track_renderer import TrackRenderer
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
+from gui.viewmodels import create_default_gamma_camera_vm
 from core.scene.nodes import SpatialNode
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
@@ -23,9 +25,11 @@ from gui.viewmodels.procedure_viewmodel import (
     SpectProcedureViewModel,
     PetProcedureViewModel,
 )
+from core.geometry.spect_kinematics import compute_orbit_matrix
 from gui.viewport_3d.kinematic_constraints import (
     IKinematicConstraint,
     SpectOrbitKinematicConstraint,
+    FixedSubcomponentKinematicConstraint,
 )
 from gui.viewport_3d.transform_gizmo import (
     GizmoAxis,
@@ -983,23 +987,8 @@ class TestStage3Viewport(unittest.TestCase):
 
     @staticmethod
     def _create_test_camera_vm(name: str = "TestCamera") -> GammaCameraViewModel:
-        """Создает тестовую ViewModel гамма-камеры со сборкой коллиматора и детектора."""
-        collimator_volume = Volume(
-            geometry=Box(400.0, 400.0, 30.0),
-            material=Material(name='Lead'),
-            name=f"Collimator_{name}"
-        )
-        detector_volume = Volume(
-            geometry=Box(400.0, 400.0, 10.0),
-            material=Material(name='NaI'),
-            name=f"Detector_{name}"
-        )
-        camera_core = GammaCamera(
-            collimator=collimator_volume,
-            detector=detector_volume,
-            name=name
-        )
-        return GammaCameraViewModel(camera_core)
+        """Создает тестовую ViewModel гамма-камеры со сборкой со слотами."""
+        return create_default_gamma_camera_vm(name=name)
 
     @staticmethod
     def _create_mock_viewport() -> Any:
@@ -1099,7 +1088,12 @@ class TestStage3Viewport(unittest.TestCase):
         """Верификация радиального перемещения (стрелка Z) и ориентации на изоцентр."""
         spect_procedure = SpectProcedureViewModel(radius=250.0)
         camera_vm = self._create_test_camera_vm("CamRadial")
-        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        camera_vm.local_matrix = compute_orbit_matrix(
+            radius=250.0,
+            angle_deg=0.0,
+            axial_z=0.0,
+            half_thickness=camera_vm.half_thickness,
+        )
         initial_matrix = camera_vm.local_matrix.copy()
 
         constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
@@ -1127,7 +1121,12 @@ class TestStage3Viewport(unittest.TestCase):
         """Верификация тангенциального перемещения (стрелка X) вдоль круговой орбиты."""
         spect_procedure = SpectProcedureViewModel(radius=250.0)
         camera_vm = self._create_test_camera_vm("CamTangential")
-        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        camera_vm.local_matrix = compute_orbit_matrix(
+            radius=250.0,
+            angle_deg=0.0,
+            axial_z=0.0,
+            half_thickness=camera_vm.half_thickness,
+        )
         initial_matrix = camera_vm.local_matrix.copy()
 
         constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
@@ -1201,7 +1200,12 @@ class TestStage3Viewport(unittest.TestCase):
         """Проверка сокрытия паразитных колец вращения и сохранения только кольца Z (In-plane roll)."""
         spect_procedure = SpectProcedureViewModel()
         camera_vm = self._create_test_camera_vm("CamRotateSingle")
-        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        camera_vm.local_matrix = compute_orbit_matrix(
+            radius=250.0,
+            angle_deg=0.0,
+            axial_z=0.0,
+            half_thickness=camera_vm.half_thickness,
+        )
         constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
         self.assertIsNotNone(constraint)
 
@@ -1254,23 +1258,29 @@ class TestStage3Viewport(unittest.TestCase):
         )
         spect_procedure.sync_cameras([camera_vm_1, camera_vm_2])
 
-        self.assertEqual(camera_vm_1.orbit_radius, 250.0)
-        self.assertEqual(camera_vm_2.orbit_radius, 250.0)
+        camera_1_radius = float(np.hypot(camera_vm_1.local_matrix[0, 3], camera_vm_1.local_matrix[1, 3])) - camera_vm_1.half_thickness
+        camera_2_radius = float(np.hypot(camera_vm_2.local_matrix[0, 3], camera_vm_2.local_matrix[1, 3])) - camera_vm_2.half_thickness
+        self.assertAlmostEqual(camera_1_radius, 250.0, delta=1e-5)
+        self.assertAlmostEqual(camera_2_radius, 250.0, delta=1e-5)
 
         constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm_1)
         self.assertIsNotNone(constraint)
 
         # Фаза continuous drag (on_transform_changed): синхронизация предпросмотра
         constraint.on_transform_changed(camera_vm_1, {'radius': 330.0, 'angle': 0.0})
-        self.assertEqual(camera_vm_2.orbit_radius, 330.0)
+        camera_2_drag_radius = float(np.hypot(camera_vm_2.local_matrix[0, 3], camera_vm_2.local_matrix[1, 3])) - camera_vm_2.half_thickness
+        self.assertAlmostEqual(camera_2_drag_radius, 330.0, delta=1e-5)
         self.assertEqual(spect_procedure.radius, 250.0)
 
         # Фаза LMB release (on_transform_committed): фиксация в процедуре
         constraint.on_transform_committed(camera_vm_1, {'radius': 330.0, 'angle': 0.0})
         self.assertEqual(spect_procedure.radius, 330.0)
-        self.assertEqual(camera_vm_1.orbit_radius, 330.0)
-        self.assertEqual(camera_vm_2.orbit_radius, 330.0)
-        self.assertEqual(camera_vm_2.orbit_angle, 180.0)
+        camera_1_committed_radius = float(np.hypot(camera_vm_1.local_matrix[0, 3], camera_vm_1.local_matrix[1, 3])) - camera_vm_1.half_thickness
+        camera_2_committed_radius = float(np.hypot(camera_vm_2.local_matrix[0, 3], camera_vm_2.local_matrix[1, 3])) - camera_vm_2.half_thickness
+        self.assertAlmostEqual(camera_1_committed_radius, 330.0, delta=1e-5)
+        self.assertAlmostEqual(camera_2_committed_radius, 330.0, delta=1e-5)
+        camera_2_angle = float(np.degrees(np.arctan2(camera_vm_2.local_matrix[1, 3], camera_vm_2.local_matrix[0, 3]))) % 360.0
+        self.assertAlmostEqual(camera_2_angle, 180.0, delta=1e-5)
 
     def test_procedure_change_dynamically_updates_gizmo_constraint(self) -> None:
         """Проверка динамического обновления ограничений манипулятора при смене активной процедуры."""
@@ -1308,7 +1318,12 @@ class TestStage3Viewport(unittest.TestCase):
         """Проверка разделения фаз инкрементального предпросмотра и финальной фиксации."""
         spect_procedure = SpectProcedureViewModel(radius=250.0, start_angle=0.0)
         camera_vm = self._create_test_camera_vm("CamLifecycleTest")
-        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        camera_vm.local_matrix = compute_orbit_matrix(
+            radius=250.0,
+            angle_deg=0.0,
+            axial_z=0.0,
+            half_thickness=camera_vm.half_thickness,
+        )
 
         constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
         self.assertIsNotNone(constraint)
@@ -1334,7 +1349,12 @@ class TestStage3Viewport(unittest.TestCase):
         """Проверка работы перемещений стрелками при повернутом на 90 градусов детекторе (Portrait mode)."""
         spect_procedure = SpectProcedureViewModel(radius=250.0)
         camera_vm = self._create_test_camera_vm("CamPortraitTest")
-        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        camera_vm.local_matrix = compute_orbit_matrix(
+            radius=250.0,
+            angle_deg=0.0,
+            axial_z=0.0,
+            half_thickness=camera_vm.half_thickness,
+        )
         constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
         self.assertIsNotNone(constraint)
 
@@ -1386,7 +1406,12 @@ class TestStage3Viewport(unittest.TestCase):
         """Проверка того, что отпускание кнопки мыши (LMB release) не сбрасывает поворот в Portrait."""
         spect_procedure = SpectProcedureViewModel(radius=250.0)
         camera_vm = self._create_test_camera_vm("CamRollCommitTest")
-        camera_vm.set_orbit_position(250.0, 0.0, 0.0)
+        camera_vm.local_matrix = compute_orbit_matrix(
+            radius=250.0,
+            angle_deg=0.0,
+            axial_z=0.0,
+            half_thickness=camera_vm.half_thickness,
+        )
         constraint = spect_procedure.get_kinematic_constraint_for_node(camera_vm)
         self.assertIsNotNone(constraint)
 
@@ -1428,7 +1453,8 @@ class TestStage3Viewport(unittest.TestCase):
         constraint_2.on_transform_committed(camera_vm_2, {'radius': 320.0, 'angle': 180.0})
 
         # Проверяем, что у головки 1 обновился радиус, но сохранился поворот 90 градусов
-        self.assertEqual(camera_vm_1.orbit_radius, 320.0)
+        camera_1_radius = float(np.hypot(camera_vm_1.local_matrix[0, 3], camera_vm_1.local_matrix[1, 3])) - camera_vm_1.half_thickness
+        self.assertAlmostEqual(camera_1_radius, 320.0, delta=1e-5)
         col_0 = camera_vm_1.local_matrix[0:3, 0]
         np.testing.assert_allclose(col_0, np.array([0.0, 0.0, 1.0]), atol=1e-5)
 
@@ -1488,7 +1514,92 @@ class TestStage3Viewport(unittest.TestCase):
         # Переключаем обратно на ОФЭКТ - направляющая восстанавливается
         viewport_controller.on_procedure_changed(spect_proc)
         self.assertEqual(viewport_controller.spect_manipulator.radius, 280.0)
-        self.assertIn(viewport_controller.spect_manipulator.orbit_actor_name, mock_viewport._actors)
+    def test_fixed_subcomponent_kinematic_constraint(self) -> None:
+        """Верификация блокировки трансформаций внутренних компонентов гамма-камеры."""
+        camera_view_model = create_default_gamma_camera_vm(name="CamSubcomponents")
+
+        # Проверяем наличие дочерних узлов
+        self.assertGreater(len(camera_view_model.children), 0)
+        casing_vm = camera_view_model.children[0]
+        detector_box_vm = casing_vm.children[0]
+        self.assertIsNotNone(detector_box_vm.kinematic_constraint)
+        self.assertIsInstance(detector_box_vm.kinematic_constraint, FixedSubcomponentKinematicConstraint)
+
+        subcomponent_constraint = detector_box_vm.kinematic_constraint
+        self.assertFalse(subcomponent_constraint.is_translation_allowed())
+        self.assertFalse(subcomponent_constraint.is_rotation_allowed())
+        self.assertFalse(subcomponent_constraint.is_scale_allowed())
+
+        allowed_axes_translate = subcomponent_constraint.get_allowed_axes(GizmoMode.TRANSLATE)
+        allowed_axes_rotate = subcomponent_constraint.get_allowed_axes(GizmoMode.ROTATE)
+        allowed_axes_scale = subcomponent_constraint.get_allowed_axes(GizmoMode.SCALE)
+        self.assertEqual(len(allowed_axes_translate), 0)
+        self.assertEqual(len(allowed_axes_rotate), 0)
+        self.assertEqual(len(allowed_axes_scale), 0)
+
+        # Попытка фильтрации перемещения возвращает нулевой вектор и пустой словарь
+        delta_vector = np.array([10.0, 20.0, 30.0], dtype=np.float64)
+        filtered_delta, changed_data = subcomponent_constraint.filter_translation(
+            detector_box_vm, delta_vector, detector_box_vm.local_matrix
+        )
+        np.testing.assert_allclose(filtered_delta, np.zeros(3), atol=1e-5)
+        self.assertIn('status_message', changed_data)
+
+    def test_gamma_camera_detector_geometry_rebuild(self) -> None:
+        """Верификация динамического изменения размеров детектора и перестроения геометрии."""
+        camera_view_model = create_default_gamma_camera_vm(
+            name="CamGeomRebuild",
+            detector_size=(500.0, 400.0),
+            detector_thickness=12.0,
+            collimator_thickness=35.0,
+        )
+        np.testing.assert_allclose(camera_view_model.detector_size, np.array([500.0, 400.0]))
+        self.assertEqual(camera_view_model.detector_thickness, 12.0)
+        self.assertEqual(camera_view_model.collimator_thickness, 35.0)
+
+        # Изменение размеров через ViewModel
+        camera_view_model.detector_size = (600.0, 450.0)
+        camera_view_model.detector_thickness = 15.0
+        camera_view_model.collimator_thickness = 40.0
+
+        np.testing.assert_allclose(camera_view_model.detector_size, np.array([600.0, 450.0]))
+        self.assertEqual(camera_view_model.detector_thickness, 15.0)
+        self.assertEqual(camera_view_model.collimator_thickness, 40.0)
+
+        housing_width, housing_height, housing_depth = camera_view_model.housing_size
+        expected_width = 600.0 + 2.0 * camera_view_model.shielding_thickness
+        expected_height = 450.0 + 2.0 * camera_view_model.shielding_thickness
+        self.assertAlmostEqual(housing_width, expected_width, delta=1e-5)
+        self.assertAlmostEqual(housing_height, expected_height, delta=1e-5)
+        expected_depth = (
+            camera_view_model.collimator_thickness
+            + camera_view_model.gap
+            + camera_view_model.detector_thickness
+            + camera_view_model.glass_backend_thickness
+            + camera_view_model.shielding_thickness
+        )
+        self.assertAlmostEqual(housing_depth, expected_depth, delta=1e-5)
+        self.assertAlmostEqual(camera_view_model.half_thickness, expected_depth / 2.0, delta=1e-5)
+
+    def test_gizmo_detaches_when_constraint_blocks_all_axes(self) -> None:
+        """Верификация скрытия манипулятора Gizmo при выборе заблокированного подузла."""
+        root_node = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        scene_viewmodel = SceneViewModel(root_core_node=root_node)
+        camera_view_model = create_default_gamma_camera_vm(name="CamDetachTest")
+        scene_viewmodel.add_node(scene_viewmodel.root_vm, camera_view_model)
+
+        mock_viewport = self._create_mock_viewport()
+        viewport_controller = SceneViewportController(viewport=mock_viewport, scene_vm=scene_viewmodel)
+
+        # Выбираем саму камеру — манипулятор прикреплен
+        viewport_controller.on_node_selected(camera_view_model)
+        self.assertIsNotNone(viewport_controller.transform_gizmo.target_node)
+
+        # Выбираем внутренний компонент (заблокирован) — манипулятор скрывается (detach)
+        casing_vm = camera_view_model.children[0]
+        detector_box_vm = casing_vm.children[0]
+        viewport_controller.on_node_selected(detector_box_vm)
+        self.assertIsNone(viewport_controller.transform_gizmo.target_node)
 
 
 if __name__ == '__main__':

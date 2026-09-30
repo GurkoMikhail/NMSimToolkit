@@ -9,13 +9,16 @@ import numpy as np
 
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
+from core.geometry.spect_kinematics import compute_orbit_matrix
 from core.materials.materials import Material
 from core.scene.gantry_node import GantryNode
 from core.scene.nodes import SpatialNode, CompositeNode
 from core.config.builder import SceneBuilder
 from core.config.exporter import SceneExporter
 from core.config.models import GantryConfig, RotateConfig
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
 
 
 class TestGantryNode(unittest.TestCase):
@@ -47,15 +50,13 @@ class TestGantryNode(unittest.TestCase):
         gantry = GantryNode(name="Gantry")
         root_world.add_child(gantry)
 
-        collimator_1 = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material, name="Collimator_1")
-        detector_1 = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material, name="Detector_1")
-        camera_1 = GammaCamera(collimator=collimator_1, detector=detector_1, name="Camera_1")
-        camera_1.set_orbit_position(radius=250.0, angle_deg=0.0, z=0.0)
+        camera_1, slots_1 = create_default_gamma_camera(name="Camera_1")
+        camera_vm_1 = GammaCameraViewModel(camera_1, slots=slots_1)
+        camera_1.local_matrix = compute_orbit_matrix(radius=250.0, angle_deg=0.0, z=0.0, half_thickness=camera_vm_1.half_thickness)
 
-        collimator_2 = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material, name="Collimator_2")
-        detector_2 = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material, name="Detector_2")
-        camera_2 = GammaCamera(collimator=collimator_2, detector=detector_2, name="Camera_2")
-        camera_2.set_orbit_position(radius=250.0, angle_deg=180.0, z=0.0)
+        camera_2, slots_2 = create_default_gamma_camera(name="Camera_2")
+        camera_vm_2 = GammaCameraViewModel(camera_2, slots=slots_2)
+        camera_2.local_matrix = compute_orbit_matrix(radius=250.0, angle_deg=180.0, z=0.0, half_thickness=camera_vm_2.half_thickness)
 
         gantry.add_child(camera_1)
         gantry.add_child(camera_2)
@@ -131,10 +132,9 @@ class TestGantryNode(unittest.TestCase):
         gantry = GantryNode(name="MountedGantry")
         room_node.add_child(gantry)
 
-        collimator = Volume(geometry=Box(400.0, 400.0, 30.0), material=self.material, name="Collimator")
-        detector = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.material, name="Detector")
-        camera = GammaCamera(collimator=collimator, detector=detector, name="MountedCamera")
-        camera.set_orbit_position(radius=250.0, angle_deg=0.0, z=0.0)
+        camera, slots = create_default_gamma_camera(name="MountedCamera")
+        camera_vm = GammaCameraViewModel(camera, slots=slots)
+        camera.local_matrix = compute_orbit_matrix(radius=250.0, angle_deg=0.0, z=0.0, half_thickness=camera_vm.half_thickness)
         gantry.add_child(camera)
 
         initial_camera_local = np.copy(camera.local_matrix)

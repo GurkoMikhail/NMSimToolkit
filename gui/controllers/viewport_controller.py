@@ -10,7 +10,7 @@ from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.viewport_3d.pet_manipulator import PETManipulator
 from gui.viewport_3d.voxel_volume_renderer import VoxelVolumeRenderer
 from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer
-from gui.viewport_3d.transform_gizmo import TransformGizmo
+from gui.viewport_3d.transform_gizmo import TransformGizmo, GizmoMode
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
@@ -27,7 +27,7 @@ from gui.viewport_3d.kinematic_constraints import (
     SpectOrbitKinematicConstraint,
 )
 
-from core.geometry import compute_spect_poses
+from core.geometry import compute_spect_poses, compute_orbit_matrix
 
 _logger = logging.getLogger(__name__)
 
@@ -386,11 +386,18 @@ class SceneViewportController(QObject):
 
             # Обновление направляющих манипуляторов ОФЭКТ/ПЭТ
             if isinstance(current_target, GammaCameraViewModel) and isinstance(self.procedure_vm, SpectProcedureViewModel):
+                matrix = current_target.local_matrix
+                pos_x = float(matrix[0, 3])
+                pos_y = float(matrix[1, 3])
+                pos_z = float(matrix[2, 3])
+                center_radius = float(np.hypot(pos_x, pos_y))
+                camera_radius = max(0.0, center_radius - current_target.half_thickness)
+                camera_angle = float(np.degrees(np.arctan2(pos_y, pos_x))) % 360.0
                 self.spect_manipulator.half_thickness = current_target.half_thickness
                 self.spect_manipulator.set_orbit_parameters(
-                    current_target.orbit_radius,
-                    current_target.orbit_angle,
-                    z=current_target.orbit_z,
+                    camera_radius,
+                    camera_angle,
+                    z=pos_z,
                     render=False,
                     emit_signal=False,
                 )
@@ -440,20 +447,32 @@ class SceneViewportController(QObject):
 
         # 2. Настраиваем манипулятор TransformGizmo:
         if self.transform_gizmo is not None:
-            self.transform_gizmo.set_constraint(constraint)
             if constraint is not None:
-                forced_space = constraint.get_forced_space()
-                if forced_space is not None:
-                    self.transform_gizmo.space = forced_space
-            self.transform_gizmo.set_target_node(selected_node_vm)
+                has_trans = len(constraint.get_allowed_axes(GizmoMode.TRANSLATE)) > 0
+                has_rot = len(constraint.get_allowed_axes(GizmoMode.ROTATE)) > 0
+                has_scale = constraint.is_scale_allowed()
+                if not has_trans and not has_rot and not has_scale:
+                    self.transform_gizmo.detach()
+                else:
+                    self.transform_gizmo.set_constraint(constraint)
+                    forced_space = constraint.get_forced_space()
+                    if forced_space is not None:
+                        self.transform_gizmo.space = forced_space
+                    self.transform_gizmo.set_target_node(selected_node_vm)
+            else:
+                self.transform_gizmo.set_constraint(None)
+                self.transform_gizmo.set_target_node(selected_node_vm)
 
         # 3. Визуальные направляющие ОФЭКТ (круговая орбита):
         if isinstance(selected_node_vm, GammaCameraViewModel) and isinstance(self.procedure_vm, SpectProcedureViewModel):
             self.spect_manipulator.half_thickness = selected_node_vm.half_thickness
+            pos = selected_node_vm.local_matrix[0:3, 3]
+            cam_radius = max(10.0, float(np.hypot(pos[0], pos[1])) - selected_node_vm.half_thickness)
+            cam_angle = float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
             self.spect_manipulator.set_orbit_parameters(
-                selected_node_vm.orbit_radius,
-                selected_node_vm.orbit_angle,
-                z=selected_node_vm.orbit_z,
+                cam_radius,
+                cam_angle,
+                z=float(pos[2]),
                 render=False,
                 emit_signal=False,
             )
@@ -475,7 +494,23 @@ class SceneViewportController(QObject):
     def on_spect_manipulator_changed(self, radius: float, angle_deg: float, z_pos: float) -> None:
         """Обработка перемещения ОФЭКТ-манипулятора в 3D-пространстве."""
         if self.scene_vm is not None and isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
-            self.scene_vm.selected_node.set_orbit_position(radius, angle_deg, z=z_pos)
+            camera_vm = self.scene_vm.selected_node
+            if isinstance(camera_vm.parent_vm, GantryViewModel):
+                camera_vm.parent_vm.gantry_angle_deg = angle_deg
+                local_angle = float(np.degrees(np.arctan2(camera_vm.local_matrix[1, 3], camera_vm.local_matrix[0, 3])) % 360.0)
+                camera_vm.local_matrix = compute_orbit_matrix(
+                    radius=radius,
+                    angle_deg=local_angle,
+                    z=z_pos,
+                    half_thickness=camera_vm.half_thickness,
+                )
+            else:
+                camera_vm.local_matrix = compute_orbit_matrix(
+                    radius=radius,
+                    angle_deg=angle_deg,
+                    z=z_pos,
+                    half_thickness=camera_vm.half_thickness,
+                )
 
     def apply_job_angles_to_viewport(
         self,
@@ -499,14 +534,23 @@ class SceneViewportController(QObject):
             if angle_val is None:
                 angle_val = context.get("current_angle")
             if angle_val is not None:
-                camera_view_model.set_orbit_position(radius, float(angle_val), camera_view_model.orbit_z)
+                z_pos = float(camera_view_model.local_matrix[2, 3]) if camera_view_model.local_matrix is not None else 0.0
+                camera_view_model.local_matrix = compute_orbit_matrix(
+                    radius=radius,
+                    angle_deg=float(angle_val),
+                    z=z_pos,
+                    half_thickness=camera_view_model.half_thickness,
+                )
 
         if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
             selected_camera = self.scene_vm.selected_node
+            pos = selected_camera.local_matrix[0:3, 3]
+            cam_radius = max(10.0, float(np.hypot(pos[0], pos[1])) - selected_camera.half_thickness)
+            cam_angle = float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
             self.spect_manipulator.set_orbit_parameters(
-                selected_camera.orbit_radius,
-                selected_camera.orbit_angle,
-                z=selected_camera.orbit_z,
+                cam_radius,
+                cam_angle,
+                z=float(pos[2]),
                 render=False,
                 emit_signal=False
             )
@@ -561,18 +605,33 @@ class SceneViewportController(QObject):
                             if camera_index < len(active_procedure.head_angles)
                             else (360.0 / max(1, len(camera_vms))) * camera_index
                         )
-                        cam_vm.set_orbit_position(radius, float(head_offset), cam_vm.orbit_z)
+                        z_pos = float(cam_vm.local_matrix[2, 3]) if cam_vm.local_matrix is not None else 0.0
+                        cam_vm.local_matrix = compute_orbit_matrix(
+                            radius=radius,
+                            angle_deg=float(head_offset),
+                            z=z_pos,
+                            half_thickness=cam_vm.half_thickness,
+                        )
                 else:
                     for camera_index, cam_vm in enumerate(camera_vms):
                         angle_val = angles[camera_index] if camera_index < len(angles) else angles[0]
-                        cam_vm.set_orbit_position(radius, float(angle_val), cam_vm.orbit_z)
+                        z_pos = float(cam_vm.local_matrix[2, 3]) if cam_vm.local_matrix is not None else 0.0
+                        cam_vm.local_matrix = compute_orbit_matrix(
+                            radius=radius,
+                            angle_deg=float(angle_val),
+                            z=z_pos,
+                            half_thickness=cam_vm.half_thickness,
+                        )
 
                 if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
                     selected_camera = self.scene_vm.selected_node
+                    pos = selected_camera.local_matrix[0:3, 3]
+                    cam_radius = max(10.0, float(np.hypot(pos[0], pos[1])) - selected_camera.half_thickness)
+                    cam_angle = float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
                     self.spect_manipulator.set_orbit_parameters(
-                        selected_camera.orbit_radius,
-                        selected_camera.orbit_angle,
-                        z=selected_camera.orbit_z,
+                        cam_radius,
+                        cam_angle,
+                        z=float(pos[2]),
                         render=False,
                         emit_signal=False
                     )

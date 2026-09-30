@@ -143,6 +143,20 @@ class NodeViewModel(QObject):
         child_vm._notify_transform_changed()
         self.child_added.emit(child_vm)
 
+    @property
+    def kinematic_constraint(self) -> Optional[IKinematicConstraint]:
+        """
+        Эффективное кинематическое ограничение узла.
+        """
+        return self.get_effective_kinematic_constraint()
+
+    @kinematic_constraint.setter
+    def kinematic_constraint(self, constraint: Optional[IKinematicConstraint]) -> None:
+        """
+        Установка собственного кинематического ограничения узла.
+        """
+        self.set_self_kinematic_constraint(constraint)
+
     def get_self_kinematic_constraint(self) -> Optional[IKinematicConstraint]:
         """
         Возвращает собственное кинематическое ограничение данного узла.

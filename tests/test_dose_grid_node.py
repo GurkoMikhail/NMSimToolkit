@@ -10,7 +10,7 @@ from core.materials.materials import Material
 from core.data.dose_map_handler import DoseMapHandler, DoseGridEntry
 from core.config.exporter import SceneExporter
 from core.config.builder import SceneBuilder
-from core.geometry.gamma_cameras import GammaCamera
+from gui.viewmodels.nodes.gamma_camera_vm import create_default_gamma_camera_vm
 from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
@@ -225,10 +225,7 @@ class TestDoseGridNode(unittest.TestCase):
 
     def test_08_gamma_camera_child_dose_grid_auto_bounds(self):
         """Проверка автоматической подгонки размеров создаваемой сетки дозы под BoundingBox гамма-камеры."""
-        collimator = Volume(geometry=Box(400.0, 400.0, 40.0), material=Material("Pb"), name="Collimator")
-        detector = Volume(geometry=Box(400.0, 400.0, 10.0), material=Material("NaI"), name="Detector")
-        camera = GammaCamera(collimator=collimator, detector=detector, name="SpectCamera")
-        cam_vm = GammaCameraViewModel(camera)
+        cam_vm = create_default_gamma_camera_vm(name="SpectCamera")
 
         world = CompositeNode(name="World")
         scene_vm = SceneViewModel(world)
@@ -249,10 +246,7 @@ class TestDoseGridNode(unittest.TestCase):
 
     def test_09_property_inspector_fit_to_parent(self):
         """Проверка кнопки подогнать под родителя в PropertyInspector для DoseGridViewModel."""
-        collimator = Volume(geometry=Box(400.0, 400.0, 40.0), material=Material("Pb"), name="Collimator")
-        detector = Volume(geometry=Box(400.0, 400.0, 10.0), material=Material("NaI"), name="Detector")
-        camera = GammaCamera(collimator=collimator, detector=detector, name="SpectCamera")
-        cam_vm = GammaCameraViewModel(camera)
+        cam_vm = create_default_gamma_camera_vm(name="SpectCamera")
 
         # Дочерний узел с произвольными размерами
         grid_node = DoseGridNode(name="ArbitraryGrid", size=[33.0, 44.0, 55.0], dose_voxel_size=5.0)

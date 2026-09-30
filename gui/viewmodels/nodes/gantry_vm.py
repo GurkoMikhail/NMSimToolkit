@@ -10,7 +10,7 @@ import weakref
 from typing import Any, Optional, Sequence
 import numpy as np
 
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
 from core.scene.gantry_node import GantryNode
 from gui.viewmodels.decorators import gui_field
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
@@ -79,7 +79,7 @@ class GantryViewModel(NodeViewModel):
         # Ограничение каретки станины для детекторов и оборудования
         mount_constraint = CameraMountKinematicConstraint(
             procedure_vm=self.procedure_vm,
-            camera_vm=child_vm if isinstance(child_vm.core_node, GammaCamera) else None,
+            camera_vm=child_vm if isinstance(child_vm.core_node, GammaCameraNode) else None,
             gantry_vm=self,
         )
         self._child_kinematic_constraints[child_identifier] = mount_constraint

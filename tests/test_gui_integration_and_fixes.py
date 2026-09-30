@@ -13,6 +13,7 @@ from core.transport.simulation_managers import SimulationManager, SimulationStat
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels import create_default_gamma_camera_vm
 from gui.viewmodels.nodes.factory import create_node_viewmodel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.views.property_inspector import PropertyInspector
@@ -276,6 +277,87 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         # Изменение значения в spinbox ниже минимума не позволяет задать небезопасную емкость
         inspector.spin_dm_buffer.setValue(1000)
         self.assertGreaterEqual(dm_vm.buffer_capacity, 25000)
+
+    def test_property_inspector_kinematic_locking(self) -> None:
+        """Верификация динамической блокировки полей инспектора свойств по кинематическому контракту."""
+        from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel
+
+        camera_view_model = create_default_gamma_camera_vm(name="CamLockTest")
+        spect_procedure = SpectProcedureViewModel(radius=250.0)
+
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_view_model)
+        self.assertIsNotNone(constraint)
+        camera_view_model.kinematic_constraint = constraint
+
+        property_inspector = PropertyInspector()
+        property_inspector.set_target_viewmodel(camera_view_model)
+
+        # Для гамма-камеры на круговой орбите перемещения X, Y, Z активны (тангенс, аксиал, радиус)
+        self.assertTrue(property_inspector.spin_x.isEnabled())
+        self.assertTrue(property_inspector.spin_y.isEnabled())
+        self.assertTrue(property_inspector.spin_z.isEnabled())
+
+        # Для углов: Roll и Tilt заблокированы, In-plane Roll разрешен
+        self.assertFalse(property_inspector.spin_rot_x.isEnabled())
+        self.assertFalse(property_inspector.spin_rot_y.isEnabled())
+        self.assertTrue(property_inspector.spin_rot_z.isEnabled())
+
+        # Масштабирование заблокировано
+        self.assertFalse(property_inspector.spin_size_x.isEnabled())
+        self.assertFalse(property_inspector.spin_size_y.isEnabled())
+        self.assertFalse(property_inspector.spin_size_z.isEnabled())
+
+        # Для внутреннего заблокированного компонента (FixedSubcomponentKinematicConstraint)
+        detector_box_view_model = camera_view_model.detector_box_vm
+        property_inspector.set_target_viewmodel(detector_box_view_model)
+
+        self.assertFalse(property_inspector.spin_x.isEnabled())
+        self.assertFalse(property_inspector.spin_y.isEnabled())
+        self.assertFalse(property_inspector.spin_z.isEnabled())
+        self.assertFalse(property_inspector.spin_rot_x.isEnabled())
+        self.assertFalse(property_inspector.spin_rot_y.isEnabled())
+        self.assertFalse(property_inspector.spin_rot_z.isEnabled())
+        self.assertFalse(property_inspector.spin_size_x.isEnabled())
+        self.assertFalse(property_inspector.spin_size_y.isEnabled())
+        self.assertFalse(property_inspector.spin_size_z.isEnabled())
+
+    def test_main_window_gizmo_toolbar_state_with_constraints(self) -> None:
+        """Верификация адаптации панели инструментов 3D-манипулятора под ограничения узлов."""
+        from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel
+
+        camera_view_model = create_default_gamma_camera_vm(name="CamToolbarTest")
+        spect_procedure = SpectProcedureViewModel(radius=250.0)
+
+        constraint = spect_procedure.get_kinematic_constraint_for_node(camera_view_model)
+        self.assertIsNotNone(constraint)
+        camera_view_model.kinematic_constraint = constraint
+
+        main_window = MainWindow()
+        main_window.procedure_vm = spect_procedure
+
+        # 1. Выбираем гамма-камеру
+        main_window._on_node_selected(camera_view_model)
+        self.assertTrue(main_window.act_gizmo_translate.isVisible())
+        self.assertTrue(main_window.act_gizmo_rotate.isVisible())
+        self.assertFalse(main_window.act_gizmo_scale.isVisible())
+        self.assertFalse(main_window.act_gizmo_space.isEnabled())
+
+        # 2. Выбираем жестко зафиксированный внутренний подузел
+        detector_box_view_model = camera_view_model.children[0]
+        main_window._on_node_selected(detector_box_view_model)
+        self.assertFalse(main_window.act_gizmo_translate.isVisible())
+        self.assertFalse(main_window.act_gizmo_rotate.isVisible())
+        self.assertFalse(main_window.act_gizmo_scale.isVisible())
+        self.assertFalse(main_window.act_gizmo_space.isVisible())
+        self.assertIsNone(main_window.viewport_controller.transform_gizmo.target_node)
+
+        # 3. Снятие выбора — все элементы восстанавливаются в исходное состояние
+        main_window._on_node_selected(None)
+        self.assertTrue(main_window.act_gizmo_translate.isVisible())
+        self.assertTrue(main_window.act_gizmo_rotate.isVisible())
+        self.assertTrue(main_window.act_gizmo_scale.isVisible())
+        self.assertTrue(main_window.act_gizmo_space.isVisible())
+        self.assertTrue(main_window.act_gizmo_space.isEnabled())
 
 
 if __name__ == '__main__':

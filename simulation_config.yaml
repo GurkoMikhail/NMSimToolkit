@@ -1,0 +1,378 @@
+Materials:
+- &air_2598 Air, Dry (near sea level)
+- &glass_e941 Glass, Borosilicate (Pyrex)
+- &pb_0789 Pb
+- &sodium_iodide_a6c2 Sodium Iodide
+- &water_6a66 Water, Liquid
+simulation_manager:
+  start_time: 0.0
+  stop_time: 1000000000.0
+  particles_number: 10000
+  min_energy: 0.001
+data_manager:
+  filename: nema_4.2/0.0_deg.hdf
+  handlers:
+  - type: HistoryAssemblerHandler
+    sensitive_volumes:
+    - Detector
+    save_initial_states: true
+scene:
+  name: Simulation_volume
+  transformations: []
+  children:
+  - name: Phantom
+    transformations: []
+    children:
+    - name: Source
+      transformations: []
+      children: []
+      type: Source
+      activity: 0.1
+      distribution:
+        path: phantoms/nema/nema_voxel_size_4.2_mm.dat
+        format: raw
+        shape:
+        - 128
+        - 128
+        - 92
+        order: F
+        encoding: text
+      voxel_size: 4.2
+      radiation_type: Gamma
+      energy: 0.159
+      half_life: 4.752e+40
+    type: WoodcockVoxelVolume
+    voxel_size: 4.2
+    distribution:
+      path: phantoms/nema/anema_voxel_size_4.2_mm.dat
+      mapping:
+        0.04: *air_2598
+        0.15: *water_6a66
+      format: raw
+      shape:
+      - 128
+      - 128
+      - 92
+      order: F
+      encoding: text
+  - name: Gantry
+    transformations: []
+    children:
+    - name: GammaCamera_1
+      transformations:
+      - type: matrix
+        matrix:
+        - - 0.0
+          - 0.0
+          - -1.0
+          - 355.25
+        - - -1.0
+          - 0.0
+          - -0.0
+          - 0.0
+        - - 0.0
+          - 1.0
+          - 0.0
+          - 0.0
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+        in_local: false
+      children:
+      - name: Casing_1
+        transformations: []
+        children:
+        - name: Detector_box_1
+          transformations:
+          - type: matrix
+            matrix:
+            - - 1.0
+              - 0.0
+              - 0.0
+              - 0.0
+            - - 0.0
+              - 1.0
+              - 0.0
+              - 0.0
+            - - 0.0
+              - 0.0
+              - 1.0
+              - 10.0
+            - - 0.0
+              - 0.0
+              - 0.0
+              - 1.0
+            in_local: false
+          children:
+          - name: Collimator_1
+            transformations:
+            - type: matrix
+              matrix:
+              - - 1.0
+                - 0.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 1.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 0.0
+                - 1.0
+                - 30.25
+              - - 0.0
+                - 0.0
+                - 0.0
+                - 1.0
+              in_local: false
+            children: []
+            type: Volume
+            geometry:
+              type: Box
+              x: 540.0
+              y: 400.0
+              z: 30.0
+            material: *pb_0789
+          - name: Detector_1
+            transformations:
+            - type: matrix
+              matrix:
+              - - 1.0
+                - 0.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 1.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 0.0
+                - 1.0
+                - 9.5
+              - - 0.0
+                - 0.0
+                - 0.0
+                - 1.0
+              in_local: false
+            children: []
+            type: Volume
+            geometry:
+              type: Box
+              x: 540.0
+              y: 400.0
+              z: 9.5
+            material: *sodium_iodide_a6c2
+          - name: Glass_backend_1
+            transformations:
+            - type: matrix
+              matrix:
+              - - 1.0
+                - 0.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 1.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 0.0
+                - 1.0
+                - -20.25
+              - - 0.0
+                - 0.0
+                - 0.0
+                - 1.0
+              in_local: false
+            children: []
+            type: Volume
+            geometry:
+              type: Box
+              x: 540.0
+              y: 400.0
+              z: 50.0
+            material: *glass_e941
+          type: Volume
+          geometry:
+            type: Box
+            x: 540.0
+            y: 400.0
+            z: 90.5
+          material: *air_2598
+        type: Volume
+        geometry:
+          type: Box
+          x: 580.0
+          y: 440.0
+          z: 110.5
+        material: *pb_0789
+      type: GammaCamera
+      slots:
+        casing: Casing_1
+        detector_box: Detector_box_1
+        collimator: Collimator_1
+        crystal: Detector_1
+        glass_backend: Glass_backend_1
+    - name: GammaCamera_2
+      transformations:
+      - type: matrix
+        matrix:
+        - - 0.0
+          - 0.0
+          - 1.0
+          - -355.25
+        - - 1.0
+          - 0.0
+          - -0.0
+          - 0.0
+        - - 0.0
+          - 1.0
+          - 0.0
+          - 0.0
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+        in_local: false
+      children:
+      - name: Casing_2
+        transformations: []
+        children:
+        - name: Detector_box_2
+          transformations:
+          - type: matrix
+            matrix:
+            - - 1.0
+              - 0.0
+              - 0.0
+              - 0.0
+            - - 0.0
+              - 1.0
+              - 0.0
+              - 0.0
+            - - 0.0
+              - 0.0
+              - 1.0
+              - 10.0
+            - - 0.0
+              - 0.0
+              - 0.0
+              - 1.0
+            in_local: false
+          children:
+          - name: Collimator_2
+            transformations:
+            - type: matrix
+              matrix:
+              - - 1.0
+                - 0.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 1.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 0.0
+                - 1.0
+                - 30.25
+              - - 0.0
+                - 0.0
+                - 0.0
+                - 1.0
+              in_local: false
+            children: []
+            type: Volume
+            geometry:
+              type: Box
+              x: 540.0
+              y: 400.0
+              z: 30.0
+            material: *pb_0789
+          - name: Detector_2
+            transformations:
+            - type: matrix
+              matrix:
+              - - 1.0
+                - 0.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 1.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 0.0
+                - 1.0
+                - 9.5
+              - - 0.0
+                - 0.0
+                - 0.0
+                - 1.0
+              in_local: false
+            children: []
+            type: Volume
+            geometry:
+              type: Box
+              x: 540.0
+              y: 400.0
+              z: 9.5
+            material: *sodium_iodide_a6c2
+          - name: Glass_backend_2
+            transformations:
+            - type: matrix
+              matrix:
+              - - 1.0
+                - 0.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 1.0
+                - 0.0
+                - 0.0
+              - - 0.0
+                - 0.0
+                - 1.0
+                - -20.25
+              - - 0.0
+                - 0.0
+                - 0.0
+                - 1.0
+              in_local: false
+            children: []
+            type: Volume
+            geometry:
+              type: Box
+              x: 540.0
+              y: 400.0
+              z: 50.0
+            material: *glass_e941
+          type: Volume
+          geometry:
+            type: Box
+            x: 540.0
+            y: 400.0
+            z: 90.5
+          material: *air_2598
+        type: Volume
+        geometry:
+          type: Box
+          x: 580.0
+          y: 440.0
+          z: 110.5
+        material: *pb_0789
+      type: GammaCamera
+      slots:
+        casing: Casing_2
+        detector_box: Detector_box_2
+        collimator: Collimator_2
+        crystal: Detector_2
+        glass_backend: Glass_backend_2
+    type: Gantry
+  type: Volume
+  geometry:
+    type: Box
+    x: 1200.0
+    y: 1200.0
+    z: 800.0
+  material: *air_2598

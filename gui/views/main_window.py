@@ -43,8 +43,12 @@ from core.materials.materials import Material
 from core.config.exporter import SceneExporter
 from core.config.yaml_loader import load_simulation_config
 from core.config.builder import SceneBuilder
-from core.config.models import DataManagerConfig, HistoryAssemblerHandlerConfig
 from core.config.orchestrator import Orchestrator
+from core.config.models import (
+    DataManagerConfig,
+    HistoryAssemblerHandlerConfig,
+    SimulationManagerConfig,
+)
 import settings.database_setting as database_setting
 
 _logger = logging.getLogger(__name__)
@@ -83,6 +87,8 @@ class MainWindow(QMainWindow):
         self.projection_shape = (128, 128)
 
         self.sim_settings: GuiSimulationSettings = GuiSimulationSettings()
+        self.lbl_grid_snap: Optional[QLabel] = None
+        self.lbl_angle_snap: Optional[QLabel] = None
 
         self._init_components()
         self._init_docks()
@@ -378,12 +384,12 @@ class MainWindow(QMainWindow):
         gizmo_toolbar.addAction(self.act_gizmo_space)
         gizmo_toolbar.addSeparator()
 
-        lbl_grid = QLabel("Сетка:")
-        gizmo_toolbar.addWidget(lbl_grid)
+        self.lbl_grid_snap = QLabel("Сетка:")
+        gizmo_toolbar.addWidget(self.lbl_grid_snap)
         gizmo_toolbar.addWidget(self.combo_grid_snap)
 
-        lbl_angle = QLabel("Угол:")
-        gizmo_toolbar.addWidget(lbl_angle)
+        self.lbl_angle_snap = QLabel("Угол:")
+        gizmo_toolbar.addWidget(self.lbl_angle_snap)
         gizmo_toolbar.addWidget(self.combo_angle_snap)
 
     def _init_statusbar(self) -> None:
@@ -480,18 +486,104 @@ class MainWindow(QMainWindow):
         """Точечное удаление актора из сцены."""
         self.viewport_controller.on_node_removed(node_vm)
 
-    def _on_node_selected(self, vm: Optional[NodeViewModel]) -> None:
+    def _on_node_selected(self, node_view_model: Optional[NodeViewModel]) -> None:
         if self.dock_inspector.isHidden():
             self.dock_inspector.show()
         self.dock_inspector.raise_()
-        self.viewport_controller.on_node_selected(vm)
-        if vm is not None:
+        self.viewport_controller.on_node_selected(node_view_model)
+        self._update_gizmo_toolbar_state(node_view_model)
+        if node_view_model is not None:
             self.lbl_status.setText(
-                f"Выбран объект '{vm.name}'. Манипулятор Gizmo: W/Ц — перемещение, "
+                f"Выбран объект '{node_view_model.name}'. Манипулятор Gizmo: W/Ц — перемещение, "
                 f"E/У — вращение, R/К — масштаб, Q/Й — система координат, Shift — отключение привязки"
             )
         else:
             self.lbl_status.setText("Статус: Готов (IDLE)")
+
+    def _update_gizmo_toolbar_state(self, node_view_model: Optional[NodeViewModel]) -> None:
+        """
+        Обновление видимости и доступности кнопок тулбара 3D-манипулятора
+        в соответствии с кинематическими ограничениями выбранного узла.
+        """
+        constraint = node_view_model.kinematic_constraint if node_view_model is not None else None
+
+        if constraint is not None:
+            allowed_trans_axes = constraint.get_allowed_axes(GizmoMode.TRANSLATE)
+            allowed_rot_axes = constraint.get_allowed_axes(GizmoMode.ROTATE)
+            allowed_scale_axes = constraint.get_allowed_axes(GizmoMode.SCALE)
+            has_translation = bool(allowed_trans_axes)
+            has_rotation = bool(allowed_rot_axes)
+            has_scale = bool(allowed_scale_axes) and constraint.is_scale_allowed()
+            all_disabled = not has_translation and not has_rotation and not has_scale
+
+            self.act_gizmo_translate.setVisible(has_translation)
+            self.act_gizmo_rotate.setVisible(has_rotation)
+            self.act_gizmo_scale.setVisible(has_scale)
+
+            if all_disabled:
+                self.act_gizmo_space.setVisible(False)
+                self.combo_grid_snap.setVisible(False)
+                self.combo_angle_snap.setVisible(False)
+                if self.lbl_grid_snap is not None:
+                    self.lbl_grid_snap.setVisible(False)
+                if self.lbl_angle_snap is not None:
+                    self.lbl_angle_snap.setVisible(False)
+            else:
+                self.act_gizmo_space.setVisible(True)
+                self.combo_grid_snap.setVisible(has_translation or has_scale)
+                self.combo_angle_snap.setVisible(has_rotation)
+                if self.lbl_grid_snap is not None:
+                    self.lbl_grid_snap.setVisible(has_translation or has_scale)
+                if self.lbl_angle_snap is not None:
+                    self.lbl_angle_snap.setVisible(has_rotation)
+
+                forced_space = constraint.get_forced_space()
+                if forced_space is not None:
+                    self.act_gizmo_space.setEnabled(False)
+                    if self.viewport_controller is not None and self.viewport_controller.transform_gizmo is not None:
+                        self.viewport_controller.transform_gizmo.space = forced_space
+                        self._on_gizmo_space_changed(forced_space)
+                else:
+                    self.act_gizmo_space.setEnabled(True)
+
+            # Если текущий активный режим манипулятора заблокирован для выбранного узла,
+            # переключаем манипулятор на первый разрешенный режим
+            if self.viewport_controller is not None and self.viewport_controller.transform_gizmo is not None:
+                current_mode = self.viewport_controller.transform_gizmo.mode
+                if current_mode == GizmoMode.TRANSLATE and not has_translation:
+                    if has_rotation:
+                        self._set_gizmo_mode(GizmoMode.ROTATE)
+                        self.act_gizmo_rotate.setChecked(True)
+                    elif has_scale:
+                        self._set_gizmo_mode(GizmoMode.SCALE)
+                        self.act_gizmo_scale.setChecked(True)
+                elif current_mode == GizmoMode.ROTATE and not has_rotation:
+                    if has_translation:
+                        self._set_gizmo_mode(GizmoMode.TRANSLATE)
+                        self.act_gizmo_translate.setChecked(True)
+                    elif has_scale:
+                        self._set_gizmo_mode(GizmoMode.SCALE)
+                        self.act_gizmo_scale.setChecked(True)
+                elif current_mode == GizmoMode.SCALE and not has_scale:
+                    if has_translation:
+                        self._set_gizmo_mode(GizmoMode.TRANSLATE)
+                        self.act_gizmo_translate.setChecked(True)
+                    elif has_rotation:
+                        self._set_gizmo_mode(GizmoMode.ROTATE)
+                        self.act_gizmo_rotate.setChecked(True)
+        else:
+            # При отсутствии ограничений все кнопки видимы и активны
+            self.act_gizmo_translate.setVisible(True)
+            self.act_gizmo_rotate.setVisible(True)
+            self.act_gizmo_scale.setVisible(True)
+            self.act_gizmo_space.setVisible(True)
+            self.act_gizmo_space.setEnabled(True)
+            self.combo_grid_snap.setVisible(True)
+            self.combo_angle_snap.setVisible(True)
+            if self.lbl_grid_snap is not None:
+                self.lbl_grid_snap.setVisible(True)
+            if self.lbl_angle_snap is not None:
+                self.lbl_angle_snap.setVisible(True)
 
     def _apply_job_angles_to_viewport(self, context: Dict[str, Any]) -> None:
         """Применяет углы из контекста задачи к гамма-камерам во вьюпорте."""
@@ -614,8 +706,8 @@ class MainWindow(QMainWindow):
             self.orchestrator_session.start()
             self._update_action_states(running=True, paused=False)
             self.lbl_status.setText(f"Моделирование запущено ({len(self.orchestrator_session.jobs)} задач)")
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка запуска", f"Не удалось запустить моделирование:\n{e}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Ошибка запуска", f"Не удалось запустить моделирование:\n{exc}")
 
     def _on_clear_accumulation(self) -> None:
         """
@@ -741,7 +833,11 @@ class MainWindow(QMainWindow):
                 if self.viewport_controller is not None:
                     self.viewport_controller.disconnect_all_nodes()
                     self.viewport_controller.clear_dose_volume()
-                self.scene_vm.load_scene(root_node, distribution_registry=builder.distribution_registry)
+                self.scene_vm.load_scene(
+                    root_node,
+                    distribution_registry=builder.distribution_registry,
+                    slots_registry=builder.slots_registry,
+                )
                 self.scene_vm.apply_simulation_config(cfg)
                 self.current_config = cfg
                 self.current_config_path = str(filepath)
@@ -766,14 +862,14 @@ class MainWindow(QMainWindow):
                     if self.data_manager_vm.buffer_capacity < self.sim_settings.particles_number:
                         self.data_manager_vm.buffer_capacity = self.sim_settings.particles_number
                     try:
-                        st_sec = float(cfg.simulation_manager.stop_time) / float(units.s)
-                        self.orchestrator_session.stop_time = st_sec
+                        stop_time_seconds = float(cfg.simulation_manager.stop_time) / float(units.s)
+                        self.orchestrator_session.stop_time = stop_time_seconds
                     except (TypeError, ValueError):
                         pass
                     try:
-                        me_kev = float(cfg.simulation_manager.min_energy) / float(units.keV)
-                        self.sim_settings.min_energy = me_kev
-                        self.orchestrator_session.min_energy = me_kev
+                        min_energy_kev = float(cfg.simulation_manager.min_energy) / float(units.keV)
+                        self.sim_settings.min_energy = min_energy_kev
+                        self.orchestrator_session.min_energy = min_energy_kev
                     except (TypeError, ValueError):
                         pass
 
@@ -785,8 +881,8 @@ class MainWindow(QMainWindow):
                 self._on_generate_jobs()
                 self.viewport.reset_camera()
                 self.lbl_status.setText(f"Загружена сцена и конфигурация из {filepath.name}")
-            except Exception as e:
-                QMessageBox.critical(self, "Ошибка загрузки", f"Не удалось загрузить YAML:\n{e}")
+            except Exception as exc:
+                QMessageBox.critical(self, "Ошибка загрузки", f"Не удалось загрузить YAML:\n{exc}")
 
     def _on_save_yaml(self) -> None:
         filename, _ = QFileDialog.getSaveFileName(self, "Сохранить конфигурацию", "simulation_config.yaml", "YAML files (*.yaml *.yml)")
@@ -799,10 +895,23 @@ class MainWindow(QMainWindow):
                         filename=self.data_manager_vm.filename,
                         handlers=handlers_cfg
                     )
-                SceneExporter.export_to_yaml(self.scene_vm.root_vm.core_node, filename, data_manager_cfg=data_mgr)
+                sim_mgr = SimulationManagerConfig(
+                    particles_number=int(self.sim_settings.particles_number),
+                    min_energy=float(self.sim_settings.min_energy) * units.keV,
+                    stop_time=float(self.orchestrator_session.stop_time) * units.s,
+                )
+                SceneExporter.export_to_yaml(
+                    self.scene_vm.root_vm.core_node,
+                    filename,
+                    simulation_manager_cfg=sim_mgr,
+                    data_manager_cfg=data_mgr,
+                    pool_size=int(self.sim_settings.pool_size),
+                    distribution_registry=self.scene_vm.distribution_registry,
+                    slots_registry=self.scene_vm.slots_registry,
+                )
                 QMessageBox.information(self, "Успех", f"Конфигурация сохранена в:\n{filename}")
-            except Exception as e:
-                QMessageBox.critical(self, "Ошибка сохранения", f"Не удалось сохранить YAML:\n{e}")
+            except Exception as exc:
+                QMessageBox.critical(self, "Ошибка сохранения", f"Не удалось сохранить YAML:\n{exc}")
 
     def _on_open_simulation_settings(self) -> None:
         """
@@ -909,16 +1018,23 @@ class MainWindow(QMainWindow):
             key = event.key()
             text_char = event.text().strip().upper()
             if key == Qt.Key.Key_W or text_char in ('W', 'Ц'):
-                self._set_gizmo_mode(GizmoMode.TRANSLATE)
+                if self.act_gizmo_translate.isVisible() and self.act_gizmo_translate.isEnabled():
+                    self._set_gizmo_mode(GizmoMode.TRANSLATE)
+                    self.act_gizmo_translate.setChecked(True)
                 return True
             elif key == Qt.Key.Key_E or text_char in ('E', 'У'):
-                self._set_gizmo_mode(GizmoMode.ROTATE)
+                if self.act_gizmo_rotate.isVisible() and self.act_gizmo_rotate.isEnabled():
+                    self._set_gizmo_mode(GizmoMode.ROTATE)
+                    self.act_gizmo_rotate.setChecked(True)
                 return True
             elif key == Qt.Key.Key_R or text_char in ('R', 'К'):
-                self._set_gizmo_mode(GizmoMode.SCALE)
+                if self.act_gizmo_scale.isVisible() and self.act_gizmo_scale.isEnabled():
+                    self._set_gizmo_mode(GizmoMode.SCALE)
+                    self.act_gizmo_scale.setChecked(True)
                 return True
             elif key == Qt.Key.Key_Q or text_char in ('Q', 'Й'):
-                self._toggle_gizmo_space()
+                if self.act_gizmo_space.isVisible() and self.act_gizmo_space.isEnabled():
+                    self._toggle_gizmo_space()
                 return True
         return super().eventFilter(watched, event)
 
@@ -938,23 +1054,26 @@ class MainWindow(QMainWindow):
             gizmo = self.viewport_controller.transform_gizmo
             key_code = event.key()
             if key_code == Qt.Key.Key_W:
-                gizmo.mode = GizmoMode.TRANSLATE
-                self.viewport.render()
+                if self.act_gizmo_translate.isVisible() and self.act_gizmo_translate.isEnabled():
+                    self._set_gizmo_mode(GizmoMode.TRANSLATE)
+                    self.act_gizmo_translate.setChecked(True)
                 event.accept()
                 return
             elif key_code == Qt.Key.Key_E:
-                gizmo.mode = GizmoMode.ROTATE
-                self.viewport.render()
+                if self.act_gizmo_rotate.isVisible() and self.act_gizmo_rotate.isEnabled():
+                    self._set_gizmo_mode(GizmoMode.ROTATE)
+                    self.act_gizmo_rotate.setChecked(True)
                 event.accept()
                 return
             elif key_code == Qt.Key.Key_R:
-                gizmo.mode = GizmoMode.SCALE
-                self.viewport.render()
+                if self.act_gizmo_scale.isVisible() and self.act_gizmo_scale.isEnabled():
+                    self._set_gizmo_mode(GizmoMode.SCALE)
+                    self.act_gizmo_scale.setChecked(True)
                 event.accept()
                 return
             elif key_code == Qt.Key.Key_Q:
-                gizmo.space = GizmoSpace.WORLD if gizmo.space == GizmoSpace.LOCAL else GizmoSpace.LOCAL
-                self.viewport.render()
+                if self.act_gizmo_space.isVisible() and self.act_gizmo_space.isEnabled():
+                    self._toggle_gizmo_space()
                 event.accept()
                 return
 

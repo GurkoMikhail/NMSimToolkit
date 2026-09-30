@@ -1,0 +1,157 @@
+Materials:
+- &air_2598 Air, Dry (near sea level)
+- &pb_0789 Pb
+- &sodium_iodide_a6c2 Sodium Iodide
+simulation_manager:
+  start_time: 0.0
+  stop_time: 1000000000.0
+  particles_number: 10000
+  min_energy: 0.001
+data_manager:
+  filename: nema_4.2/0.0_deg.hdf
+  handlers:
+  - type: HistoryAssemblerHandler
+    sensitive_volumes:
+    - Detector
+    save_initial_states: true
+scene:
+  name: Simulation_volume
+  transformations: []
+  children:
+  - name: Phantom
+    transformations: []
+    children:
+    - name: Source
+      transformations: []
+      children: []
+      type: Source
+      activity: 0.1
+      distribution:
+        path: Source.npy
+        format: numpy
+      voxel_size: 4.2
+      radiation_type: Gamma
+      energy: 0.159
+      half_life: 4.752e+40
+    type: WoodcockVoxelVolume
+    voxel_size: 4.2
+    distribution:
+      path: Phantom.npy
+      format: numpy
+  - name: Gantry
+    transformations: []
+    children:
+    - name: GammaCamera_1
+      transformations:
+      - type: translate
+        x: 305.25
+        y: 0.0
+        z: 300.0
+        in_local: false
+      - type: rotate
+        alpha: 0.0
+        beta: -1.5707963267948966
+        gamma: -0.0
+        rotation_center:
+        - 0.0
+        - 0.0
+        - 0.0
+        in_local: false
+      children: []
+      type: GammaCamera
+      collimator:
+        name: Collimator_1
+        transformations:
+        - type: translate
+          x: 0.0
+          y: 0.0
+          z: 60.5
+          in_local: false
+        children: []
+        type: Volume
+        geometry:
+          type: Box
+          x: 400.0
+          y: 400.0
+          z: 30.0
+        material: *pb_0789
+      detector:
+        name: Detector_1
+        transformations:
+        - type: translate
+          x: 0.0
+          y: 0.0
+          z: 19.0
+          in_local: false
+        children: []
+        type: Volume
+        geometry:
+          type: Box
+          x: 400.0
+          y: 400.0
+          z: 9.5
+        material: *sodium_iodide_a6c2
+      gap: 1.0
+      shielding_thickness: 20.0
+      glass_backend_thickness: 50.0
+    - name: GammaCamera_2
+      transformations:
+      - type: translate
+        x: -305.25
+        y: 3.7382343543972954e-14
+        z: 300.0
+        in_local: false
+      - type: rotate
+        alpha: 6.123233995736766e-17
+        beta: 1.5707963267948966
+        gamma: -0.0
+        rotation_center:
+        - 0.0
+        - 0.0
+        - 0.0
+        in_local: false
+      children: []
+      type: GammaCamera
+      collimator:
+        name: Collimator_2
+        transformations:
+        - type: translate
+          x: 0.0
+          y: 0.0
+          z: 60.5
+          in_local: false
+        children: []
+        type: Volume
+        geometry:
+          type: Box
+          x: 400.0
+          y: 400.0
+          z: 30.0
+        material: *pb_0789
+      detector:
+        name: Detector_2
+        transformations:
+        - type: translate
+          x: 0.0
+          y: 0.0
+          z: 19.0
+          in_local: false
+        children: []
+        type: Volume
+        geometry:
+          type: Box
+          x: 400.0
+          y: 400.0
+          z: 9.5
+        material: *sodium_iodide_a6c2
+      gap: 1.0
+      shielding_thickness: 20.0
+      glass_backend_thickness: 50.0
+    type: Gantry
+  type: Volume
+  geometry:
+    type: Box
+    x: 1200.0
+    y: 1200.0
+    z: 800.0
+  material: *air_2598

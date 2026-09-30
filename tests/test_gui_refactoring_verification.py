@@ -19,7 +19,8 @@ from gui.viewport_3d.vtk_viewport import VTKViewport
 from gui.views.main_window import MainWindow
 from gui.views.scene_tree_widget import SceneTreeWidget
 from gui.views.property_inspector import PropertyInspector
-from core.geometry.gamma_cameras import GammaCamera
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
+from gui.viewmodels.nodes.gamma_camera_vm import create_default_gamma_camera_vm
 
 
 class TestGuiRefactoringVerification(unittest.TestCase):
@@ -265,41 +266,37 @@ class TestGuiRefactoringVerification(unittest.TestCase):
         """
         Проверка GammaCameraViewModel:
         - Наследование от VolumeViewModel (наличие size, color).
-        - Корректная синхронизация orbit_radius и orbit_angle через дескрипторы gui_field.
-        - Отсутствие отката значений к дефолтным при вызове set_orbit_position().
+        - Наличие геометрических параметров: detector_size, detector_thickness, collimator_thickness, half_thickness.
+        - Корректная связь с полями spect_group в PropertyInspector.
         """
-        from settings.database_setting import material_database
-        collimator = Volume(geometry=Box(20.0, 20.0, 5.0), material=material_database['Pb'], name='Collimator')
-        detector = Volume(geometry=Box(20.0, 20.0, 2.0), material=material_database['Pb'], name='Detector')
-        cam = GammaCamera(collimator=collimator, detector=detector, name='TestGammaCam')
-
-        vm = GammaCameraViewModel(cam)
-        self.assertIsInstance(vm, VolumeViewModel)
+        vm = create_default_gamma_camera_vm(
+            name='TestGammaCam',
+            detector_size=(20.0, 20.0),
+            detector_thickness=2.0,
+            collimator_thickness=5.0,
+        )
+        self.assertIsInstance(vm, NodeViewModel)
         self.assertIsNotNone(vm.size)
 
-        # Проверка начальных параметров
-        self.assertAlmostEqual(vm.orbit_radius, 250.0)
-        self.assertAlmostEqual(vm.orbit_angle, 0.0)
-
-        # Вызов set_orbit_position и проверка реактивности
-        prop_changes = []
-        vm.property_changed.connect(lambda prop, val: prop_changes.append((prop, val)))
-
-        vm.set_orbit_position(380.0, 60.0)
-        self.assertAlmostEqual(vm.orbit_radius, 380.0)
-        self.assertAlmostEqual(vm.orbit_angle, 60.0)
+        # Проверка начальных геометрических параметров
+        np.testing.assert_allclose(vm.detector_size, [20.0, 20.0])
+        self.assertAlmostEqual(vm.detector_thickness, 2.0)
+        self.assertAlmostEqual(vm.collimator_thickness, 5.0)
+        self.assertGreater(vm.half_thickness, 0.0)
 
         # Проверка связывания с PropertyInspector
         inspector = PropertyInspector()
         inspector.set_target_viewmodel(vm)
-        self.assertAlmostEqual(inspector.spin_orbit_radius.value(), 380.0)
-        self.assertAlmostEqual(inspector.spin_orbit_angle.value(), 60.0)
+        self.assertAlmostEqual(inspector.spin_detector_size_x.value(), 20.0)
+        self.assertAlmostEqual(inspector.spin_detector_size_y.value(), 20.0)
+        self.assertAlmostEqual(inspector.spin_detector_thickness.value(), 2.0)
+        self.assertAlmostEqual(inspector.spin_collimator_thickness.value(), 5.0)
 
         # Изменение через UI инспектора
-        inspector.spin_orbit_radius.setValue(420.0)
-        inspector._on_spect_param_changed()
-        self.assertAlmostEqual(vm.orbit_radius, 420.0)
-        self.assertAlmostEqual(inspector.spin_orbit_radius.value(), 420.0)
+        inspector.spin_detector_size_x.setValue(35.0)
+        inspector._on_spect_detector_size_changed()
+        np.testing.assert_allclose(vm.detector_size, [35.0, 20.0])
+        self.assertAlmostEqual(inspector.spin_detector_size_x.value(), 35.0)
 
     def test_data_manager_stop_method(self):
         """
@@ -347,11 +344,13 @@ class TestGuiRefactoringVerification(unittest.TestCase):
         """
         Проверка двусторонней связи 3D-манипулятора ОФЭКТ с выбранной GammaCameraViewModel в MainWindow.
         """
-        from settings.database_setting import material_database
         root = CompositeNode(name="SPECTScene")
-        collimator = Volume(geometry=Box(20.0, 20.0, 5.0), material=material_database['Pb'], name='Collimator')
-        detector = Volume(geometry=Box(20.0, 20.0, 2.0), material=material_database['Pb'], name='Detector')
-        cam = GammaCamera(collimator=collimator, detector=detector, name='CameraNode')
+        cam, _ = create_default_gamma_camera(
+            name='CameraNode',
+            detector_size=(20.0, 20.0),
+            detector_thickness=2.0,
+            collimator_thickness=5.0,
+        )
         root.add_child(cam)
 
         scene_vm = SceneViewModel(root)
@@ -363,8 +362,11 @@ class TestGuiRefactoringVerification(unittest.TestCase):
 
         # Симулируем перемещение манипулятора
         win.viewport_controller.spect_manipulator.orbit_changed.emit(330.0, 45.0, 0.0)
-        self.assertAlmostEqual(cam_vm.orbit_radius, 330.0)
-        self.assertAlmostEqual(cam_vm.orbit_angle, 45.0)
+        world_pos = cam_vm.global_matrix[0:3, 3]
+        cam_r = float(np.hypot(world_pos[0], world_pos[1])) - cam_vm.half_thickness
+        cam_ang = float(np.degrees(np.arctan2(world_pos[1], world_pos[0])) % 360.0)
+        self.assertAlmostEqual(cam_r, 330.0)
+        self.assertAlmostEqual(cam_ang, 45.0)
 
         win.close()
 

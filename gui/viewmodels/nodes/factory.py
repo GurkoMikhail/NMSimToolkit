@@ -6,7 +6,7 @@ from core.scene.dose_grid_node import DoseGridNode
 from core.scene.gantry_node import GantryNode
 from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
 from core.geometry.parametric_collimators import (
     ParametricParallelCollimator,
     ParametricParallelSquareCollimator,
@@ -45,7 +45,7 @@ def create_node_viewmodel(core_node: SpatialNode, parent_vm: Optional[NodeViewMo
         return ParametricParallelSquareCollimatorViewModel(core_node, parent_vm)
     if isinstance(core_node, WoodcockVoxelVolume):
         return VoxelVolumeViewModel(core_node, parent_vm)
-    if isinstance(core_node, GammaCamera):
+    if isinstance(core_node, GammaCameraNode):
         return GammaCameraViewModel(core_node, parent_vm)
     if isinstance(core_node, PetScanner):
         return PetScannerViewModel(core_node, parent_vm)

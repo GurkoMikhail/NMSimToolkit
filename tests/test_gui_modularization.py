@@ -7,7 +7,7 @@ from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from settings.database_setting import material_database
 from core.scene.nodes import CompositeNode
-from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel, create_default_gamma_camera_vm
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
@@ -58,15 +58,10 @@ class TestGuiModularization(unittest.TestCase):
         камер GammaCameraViewModel со свойствами процедуры.
         """
         # Создаем детекторные головки
-        box_geom = Box(100.0, 80.0, 40.0)
-        mat = material_database['Pb']
-        cam1 = Volume(geometry=box_geom, material=mat, name="Camera_Head_1")
-        cam2 = Volume(geometry=box_geom, material=mat, name="Camera_Head_2")
-        self.root.add_child(cam1)
-        self.root.add_child(cam2)
-
-        cam_vm1 = GammaCameraViewModel(cam1)
-        cam_vm2 = GammaCameraViewModel(cam2)
+        cam_vm1 = create_default_gamma_camera_vm(name="Camera_Head_1")
+        cam_vm2 = create_default_gamma_camera_vm(name="Camera_Head_2")
+        self.root.add_child(cam_vm1.core_node)
+        self.root.add_child(cam_vm2.core_node)
 
         proc = SpectProcedureViewModel()
         proc.steps = 32
@@ -84,10 +79,14 @@ class TestGuiModularization(unittest.TestCase):
 
         # Проверяем синхронизацию камер со свойствами процедуры
         proc.sync_cameras([cam_vm1, cam_vm2])
-        self.assertAlmostEqual(cam_vm1.orbit_radius, 280.0)
-        self.assertAlmostEqual(cam_vm2.orbit_radius, 280.0)
-        self.assertAlmostEqual(cam_vm1.orbit_angle, 15.0)
-        self.assertAlmostEqual(cam_vm2.orbit_angle, 105.0)
+        cam1_r = float(np.hypot(cam_vm1.local_matrix[0, 3], cam_vm1.local_matrix[1, 3])) - cam_vm1.half_thickness
+        cam2_r = float(np.hypot(cam_vm2.local_matrix[0, 3], cam_vm2.local_matrix[1, 3])) - cam_vm2.half_thickness
+        cam1_ang = float(np.degrees(np.arctan2(cam_vm1.local_matrix[1, 3], cam_vm1.local_matrix[0, 3])) % 360.0)
+        cam2_ang = float(np.degrees(np.arctan2(cam_vm2.local_matrix[1, 3], cam_vm2.local_matrix[0, 3])) % 360.0)
+        self.assertAlmostEqual(cam1_r, 280.0)
+        self.assertAlmostEqual(cam2_r, 280.0)
+        self.assertAlmostEqual(cam1_ang, 15.0)
+        self.assertAlmostEqual(cam2_ang, 105.0)
 
     def test_procedure_factory_and_types(self) -> None:
         """

@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Optional, Protocol, Set, Tuple, runtime_chec
 
 import numpy as np
 
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
+from core.geometry.spect_kinematics import compute_orbit_matrix
 from core.scene.gantry_node import GantryNode
 from gui.viewport_3d.gizmo_types import GizmoAxis, GizmoMode, GizmoSpace
 
@@ -79,6 +80,53 @@ class IKinematicConstraint(Protocol):
     def on_transform_committed(self, target_node: Any, commit_data: Dict[str, Any]) -> None:
         """Фиксация параметров в процедуре при отпускании кнопки мыши (LMB release)."""
         ...
+
+
+
+class FixedSubcomponentKinematicConstraint:
+    """
+    Кинематическое ограничение для жестко зафиксированных внутренних компонентов (дочерних узлов).
+    Блокирует любые перемещения, вращения и масштабирование, делая компонент полностью неподвижным.
+    """
+
+    def filter_translation(
+        self,
+        target_node: Any,
+        proposed_world_delta: np.ndarray,
+        initial_matrix: np.ndarray,
+        active_axis: Optional[GizmoAxis] = None,
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        return (np.zeros(3, dtype=np.float64), {'status_message': 'Геометрия компонента зафиксирована'})
+
+    def filter_rotation(
+        self,
+        target_node: Any,
+        axis: np.ndarray,
+        proposed_angle_deg: float,
+        initial_matrix: np.ndarray,
+    ) -> Tuple[np.ndarray, float, Dict[str, Any]]:
+        return (axis, 0.0, {'status_message': 'Геометрия компонента зафиксирована'})
+
+    def is_translation_allowed(self) -> bool:
+        return False
+
+    def is_rotation_allowed(self) -> bool:
+        return False
+
+    def is_scale_allowed(self) -> bool:
+        return False
+
+    def get_forced_space(self) -> Optional[GizmoSpace]:
+        return None
+
+    def get_allowed_axes(self, mode: GizmoMode) -> Set[GizmoAxis]:
+        return set()
+
+    def on_transform_changed(self, target_node: Any, changed_data: Dict[str, Any]) -> None:
+        pass
+
+    def on_transform_committed(self, target_node: Any, commit_data: Dict[str, Any]) -> None:
+        pass
 
 
 
@@ -158,7 +206,7 @@ class SpectOrbitKinematicConstraint:
         """
         camera_half_thickness = (
             target_node.half_thickness
-            if isinstance(target_node.core_node, GammaCamera)
+            if isinstance(target_node.core_node, GammaCameraNode)
             else (self._camera_vm.half_thickness if self._camera_vm is not None else 0.0)
         )
 
@@ -229,7 +277,7 @@ class SpectOrbitKinematicConstraint:
             new_angle = initial_angle
             status_message = f"ОФЭКТ: Смещение Z = {new_z:.1f} мм (Сетка: 10 мм)"
 
-        new_matrix = GammaCamera.compute_orbit_matrix(
+        new_matrix = compute_orbit_matrix(
             radius=new_radius,
             angle_deg=new_angle,
             z=new_z,
@@ -328,10 +376,18 @@ class SpectOrbitKinematicConstraint:
         new_z = changed_data.get('z')
 
         if self.spect_manipulator is not None and new_radius is not None:
+            camera_node = target_node if target_node is not None else self._camera_vm
+            default_angle = 0.0
+            default_z = 0.0
+            if camera_node is not None and camera_node.local_matrix is not None:
+                matrix_pos = camera_node.local_matrix[0:3, 3]
+                default_angle = float(np.degrees(np.arctan2(matrix_pos[1], matrix_pos[0])) % 360.0)
+                default_z = float(matrix_pos[2])
+
             self.spect_manipulator.set_orbit_parameters(
                 radius=float(new_radius),
-                angle_deg=float(new_angle if new_angle is not None else (self._camera_vm.orbit_angle if self._camera_vm is not None else 0.0)),
-                z=float(new_z if new_z is not None else (self._camera_vm.orbit_z if self._camera_vm is not None else 0.0)),
+                angle_deg=float(new_angle if new_angle is not None else default_angle),
+                z=float(new_z if new_z is not None else default_z),
                 render=False,
                 emit_signal=False,
             )
@@ -339,7 +395,7 @@ class SpectOrbitKinematicConstraint:
         if target_node.parent_vm is not None:
             sibling_cameras = [
                 child for child in target_node.parent_vm.children
-                if isinstance(child.core_node, GammaCamera)
+                if isinstance(child.core_node, GammaCameraNode)
             ]
             if len(sibling_cameras) > 1 and target_node in sibling_cameras:
                 procedure = self._procedure_ref() if self._procedure_ref is not None else None
@@ -348,7 +404,20 @@ class SpectOrbitKinematicConstraint:
                 if new_radius is not None:
                     for sibling in sibling_cameras:
                         if sibling is not target_node:
-                            sibling.set_orbit_position(float(new_radius), sibling.orbit_angle, sibling.orbit_z)
+                            sibling_position = sibling.local_matrix[0:3, 3]
+                            sibling_angle = float(np.degrees(np.arctan2(sibling_position[1], sibling_position[0])) % 360.0)
+                            sibling_dir_z = sibling.local_matrix[0:3, 2]
+                            sibling_dir_y = sibling.local_matrix[0:3, 1]
+                            cos_roll = float(np.clip(np.dot(sibling_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
+                            sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), sibling_dir_y), sibling_dir_z))
+                            sibling_roll_deg = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
+                            sibling.local_matrix = compute_orbit_matrix(
+                                radius=float(new_radius),
+                                angle_deg=sibling_angle,
+                                z=float(sibling_position[2]),
+                                half_thickness=sibling.half_thickness,
+                                roll_deg=sibling_roll_deg,
+                            )
 
                 if new_angle is not None and procedure is not None:
                     head_angles = procedure.head_angles
@@ -357,10 +426,19 @@ class SpectOrbitKinematicConstraint:
                     for sibling_idx, sibling in enumerate(sibling_cameras):
                         if sibling is not target_node:
                             sib_offset = head_angles[sibling_idx] if sibling_idx < len(head_angles) else (360.0 / len(sibling_cameras)) * sibling_idx
-                            sibling.set_orbit_position(
-                                sibling.orbit_radius,
-                                (base_start_angle + sib_offset) % 360.0,
-                                sibling.orbit_z,
+                            sibling_position = sibling.local_matrix[0:3, 3]
+                            sibling_radius = max(self._min_radius, float(np.hypot(sibling_position[0], sibling_position[1])) - sibling.half_thickness)
+                            sibling_dir_z = sibling.local_matrix[0:3, 2]
+                            sibling_dir_y = sibling.local_matrix[0:3, 1]
+                            cos_roll = float(np.clip(np.dot(sibling_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
+                            sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), sibling_dir_y), sibling_dir_z))
+                            sibling_roll_deg = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
+                            sibling.local_matrix = compute_orbit_matrix(
+                                radius=sibling_radius,
+                                angle_deg=(base_start_angle + sib_offset) % 360.0,
+                                z=float(sibling_position[2]),
+                                half_thickness=sibling.half_thickness,
+                                roll_deg=sibling_roll_deg,
                             )
 
     def on_transform_committed(self, target_node: Any, commit_data: Dict[str, Any]) -> None:
@@ -376,7 +454,7 @@ class SpectOrbitKinematicConstraint:
 
         camera_nodes = [
             child for child in target_node.parent_vm.children
-            if isinstance(child.core_node, GammaCamera)
+            if isinstance(child.core_node, GammaCameraNode)
         ] if target_node.parent_vm is not None else [target_node]
 
 
@@ -447,7 +525,7 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
 
         camera_half_thickness = (
             target_node.half_thickness
-            if isinstance(target_node.core_node, GammaCamera)
+            if isinstance(target_node.core_node, GammaCameraNode)
             else (self._camera_vm.half_thickness if self._camera_vm is not None else 0.0)
         )
 
@@ -525,7 +603,7 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
             gantry_angle = gantry_node_vm.gantry_angle_deg
             status_message = f"ОФЭКТ (Гантри): Смещение Z = {new_z:.1f} мм (Сетка: 10 мм)"
 
-        new_matrix = GammaCamera.compute_orbit_matrix(
+        new_matrix = compute_orbit_matrix(
             radius=new_radius,
             angle_deg=new_angle,
             z=new_z,
@@ -578,18 +656,28 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
                 new_radius = changed_data.get('radius')
                 if new_radius is not None:
                     for sibling in gantry_node_vm.children:
-                        if isinstance(sibling.core_node, GammaCamera) and sibling is not target_node:
-                            sibling.set_orbit_position(float(new_radius), sibling.orbit_angle, sibling.orbit_z)
+                        if isinstance(sibling.core_node, GammaCameraNode) and sibling is not target_node:
+                            sibling_pos = sibling.local_matrix[0:3, 3]
+                            sibling_angle = float(np.degrees(np.arctan2(sibling_pos[1], sibling_pos[0])) % 360.0)
+                            sibling.local_matrix = compute_orbit_matrix(
+                                radius=float(new_radius),
+                                angle_deg=sibling_angle,
+                                z=float(sibling_pos[2]),
+                                half_thickness=sibling.half_thickness,
+                            )
                     if procedure is not None:
                         procedure.radius = float(new_radius)
 
             if self.spect_manipulator is not None:
-                current_radius = float(changed_data['radius']) if 'radius' in changed_data else target_node.orbit_radius
+                current_radius = float(changed_data['radius']) if 'radius' in changed_data else (
+                    float(np.hypot(target_node.local_matrix[0, 3], target_node.local_matrix[1, 3])) - target_node.half_thickness
+                )
                 current_gantry_angle = gantry_node_vm.gantry_angle_deg
+                current_z = float(changed_data.get('z', target_node.local_matrix[2, 3]))
                 self.spect_manipulator.set_orbit_parameters(
                     radius=current_radius,
                     angle_deg=current_gantry_angle,
-                    z=float(changed_data.get('z', target_node.orbit_z)),
+                    z=current_z,
                     render=False,
                     emit_signal=False,
                 )
@@ -610,7 +698,7 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
                 if commit_data.get('action') in ('radial', 'tangential'):
                     camera_nodes = [
                         child for child in gantry_node_vm.children
-                        if isinstance(child.core_node, GammaCamera)
+                        if isinstance(child.core_node, GammaCameraNode)
                     ]
                     procedure.sync_cameras(camera_nodes)
         else:
@@ -744,6 +832,7 @@ class GantryKinematicConstraint:
 __all__ = [
     'IRotatableProcedure',
     'IKinematicConstraint',
+    'FixedSubcomponentKinematicConstraint',
     'SpectOrbitKinematicConstraint',
     'CameraMountKinematicConstraint',
     'GantryKinematicConstraint',

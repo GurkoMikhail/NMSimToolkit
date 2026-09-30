@@ -17,6 +17,7 @@ from core.config.models import (
     DataManagerConfig,
     DirectStreamHandlerConfig,
     GammaCameraConfig,
+    GammaCameraSlotsConfig,
     NumpyDistributionConfig,
     ParametricParallelCollimatorConfig,
     ParametricParallelSquareCollimatorConfig,
@@ -26,6 +27,7 @@ from core.config.models import (
     SourceConfig,
     TransformConfig,
     TranslateConfig,
+    MatrixTransformConfig,
     VolumeConfig,
     WoodcockVoxelVolumeConfig,
     DoseGridNodeConfig,
@@ -34,7 +36,7 @@ from core.config.models import (
 )
 from core.config.yaml_dumper import dump_simulation_config
 from core.geometry.geometries import Box
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
 from core.geometry.parametric_collimators import (
     ParametricParallelCollimator,
     ParametricParallelSquareCollimator,
@@ -56,12 +58,23 @@ class SceneExporter:
     """
 
     @classmethod
-    def decompose_matrix(cls, matrix: np.ndarray) -> List[TransformConfig]:
+    def decompose_matrix(cls, matrix: np.ndarray, as_matrix: bool = True) -> List[TransformConfig]:
         """
-        Декомпозирует матрицу трансформации 4x4 на трансляцию и поворот (углы Эйлера).
+        Преобразует матрицу трансформации 4x4 в список TransformConfig.
+        По умолчанию при as_matrix=True выгружает полную матрицу 4x4 (MatrixTransformConfig),
+        что гарантирует 100% стабильность сохранения/загрузки без потери знаков и Gimbal lock.
+        При as_matrix=False выполняет декомпозицию на TranslateConfig и RotateConfig.
         """
         transforms: List[TransformConfig] = []
-        if matrix is None or np.allclose(matrix, np.eye(4)):
+        if matrix is None or np.allclose(matrix, np.eye(4), atol=1e-7):
+            return transforms
+
+        if as_matrix:
+            mat_4x4 = [
+                [float(np.round(matrix[i, j], 8)) for j in range(4)]
+                for i in range(4)
+            ]
+            transforms.append(MatrixTransformConfig(matrix=mat_4x4))
             return transforms
 
         # 1. Извлечение трансляции
@@ -94,6 +107,7 @@ class SceneExporter:
         cls,
         node: SpatialNode,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
+        slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
     ) -> AnyNodeConfig:
         """
         Рекурсивно экспортирует узел сцены в Pydantic-модель конфигурации.
@@ -101,16 +115,30 @@ class SceneExporter:
         node_name = node.name
         transforms = cls.decompose_matrix(node.local_matrix)
 
-        # 1. GammaCamera
-        if isinstance(node, GammaCamera):
-            collimator_cfg = cls.export_node(node.collimator, distribution_registry=distribution_registry)
-            detector_cfg = cls.export_node(node.detector, distribution_registry=distribution_registry)
+        # 1. GammaCameraNode
+        if isinstance(node, GammaCameraNode):
+            children_cfgs = [
+                cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry)
+                for child_node in node.childs
+            ]
+            slots_cfg = None
+            if slots_registry is not None:
+                slots_cfg = slots_registry.get(node)
+            if slots_cfg is None:
+                slots_cfg = GammaCameraSlotsConfig(
+                    casing=node.slots.get("casing"),
+                    detector_box=node.slots.get("detector_box"),
+                    collimator=node.slots.get("collimator"),
+                    crystal=node.slots.get("crystal"),
+                    glass_backend=node.slots.get("glass_backend"),
+                )
             return GammaCameraConfig(
                 name=node_name,
                 transformations=transforms,
-                collimator=collimator_cfg,
-                detector=detector_cfg,
+                slots=slots_cfg,
+                children=children_cfgs,
             )
+
 
         # 2. ParametricParallelCollimator
         if isinstance(node, ParametricParallelCollimator):
@@ -146,7 +174,7 @@ class SceneExporter:
                 dist_cfg = distribution_registry.get(node)
             if dist_cfg is None:
                 dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'phantom'}.npy")
-            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry) for child_node in node.childs]
+            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
             return WoodcockVoxelVolumeConfig(
                 name=node_name,
                 transformations=transforms,
@@ -164,7 +192,7 @@ class SceneExporter:
                 geo_cfg = BoxConfig(x=float(node.size[0]), y=float(node.size[1]), z=float(node.size[2]))
 
             mat_name = node.material.name
-            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry) for child_node in node.childs]
+            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
 
             return VolumeConfig(
                 name=node_name,
@@ -183,7 +211,7 @@ class SceneExporter:
                 dist_cfg = distribution_registry.get(node)
             if dist_cfg is None:
                 dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'source_dist'}.npy")
-            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry) for child_node in node.childs]
+            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
             half_life = float(node.half_life)
             rad_type = node.radiation_type
             if len(node.energy) == 1:
@@ -204,7 +232,7 @@ class SceneExporter:
 
         # 7. DoseGridNode
         if isinstance(node, DoseGridNode):
-            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry) for child_item in node.childs]
+            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
             return DoseGridNodeConfig(
                 name=node_name,
                 transformations=transforms,
@@ -216,7 +244,7 @@ class SceneExporter:
 
         # 7.1. GantryNode
         if isinstance(node, GantryNode):
-            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry) for child_item in node.childs]
+            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
             return GantryConfig(
                 name=node_name,
                 transformations=transforms,
@@ -225,7 +253,7 @@ class SceneExporter:
 
         # 8. CompositeNode
         if isinstance(node, CompositeNode):
-            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry) for child_item in node.childs]
+            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
             return BaseCompositeNodeConfig(
                 name=node_name,
                 transformations=transforms,
@@ -243,11 +271,12 @@ class SceneExporter:
         cls,
         root_node: SpatialNode,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
+        slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
     ) -> AnyNodeConfig:
         """
         Экспортирует корневой узел графа сцены.
         """
-        return cls.export_node(root_node, distribution_registry=distribution_registry)
+        return cls.export_node(root_node, distribution_registry=distribution_registry, slots_registry=slots_registry)
 
     @classmethod
     def export_to_config(
@@ -257,11 +286,12 @@ class SceneExporter:
         data_manager_cfg: Optional[DataManagerConfig] = None,
         pool_size: int = 1,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
+        slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
     ) -> SimulationConfig:
         """
         Формирует полный SimulationConfig из корневого узла сцены и опциональных параметров.
         """
-        scene_cfg = cls.export_scene(root_node, distribution_registry=distribution_registry)
+        scene_cfg = cls.export_scene(root_node, distribution_registry=distribution_registry, slots_registry=slots_registry)
         sim_mgr = simulation_manager_cfg or SimulationManagerConfig()
         data_mgr = data_manager_cfg or DataManagerConfig(
             filename="output.h5",
@@ -284,6 +314,7 @@ class SceneExporter:
         data_manager_cfg: Optional[DataManagerConfig] = None,
         pool_size: int = 1,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
+        slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
     ) -> None:
         """
         Экспортирует граф сцены напрямую в YAML-файл конфигурации.
@@ -294,5 +325,6 @@ class SceneExporter:
             data_manager_cfg=data_manager_cfg,
             pool_size=pool_size,
             distribution_registry=distribution_registry,
+            slots_registry=slots_registry,
         )
         dump_simulation_config(config, filepath)

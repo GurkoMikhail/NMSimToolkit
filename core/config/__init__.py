@@ -24,11 +24,13 @@ from core.config.models import (
     AnyDistributionConfig,
     SourceConfig,
     GammaCameraConfig,
+    GammaCameraSlotsConfig,
     DoseGridNodeConfig,
     GantryConfig,
     TransformConfig,
     TranslateConfig,
     RotateConfig,
+    MatrixTransformConfig,
 )
 from core.config.units import (
     LengthConfig,
@@ -61,11 +63,13 @@ __all__ = [
     'AnyDistributionConfig',
     'SourceConfig',
     'GammaCameraConfig',
+    'GammaCameraSlotsConfig',
     'DoseGridNodeConfig',
     'GantryConfig',
     'TransformConfig',
     'TranslateConfig',
     'RotateConfig',
+    'MatrixTransformConfig',
     'LengthConfig',
     'EnergyConfig',
     'TimeConfig',
@@ -73,3 +77,4 @@ __all__ = [
     'AngleConfig',
     'unit_validator_factory',
 ]
+

@@ -5,7 +5,8 @@ from PySide6.QtWidgets import QApplication
 
 from core.scene.nodes import CompositeNode
 from core.geometry.pet_scanners import PetScanner
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
@@ -206,10 +207,9 @@ class TestArchitecturalReviewFixes(unittest.TestCase):
         """
         mat = Material(name="Lead")
 
-        def _make_cam(name: str) -> GammaCamera:
-            col = Volume(geometry=Box(200, 150, 20), material=mat, name=f"{name}_Col")
-            det = Volume(geometry=Box(200, 150, 10), material=mat, name=f"{name}_Det")
-            return GammaCamera(collimator=col, detector=det, name=name)
+        def _make_cam(name: str) -> GammaCameraNode:
+            cam_node, _ = create_default_gamma_camera(name=name)
+            return cam_node
 
         cam1 = _make_cam("Camera_Head_1")
         cam2 = _make_cam("Camera_Head_2")

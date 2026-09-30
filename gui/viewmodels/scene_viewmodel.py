@@ -32,17 +32,24 @@ class SceneViewModel(QObject):
         self.selected_node: Optional[NodeViewModel] = None
         self._node_map: Dict[int, NodeViewModel] = {}
         self.distribution_registry: Dict[Any, Any] = {}
+        self.slots_registry: Dict[Any, Any] = {}
 
         if root_core_node is not None:
             self.load_scene(root_core_node)
 
-    def load_scene(self, root_core_node: SpatialNode, distribution_registry: Optional[Dict[Any, Any]] = None) -> NodeViewModel:
+    def load_scene(
+        self,
+        root_core_node: SpatialNode,
+        distribution_registry: Optional[Dict[Any, Any]] = None,
+        slots_registry: Optional[Dict[Any, Any]] = None,
+    ) -> NodeViewModel:
         """
         Загружает граф сцены из ядра и строит иерархию ViewModel.
         """
         VolumeViewModel.clear_sensitive_volumes()
         self._node_map.clear()
         self.distribution_registry = dict(distribution_registry) if distribution_registry is not None else {}
+        self.slots_registry = dict(slots_registry) if slots_registry is not None else {}
         self.root_vm = create_node_viewmodel(root_core_node)
         self._register_node_recursive(self.root_vm)
         self.select_node(self.root_vm)

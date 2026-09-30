@@ -19,6 +19,7 @@ from gui.viewport_3d.transform_gizmo import (
 )
 from gui.viewport_3d.kinematic_constraints import (
     IKinematicConstraint,
+    FixedSubcomponentKinematicConstraint,
     SpectOrbitKinematicConstraint,
     CameraMountKinematicConstraint,
     GantryKinematicConstraint,
@@ -41,6 +42,7 @@ __all__ = [
     'GizmoSpace',
     'GizmoAxis',
     'IKinematicConstraint',
+    'FixedSubcomponentKinematicConstraint',
     'SpectOrbitKinematicConstraint',
     'CameraMountKinematicConstraint',
     'GantryKinematicConstraint',

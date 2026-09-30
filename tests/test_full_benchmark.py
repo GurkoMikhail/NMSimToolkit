@@ -12,7 +12,8 @@ os.environ['OMP_NUM_THREADS'] = '1'
 from core.geometry.volumes import Volume
 from core.scene.nodes import CompositeNode
 from core.geometry.geometries import Box
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from settings.database_setting import material_database
 from core.source.sources import PointSource
@@ -46,7 +47,7 @@ class TestFullBenchmark(unittest.TestCase):
             name='Collimator'
         )
 
-        spect_head = GammaCamera(
+        spect_head, _ = create_default_gamma_camera(
             collimator=collimator,
             detector=detector,
             shielding_material=material_database['Pb'],
@@ -57,10 +58,11 @@ class TestFullBenchmark(unittest.TestCase):
             name='Gamma_camera'
         )
 
+        casing_node = next(child for child in spect_head.childs if child.name == spect_head.slots['casing'])
         # Position the camera at some radius from the center
         radius = 23.3 * units.cm
         spect_head.rotate(gamma=units.pi/2)
-        spect_head.translate(y=radius + spect_head.size[2]/2)
+        spect_head.translate(y=radius + casing_node.size[2]/2)
 
         root_scene.add_child(spect_head)
 

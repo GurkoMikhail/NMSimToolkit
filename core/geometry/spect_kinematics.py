@@ -51,4 +51,62 @@ def compute_spect_poses(
     return calculated_poses
 
 
-__all__ = ["compute_spect_poses"]
+def compute_orbit_matrix(
+    radius: float,
+    angle_deg: float,
+    z: float = 0.0,
+    half_thickness: float = 0.0,
+    roll_deg: float = 0.0,
+    axial_z: Optional[float] = None,
+) -> np.ndarray:
+    """
+    Вычисляет кинематическую матрицу трансформации 4x4 для круговой орбиты ОФЭКТ,
+    ориентирующую гамма-камеру к центру орбиты (0, 0, z).
+    Лицевая поверхность гамма-камеры находится на заданном расстоянии radius от центра орбиты.
+    При half_thickness > 0 геометрический центр камеры смещается на radius + half_thickness,
+    что обеспечивает точный отсчет радиуса орбиты по лицевой поверхности гамма-камеры.
+    Лицевая нормаль детектора (+Z) направлена к центру орбиты.
+    Ось стола (+Y детектора) направлена вдоль глобальной оси Z.
+    Поперечная ось (+X детектора) направлена тангенциально к орбите.
+    Параметр roll_deg задает вращение детектора в его собственной плоскости вокруг нормали Z.
+    """
+    if axial_z is not None:
+        z = float(axial_z)
+
+    rad = np.radians(angle_deg)
+    center_radius = float(radius) + float(half_thickness)
+    pos_x = center_radius * np.cos(rad)
+    pos_y = center_radius * np.sin(rad)
+    mat = np.eye(4, dtype=np.float64)
+    mat[0, 3] = pos_x
+    mat[1, 3] = pos_y
+    mat[2, 3] = z
+
+    # Лицевая нормаль детектора (локальная ось +Z, столбец 2) смотрит в центр орбиты (0, 0, z)
+    mat[0, 2] = -np.cos(rad)
+    mat[1, 2] = -np.sin(rad)
+    mat[2, 2] = 0.0
+
+    # Осевая ось детектора (локальная ось +Y, столбец 1) направлена вдоль глобальной оси +Z (ось стола)
+    axis_y = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+    # Трансверсионная ось детектора (локальная ось +X, столбец 0) образует правую тройку: X = Y x Z
+    axis_x = np.array([np.sin(rad), -np.cos(rad), 0.0], dtype=np.float64)
+
+    if roll_deg != 0.0:
+        roll_rad = np.radians(roll_deg)
+        cos_roll = np.cos(roll_rad)
+        sin_roll = np.sin(roll_rad)
+        # Вращение вокруг нормали Z
+        rotated_x = cos_roll * axis_x + sin_roll * axis_y
+        rotated_y = -sin_roll * axis_x + cos_roll * axis_y
+        mat[0:3, 0] = rotated_x
+        mat[0:3, 1] = rotated_y
+    else:
+        mat[0:3, 0] = axis_x
+        mat[0:3, 1] = axis_y
+
+    return mat
+
+
+__all__ = ["compute_spect_poses", "compute_orbit_matrix"]

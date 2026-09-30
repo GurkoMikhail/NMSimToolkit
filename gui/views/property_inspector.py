@@ -19,8 +19,10 @@ from gui.viewmodels.nodes.volume_vm import (
 )
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.gantry_vm import GantryViewModel
 from gui.viewmodels.nodes.source_vm import SourceViewModel
 from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
+from gui.viewport_3d.transform_gizmo import GizmoAxis, GizmoMode
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
     SpectProcedureViewModel,
@@ -329,24 +331,39 @@ class PropertyInspector(QWidget):
         src_form.addRow("Сетка источника:", self.lbl_source_shape)
         self.content_layout.addWidget(self.source_group)
 
-        # 6. Секция ОФЭКТ камеры (GammaCamera)
+        # 6. Секция параметров гамма-камеры (GammaCamera)
         self.spect_group = QGroupBox("Параметры гамма-камеры")
         spect_form = QFormLayout(self.spect_group)
 
-        self.spin_orbit_radius = QDoubleSpinBox()
-        self.spin_orbit_radius.setRange(50.0, 1000.0)
-        self.spin_orbit_radius.setSingleStep(5.0)
-        self.spin_orbit_radius.valueChanged.connect(self._on_spect_param_changed)
+        self.spin_detector_size_x = QDoubleSpinBox()
+        self.spin_detector_size_x.setRange(10.0, 2000.0)
+        self.spin_detector_size_x.setSingleStep(10.0)
+        self.spin_detector_size_x.setSuffix(" мм")
+        self.spin_detector_size_x.valueChanged.connect(self._on_spect_detector_size_changed)
 
-        self.spin_orbit_angle = QDoubleSpinBox()
-        self.spin_orbit_angle.setRange(0.0, 360.0)
-        self.spin_orbit_angle.setSingleStep(1.0)
-        self.spin_orbit_angle.valueChanged.connect(self._on_spect_param_changed)
+        self.spin_detector_size_y = QDoubleSpinBox()
+        self.spin_detector_size_y.setRange(10.0, 2000.0)
+        self.spin_detector_size_y.setSingleStep(10.0)
+        self.spin_detector_size_y.setSuffix(" мм")
+        self.spin_detector_size_y.valueChanged.connect(self._on_spect_detector_size_changed)
 
-        self.spin_orbit_z = QDoubleSpinBox()
-        self.spin_orbit_z.setRange(-2000.0, 2000.0)
-        self.spin_orbit_z.setSingleStep(5.0)
-        self.spin_orbit_z.valueChanged.connect(self._on_spect_param_changed)
+        det_size_layout = QHBoxLayout()
+        det_size_layout.addWidget(QLabel("X:"))
+        det_size_layout.addWidget(self.spin_detector_size_x)
+        det_size_layout.addWidget(QLabel("Y:"))
+        det_size_layout.addWidget(self.spin_detector_size_y)
+
+        self.spin_detector_thickness = QDoubleSpinBox()
+        self.spin_detector_thickness.setRange(0.1, 200.0)
+        self.spin_detector_thickness.setSingleStep(0.5)
+        self.spin_detector_thickness.setSuffix(" мм")
+        self.spin_detector_thickness.valueChanged.connect(self._on_spect_detector_thickness_changed)
+
+        self.spin_collimator_thickness = QDoubleSpinBox()
+        self.spin_collimator_thickness.setRange(1.0, 300.0)
+        self.spin_collimator_thickness.setSingleStep(1.0)
+        self.spin_collimator_thickness.setSuffix(" мм")
+        self.spin_collimator_thickness.valueChanged.connect(self._on_spect_collimator_thickness_changed)
 
         self.spin_cam_gap = QDoubleSpinBox()
         self.spin_cam_gap.setRange(0.0, 100.0)
@@ -369,13 +386,33 @@ class PropertyInspector(QWidget):
         self.spin_cam_glass.setSuffix(" мм")
         self.spin_cam_glass.valueChanged.connect(self._on_spect_cam_glass_changed)
 
-        spect_form.addRow("Радиус орбиты (мм):", self.spin_orbit_radius)
-        spect_form.addRow("Угол проекции (°):", self.spin_orbit_angle)
-        spect_form.addRow("Осевое смещение Z (мм):", self.spin_orbit_z)
+        self.lbl_housing_size = QLabel("-")
+
+        spect_form.addRow("Активное поле детектора (X×Y):", det_size_layout)
+        spect_form.addRow("Толщина кристалла (Z):", self.spin_detector_thickness)
+        spect_form.addRow("Толщина коллиматора (Z):", self.spin_collimator_thickness)
         spect_form.addRow("Зазор детектор-коллиматор:", self.spin_cam_gap)
         spect_form.addRow("Толщина свинцовой защиты Pb:", self.spin_cam_shielding)
-        spect_form.addRow("Толщина стекла (Glass Backend):", self.spin_cam_glass)
+        spect_form.addRow("Толщина оптического стекла:", self.spin_cam_glass)
+        spect_form.addRow("Габариты корпуса (X×Y×Z):", self.lbl_housing_size)
         self.content_layout.addWidget(self.spect_group)
+
+        # 7. Секция станины томографа (GantryNode / GantryViewModel)
+        self.gantry_group = QGroupBox("Параметры станины томографа (Gantry)")
+        gantry_form = QFormLayout(self.gantry_group)
+
+        self.spin_gantry_angle = QDoubleSpinBox()
+        self.spin_gantry_angle.setRange(0.0, 360.0)
+        self.spin_gantry_angle.setSingleStep(5.0)
+        self.spin_gantry_angle.setSuffix(" °")
+        self.spin_gantry_angle.valueChanged.connect(self._on_gantry_angle_changed)
+
+        self.chk_wireframe_visible = QCheckBox("Отображать направляющие (Wireframe)")
+        self.chk_wireframe_visible.toggled.connect(self._on_gantry_wireframe_toggled)
+
+        gantry_form.addRow("Угол поворота ротора θ:", self.spin_gantry_angle)
+        gantry_form.addRow(self.chk_wireframe_visible)
+        self.content_layout.addWidget(self.gantry_group)
 
         # 9. Секция протоколов / процедур (Procedures)
         self._init_procedure_ui()
@@ -580,6 +617,7 @@ class PropertyInspector(QWidget):
         self.voxel_group.setVisible(False)
         self.source_group.setVisible(False)
         self.spect_group.setVisible(False)
+        self.gantry_group.setVisible(False)
         self.procedure_group.setVisible(False)
         self.data_handler_group.setVisible(False)
         self.data_manager_group.setVisible(False)
@@ -603,6 +641,7 @@ class PropertyInspector(QWidget):
             self.voxel_group.setVisible(False)
             self.source_group.setVisible(False)
             self.spect_group.setVisible(False)
+            self.gantry_group.setVisible(False)
             self.data_handler_group.setVisible(False)
             self.data_manager_group.setVisible(False)
             self.procedure_group.setVisible(True)
@@ -619,6 +658,7 @@ class PropertyInspector(QWidget):
             self.voxel_group.setVisible(False)
             self.source_group.setVisible(False)
             self.spect_group.setVisible(False)
+            self.gantry_group.setVisible(False)
             self.procedure_group.setVisible(False)
             self.data_manager_group.setVisible(False)
             self.data_handler_group.setVisible(True)
@@ -635,6 +675,7 @@ class PropertyInspector(QWidget):
             self.voxel_group.setVisible(False)
             self.source_group.setVisible(False)
             self.spect_group.setVisible(False)
+            self.gantry_group.setVisible(False)
             self.procedure_group.setVisible(False)
             self.data_handler_group.setVisible(False)
             self.data_manager_group.setVisible(True)
@@ -657,6 +698,7 @@ class PropertyInspector(QWidget):
 
         # Видимость специализированных секций
         is_spect = isinstance(self.current_vm, GammaCameraViewModel)
+        is_gantry = isinstance(self.current_vm, GantryViewModel)
         is_vox = isinstance(self.current_vm, VoxelVolumeViewModel)
         is_src = isinstance(self.current_vm, SourceViewModel)
         is_dose_grid = isinstance(self.current_vm, DoseGridViewModel)
@@ -671,6 +713,7 @@ class PropertyInspector(QWidget):
         self.voxel_group.setVisible(is_vox)
         self.source_group.setVisible(is_src)
         self.spect_group.setVisible(is_spect)
+        self.gantry_group.setVisible(is_gantry)
 
         if is_col:
             self.lbl_collimator_type.setText(self.current_vm.collimator_type)
@@ -684,16 +727,16 @@ class PropertyInspector(QWidget):
                 self.spin_collimator_septa.setValue(float(self.current_vm.septa_thickness))
 
         if is_dose_grid:
-            sz = self.current_vm.size
-            self.spin_dose_grid_size_x.setValue(float(sz[0]))
-            self.spin_dose_grid_size_y.setValue(float(sz[1]))
-            self.spin_dose_grid_size_z.setValue(float(sz[2]))
+            grid_size = self.current_vm.size
+            self.spin_dose_grid_size_x.setValue(float(grid_size[0]))
+            self.spin_dose_grid_size_y.setValue(float(grid_size[1]))
+            self.spin_dose_grid_size_z.setValue(float(grid_size[2]))
             self.spin_dose_grid_voxel.setValue(float(self.current_vm.dose_voxel_size))
             self.chk_dose_grid_active.setChecked(bool(self.current_vm.is_active))
             self._update_dose_grid_metrics()
 
             parent_vm = self.current_vm.parent_vm
-            if isinstance(parent_vm, VolumeViewModel):
+            if isinstance(parent_vm, (VolumeViewModel, GammaCameraViewModel)):
                 self.btn_fit_dose_grid_to_parent.setEnabled(True)
                 self.btn_fit_dose_grid_to_parent.setText(f"⇲ Подогнать под {parent_vm.name}")
             else:
@@ -701,17 +744,24 @@ class PropertyInspector(QWidget):
                 self.btn_fit_dose_grid_to_parent.setText("⇲ Подогнать размер под родителя")
 
         if is_spect:
-            self.spin_orbit_radius.setValue(float(self.current_vm.orbit_radius))
-            self.spin_orbit_angle.setValue(float(self.current_vm.orbit_angle))
-            self.spin_orbit_z.setValue(float(self.current_vm.orbit_z))
+            detector_dimensions = self.current_vm.detector_size
+            self.spin_detector_size_x.setValue(float(detector_dimensions[0]))
+            self.spin_detector_size_y.setValue(float(detector_dimensions[1]))
+            self.spin_detector_thickness.setValue(float(self.current_vm.detector_thickness))
+            self.spin_collimator_thickness.setValue(float(self.current_vm.collimator_thickness))
             self.spin_cam_gap.setValue(float(self.current_vm.gap))
             self.spin_cam_shielding.setValue(float(self.current_vm.shielding_thickness))
             self.spin_cam_glass.setValue(float(self.current_vm.glass_backend_thickness))
+            self._update_housing_size_label()
+
+        elif is_gantry:
+            self.spin_gantry_angle.setValue(float(self.current_vm.gantry_angle_deg))
+            self.chk_wireframe_visible.setChecked(bool(self.current_vm.wireframe_visible))
 
         elif is_src:
-            idx = self.combo_rad_type.findText(self.current_vm.radiation_type)
-            if idx >= 0:
-                self.combo_rad_type.setCurrentIndex(idx)
+            source_type_index = self.combo_rad_type.findText(self.current_vm.radiation_type)
+            if source_type_index >= 0:
+                self.combo_rad_type.setCurrentIndex(source_type_index)
             self.spin_source_energy.setValue(float(self.current_vm.energy))
             self.spin_source_activity.setValue(float(self.current_vm.activity))
             self.spin_source_half_life.setValue(float(self.current_vm.half_life))
@@ -732,25 +782,25 @@ class PropertyInspector(QWidget):
                 self.spin_voxel_size_x.setValue(float(vox_sz[0]))
                 self.spin_voxel_size_y.setValue(float(vox_sz[1]))
                 self.spin_voxel_size_z.setValue(float(vox_sz[2]))
-            idx = self.combo_colormap.findText(self.current_vm.colormap_name)
-            if idx >= 0:
-                self.combo_colormap.setCurrentIndex(idx)
+            colormap_index = self.combo_colormap.findText(self.current_vm.colormap_name)
+            if colormap_index >= 0:
+                self.combo_colormap.setCurrentIndex(colormap_index)
             self.slider_lod.setValue(int(round(float(self.current_vm.lod_factor) * 5.0)))
             self.spin_opacity_thresh.setValue(float(self.current_vm.opacity_threshold))
             self.spin_max_opacity.setValue(float(self.current_vm.max_opacity))
             preset = self.current_vm.opacity_preset
-            p_idx = self.combo_opacity_preset.findData(preset)
-            if p_idx >= 0:
-                self.combo_opacity_preset.setCurrentIndex(p_idx)
+            preset_index = self.combo_opacity_preset.findData(preset)
+            if preset_index >= 0:
+                self.combo_opacity_preset.setCurrentIndex(preset_index)
 
         elif is_vol:
-            sz = self.current_vm.size
-            self.spin_size_x.setValue(float(sz[0]))
-            self.spin_size_y.setValue(float(sz[1]))
-            self.spin_size_z.setValue(float(sz[2]))
-            idx = self.combo_material.findText(self.current_vm.material_name)
-            if idx >= 0:
-                self.combo_material.setCurrentIndex(idx)
+            volume_size = self.current_vm.size
+            self.spin_size_x.setValue(float(volume_size[0]))
+            self.spin_size_y.setValue(float(volume_size[1]))
+            self.spin_size_z.setValue(float(volume_size[2]))
+            material_index = self.combo_material.findText(self.current_vm.material_name)
+            if material_index >= 0:
+                self.combo_material.setCurrentIndex(material_index)
             self.chk_is_detector.setChecked(bool(self.current_vm.is_sensitive_detector))
 
         self._is_updating_ui = False
@@ -758,6 +808,36 @@ class PropertyInspector(QWidget):
     def _update_transform_fields(self) -> None:
         if self.current_vm is None:
             return
+
+        constraint = self.current_vm.get_effective_kinematic_constraint()
+        if constraint is not None:
+            allowed_trans = constraint.get_allowed_axes(GizmoMode.TRANSLATE)
+            allowed_rot = constraint.get_allowed_axes(GizmoMode.ROTATE)
+            scale_allowed = constraint.is_scale_allowed()
+
+            self.spin_x.setEnabled(GizmoAxis.X in allowed_trans)
+            self.spin_y.setEnabled(GizmoAxis.Y in allowed_trans)
+            self.spin_z.setEnabled(GizmoAxis.Z in allowed_trans)
+
+            self.spin_rot_x.setEnabled(GizmoAxis.X in allowed_rot)
+            self.spin_rot_y.setEnabled(GizmoAxis.Y in allowed_rot)
+            self.spin_rot_z.setEnabled(GizmoAxis.Z in allowed_rot)
+
+            self.spin_size_x.setEnabled(scale_allowed)
+            self.spin_size_y.setEnabled(scale_allowed)
+            self.spin_size_z.setEnabled(scale_allowed)
+        else:
+            self.spin_x.setEnabled(True)
+            self.spin_y.setEnabled(True)
+            self.spin_z.setEnabled(True)
+
+            self.spin_rot_x.setEnabled(True)
+            self.spin_rot_y.setEnabled(True)
+            self.spin_rot_z.setEnabled(True)
+
+            self.spin_size_x.setEnabled(True)
+            self.spin_size_y.setEnabled(True)
+            self.spin_size_z.setEnabled(True)
 
         old_state = self._is_updating_ui
         self._is_updating_ui = True
@@ -772,13 +852,13 @@ class PropertyInspector(QWidget):
                 if np.all(np.isfinite(rot_mat)):
                     det = np.linalg.det(rot_mat)
                     if det > 1e-6:
-                        r = Rotation.from_matrix(rot_mat)
-                        euler = r.as_euler('xyz', degrees=True)
+                        rotation_obj = Rotation.from_matrix(rot_mat)
+                        euler = rotation_obj.as_euler('xyz', degrees=True)
                         if np.all(np.isfinite(euler)):
                             self.spin_rot_x.setValue(float(euler[0]))
                             self.spin_rot_y.setValue(float(euler[1]))
                             self.spin_rot_z.setValue(float(euler[2]))
-            except Exception:
+            except (ValueError, np.linalg.LinAlgError):
                 pass
         finally:
             self._is_updating_ui = old_state
@@ -800,7 +880,7 @@ class PropertyInspector(QWidget):
                 self.spin_rot_z.value()
             ], degrees=True)
             mat[:3, :3] = rot.as_matrix()
-        except Exception:
+        except ValueError:
             mat[:3, :3] = self.current_vm.local_matrix[:3, :3]
 
         mat[0, 3] = self.spin_x.value()
@@ -941,11 +1021,11 @@ class PropertyInspector(QWidget):
         if self._is_updating_ui or not isinstance(self.current_vm, DoseGridViewModel):
             return
         parent_vm = self.current_vm.parent_vm
-        if not isinstance(parent_vm, VolumeViewModel):
+        if not isinstance(parent_vm, (VolumeViewModel, GammaCameraViewModel)):
             return
 
-        b_size = parent_vm.local_bound
-        new_size = (float(b_size[0]), float(b_size[1]), float(b_size[2]))
+        bounding_box_size = parent_vm.local_bound
+        new_size = (float(bounding_box_size[0]), float(bounding_box_size[1]), float(bounding_box_size[2]))
         self.current_vm.size = new_size
         self._is_updating_ui = True
         try:
@@ -956,13 +1036,40 @@ class PropertyInspector(QWidget):
         finally:
             self._is_updating_ui = False
 
-    def _on_spect_param_changed(self) -> None:
+    def _on_spect_detector_size_changed(self) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, GammaCameraViewModel):
             return
-        r = self.spin_orbit_radius.value()
-        theta = self.spin_orbit_angle.value()
-        z = self.spin_orbit_z.value()
-        self.current_vm.set_orbit_position(r, theta, z=z)
+        size_x = float(self.spin_detector_size_x.value())
+        size_y = float(self.spin_detector_size_y.value())
+        self.current_vm.detector_size = (size_x, size_y)
+        self._update_housing_size_label()
+
+    def _on_spect_detector_thickness_changed(self, value: float) -> None:
+        if self._is_updating_ui or not isinstance(self.current_vm, GammaCameraViewModel):
+            return
+        self.current_vm.detector_thickness = float(value)
+        self._update_housing_size_label()
+
+    def _on_spect_collimator_thickness_changed(self, value: float) -> None:
+        if self._is_updating_ui or not isinstance(self.current_vm, GammaCameraViewModel):
+            return
+        self.current_vm.collimator_thickness = float(value)
+        self._update_housing_size_label()
+
+    def _on_gantry_angle_changed(self, value: float) -> None:
+        if self._is_updating_ui or not isinstance(self.current_vm, GantryViewModel):
+            return
+        self.current_vm.gantry_angle_deg = float(value)
+
+    def _on_gantry_wireframe_toggled(self, checked: bool) -> None:
+        if self._is_updating_ui or not isinstance(self.current_vm, GantryViewModel):
+            return
+        self.current_vm.wireframe_visible = bool(checked)
+
+    def _update_housing_size_label(self) -> None:
+        if isinstance(self.current_vm, GammaCameraViewModel):
+            housing_dims = self.current_vm.housing_size
+            self.lbl_housing_size.setText(f"{housing_dims[0]:.1f} × {housing_dims[1]:.1f} × {housing_dims[2]:.1f} мм")
 
     def _on_collimator_hole_changed(self, value: float) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, CollimatorViewModel):
@@ -995,16 +1102,19 @@ class PropertyInspector(QWidget):
         if self._is_updating_ui or not isinstance(self.current_vm, GammaCameraViewModel):
             return
         self.current_vm.gap = float(value)
+        self._update_housing_size_label()
 
     def _on_spect_cam_shielding_changed(self, value: float) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, GammaCameraViewModel):
             return
         self.current_vm.shielding_thickness = float(value)
+        self._update_housing_size_label()
 
     def _on_spect_cam_glass_changed(self, value: float) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, GammaCameraViewModel):
             return
         self.current_vm.glass_backend_thickness = float(value)
+        self._update_housing_size_label()
 
     def _on_property_changed_externally(self, prop_name: str, new_val: Any) -> None:
         if self._is_updating_ui or self.current_vm is None:
@@ -1018,20 +1128,20 @@ class PropertyInspector(QWidget):
             finally:
                 self._is_updating_ui = False
         elif prop_name == 'size' and isinstance(self.current_vm, VolumeViewModel):
-            sz = new_val if isinstance(new_val, (list, tuple, np.ndarray)) else self.current_vm.size
+            volume_size = new_val if isinstance(new_val, (list, tuple, np.ndarray)) else self.current_vm.size
             self._is_updating_ui = True
             try:
-                self.spin_size_x.setValue(float(sz[0]))
-                self.spin_size_y.setValue(float(sz[1]))
-                self.spin_size_z.setValue(float(sz[2]))
+                self.spin_size_x.setValue(float(volume_size[0]))
+                self.spin_size_y.setValue(float(volume_size[1]))
+                self.spin_size_z.setValue(float(volume_size[2]))
             finally:
                 self._is_updating_ui = False
         elif prop_name == 'material_name' and isinstance(self.current_vm, VolumeViewModel):
-            idx = self.combo_material.findText(str(new_val))
-            if idx >= 0:
+            material_index = self.combo_material.findText(str(new_val))
+            if material_index >= 0:
                 self._is_updating_ui = True
                 try:
-                    self.combo_material.setCurrentIndex(idx)
+                    self.combo_material.setCurrentIndex(material_index)
                 finally:
                     self._is_updating_ui = False
         elif prop_name in ('is_sensitive_detector', 'is_detector') and isinstance(self.current_vm, VolumeViewModel):
@@ -1041,11 +1151,11 @@ class PropertyInspector(QWidget):
             finally:
                 self._is_updating_ui = False
         elif prop_name == 'colormap_name' and isinstance(self.current_vm, VoxelVolumeViewModel):
-            idx = self.combo_colormap.findText(str(new_val))
-            if idx >= 0:
+            colormap_index = self.combo_colormap.findText(str(new_val))
+            if colormap_index >= 0:
                 self._is_updating_ui = True
                 try:
-                    self.combo_colormap.setCurrentIndex(idx)
+                    self.combo_colormap.setCurrentIndex(colormap_index)
                 finally:
                     self._is_updating_ui = False
         elif prop_name == 'opacity_threshold' and isinstance(self.current_vm, VoxelVolumeViewModel):
@@ -1100,26 +1210,35 @@ class PropertyInspector(QWidget):
                 self.spin_source_half_life.setValue(float(new_val))
             finally:
                 self._is_updating_ui = False
-        elif prop_name in ('orbit_radius', 'orbit_angle', 'orbit_z') and isinstance(self.current_vm, GammaCameraViewModel):
+        elif isinstance(self.current_vm, GammaCameraViewModel) and prop_name in (
+            'detector_size', 'detector_thickness', 'collimator_thickness',
+            'gap', 'shielding_thickness', 'glass_backend_thickness', 'housing_size'
+        ):
             self._is_updating_ui = True
             try:
-                if prop_name == 'orbit_radius':
-                    self.spin_orbit_radius.setValue(float(new_val))
-                elif prop_name == 'orbit_angle':
-                    self.spin_orbit_angle.setValue(float(new_val))
-                elif prop_name == 'orbit_z':
-                    self.spin_orbit_z.setValue(float(new_val))
-            finally:
-                self._is_updating_ui = False
-        elif isinstance(self.current_vm, GammaCameraViewModel) and prop_name in ('gap', 'shielding_thickness', 'glass_backend_thickness'):
-            self._is_updating_ui = True
-            try:
-                if prop_name == 'gap':
+                if prop_name == 'detector_size' and isinstance(new_val, (list, tuple, np.ndarray)) and len(new_val) >= 2:
+                    self.spin_detector_size_x.setValue(float(new_val[0]))
+                    self.spin_detector_size_y.setValue(float(new_val[1]))
+                elif prop_name == 'detector_thickness':
+                    self.spin_detector_thickness.setValue(float(new_val))
+                elif prop_name == 'collimator_thickness':
+                    self.spin_collimator_thickness.setValue(float(new_val))
+                elif prop_name == 'gap':
                     self.spin_cam_gap.setValue(float(new_val))
                 elif prop_name == 'shielding_thickness':
                     self.spin_cam_shielding.setValue(float(new_val))
                 elif prop_name == 'glass_backend_thickness':
                     self.spin_cam_glass.setValue(float(new_val))
+                self._update_housing_size_label()
+            finally:
+                self._is_updating_ui = False
+        elif isinstance(self.current_vm, GantryViewModel) and prop_name in ('gantry_angle_deg', 'wireframe_visible'):
+            self._is_updating_ui = True
+            try:
+                if prop_name == 'gantry_angle_deg':
+                    self.spin_gantry_angle.setValue(float(new_val))
+                elif prop_name == 'wireframe_visible':
+                    self.chk_wireframe_visible.setChecked(bool(new_val))
             finally:
                 self._is_updating_ui = False
         elif isinstance(self.current_vm, CollimatorViewModel) and prop_name in ('hole_diameter', 'hole_width', 'septa_thickness'):
@@ -1135,23 +1254,23 @@ class PropertyInspector(QWidget):
             self._is_updating_ui = True
             try:
                 if isinstance(self.current_vm, VoxelVolumeViewModel):
-                    sz = new_val if isinstance(new_val, (list, tuple, np.ndarray)) else self.current_vm.voxel_size
-                    if len(sz) >= 3:
-                        self.spin_voxel_size_x.setValue(float(sz[0]))
-                        self.spin_voxel_size_y.setValue(float(sz[1]))
-                        self.spin_voxel_size_z.setValue(float(sz[2]))
+                    volume_size = new_val if isinstance(new_val, (list, tuple, np.ndarray)) else self.current_vm.voxel_size
+                    if len(volume_size) >= 3:
+                        self.spin_voxel_size_x.setValue(float(volume_size[0]))
+                        self.spin_voxel_size_y.setValue(float(volume_size[1]))
+                        self.spin_voxel_size_z.setValue(float(volume_size[2]))
                 elif isinstance(self.current_vm, SourceViewModel):
                     self.spin_source_voxel_size.setValue(float(new_val))
             finally:
                 self._is_updating_ui = False
         elif isinstance(self.current_vm, DoseGridViewModel):
             if prop_name == 'size':
-                sz = new_val if isinstance(new_val, (list, tuple, np.ndarray)) else self.current_vm.size
+                grid_size = new_val if isinstance(new_val, (list, tuple, np.ndarray)) else self.current_vm.size
                 self._is_updating_ui = True
                 try:
-                    self.spin_dose_grid_size_x.setValue(float(sz[0]))
-                    self.spin_dose_grid_size_y.setValue(float(sz[1]))
-                    self.spin_dose_grid_size_z.setValue(float(sz[2]))
+                    self.spin_dose_grid_size_x.setValue(float(grid_size[0]))
+                    self.spin_dose_grid_size_y.setValue(float(grid_size[1]))
+                    self.spin_dose_grid_size_z.setValue(float(grid_size[2]))
                     self._update_dose_grid_metrics()
                 finally:
                     self._is_updating_ui = False

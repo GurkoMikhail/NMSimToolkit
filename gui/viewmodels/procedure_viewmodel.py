@@ -9,11 +9,12 @@ from core.config.models import (
     SpectProtocolConfig,
     CustomSweepProtocolConfig,
 )
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
-import settings.database_setting as database_setting
+from core.geometry.spect_kinematics import compute_orbit_matrix
 from core.scene.gantry_node import GantryNode
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
@@ -173,18 +174,25 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         """Слушатель (Observer) изменений свойств дочерних гамма-камер GammaCameraViewModel."""
         if self._is_syncing_with_scene:
             return
-        if property_name == "orbit_radius":
-            new_radius = float(property_value)
+        if property_name == "local_matrix" and isinstance(property_value, np.ndarray):
+            sender_obj = self.sender()
+            sender_half_thickness = sender_obj.half_thickness if isinstance(sender_obj, GammaCameraViewModel) else 0.0
+            position_vector = property_value[0:3, 3]
+            center_distance = float(np.hypot(position_vector[0], position_vector[1]))
+            new_radius = max(10.0, center_distance - sender_half_thickness)
             if abs(self._radius - new_radius) > 1e-4:
                 self._is_syncing_with_scene = True
                 try:
                     self._radius = new_radius
                     for other_camera_vm in self._observed_cameras:
-                        if abs(other_camera_vm.orbit_radius - new_radius) > 1e-4:
-                            other_camera_vm.set_orbit_position(
-                                new_radius,
-                                other_camera_vm.orbit_angle,
-                                other_camera_vm.orbit_z,
+                        if other_camera_vm is not sender_obj:
+                            other_position = other_camera_vm.local_matrix[0:3, 3]
+                            other_angle = float(np.degrees(np.arctan2(other_position[1], other_position[0])) % 360.0)
+                            other_camera_vm.local_matrix = compute_orbit_matrix(
+                                radius=new_radius,
+                                angle_deg=other_angle,
+                                z=float(other_position[2]),
+                                half_thickness=other_camera_vm.half_thickness,
                             )
                     self.changed.emit()
                     self.parameter_changed.emit("radius", new_radius)
@@ -193,7 +201,7 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
 
     def _on_gantry_child_added(self, child_node_vm: Any) -> None:
         """Слушатель добавления узлов на станину."""
-        if isinstance(child_node_vm.core_node, GammaCamera) and child_node_vm not in self._observed_cameras:
+        if isinstance(child_node_vm.core_node, GammaCameraNode) and child_node_vm not in self._observed_cameras:
             child_node_vm.property_changed.connect(self._on_camera_property_changed)
             self._observed_cameras.append(child_node_vm)
 
@@ -261,10 +269,13 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
                 self._is_syncing_with_scene = True
                 try:
                     for camera_view_model in self._observed_cameras:
-                        camera_view_model.set_orbit_position(
-                            validated_radius,
-                            camera_view_model.orbit_angle,
-                            camera_view_model.orbit_z,
+                        pos = camera_view_model.local_matrix[0:3, 3]
+                        angle = float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
+                        camera_view_model.local_matrix = compute_orbit_matrix(
+                            radius=validated_radius,
+                            angle_deg=angle,
+                            z=float(pos[2]),
+                            half_thickness=camera_view_model.half_thickness,
                         )
                 finally:
                     self._is_syncing_with_scene = False
@@ -388,12 +399,26 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         """
         Прямая синхронизация списка детекторных камер со свойствами процедуры.
         """
-        for camera_idx, cam_vm in enumerate(camera_vms):
-            offset = self._head_angles[camera_idx] if camera_idx < len(self._head_angles) else (360.0 / max(1, len(camera_vms)) * camera_idx)
-            if isinstance(cam_vm.parent_vm, GantryViewModel):
-                cam_vm.set_orbit_position(self._radius, offset % 360.0, cam_vm.orbit_z)
-            else:
-                cam_vm.set_orbit_position(self._radius, (self._start_angle + offset) % 360.0, cam_vm.orbit_z)
+        for camera_index, camera_view_model in enumerate(camera_vms):
+            angle_offset = self._head_angles[camera_index] if camera_index < len(self._head_angles) else (360.0 / max(1, len(camera_vms)) * camera_index)
+            axial_position_z = float(camera_view_model.local_matrix[2, 3]) if camera_view_model.local_matrix is not None else 0.0
+            orbit_angle = (angle_offset % 360.0) if isinstance(camera_view_model.parent_vm, GantryViewModel) else ((self._start_angle + angle_offset) % 360.0)
+
+            roll_angle_deg = 0.0
+            if camera_view_model.local_matrix is not None:
+                current_dir_z = camera_view_model.local_matrix[0:3, 2]
+                current_dir_y = camera_view_model.local_matrix[0:3, 1]
+                cos_roll = float(np.clip(np.dot(current_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
+                sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), current_dir_y), current_dir_z))
+                roll_angle_deg = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
+
+            camera_view_model.local_matrix = compute_orbit_matrix(
+                radius=self._radius,
+                angle_deg=orbit_angle,
+                z=axial_position_z,
+                half_thickness=camera_view_model.half_thickness,
+                roll_deg=roll_angle_deg,
+            )
 
 
     def to_config(self) -> SpectProtocolConfig:
@@ -477,29 +502,15 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
             if existing_camera_view_model.parent_vm is not gantry_view_model:
                 gantry_view_model.add_child(existing_camera_view_model)
 
-        # 1. Приведение количества камер к требуемому
+        had_created_cameras = False
         needed_camera_count = self._gamma_cameras
         if len(camera_view_models) < needed_camera_count:
-            lead_material = database_setting.material_database.get('Pb', Material(name='Lead'))
-            sodium_iodide_material = database_setting.material_database.get('Sodium Iodide', Material(name='NaI'))
+            had_created_cameras = True
             for new_camera_index in range(len(camera_view_models), needed_camera_count):
                 camera_name = f"GammaCamera_{new_camera_index + 1}"
-                collimator_volume = Volume(
-                    geometry=Box(400.0, 400.0, 30.0),
-                    material=lead_material,
-                    name=f"Collimator_{camera_name}",
-                )
-                detector_volume = Volume(
-                    geometry=Box(400.0, 400.0, 10.0),
-                    material=sodium_iodide_material,
-                    name=f"Detector_{camera_name}",
-                )
-                camera_core = GammaCamera(
-                    collimator=collimator_volume,
-                    detector=detector_volume,
-                    name=camera_name,
-                )
-                created_camera_view_model = GammaCameraViewModel(camera_core)
+                camera_core, slots_cfg = create_default_gamma_camera(name=camera_name)
+                created_camera_view_model = GammaCameraViewModel(camera_core, slots=slots_cfg)
+                scene_view_model.slots_registry[camera_core] = slots_cfg
                 scene_view_model.add_node(gantry_view_model, created_camera_view_model)
                 camera_view_models.append(created_camera_view_model)
         elif len(camera_view_models) > needed_camera_count:
@@ -516,10 +527,19 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         # 2. Обновление угла станины и локальных параметров камер с подавлением эхо-сигналов
         self._is_syncing_with_scene = True
         try:
-            gantry_view_model.gantry_angle_deg = self._start_angle
-            self.sync_cameras(camera_view_models)
+            if had_created_cameras:
+                gantry_view_model.gantry_angle_deg = self._start_angle
+                self.sync_cameras(camera_view_models)
+            elif camera_view_models:
+                # Камеры уже присутствуют в сцене: считываем радиус из сцены без мутации матриц
+                first_cam = camera_view_models[0]
+                pos = first_cam.local_matrix[0:3, 3]
+                dist = float(np.hypot(pos[0], pos[1]))
+                if dist > 1.0:
+                    self._radius = max(10.0, dist - first_cam.half_thickness)
         finally:
             self._is_syncing_with_scene = False
+
 
     def get_kinematic_constraint_for_node(
         self,

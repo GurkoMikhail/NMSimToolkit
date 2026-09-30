@@ -16,7 +16,8 @@ from settings.database_setting import material_database
 from core.source.sources import Source, PointSource
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.scene.dose_grid_node import DoseGridNode
-from core.geometry.gamma_cameras import GammaCamera
+from gui.viewmodels.nodes.gamma_camera_vm import create_default_gamma_camera_vm
+from core.geometry.spect_kinematics import compute_orbit_matrix
 from core.other.typing_definitions import Float
 from core.config.builder import SceneBuilder
 from core.config.exporter import SceneExporter
@@ -92,19 +93,20 @@ class TestGUIIntegrationFixes(unittest.TestCase):
 
     # 1. Радиус орбиты ОФЭКТ по лицевой поверхности гамма-камеры
     def test_spect_orbit_radius_by_face_surface(self):
-        col = Volume(geometry=Box(100.0, 100.0, 30.0), material=material_database['Pb'], name="Collimator")
-        det = Volume(geometry=Box(100.0, 100.0, 10.0), material=material_database['Plastic Scintillator, Vinyltoluene'], name="Detector")
-        cam = GammaCamera(collimator=col, detector=det, name="GammaCam")
-
-        cam_vm = GammaCameraViewModel(cam)
+        cam_vm = create_default_gamma_camera_vm(
+            detector_size=(100.0, 100.0),
+            detector_thickness=10.0,
+            collimator_thickness=30.0,
+            name="GammaCam"
+        )
         # Проверяем расчет half_thickness
-        expected_half_th = cam.size[2] / 2.0
+        expected_half_th = cam_vm.size[2] / 2.0
         self.assertAlmostEqual(cam_vm.half_thickness, expected_half_th, places=4)
         self.assertGreater(cam_vm.half_thickness, 0.0)
 
         # Вычисляем матрицу с учетом half_thickness
         orbit_radius_face = 250.0
-        mat = GammaCameraViewModel.compute_orbit_matrix(
+        mat = compute_orbit_matrix(
             radius=orbit_radius_face,
             angle_deg=0.0,
             z=0.0,
@@ -122,11 +124,18 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         face_x = center_x + normal_x * cam_vm.half_thickness
         self.assertAlmostEqual(face_x, orbit_radius_face, places=4)
 
-        # Проверяем set_orbit_position
-        cam_vm.set_orbit_position(orbit_radius_face, 90.0, 10.0)
-        self.assertAlmostEqual(cam_vm.orbit_radius, orbit_radius_face, places=4)
-        self.assertAlmostEqual(cam_vm.orbit_angle, 90.0, places=4)
-        self.assertAlmostEqual(cam_vm.orbit_z, 10.0, places=4)
+        # Проверяем local_matrix
+        cam_vm.local_matrix = compute_orbit_matrix(
+            radius=orbit_radius_face,
+            angle_deg=90.0,
+            z=10.0,
+            half_thickness=cam_vm.half_thickness,
+        )
+        cam_r = float(np.hypot(cam_vm.local_matrix[0, 3], cam_vm.local_matrix[1, 3])) - cam_vm.half_thickness
+        cam_ang = float(np.degrees(np.arctan2(cam_vm.local_matrix[1, 3], cam_vm.local_matrix[0, 3])) % 360.0)
+        self.assertAlmostEqual(cam_r, orbit_radius_face, places=4)
+        self.assertAlmostEqual(cam_ang, 90.0, places=4)
+        self.assertAlmostEqual(float(cam_vm.local_matrix[2, 3]), 10.0, places=4)
         self.assertAlmostEqual(float(cam_vm.local_matrix[1, 3]), orbit_radius_face + cam_vm.half_thickness, places=4)
 
         # Проверяем SPECTManipulator
@@ -458,21 +467,26 @@ class TestGUIIntegrationFixes(unittest.TestCase):
 
     # 8. Сохранение радиуса орбиты по лицевой поверхности при кинематических операциях
     def test_camera_orbit_radius_preservation_under_rotation_and_translation(self):
-        col = Volume(geometry=Box(120.0, 120.0, 40.0), material=material_database['Pb'], name="Col")
-        det = Volume(geometry=Box(120.0, 120.0, 20.0), material=material_database['Plastic Scintillator, Vinyltoluene'], name="Det")
-        cam = GammaCamera(collimator=col, detector=det, name="SPECT_Cam")
-        cam_vm = GammaCameraViewModel(cam)
+        cam_vm = create_default_gamma_camera_vm(name="SPECT_Cam")
 
         face_radius = 280.0
-        cam_vm.set_orbit_position(face_radius, 45.0, z=15.0)
-        self.assertAlmostEqual(cam_vm.orbit_radius, face_radius, places=3)
-        self.assertAlmostEqual(cam_vm.orbit_angle, 45.0, places=3)
-        self.assertAlmostEqual(cam_vm.orbit_z, 15.0, places=3)
+        cam_vm.local_matrix = compute_orbit_matrix(
+            radius=face_radius,
+            angle_deg=45.0,
+            z=15.0,
+            half_thickness=cam_vm.half_thickness,
+        )
+        cam_r = float(np.hypot(cam_vm.local_matrix[0, 3], cam_vm.local_matrix[1, 3])) - cam_vm.half_thickness
+        cam_ang = float(np.degrees(np.arctan2(cam_vm.local_matrix[1, 3], cam_vm.local_matrix[0, 3])) % 360.0)
+        self.assertAlmostEqual(cam_r, face_radius, places=3)
+        self.assertAlmostEqual(cam_ang, 45.0, places=3)
+        self.assertAlmostEqual(float(cam_vm.local_matrix[2, 3]), 15.0, places=3)
 
         # Смещение по оси стола (Z) сохраняет радиус орбиты
         cam_vm.translate(z=10.0)
-        self.assertAlmostEqual(cam_vm.orbit_radius, face_radius, places=3)
-        self.assertAlmostEqual(cam_vm.orbit_z, 25.0, places=3)
+        cam_r_after = float(np.hypot(cam_vm.local_matrix[0, 3], cam_vm.local_matrix[1, 3])) - cam_vm.half_thickness
+        self.assertAlmostEqual(cam_r_after, face_radius, places=3)
+        self.assertAlmostEqual(float(cam_vm.local_matrix[2, 3]), 25.0, places=3)
 
     # 9. Сохранение ненулевых материалов и вокселей при reload_distribution
     def test_voxel_volume_reload_materials_and_non_zero_retention(self):
@@ -529,17 +543,14 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         Проверяет свойства detector_vm и collimator_vm в GammaCameraViewModel,
         а также автоматическую установку флага is_sensitive_detector = True для кристалла детектора.
         """
-        col = Volume(geometry=Box(80.0, 80.0, 25.0), material=material_database['Pb'], name="CamCollimator")
-        det = Volume(geometry=Box(80.0, 80.0, 15.0), material=material_database['Plastic Scintillator, Vinyltoluene'], name="CamDetector")
-        cam = GammaCamera(collimator=col, detector=det, name="SPECT_Head")
-        cam_vm = GammaCameraViewModel(cam)
+        cam_vm = create_default_gamma_camera_vm(name="SPECT_Head")
 
         self.assertIsNotNone(cam_vm.detector_vm)
-        self.assertEqual(cam_vm.detector_vm.name, "CamDetector")
+        self.assertIn("SPECT_Head", cam_vm.detector_vm.name)
         self.assertTrue(cam_vm.detector_vm.is_sensitive_detector)
 
         self.assertIsNotNone(cam_vm.collimator_vm)
-        self.assertEqual(cam_vm.collimator_vm.name, "CamCollimator")
+        self.assertIn("SPECT_Head", cam_vm.collimator_vm.name)
         self.assertFalse(cam_vm.collimator_vm.is_sensitive_detector)
 
     # 12. Применение конфигурации SimulationConfig к SceneViewModel (apply_simulation_config)

@@ -18,7 +18,29 @@ class RotateConfig(BaseModel):
     rotation_center: Tuple[LengthConfig, LengthConfig, LengthConfig] = (0.0 * units.mm, 0.0 * units.mm, 0.0 * units.mm)
     in_local: bool = False
 
-TransformConfig = Annotated[Union[TranslateConfig, RotateConfig], Field(discriminator='type')]
+class MatrixTransformConfig(BaseModel):
+    type: Literal['matrix'] = 'matrix'
+    matrix: Union[List[float], List[List[float]]]
+    in_local: bool = False
+
+    @model_validator(mode='after')
+    def validate_matrix_shape(self) -> 'MatrixTransformConfig':
+        raw = self.matrix
+        if len(raw) == 16 and all(isinstance(x, (int, float)) for x in raw):
+            self.matrix = [
+                [float(raw[i * 4 + j]) for j in range(4)]
+                for i in range(4)
+            ]
+            return self
+        if len(raw) == 4 and all(len(row) == 4 and all(isinstance(x, (int, float)) for x in row) for row in raw):
+            self.matrix = [[float(x) for x in row] for row in raw]
+            return self
+        raise ValueError(
+            f"Матрица трансформации должна иметь размерность 4x4 (16 элементов) или список 4x4, получено {len(raw)} строк"
+        )
+
+TransformConfig = Annotated[Union[TranslateConfig, RotateConfig, MatrixTransformConfig], Field(discriminator='type')]
+
 
 class BoxConfig(BaseModel):
     type: Literal['Box'] = 'Box'
@@ -67,13 +89,16 @@ class WoodcockVoxelVolumeConfig(CompositeNodeConfig):
     voxel_size: LengthConfig
     distribution: AnyDistributionConfig
 
+class GammaCameraSlotsConfig(BaseModel):
+    casing: Optional[str] = None
+    detector_box: Optional[str] = None
+    collimator: Optional[str] = None
+    crystal: Optional[str] = None
+    glass_backend: Optional[str] = None
+
 class GammaCameraConfig(CompositeNodeConfig):
     type: Literal['GammaCamera'] = 'GammaCamera'
-    collimator: 'AnyNodeConfig'
-    detector: 'AnyNodeConfig'
-    gap: LengthConfig = 1.0 * units.mm
-    shielding_thickness: LengthConfig = 2.0 * units.cm
-    glass_backend_thickness: LengthConfig = 5.0 * units.cm
+    slots: GammaCameraSlotsConfig = Field(default_factory=GammaCameraSlotsConfig)
 
 class ParametricParallelCollimatorConfig(CompositeNodeConfig):
     type: Literal['ParametricParallelCollimator'] = 'ParametricParallelCollimator'

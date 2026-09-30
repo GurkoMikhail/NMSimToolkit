@@ -11,7 +11,7 @@ import numpy as np
 from core.data.data_handlers import BaseDataHandler
 from core.scene.nodes import SpatialNode, CompositeNode
 from core.geometry.volumes import Volume
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
 
 _logger = logging.getLogger(__name__)
 
@@ -452,13 +452,15 @@ def create_gui_stream_handler(
 
     if focused_shm_name and is_focused:
         def _find_detector_node(node: Any) -> Any:
-            if isinstance(node, GammaCamera):
-                return node.detector
+            if isinstance(node, Volume):
+                node_name_lower = (node.name or "").lower()
+                if ("detector" in node_name_lower or "crystal" in node_name_lower) and "detector_box" not in node_name_lower:
+                    return node
             if isinstance(node, CompositeNode):
-                for ch in node.childs:
-                    res = _find_detector_node(ch)
-                    if res is not None:
-                        return res
+                for child_item in node.childs:
+                    found_node = _find_detector_node(child_item)
+                    if found_node is not None:
+                        return found_node
             return None
 
         det_node = _find_detector_node(root_scene)
