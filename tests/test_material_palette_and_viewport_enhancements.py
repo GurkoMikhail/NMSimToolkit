@@ -201,10 +201,16 @@ class TestMaterialPaletteAndPhysicalAttenuation(unittest.TestCase):
             self.assertGreaterEqual(linear_attenuation, 0.0)
 
         # Псевдонимы и неточные имена вызывают KeyError
-        synonyms_to_reject = ["lead", "Lead", "tungsten", "Tungsten", "water", "Water", "air", "Air", "czt", "CZT"]
+        synonyms_to_reject = ["lead", "Lead", "tungsten", "Tungsten", "water", "Water", "air", "Air", "czt", "CZT", ""]
         for synonym in synonyms_to_reject:
             with self.assertRaises(KeyError):
                 compute_material_linear_attenuation(synonym, energy=140.0 * units.keV)
+
+        # Псевдонимы больше не нормализуются в get_material_color, а получают независимый детерминированный оттенок
+        self.assertNotEqual(get_material_color("Pb"), get_material_color("Lead"))
+        self.assertNotEqual(get_material_color("Water, Liquid"), get_material_color("Water"))
+        self.assertNotEqual(get_material_color("Air, Dry (near sea level)"), get_material_color("Air"))
+        self.assertNotEqual(get_material_color("W"), get_material_color("Tungsten"))
 
     def test_pseudo_xray_mode_generation(self) -> None:
         """Проверка генерации контрастного оттенка и непрозрачности в режиме псевдорентгена."""
