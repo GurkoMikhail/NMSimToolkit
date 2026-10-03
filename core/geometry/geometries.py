@@ -11,7 +11,10 @@ ShapeDataDType = np.dtype([
     ('shape', ShapeID),
     ('param_0', Float),
     ('param_1', Float),
-    ('param_2', Float)
+    ('param_2', Float),
+    ('param_3', Float),
+    ('param_4', Float),
+    ('param_5', Float),
 ])
 
 class Geometry(ABC):
@@ -66,4 +69,77 @@ class Box(Geometry):
         shape_data_array[index]['param_0'] = self.half_size[0]
         shape_data_array[index]['param_1'] = self.half_size[1]
         shape_data_array[index]['param_2'] = self.half_size[2]
+
+
+class PeriodicHexPrism(Geometry):
+    """
+    Геометрия бесконечной периодической гексагональной решетки шестиугольных каналов (призм),
+    ограниченная по оси Z габаритами коллиматора.
+    """
+    _hole_diameter: Float
+    _septa: Float
+    _x_period: Float
+    _y_period: Float
+    _channel_half_width: Float
+    _channel_side_limit: Float
+    _cell_half_width: Float
+
+    def __init__(
+        self,
+        size: Union[Sequence[Length], Vector3D],
+        hole_diameter: Float,
+        septa: Float,
+    ) -> None:
+        super().__init__(size)
+        if any(dimension <= 0.0 for dimension in self.size):
+            raise ValueError(f"Габаритные размеры должны быть строго положительными (> 0), получено {size}")
+        if Float(hole_diameter) <= 0.0:
+            raise ValueError(f"Диаметр отверстия должен быть строго положительным (> 0), получено {hole_diameter}")
+        if Float(septa) <= 0.0:
+            raise ValueError(f"Толщина септы должна быть строго положительной (> 0), получено {septa}")
+        self._hole_diameter = Float(hole_diameter)
+        self._septa = Float(septa)
+        self._compute_parameters()
+
+    def _compute_parameters(self) -> None:
+        self._x_period = Float(self._hole_diameter + self._septa)
+        self._y_period = Float(np.sqrt(3.0) * self._x_period)
+        self._channel_half_width = Float(0.5 * self._hole_diameter)
+        self._channel_side_limit = Float(self._hole_diameter)
+        self._cell_half_width = Float(0.5 * self._x_period)
+
+    @property
+    def hole_diameter(self) -> Float:
+        """Диаметр гексагонального канала между противоположными параллельными гранями."""
+        return self._hole_diameter
+
+    @hole_diameter.setter
+    def hole_diameter(self, value: Float) -> None:
+        float_value = Float(value)
+        if float_value <= 0.0:
+            raise ValueError(f"Диаметр отверстия должен быть строго положительным (> 0), получено {value}")
+        self._hole_diameter = float_value
+        self._compute_parameters()
+
+    @property
+    def septa(self) -> Float:
+        """Толщина перегородки (септы) между каналами."""
+        return self._septa
+
+    @septa.setter
+    def septa(self, value: Float) -> None:
+        float_value = Float(value)
+        if float_value <= 0.0:
+            raise ValueError(f"Толщина септы должна быть строго положительной (> 0), получено {value}")
+        self._septa = float_value
+        self._compute_parameters()
+
+    def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
+        shape_data_array[index]['shape'] = 1
+        shape_data_array[index]['param_0'] = self._x_period
+        shape_data_array[index]['param_1'] = self._y_period
+        shape_data_array[index]['param_2'] = self._channel_half_width
+        shape_data_array[index]['param_3'] = self._channel_side_limit
+        shape_data_array[index]['param_4'] = Float(self.half_size[2])
+        shape_data_array[index]['param_5'] = self._cell_half_width
 
