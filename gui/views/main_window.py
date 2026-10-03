@@ -939,6 +939,13 @@ class MainWindow(QMainWindow):
                 self.viewport_controller.transform_gizmo.angle_snap_step = new_settings.angle_snap_step
                 self.viewport_controller.transform_gizmo.scale_snap_step = new_settings.scale_snap_step
 
+            # Передача параметров рентгеновской визуализации во вьюпорт
+            if self.viewport_controller is not None:
+                self.viewport_controller.set_xray_parameters(
+                    energy_kev=new_settings.xray_energy_kev,
+                    pseudo_xray_mode=new_settings.pseudo_xray_mode,
+                )
+
             self._on_generate_jobs()
             self.lbl_status.setText("Параметры симуляции обновлены")
 

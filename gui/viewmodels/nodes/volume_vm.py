@@ -13,6 +13,7 @@ from core.other.typing_definitions import Float
 import settings.database_setting as database_setting
 from gui.viewmodels.decorators import gui_field
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewport_3d.material_palette import get_material_rgba, normalize_material_name
 
 _logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ class VolumeViewModel(NodeViewModel):
     def __init__(self, core_node: Volume, parent_vm: Optional[NodeViewModel] = None) -> None:
         super().__init__(core_node, parent_vm)
         self._is_sensitive_detector: bool = False
+        initial_material_name = self.material_name
+        self.color = get_material_rgba(initial_material_name)
 
     @classmethod
     def get_sensitive_volumes(cls) -> Set[Volume]:
@@ -48,32 +51,36 @@ class VolumeViewModel(NodeViewModel):
         return self._is_sensitive_detector
 
     @is_sensitive_detector.setter
-    def is_sensitive_detector(self, val: bool) -> None:
-        val_bool = bool(val)
-        if self._is_sensitive_detector == val_bool:
+    def is_sensitive_detector(self, is_detector_flag: bool) -> None:
+        flag_bool = bool(is_detector_flag)
+        if self._is_sensitive_detector == flag_bool:
             return
-        self._is_sensitive_detector = val_bool
-        if val_bool and isinstance(self.core_node, Volume):
+        self._is_sensitive_detector = flag_bool
+        if flag_bool and isinstance(self.core_node, Volume):
             VolumeViewModel._sensitive_core_volumes.add(self.core_node)
         elif isinstance(self.core_node, Volume):
             VolumeViewModel._sensitive_core_volumes.discard(self.core_node)
-        self.property_changed.emit('is_sensitive_detector', val_bool)
+        self.property_changed.emit('is_sensitive_detector', flag_bool)
 
     @property
     def material_name(self) -> str:
-        mat = self.core_node.material if isinstance(self.core_node, Volume) else None
-        return mat.name if mat is not None else "Vacuum"
+        current_material = self.core_node.material if isinstance(self.core_node, Volume) else None
+        return current_material.name if current_material is not None else "Vacuum"
 
     @material_name.setter
-    def material_name(self, name: str) -> None:
-        if name == "Vacuum":
+    def material_name(self, new_material_name: str) -> None:
+        canonical_name = normalize_material_name(new_material_name)
+        if canonical_name == "Vacuum":
             self.core_node.material = Material(name="Vacuum")
-        elif name in database_setting.material_database:
-            self.core_node.material = database_setting.material_database[name]
+        elif new_material_name in database_setting.material_database:
+            self.core_node.material = database_setting.material_database[new_material_name]
+        elif canonical_name in database_setting.material_database:
+            self.core_node.material = database_setting.material_database[canonical_name]
         else:
-            raise KeyError(f"Material '{name}' is not found in the material database.")
+            raise KeyError(f"Material '{new_material_name}' is not found in the material database.")
         self.core_node.invalidate_geometry()
-        self.property_changed.emit('material_name', name)
+        self.color = get_material_rgba(new_material_name)
+        self.property_changed.emit('material_name', new_material_name)
 
     @property
     def size(self) -> np.ndarray:
@@ -111,11 +118,11 @@ class CollimatorViewModel(VolumeViewModel):
         return 0.2
 
     @septa_thickness.setter
-    def septa_thickness(self, val: float) -> None:
-        v = float(val)
+    def septa_thickness(self, thickness_value: float) -> None:
+        numeric_thickness = float(thickness_value)
         if isinstance(self.core_node, (ParametricParallelCollimator, ParametricParallelSquareCollimator)):
-            self.core_node.septa = Float(v)
-            self.property_changed.emit('septa_thickness', v)
+            self.core_node.septa = Float(numeric_thickness)
+            self.property_changed.emit('septa_thickness', numeric_thickness)
 
 
 class ParametricParallelCollimatorViewModel(CollimatorViewModel):
@@ -133,11 +140,11 @@ class ParametricParallelCollimatorViewModel(CollimatorViewModel):
         return 1.5
 
     @hole_diameter.setter
-    def hole_diameter(self, val: float) -> None:
+    def hole_diameter(self, diameter_value: float) -> None:
         if isinstance(self.core_node, ParametricParallelCollimator):
-            v = float(val)
-            self.core_node.hole_diameter = Float(v)
-            self.property_changed.emit('hole_diameter', v)
+            numeric_diameter = float(diameter_value)
+            self.core_node.hole_diameter = Float(numeric_diameter)
+            self.property_changed.emit('hole_diameter', numeric_diameter)
 
 
 class ParametricParallelSquareCollimatorViewModel(CollimatorViewModel):
@@ -155,8 +162,8 @@ class ParametricParallelSquareCollimatorViewModel(CollimatorViewModel):
         return 1.5
 
     @hole_width.setter
-    def hole_width(self, val: float) -> None:
+    def hole_width(self, width_value: float) -> None:
         if isinstance(self.core_node, ParametricParallelSquareCollimator):
-            v = float(val)
-            self.core_node.hole_width = Float(v)
-            self.property_changed.emit('hole_width', v)
+            numeric_width = float(width_value)
+            self.core_node.hole_width = Float(numeric_width)
+            self.property_changed.emit('hole_width', numeric_width)

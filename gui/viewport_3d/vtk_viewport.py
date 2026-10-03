@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 import numpy as np
 import vtk
@@ -12,6 +12,42 @@ from pyvistaqt import QtInteractor
 from gui.viewport_3d.dicom_colormaps import get_available_colormaps, get_colormap_lut
 
 _logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class ISceneViewport(Protocol):
+    """
+    Контракт взаимодействия с 3D-вьюпортом сцены.
+    Исключает неявную утиную типизацию (hasattr/getattr).
+    """
+
+    def add_mesh_actor(
+        self,
+        name: str,
+        mesh: Any,
+        color: Optional[str] = 'white',
+        opacity: float = 1.0,
+        style: str = 'surface',
+        wireframe: bool = False,
+        rgb: bool = False,
+        **kwargs: Any
+    ) -> Optional[Any]: ...
+
+    def update_actor_transform(self, name: str, matrix: np.ndarray) -> bool: ...
+
+    def remove_actor(self, name: str) -> None: ...
+
+    def render(self) -> None: ...
+
+    def get_actor(self, name: str) -> Optional[Any]: ...
+
+    def set_actor_edge_highlight(
+        self,
+        name: str,
+        visible: bool,
+        color: Tuple[float, float, float] = (1.0, 0.55, 0.0),
+        line_width: float = 2.5,
+    ) -> bool: ...
 
 
 class VTKViewport(QWidget):
@@ -52,8 +88,8 @@ class VTKViewport(QWidget):
                 self.plotter.iren.add_observer('StartInteractionEvent', self._on_interaction_start)
                 self.plotter.iren.add_observer('EndInteractionEvent', self._on_interaction_end)
 
-        except Exception as e:
-            _logger.info(f"PyVista QtInteractor не инициализирован (headless/mock режим): {e}")
+        except (RuntimeError, ImportError, TypeError, AttributeError) as init_error:
+            _logger.info(f"PyVista QtInteractor не инициализирован (headless/mock режим): {init_error}")
             self.plotter = None
             fallback_label = QLabel(
                 "3D Viewport недоступен (QtInteractor не инициализирован).\n"
@@ -124,8 +160,8 @@ class VTKViewport(QWidget):
             actor = self.plotter.add_mesh(mesh, **mesh_kwargs)
             self._actors[name] = actor
             return actor
-        except Exception as e:
-            _logger.error(f"Ошибка добавления меша {name}: {e}")
+        except (RuntimeError, ValueError, TypeError) as mesh_error:
+            _logger.error(f"Ошибка добавления меша {name}: {mesh_error}")
             return None
 
     def update_actor_transform(self, name: str, matrix: np.ndarray) -> bool:
@@ -149,8 +185,8 @@ class VTKViewport(QWidget):
                 actor.SetUserMatrix(mat_vtk)
             self.render()
             return True
-        except Exception as e:
-            _logger.error(f"Ошибка обновления трансформации актора {name}: {e}")
+        except (RuntimeError, ValueError, TypeError) as transform_error:
+            _logger.error(f"Ошибка обновления трансформации актора {name}: {transform_error}")
             return False
 
     def add_volume_actor(
@@ -184,8 +220,8 @@ class VTKViewport(QWidget):
             actor = self.plotter.add_volume(grid, **vol_kwargs)
             self._actors[name] = actor
             return actor
-        except Exception as e:
-            _logger.error(f"Ошибка добавления объема {name}: {e}")
+        except (RuntimeError, ValueError, TypeError) as volume_error:
+            _logger.error(f"Ошибка добавления объема {name}: {volume_error}")
             return None
 
     def remove_actor(self, name: str) -> None:
@@ -195,9 +231,43 @@ class VTKViewport(QWidget):
         if self.plotter is not None and name in self._actors:
             try:
                 self.plotter.remove_actor(name)
-            except Exception:
+            except (KeyError, RuntimeError, AttributeError):
                 pass
         self._actors.pop(name, None)
+
+    def get_actor(self, name: str) -> Optional[Any]:
+        """
+        Возвращает существующий VTK/PyVista актор по его имени.
+        """
+        return self._actors.get(name)
+
+    def set_actor_edge_highlight(
+        self,
+        name: str,
+        visible: bool,
+        color: Tuple[float, float, float] = (1.0, 0.55, 0.0),
+        line_width: float = 2.5,
+    ) -> bool:
+        """
+        Управляет подсветкой контура (рёбер) полигонального актора через SetEdgeVisibility.
+        Используется для выделения выбранных в графе узлов контрастным amber/оранжевым цветом.
+        """
+        target_actor = self._actors.get(name)
+        if target_actor is None:
+            return False
+        try:
+            property_obj = target_actor.GetProperty()
+            if property_obj is None:
+                return False
+            property_obj.SetEdgeVisibility(bool(visible))
+            if visible:
+                property_obj.SetEdgeColor(float(color[0]), float(color[1]), float(color[2]))
+                property_obj.SetLineWidth(float(line_width))
+            self.render()
+            return True
+        except (AttributeError, RuntimeError, TypeError) as highlight_error:
+            _logger.error(f"Ошибка настройки подсветки рёбер актора {name}: {highlight_error}")
+            return False
 
     def clear_actors(self) -> None:
         """
@@ -240,7 +310,7 @@ class VTKViewport(QWidget):
                 return
             try:
                 self.plotter.render()
-            except Exception:
+            except (RuntimeError, AttributeError):
                 pass
 
     def close(self) -> bool:
@@ -250,7 +320,7 @@ class VTKViewport(QWidget):
         if self.plotter is not None:
             try:
                 self.plotter.close()
-            except Exception:
+            except (RuntimeError, AttributeError):
                 pass
             self.plotter = None
         return super().close()

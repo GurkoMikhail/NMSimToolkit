@@ -19,6 +19,8 @@ class GuiSimulationSettings(BaseModel):
     grid_snap_step: float = Field(default=10.0, gt=0.0, description="Шаг сетки перемещения Gizmo (мм)")
     angle_snap_step: float = Field(default=15.0, gt=0.0, description="Шаг угловой привязки Gizmo (град)")
     scale_snap_step: float = Field(default=1.0, gt=0.0, description="Шаг привязки масштаба Gizmo (мм)")
+    xray_energy_kev: float = Field(default=140.0, gt=0.0, description="Энергия фотонов для расчета ослабления и прозрачности (кэВ)")
+    pseudo_xray_mode: bool = Field(default=False, description="Режим отображения в псевдорентгене")
 
     def update(self, new_settings: Any) -> None:
         """
@@ -46,6 +48,10 @@ class GuiSimulationSettings(BaseModel):
                 self.angle_snap_step = float(param_value)
             elif param_key == 'scale_snap_step':
                 self.scale_snap_step = float(param_value)
+            elif param_key == 'xray_energy_kev':
+                self.xray_energy_kev = float(param_value)
+            elif param_key == 'pseudo_xray_mode':
+                self.pseudo_xray_mode = bool(param_value)
             else:
                 raise KeyError(f"Неизвестный параметр конфигурации: {param_key}")
 

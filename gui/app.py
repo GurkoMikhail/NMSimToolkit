@@ -78,8 +78,13 @@ QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
     padding: 3px 6px;
     border-radius: 2px;
 }
-QLineEdit:focus, QDoubleSpinBox:focus, QComboBox:focus {
+QLineEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus {
     border: 1px solid #007acc;
+}
+QLineEdit:disabled, QDoubleSpinBox:disabled, QSpinBox:disabled, QComboBox:disabled {
+    background-color: #2b2b2b;
+    border: 1px solid #3e3e42;
+    color: #6e6e6e;
 }
 QPushButton {
     background-color: #0e639c;
@@ -94,6 +99,14 @@ QPushButton:hover {
 }
 QPushButton:pressed {
     background-color: #0d5c8f;
+}
+QPushButton:disabled {
+    background-color: #2d2d30;
+    color: #656565;
+    border: 1px solid #3e3e42;
+}
+QCheckBox:disabled {
+    color: #656565;
 }
 QTabWidget::pane {
     border: 1px solid #3e3e42;

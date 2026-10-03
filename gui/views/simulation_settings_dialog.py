@@ -106,6 +106,17 @@ class SimulationSettingsDialog(QDialog):
         self.spin_scale_snap.setValue(float(self._settings.scale_snap_step))
         form_tracks.addRow("Шаг привязки масштаба (Scale Snap):", self.spin_scale_snap)
 
+        self.spin_xray_energy = QDoubleSpinBox(grp_tracks)
+        self.spin_xray_energy.setRange(1.0, 10000.0)
+        self.spin_xray_energy.setSingleStep(5.0)
+        self.spin_xray_energy.setSuffix(" кэВ")
+        self.spin_xray_energy.setValue(float(self._settings.xray_energy_kev))
+        form_tracks.addRow("Энергия расчета ослабления (X-Ray):", self.spin_xray_energy)
+
+        self.chk_pseudo_xray = QCheckBox("Режим отображения в псевдорентгене", grp_tracks)
+        self.chk_pseudo_xray.setChecked(bool(self._settings.pseudo_xray_mode))
+        form_tracks.addRow(self.chk_pseudo_xray)
+
         main_layout.addWidget(grp_tracks)
 
         # 3. Стандартные кнопки диалога
@@ -129,5 +140,7 @@ class SimulationSettingsDialog(QDialog):
             "grid_snap_step": self.spin_grid_snap.value(),
             "angle_snap_step": self.spin_angle_snap.value(),
             "scale_snap_step": self.spin_scale_snap.value(),
+            "xray_energy_kev": self.spin_xray_energy.value(),
+            "pseudo_xray_mode": self.chk_pseudo_xray.isChecked(),
         })
         return GuiSimulationSettings(**updated_dict)

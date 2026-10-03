@@ -575,8 +575,8 @@ class TestStage3Viewport(unittest.TestCase):
         class MockWithAbort:
             def __init__(self):
                 self.flag = 0
-            def SetAbortFlag(self, f):
-                self.flag = f
+            def SetAbortFlag(self, abort_flag):
+                self.flag = abort_flag
 
         caller_mock = MockWithAbort()
         gizmo._abort_event(caller_mock, 'LeftButtonPressEvent')
@@ -589,7 +589,7 @@ class TestStage3Viewport(unittest.TestCase):
         iren.SetRenderWindow(rw)
         iren.Initialize()
 
-        tag = iren.AddObserver('LeftButtonPressEvent', lambda c, e: None, 10.0)
+        tag = iren.AddObserver('LeftButtonPressEvent', lambda caller_obj, event_id: None, 10.0)
         gizmo._observer_tags['LeftButtonPressEvent'] = tag
 
         # Вызов не должен выбрасывать AttributeError: object has no attribute 'SetAbortFlag'
@@ -1032,6 +1032,13 @@ class TestStage3Viewport(unittest.TestCase):
                 actor_name = args[0] if args else kwargs.get('name')
                 if actor_name is not None and str(actor_name) in self._actors:
                     del self._actors[str(actor_name)]
+
+            def get_actor(self, *args: Any, **kwargs: Any) -> Any:
+                actor_name = args[0] if args else kwargs.get('name')
+                return self._actors.get(str(actor_name))
+
+            def set_actor_edge_highlight(self, *args: Any, **kwargs: Any) -> bool:
+                return True
 
         return _MockViewport()
 

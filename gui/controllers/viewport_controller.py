@@ -4,7 +4,16 @@ import numpy as np
 import pyvista as pv
 from PySide6.QtCore import QObject
 
-from gui.viewport_3d.vtk_viewport import VTKViewport
+from gui.viewport_3d.vtk_viewport import VTKViewport, ISceneViewport
+from gui.viewport_3d.material_palette import (
+    get_material_rgba,
+    get_material_opacity,
+    get_pseudo_xray_rgba,
+    DETECTOR_ACCENT_COLOR,
+    DETECTOR_ACCENT_OPACITY,
+    SELECTED_EDGE_HIGHLIGHT_COLOR,
+    SELECTED_EDGE_HIGHLIGHT_WIDTH,
+)
 from gui.viewport_3d.track_renderer import TrackRenderer
 from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.viewport_3d.pet_manipulator import PETManipulator
@@ -81,11 +90,51 @@ class SceneViewportController(QObject):
         self._active_dose_origin: Optional[Tuple[float, float, float]] = None
         self._active_dose_transform_matrix: Optional[np.ndarray] = None
 
+        # Состояние выделения узлов и параметров рентгеновской визуализации
+        self._selected_node_vm: Optional[NodeViewModel] = None
+        self._xray_mode: bool = False
+        self._xray_energy_kev: float = 140.0
+
         # Словарь подписок на события узлов: node_id -> (node_vm, [connections])
         self._node_connections: Dict[int, Tuple[NodeViewModel, List[Any]]] = {}
 
         if self.scene_vm is not None:
             self.set_scene_viewmodel(self.scene_vm)
+
+    @property
+    def selected_node_vm(self) -> Optional[NodeViewModel]:
+        """Текущий выделенный узел сцены."""
+        return self._selected_node_vm
+
+    @property
+    def xray_mode(self) -> bool:
+        """Флаг активного режима отображения 'Псевдорентген'."""
+        return self._xray_mode
+
+    @xray_mode.setter
+    def xray_mode(self, enabled: bool) -> None:
+        self.set_xray_parameters(self._xray_energy_kev, enabled)
+
+    @property
+    def xray_energy_kev(self) -> float:
+        """Энергия фотонов в кэВ для расчета физической рентгеновской непрозрачности."""
+        return self._xray_energy_kev
+
+    @xray_energy_kev.setter
+    def xray_energy_kev(self, energy_kev: float) -> None:
+        self.set_xray_parameters(energy_kev, self._xray_mode)
+
+    def set_xray_parameters(self, energy_kev: float, pseudo_xray_mode: bool) -> None:
+        """
+        Устанавливает параметры рентгеновской визуализации и обновляет акторы объемов.
+        """
+        self._xray_energy_kev = float(energy_kev)
+        self._xray_mode = bool(pseudo_xray_mode)
+        if self.scene_vm is not None:
+            for node_vm in self.scene_vm.all_nodes():
+                if isinstance(node_vm, VolumeViewModel):
+                    self.add_or_update_node_actor(node_vm)
+            self.viewport.render()
 
     @property
     def node_connections(self) -> Dict[int, Tuple[NodeViewModel, List[Any]]]:
@@ -120,10 +169,15 @@ class SceneViewportController(QObject):
 
     def set_scene_viewmodel(self, scene_vm: Optional[SceneViewModel]) -> None:
         """Привязка новой модели представления сцены с обновлением подписок."""
+        if self._selected_node_vm is not None:
+            self._set_node_edge_highlight(self._selected_node_vm, False)
+            self._selected_node_vm = None
         self.disconnect_all_nodes()
         self.scene_vm = scene_vm
         if self.scene_vm is not None:
             self.sync_viewport_scene()
+            if self.scene_vm.selected_node is not None:
+                self.on_node_selected(self.scene_vm.selected_node)
 
     def sync_viewport_scene(self) -> None:
         """
@@ -153,7 +207,7 @@ class SceneViewportController(QObject):
             self.pet_manipulator.remove_visuals()
 
         # Удаляем акторы и отключаем подписки узлов, которых больше нет в сцене
-        current_node_ids = {id(n) for n in all_nodes}
+        current_node_ids = {id(existing_node_vm) for existing_node_vm in all_nodes}
         for node_id in list(self._node_connections.keys()):
             if node_id not in current_node_ids:
                 self.disconnect_node(node_id)
@@ -188,10 +242,36 @@ class SceneViewportController(QObject):
         if isinstance(node_vm, VolumeViewModel):
             volume_size = node_vm.size
             box = pv.Box(bounds=(-volume_size[0]/2, volume_size[0]/2, -volume_size[1]/2, volume_size[1]/2, -volume_size[2]/2, volume_size[2]/2))
-            color = node_vm.color
-            rgb_color = color[:3] if isinstance(color, tuple) and len(color) >= 3 else (0.2, 0.6, 1.0)
-            self.viewport.add_mesh_actor(actor_name, box, color=rgb_color, opacity=0.45)
+            if self._xray_mode:
+                rgb_color, calculated_opacity = get_pseudo_xray_rgba(
+                    node_vm.material_name,
+                    energy_kev=self._xray_energy_kev,
+                )
+            elif node_vm.is_sensitive_detector:
+                rgb_color = DETECTOR_ACCENT_COLOR
+                calculated_opacity = DETECTOR_ACCENT_OPACITY
+            else:
+                volume_color = node_vm.color
+                if isinstance(volume_color, (tuple, list)) and len(volume_color) >= 3:
+                    rgb_color = (float(volume_color[0]), float(volume_color[1]), float(volume_color[2]))
+                else:
+                    rgb_color = get_material_color(node_vm.material_name)
+                calculated_opacity = get_material_opacity(
+                    node_vm.material_name,
+                    energy_kev=self._xray_energy_kev,
+                )
+
+            self.viewport.add_mesh_actor(actor_name, box, color=rgb_color, opacity=calculated_opacity)
             self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
+
+            if self._is_node_selected_or_child(node_vm):
+                if isinstance(self.viewport, ISceneViewport):
+                    self.viewport.set_actor_edge_highlight(
+                        actor_name,
+                        True,
+                        color=SELECTED_EDGE_HIGHLIGHT_COLOR,
+                        line_width=SELECTED_EDGE_HIGHLIGHT_WIDTH,
+                    )
 
         elif isinstance(node_vm, VoxelVolumeViewModel):
             dist = node_vm.core_node.material_distribution
@@ -220,18 +300,18 @@ class SceneViewportController(QObject):
                 sphere = pv.Sphere(radius=8.0)
                 self.viewport.add_mesh_actor(actor_name, sphere, color=(1.0, 0.2, 0.2), opacity=0.85)
             else:
-                sz = node_vm.size
-                if any(s <= 0 for s in sz):
-                    sz = (50.0, 50.0, 50.0)
-                box = pv.Box(bounds=(-sz[0]/2, sz[0]/2, -sz[1]/2, sz[1]/2, -sz[2]/2, sz[2]/2))
+                source_size = node_vm.size
+                if any(dimension_val <= 0 for dimension_val in source_size):
+                    source_size = (50.0, 50.0, 50.0)
+                box = pv.Box(bounds=(-source_size[0]/2, source_size[0]/2, -source_size[1]/2, source_size[1]/2, -source_size[2]/2, source_size[2]/2))
                 self.viewport.add_mesh_actor(actor_name, box, color=(1.0, 0.8, 0.1), opacity=0.35, style='wireframe')
             self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
 
         elif isinstance(node_vm, DoseGridViewModel):
-            sz = node_vm.size
-            if any(s <= 0 for s in sz):
-                sz = (100.0, 100.0, 100.0)
-            box = pv.Box(bounds=(-sz[0]/2, sz[0]/2, -sz[1]/2, sz[1]/2, -sz[2]/2, sz[2]/2))
+            grid_size = node_vm.size
+            if any(dimension_val <= 0 for dimension_val in grid_size):
+                grid_size = (100.0, 100.0, 100.0)
+            box = pv.Box(bounds=(-grid_size[0]/2, grid_size[0]/2, -grid_size[1]/2, grid_size[1]/2, -grid_size[2]/2, grid_size[2]/2))
             color = (0.2, 0.9, 0.3)
             opacity = 0.85 if node_vm.is_active else 0.3
             self.viewport.add_mesh_actor(
@@ -302,7 +382,7 @@ class SceneViewportController(QObject):
         """
         Инкрементальное обновление параметров актора при смене геометрии, цвета или физических свойств.
         """
-        if prop_name in ('size', 'color', 'voxel_size', 'is_point_source', 'file_path', 'dose_voxel_size', 'is_active'):
+        if prop_name in ('size', 'color', 'voxel_size', 'is_point_source', 'file_path', 'dose_voxel_size', 'is_active', 'material_name', 'is_sensitive_detector'):
             self.add_or_update_node_actor(node_vm)
             self.viewport.render()
         elif prop_name in ('diameter', 'axial_length', 'num_sectors') and isinstance(node_vm, PetScannerViewModel):
@@ -345,6 +425,9 @@ class SceneViewportController(QObject):
 
     def on_node_removed(self, node_vm: NodeViewModel) -> None:
         """Точечное удаление актора из сцены (рекурсивно для дочерних узлов)."""
+        if self._selected_node_vm is node_vm:
+            self._selected_node_vm = None
+
         def _remove_recursive(vm: NodeViewModel) -> None:
             actor_name = f"mesh_{id(vm)}"
             self.viewport.remove_actor(actor_name)
@@ -415,8 +498,52 @@ class SceneViewportController(QObject):
 
             self.viewport.render()
 
+    def _is_node_selected_or_child(self, node_vm: NodeViewModel) -> bool:
+        """Проверяет, является ли узел выделенным или потомком выделенного узла любой глубины вложенности."""
+        if self._selected_node_vm is None:
+            return False
+        current_node_vm: Optional[NodeViewModel] = node_vm
+        while current_node_vm is not None:
+            if current_node_vm is self._selected_node_vm:
+                return True
+            current_node_vm = current_node_vm.parent_vm
+        return False
+
+    def _set_node_edge_highlight(
+        self,
+        node_vm: Optional[NodeViewModel],
+        visible: bool,
+        color: Tuple[float, float, float] = SELECTED_EDGE_HIGHLIGHT_COLOR,
+        line_width: float = SELECTED_EDGE_HIGHLIGHT_WIDTH,
+    ) -> None:
+        """
+        Рекурсивно включает или выключает подсветку контура (ребер) для узла
+        и всех его потомков в графе сцены на любой глубине вложенности.
+        """
+        if node_vm is None or not isinstance(self.viewport, ISceneViewport):
+            return
+
+        def _apply_highlight_recursive(target_node_vm: NodeViewModel) -> None:
+            actor_name = f"mesh_{id(target_node_vm)}"
+            self.viewport.set_actor_edge_highlight(
+                actor_name,
+                visible,
+                color=color,
+                line_width=line_width,
+            )
+            for child_vm in target_node_vm.children:
+                _apply_highlight_recursive(child_vm)
+
+        _apply_highlight_recursive(node_vm)
+
     def on_node_selected(self, selected_node_vm: Optional[NodeViewModel]) -> None:
-        """Синхронизация ОФЭКТ/ПЭТ-манипулятора и Transform Gizmo при выборе узла в сцене."""
+        """Синхронизация подсветки ребер, ОФЭКТ/ПЭТ-манипулятора и Transform Gizmo при выборе узла в сцене."""
+        if self._selected_node_vm is not None:
+            self._set_node_edge_highlight(self._selected_node_vm, False)
+        self._selected_node_vm = selected_node_vm
+        if selected_node_vm is not None:
+            self._set_node_edge_highlight(selected_node_vm, True)
+
         if selected_node_vm is None:
             if self.transform_gizmo is not None:
                 self.transform_gizmo.detach()
