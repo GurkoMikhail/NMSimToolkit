@@ -6,6 +6,7 @@
 import unittest
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
+import hepunits as units
 
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
@@ -144,21 +145,21 @@ class TestMaterialPaletteAndPhysicalAttenuation(unittest.TestCase):
             self.assertEqual(len(color_rgb), 3)
             self.assertTrue(all(0.0 <= component <= 1.0 for component in color_rgb))
 
-            opacity_calculated = get_material_opacity(material_item_name, energy_kev=140.0)
+            opacity_calculated = get_material_opacity(material_item_name, energy=140.0 * units.keV)
             self.assertTrue(0.0 <= opacity_calculated <= 1.0)
 
-            rgba_tuple = get_material_rgba(material_item_name, energy_kev=140.0)
+            rgba_tuple = get_material_rgba(material_item_name, energy=140.0 * units.keV)
             self.assertEqual(len(rgba_tuple), 4)
             self.assertEqual(rgba_tuple[:3], color_rgb)
             self.assertEqual(rgba_tuple[3], opacity_calculated)
 
     def test_physical_attenuation_hierarchy(self) -> None:
         """Проверка физической корректности коэффициентов ослабления: Вакуум < Воздух < Вода < Кость < Свинец."""
-        vacuum_attenuation = compute_material_linear_attenuation("Vacuum", energy_kev=140.0)
-        air_attenuation = compute_material_linear_attenuation("Air, Dry (near sea level)", energy_kev=140.0)
-        water_attenuation = compute_material_linear_attenuation("Water, Liquid", energy_kev=140.0)
-        bone_attenuation = compute_material_linear_attenuation("Bone, Cortical (ICRU-44)", energy_kev=140.0)
-        lead_attenuation = compute_material_linear_attenuation("Pb", energy_kev=140.0)
+        vacuum_attenuation = compute_material_linear_attenuation("Vacuum", energy=140.0 * units.keV)
+        air_attenuation = compute_material_linear_attenuation("Air, Dry (near sea level)", energy=140.0 * units.keV)
+        water_attenuation = compute_material_linear_attenuation("Water, Liquid", energy=140.0 * units.keV)
+        bone_attenuation = compute_material_linear_attenuation("Bone, Cortical (ICRU-44)", energy=140.0 * units.keV)
+        lead_attenuation = compute_material_linear_attenuation("Pb", energy=140.0 * units.keV)
 
         self.assertEqual(vacuum_attenuation, 0.0)
         self.assertGreater(air_attenuation, vacuum_attenuation)
@@ -180,14 +181,14 @@ class TestMaterialPaletteAndPhysicalAttenuation(unittest.TestCase):
 
     def test_energy_dependency_of_attenuation(self) -> None:
         """Проверка падения коэффициента ослабления с ростом энергии (фотоэффект -> комптон)."""
-        mu_30kev = compute_material_linear_attenuation("Water, Liquid", energy_kev=30.0)
-        mu_60kev = compute_material_linear_attenuation("Water, Liquid", energy_kev=60.0)
-        mu_140kev = compute_material_linear_attenuation("Water, Liquid", energy_kev=140.0)
-        mu_511kev = compute_material_linear_attenuation("Water, Liquid", energy_kev=511.0)
+        mu_low = compute_material_linear_attenuation("Water, Liquid", energy=30.0 * units.keV)
+        mu_mid_low = compute_material_linear_attenuation("Water, Liquid", energy=60.0 * units.keV)
+        mu_mid_high = compute_material_linear_attenuation("Water, Liquid", energy=140.0 * units.keV)
+        mu_high = compute_material_linear_attenuation("Water, Liquid", energy=511.0 * units.keV)
 
-        self.assertGreater(mu_30kev, mu_60kev)
-        self.assertGreater(mu_60kev, mu_140kev)
-        self.assertGreater(mu_140kev, mu_511kev)
+        self.assertGreater(mu_low, mu_mid_low)
+        self.assertGreater(mu_mid_low, mu_mid_high)
+        self.assertGreater(mu_mid_high, mu_high)
 
     def test_material_synonyms_normalization(self) -> None:
         """Проверка разрешения синонимов (Lead -> Pb, Water -> Water, Liquid и т.д.)."""
@@ -203,8 +204,8 @@ class TestMaterialPaletteAndPhysicalAttenuation(unittest.TestCase):
 
     def test_pseudo_xray_mode_generation(self) -> None:
         """Проверка генерации контрастного оттенка и непрозрачности в режиме псевдорентгена."""
-        rgb_lead, opacity_lead = get_pseudo_xray_rgba("Pb", energy_kev=140.0)
-        rgb_air, opacity_air = get_pseudo_xray_rgba("Air, Dry (near sea level)", energy_kev=140.0)
+        rgb_lead, opacity_lead = get_pseudo_xray_rgba("Pb", energy=140.0 * units.keV)
+        rgb_air, opacity_air = get_pseudo_xray_rgba("Air, Dry (near sea level)", energy=140.0 * units.keV)
 
         # Свинец в псевдорентгене должен быть значительно ярче и непрозрачнее воздуха
         self.assertGreater(rgb_lead[0], rgb_air[0])
@@ -223,15 +224,15 @@ class TestMaterialPaletteAndPhysicalAttenuation(unittest.TestCase):
     def test_dbc_and_exceptions_handling(self) -> None:
         """Проверка контрактного программирования (DbC): валидация энергии и выброс KeyError для неизвестных материалов."""
         with self.assertRaises(ValueError):
-            compute_material_linear_attenuation("Water, Liquid", energy_kev=0.0)
+            compute_material_linear_attenuation("Water, Liquid", energy=0.0)
         with self.assertRaises(ValueError):
-            compute_material_linear_attenuation("Water, Liquid", energy_kev=-50.0)
+            compute_material_linear_attenuation("Water, Liquid", energy=-50.0 * units.keV)
         with self.assertRaises(KeyError):
-            compute_material_linear_attenuation("NonExistentMaterialXYZ", energy_kev=140.0)
+            compute_material_linear_attenuation("NonExistentMaterialXYZ", energy=140.0 * units.keV)
         with self.assertRaises(ValueError):
-            compute_xray_opacity(0.015, characteristic_length_mm=0.0)
+            compute_xray_opacity(0.015, characteristic_length=0.0)
         with self.assertRaises(ValueError):
-            compute_xray_opacity(0.015, characteristic_length_mm=-10.0)
+            compute_xray_opacity(0.015, characteristic_length=-10.0 * units.mm)
 
 
 class TestVolumeViewModelMaterialIntegration(unittest.TestCase):
@@ -252,7 +253,7 @@ class TestVolumeViewModelMaterialIntegration(unittest.TestCase):
         volume_view_model.material_name = "Pb"
         expected_lead_color = get_material_color("Pb")
         self.assertEqual(volume_view_model.color[:3], expected_lead_color)
-        self.assertAlmostEqual(volume_view_model.color[3], get_material_opacity("Pb", energy_kev=140.0))
+        self.assertAlmostEqual(volume_view_model.color[3], get_material_opacity("Pb", energy=140.0 * units.keV))
 
     def test_detector_flag_reactivity(self) -> None:
         """Проверка свойства is_sensitive_detector и глобального реестра чувствительных объемов."""
@@ -347,13 +348,13 @@ class TestViewportControllerEnhancements(unittest.TestCase):
     def test_xray_mode_and_energy_update(self) -> None:
         """Проверка переключения режима псевдорентгена и смены энергии фотонов."""
         self.assertFalse(self.controller.xray_mode)
-        self.assertEqual(self.controller.xray_energy_kev, 140.0)
+        self.assertAlmostEqual(self.controller.xray_energy, 140.0 * units.keV)
 
         initial_renders = self.mock_viewport.render_call_count
-        self.controller.set_xray_parameters(energy_kev=60.0, pseudo_xray_mode=True)
+        self.controller.set_xray_parameters(energy=60.0 * units.keV, pseudo_xray_mode=True)
 
         self.assertTrue(self.controller.xray_mode)
-        self.assertEqual(self.controller.xray_energy_kev, 60.0)
+        self.assertAlmostEqual(self.controller.xray_energy, 60.0 * units.keV)
         self.assertGreater(self.mock_viewport.render_call_count, initial_renders)
 
     def test_deep_hierarchical_edge_highlighting(self) -> None:
@@ -407,15 +408,15 @@ class TestViewportControllerEnhancements(unittest.TestCase):
         self.mock_viewport.add_mesh_actor = intercepting_add_mesh
 
         # Изменяем энергию со 140 кэВ на 30 кэВ (коэффициент ослабления воды растет, непрозрачность увеличивается)
-        self.controller.set_xray_parameters(energy_kev=30.0, pseudo_xray_mode=False)
+        self.controller.set_xray_parameters(energy=30.0 * units.keV, pseudo_xray_mode=False)
         self.assertTrue(len(recorded_opacities) > 0)
         new_opacity = recorded_opacities[-1]
 
-        expected_opacity_30kev = get_material_opacity("Water, Liquid", energy_kev=30.0)
-        expected_opacity_140kev = get_material_opacity("Water, Liquid", energy_kev=140.0)
+        expected_opacity_low = get_material_opacity("Water, Liquid", energy=30.0 * units.keV)
+        expected_opacity_default = get_material_opacity("Water, Liquid", energy=140.0 * units.keV)
 
-        self.assertAlmostEqual(new_opacity, expected_opacity_30kev, places=4)
-        self.assertGreater(new_opacity, expected_opacity_140kev)
+        self.assertAlmostEqual(new_opacity, expected_opacity_low, places=4)
+        self.assertGreater(new_opacity, expected_opacity_default)
 
 
 class TestDarkStyleSheetDisabledFields(unittest.TestCase):
@@ -432,20 +433,20 @@ class TestDarkStyleSheetDisabledFields(unittest.TestCase):
 
 
 class TestGuiSimulationSettingsExtension(unittest.TestCase):
-    """Тестирование расширения параметров настроек симуляции xray_energy_kev и pseudo_xray_mode."""
+    """Тестирование расширения параметров настроек симуляции xray_energy и pseudo_xray_mode."""
 
     def test_settings_fields_and_dict_serialization(self) -> None:
         """Проверка полей, валидации и сериализации в GuiSimulationSettings."""
         settings_instance = GuiSimulationSettings()
-        self.assertEqual(settings_instance.xray_energy_kev, 140.0)
+        self.assertAlmostEqual(settings_instance.xray_energy, 140.0 * units.keV)
         self.assertFalse(settings_instance.pseudo_xray_mode)
 
-        settings_instance.update({"xray_energy_kev": 60.0, "pseudo_xray_mode": True})
-        self.assertEqual(settings_instance.xray_energy_kev, 60.0)
+        settings_instance.update({"xray_energy": 60.0 * units.keV, "pseudo_xray_mode": True})
+        self.assertAlmostEqual(settings_instance.xray_energy, 60.0 * units.keV)
         self.assertTrue(settings_instance.pseudo_xray_mode)
 
         serialized_settings = settings_instance.to_dict()
-        self.assertEqual(serialized_settings["xray_energy_kev"], 60.0)
+        self.assertAlmostEqual(serialized_settings["xray_energy"], 60.0 * units.keV)
         self.assertTrue(serialized_settings["pseudo_xray_mode"])
 
 

@@ -2,6 +2,7 @@ import logging
 from typing import Any, Dict, List, Optional, Protocol, Set, Tuple, Union, runtime_checkable
 import numpy as np
 import pyvista as pv
+import hepunits as units
 from PySide6.QtCore import QObject
 
 from gui.viewport_3d.vtk_viewport import VTKViewport, ISceneViewport
@@ -93,7 +94,7 @@ class SceneViewportController(QObject):
         # Состояние выделения узлов и параметров рентгеновской визуализации
         self._selected_node_vm: Optional[NodeViewModel] = None
         self._xray_mode: bool = False
-        self._xray_energy_kev: float = 140.0
+        self._xray_energy: float = 140.0 * units.keV
 
         # Словарь подписок на события узлов: node_id -> (node_vm, [connections])
         self._node_connections: Dict[int, Tuple[NodeViewModel, List[Any]]] = {}
@@ -113,22 +114,22 @@ class SceneViewportController(QObject):
 
     @xray_mode.setter
     def xray_mode(self, enabled: bool) -> None:
-        self.set_xray_parameters(self._xray_energy_kev, enabled)
+        self.set_xray_parameters(self._xray_energy, enabled)
 
     @property
-    def xray_energy_kev(self) -> float:
-        """Энергия фотонов в кэВ для расчета физической рентгеновской непрозрачности."""
-        return self._xray_energy_kev
+    def xray_energy(self) -> float:
+        """Энергия фотонов в единицах hepunits для расчета физической рентгеновской непрозрачности."""
+        return self._xray_energy
 
-    @xray_energy_kev.setter
-    def xray_energy_kev(self, energy_kev: float) -> None:
-        self.set_xray_parameters(energy_kev, self._xray_mode)
+    @xray_energy.setter
+    def xray_energy(self, energy: float) -> None:
+        self.set_xray_parameters(energy, self._xray_mode)
 
-    def set_xray_parameters(self, energy_kev: float, pseudo_xray_mode: bool) -> None:
+    def set_xray_parameters(self, energy: float, pseudo_xray_mode: bool) -> None:
         """
         Устанавливает параметры рентгеновской визуализации и обновляет акторы объемов.
         """
-        self._xray_energy_kev = float(energy_kev)
+        self._xray_energy = float(energy)
         self._xray_mode = bool(pseudo_xray_mode)
         if self.scene_vm is not None:
             for node_vm in self.scene_vm.all_nodes():
@@ -245,7 +246,7 @@ class SceneViewportController(QObject):
             if self._xray_mode:
                 rgb_color, calculated_opacity = get_pseudo_xray_rgba(
                     node_vm.material_name,
-                    energy_kev=self._xray_energy_kev,
+                    energy=self._xray_energy,
                 )
             elif node_vm.is_sensitive_detector:
                 rgb_color = DETECTOR_ACCENT_COLOR
@@ -258,7 +259,7 @@ class SceneViewportController(QObject):
                     rgb_color = get_material_color(node_vm.material_name)
                 calculated_opacity = get_material_opacity(
                     node_vm.material_name,
-                    energy_kev=self._xray_energy_kev,
+                    energy=self._xray_energy,
                 )
 
             self.viewport.add_mesh_actor(actor_name, box, color=rgb_color, opacity=calculated_opacity)

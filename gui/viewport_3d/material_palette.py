@@ -4,7 +4,7 @@
 Модуль предоставляет:
 1. Каталог визуальных цветов для всех 144 материалов базы данных NIST (tables/NIST Materials.h5)
    с разделением по физическим группам (биологические ткани, полимеры, сцинтилляторы, кристаллы, металлы, газы).
-2. Физический расчет линейного коэффициента ослабления фотонов (mu в 1/мм) для материалов на основе NIST XCOM.
+2. Физический расчет линейного коэффициента ослабления фотонов (mu в единицах hepunits) для материалов на основе NIST XCOM.
 3. Расчет оптической непрозрачности (Opacity) по закону Бугера-Ламберта-Бера в зависимости от энергии квантов.
 4. Режим отображения в псевдорентгене (Pseudo-X-ray Mode).
 5. Визуальные акценты для детекторов (золотистый янтарь) и подсветки ребер выделенных узлов.
@@ -324,14 +324,14 @@ def get_material_color(material_name: str) -> Tuple[float, float, float]:
 
 def compute_material_linear_attenuation(
     material_name: str,
-    energy_kev: float = 140.0,
+    energy: float = 140.0 * units.keV,
 ) -> float:
     """
-    Рассчитывает физический линейный коэффициент ослабления mu (1/мм)
-    для материала при заданной энергии фотонов (кэВ) на основе NIST XCOM.
+    Рассчитывает физический линейный коэффициент ослабления mu (в единицах hepunits)
+    для материала при заданной энергии фотонов на основе NIST XCOM.
     """
-    if energy_kev <= 0.0:
-        raise ValueError(f"Энергия фотонов должна быть строго положительной (> 0 кэВ), получено: {energy_kev}")
+    if energy <= 0.0:
+        raise ValueError(f"Энергия фотонов должна быть строго положительной (> 0), получено: {energy}")
 
     canonical_name = normalize_material_name(material_name)
     if canonical_name == "Vacuum":
@@ -354,7 +354,7 @@ def compute_material_linear_attenuation(
             f"Материал '{material_name}' (каноническое имя: '{canonical_name}') отсутствует в базе данных ослабления NIST."
         )
 
-    energy_mev = float(energy_kev / 1000.0)
+    energy_table_scale = float(energy / units.MeV)
     mac_table = attenuations_db[target_material]
     energy_array = mac_table['Energy']
     coefficients_table = mac_table['Coefficient']
@@ -364,15 +364,15 @@ def compute_material_linear_attenuation(
         for process_name in coefficients_table.dtype.names
     )
 
-    interpolated_mass_coeff = float(np.interp(energy_mev, energy_array, total_mass_attenuation_array))
+    interpolated_mass_coeff = float(np.interp(energy_table_scale, energy_array, total_mass_attenuation_array))
     linear_attenuation_internal = interpolated_mass_coeff * target_material.density
-    linear_attenuation_per_mm = float(linear_attenuation_internal / (1.0 / units.mm))
-    return max(0.0, linear_attenuation_per_mm)
+    linear_attenuation = float(linear_attenuation_internal / (1.0 / units.mm))
+    return max(0.0, linear_attenuation)
 
 
 def compute_xray_opacity(
-    linear_attenuation_per_mm: float,
-    characteristic_length_mm: float = 25.0,
+    linear_attenuation: float,
+    characteristic_length: float = 25.0 * units.mm,
     min_opacity: float = 0.12,
     max_opacity: float = 0.95,
 ) -> float:
@@ -380,14 +380,14 @@ def compute_xray_opacity(
     Преобразует линейный коэффициент ослабления mu в оптическую непрозрачность (Opacity)
     по физическому экспоненциальному закону Бугера-Ламберта-Бера: Opacity = 1 - exp(-mu * L).
     """
-    if characteristic_length_mm <= 0.0:
+    if characteristic_length <= 0.0:
         raise ValueError(
-            f"Характерный размер объема должен быть строго положительным (> 0 мм), получено: {characteristic_length_mm}"
+            f"Характерный размер объема должен быть строго положительным (> 0), получено: {characteristic_length}"
         )
-    if linear_attenuation_per_mm <= 1e-7:
+    if linear_attenuation <= 1e-7:
         return 0.06
 
-    optical_depth = float(linear_attenuation_per_mm * characteristic_length_mm)
+    optical_depth = float(linear_attenuation * characteristic_length)
     absorbed_ratio = float(1.0 - np.exp(-optical_depth))
     visual_opacity = min_opacity + (max_opacity - min_opacity) * (absorbed_ratio ** 0.8)
     return float(np.clip(visual_opacity, min_opacity, max_opacity))
@@ -395,26 +395,26 @@ def compute_xray_opacity(
 
 def get_material_opacity(
     material_name: str,
-    energy_kev: float = 140.0,
-    characteristic_length_mm: float = 25.0,
+    energy: float = 140.0 * units.keV,
+    characteristic_length: float = 25.0 * units.mm,
 ) -> float:
     """
     Возвращает рассчитанную оптическую непрозрачность (Opacity) материала
-    при заданной энергии фотонов (кэВ) и характерном размере (мм).
+    при заданной энергии фотонов и характерном размере в единицах hepunits.
     """
     try:
-        linear_attenuation = compute_material_linear_attenuation(material_name, energy_kev=energy_kev)
+        linear_attenuation = compute_material_linear_attenuation(material_name, energy=energy)
     except KeyError:
         # Для нестандартных/пользовательских материалов, отсутствующих в базе NIST,
-        # используем стандартное ослабление мягких тканей/воды (0.015 мм^-1)
-        linear_attenuation = 0.015
-    return compute_xray_opacity(linear_attenuation, characteristic_length_mm=characteristic_length_mm)
+        # используем стандартное ослабление мягких тканей/воды (0.015 / units.mm)
+        linear_attenuation = 0.015 * (1.0 / units.mm)
+    return compute_xray_opacity(linear_attenuation, characteristic_length=characteristic_length)
 
 
 def get_material_rgba(
     material_name: str,
-    energy_kev: float = 140.0,
-    characteristic_length_mm: float = 25.0,
+    energy: float = 140.0 * units.keV,
+    characteristic_length: float = 25.0 * units.mm,
 ) -> Tuple[float, float, float, float]:
     """
     Возвращает полный кортеж (Red, Green, Blue, Alpha) для материала,
@@ -423,16 +423,16 @@ def get_material_rgba(
     red_color, green_color, blue_color = get_material_color(material_name)
     opacity_value = get_material_opacity(
         material_name,
-        energy_kev=energy_kev,
-        characteristic_length_mm=characteristic_length_mm,
+        energy=energy,
+        characteristic_length=characteristic_length,
     )
     return (red_color, green_color, blue_color, opacity_value)
 
 
 def get_pseudo_xray_rgba(
     material_name: str,
-    energy_kev: float = 140.0,
-    characteristic_length_mm: float = 25.0,
+    energy: float = 140.0 * units.keV,
+    characteristic_length: float = 25.0 * units.mm,
 ) -> Tuple[Tuple[float, float, float], float]:
     """
     Возвращает RGB цвет и Opacity материала для режима визуализации 'Псевдорентген'.
@@ -440,13 +440,13 @@ def get_pseudo_xray_rgba(
     тогда как мягкие ткани и воздух становятся слабовидимыми и полупрозрачными.
     """
     try:
-        linear_attenuation = compute_material_linear_attenuation(material_name, energy_kev=energy_kev)
+        linear_attenuation = compute_material_linear_attenuation(material_name, energy=energy)
     except KeyError:
-        linear_attenuation = 0.015
+        linear_attenuation = 0.015 * (1.0 / units.mm)
 
-    opacity_value = compute_xray_opacity(linear_attenuation, characteristic_length_mm=characteristic_length_mm)
+    opacity_value = compute_xray_opacity(linear_attenuation, characteristic_length=characteristic_length)
 
-    optical_thickness = float(linear_attenuation * characteristic_length_mm)
+    optical_thickness = float(linear_attenuation * characteristic_length)
     radiographic_brightness = float(np.clip(0.20 + 0.80 * (1.0 - np.exp(-optical_thickness)), 0.20, 1.00))
 
     # Стилизация холодного рентгеновского свечения

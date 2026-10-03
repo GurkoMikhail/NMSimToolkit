@@ -867,9 +867,9 @@ class MainWindow(QMainWindow):
                     except (TypeError, ValueError):
                         pass
                     try:
-                        min_energy_kev = float(cfg.simulation_manager.min_energy) / float(units.keV)
-                        self.sim_settings.min_energy = min_energy_kev
-                        self.orchestrator_session.min_energy = min_energy_kev
+                        scaled_min_energy = float(cfg.simulation_manager.min_energy) / float(units.keV)
+                        self.sim_settings.min_energy = scaled_min_energy
+                        self.orchestrator_session.min_energy = scaled_min_energy
                     except (TypeError, ValueError):
                         pass
 
@@ -942,7 +942,7 @@ class MainWindow(QMainWindow):
             # Передача параметров рентгеновской визуализации во вьюпорт
             if self.viewport_controller is not None:
                 self.viewport_controller.set_xray_parameters(
-                    energy_kev=new_settings.xray_energy_kev,
+                    energy=new_settings.xray_energy,
                     pseudo_xray_mode=new_settings.pseudo_xray_mode,
                 )
 

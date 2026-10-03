@@ -1,5 +1,6 @@
 import os
 from typing import Any, Dict, Optional
+import hepunits as units
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QGroupBox, QFormLayout,
@@ -110,7 +111,7 @@ class SimulationSettingsDialog(QDialog):
         self.spin_xray_energy.setRange(1.0, 10000.0)
         self.spin_xray_energy.setSingleStep(5.0)
         self.spin_xray_energy.setSuffix(" кэВ")
-        self.spin_xray_energy.setValue(float(self._settings.xray_energy_kev))
+        self.spin_xray_energy.setValue(float(self._settings.xray_energy / units.keV))
         form_tracks.addRow("Энергия расчета ослабления (X-Ray):", self.spin_xray_energy)
 
         self.chk_pseudo_xray = QCheckBox("Режим отображения в псевдорентгене", grp_tracks)
@@ -140,7 +141,7 @@ class SimulationSettingsDialog(QDialog):
             "grid_snap_step": self.spin_grid_snap.value(),
             "angle_snap_step": self.spin_angle_snap.value(),
             "scale_snap_step": self.spin_scale_snap.value(),
-            "xray_energy_kev": self.spin_xray_energy.value(),
+            "xray_energy": float(self.spin_xray_energy.value()) * units.keV,
             "pseudo_xray_mode": self.chk_pseudo_xray.isChecked(),
         })
         return GuiSimulationSettings(**updated_dict)
