@@ -40,7 +40,7 @@ scene:
       voxel_size: 4.2
       radiation_type: Gamma
       energy: 0.159
-      half_life: 4.752e+40
+      half_life: 4.752e+49
     type: WoodcockVoxelVolume
     voxel_size: 4.2
     distribution:
@@ -68,7 +68,7 @@ scene:
           - 355.25
         - - -1.0
           - 0.0
-          - -0.0
+          - 0.0
           - 0.0
         - - 0.0
           - 1.0
@@ -223,7 +223,7 @@ scene:
           - -355.25
         - - 1.0
           - 0.0
-          - -0.0
+          - 0.0
           - 0.0
         - - 0.0
           - 1.0
@@ -369,6 +369,16 @@ scene:
         crystal: Detector_2
         glass_backend: Glass_backend_2
     type: Gantry
+  - name: DoseGrid_1
+    transformations: []
+    children: []
+    type: DoseGridNode
+    size:
+    - 1200.0
+    - 1200.0
+    - 800.0
+    dose_voxel_size: 8.0
+    is_active: true
   type: Volume
   geometry:
     type: Box
