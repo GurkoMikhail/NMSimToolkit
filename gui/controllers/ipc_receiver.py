@@ -6,6 +6,7 @@ from multiprocessing import shared_memory
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import hepunits as units
 from PySide6.QtCore import QThread, Signal
 
 _logger = logging.getLogger(__name__)
@@ -154,7 +155,7 @@ class IPCReceiver(QThread):
                     edep_arr = np.asarray(edep)
                     valid_edep = edep_arr[edep_arr > 0]
                     if len(valid_edep) > 0:
-                        energies = (valid_edep * 1000.0).astype(np.float32)
+                        energies = (valid_edep / units.keV).astype(np.float32)
                         self._accumulated_energies.append(energies)
                         self._spectrum_dirty = True
                         # Предотвращение лавинообразного роста памяти: периодическая компактификация

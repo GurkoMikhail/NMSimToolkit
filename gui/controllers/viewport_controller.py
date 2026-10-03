@@ -129,6 +129,8 @@ class SceneViewportController(QObject):
         """
         Устанавливает параметры рентгеновской визуализации и обновляет акторы объемов.
         """
+        if energy <= 0.0:
+            raise ValueError(f"Энергия фотонов должна быть строго положительной (> 0), получено: {energy}")
         self._xray_energy = float(energy)
         self._xray_mode = bool(pseudo_xray_mode)
         if self.scene_vm is not None:

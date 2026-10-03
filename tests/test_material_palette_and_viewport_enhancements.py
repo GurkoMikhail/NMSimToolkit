@@ -12,10 +12,13 @@ from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.scene.nodes import SpatialNode, CompositeNode
+from pydantic import ValidationError
+
 import settings.database_setting as database_setting
 
 from gui.app import DARK_STYLE_SHEET
 from gui.models.gui_settings import GuiSimulationSettings
+from gui.views.simulation_settings_dialog import SimulationSettingsDialog
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
@@ -233,6 +236,12 @@ class TestMaterialPaletteAndPhysicalAttenuation(unittest.TestCase):
             compute_xray_opacity(0.015, characteristic_length=0.0)
         with self.assertRaises(ValueError):
             compute_xray_opacity(0.015, characteristic_length=-10.0 * units.mm)
+        with self.assertRaises(ValueError):
+            compute_xray_opacity(-0.015, characteristic_length=25.0 * units.mm)
+        with self.assertRaises(ValueError):
+            compute_xray_opacity(0.015, min_opacity=-0.1)
+        with self.assertRaises(ValueError):
+            compute_xray_opacity(0.015, min_opacity=0.9, max_opacity=0.5)
 
 
 class TestVolumeViewModelMaterialIntegration(unittest.TestCase):
@@ -357,6 +366,11 @@ class TestViewportControllerEnhancements(unittest.TestCase):
         self.assertAlmostEqual(self.controller.xray_energy, 60.0 * units.keV)
         self.assertGreater(self.mock_viewport.render_call_count, initial_renders)
 
+        with self.assertRaises(ValueError):
+            self.controller.set_xray_parameters(energy=0.0, pseudo_xray_mode=False)
+        with self.assertRaises(ValueError):
+            self.controller.set_xray_parameters(energy=-10.0 * units.keV, pseudo_xray_mode=False)
+
     def test_deep_hierarchical_edge_highlighting(self) -> None:
         """Проверка подсветки ребер при глубокой вложенности (CompositeNode -> CompositeNode -> Volume)."""
         scanner_node = CompositeNode(name="Scanner")
@@ -449,6 +463,43 @@ class TestGuiSimulationSettingsExtension(unittest.TestCase):
         self.assertAlmostEqual(serialized_settings["xray_energy"], 60.0 * units.keV)
         self.assertTrue(serialized_settings["pseudo_xray_mode"])
 
+        # Валидация строго положительной энергии фотонов (gt=0.0)
+        with self.assertRaises(ValidationError):
+            settings_instance.update({"xray_energy": -50.0})
+        with self.assertRaises(ValidationError):
+            settings_instance.update({"xray_energy": 0.0})
+
+
+class TestSimulationSettingsDialogXrayIntegration(unittest.TestCase):
+    """Тестирование отображения и конвертации xray_energy в диалоге SimulationSettingsDialog."""
+
+    def test_dialog_xray_energy_scaling_and_persistence(self) -> None:
+        """Проверка отображения в кэВ и считывания в базовой размерности hepunits."""
+        default_settings = GuiSimulationSettings()
+        dialog = SimulationSettingsDialog(default_settings)
+
+        # По умолчанию xray_energy = 140.0 * units.keV -> спинбокс отображает 140.0 кэВ
+        self.assertAlmostEqual(dialog.spin_xray_energy.value(), 140.0)
+        self.assertFalse(dialog.chk_pseudo_xray.isChecked())
+
+        # Изменяем значение в спинбоксе на 60.0 кэВ и включаем псевдорентген
+        dialog.spin_xray_energy.setValue(60.0)
+        dialog.chk_pseudo_xray.setChecked(True)
+
+        updated_settings = dialog.get_settings()
+        self.assertIsInstance(updated_settings, GuiSimulationSettings)
+        self.assertAlmostEqual(updated_settings.xray_energy, 60.0 * units.keV)
+        self.assertTrue(updated_settings.pseudo_xray_mode)
+
+    def test_dialog_custom_initial_xray_energy(self) -> None:
+        """Проверка инициализации спинбокса при нестандартной энергии в модели настроек."""
+        custom_settings = GuiSimulationSettings(xray_energy=80.0 * units.keV, pseudo_xray_mode=True)
+        dialog = SimulationSettingsDialog(custom_settings)
+
+        self.assertAlmostEqual(dialog.spin_xray_energy.value(), 80.0)
+        self.assertTrue(dialog.chk_pseudo_xray.isChecked())
+
 
 if __name__ == "__main__":
     unittest.main()
+

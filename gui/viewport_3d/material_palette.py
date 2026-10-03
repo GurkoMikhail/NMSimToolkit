@@ -384,6 +384,14 @@ def compute_xray_opacity(
         raise ValueError(
             f"Характерный размер объема должен быть строго положительным (> 0), получено: {characteristic_length}"
         )
+    if linear_attenuation < 0.0:
+        raise ValueError(
+            f"Линейный коэффициент ослабления должен быть неотрицательным (>= 0), получено: {linear_attenuation}"
+        )
+    if not (0.0 <= min_opacity <= max_opacity <= 1.0):
+        raise ValueError(
+            f"Недопустимый диапазон непрозрачности: min_opacity={min_opacity}, max_opacity={max_opacity}"
+        )
     if linear_attenuation <= 1e-7:
         return 0.06
 
@@ -446,8 +454,8 @@ def get_pseudo_xray_rgba(
 
     opacity_value = compute_xray_opacity(linear_attenuation, characteristic_length=characteristic_length)
 
-    optical_thickness = float(linear_attenuation * characteristic_length)
-    radiographic_brightness = float(np.clip(0.20 + 0.80 * (1.0 - np.exp(-optical_thickness)), 0.20, 1.00))
+    optical_depth = float(linear_attenuation * characteristic_length)
+    radiographic_brightness = float(np.clip(0.20 + 0.80 * (1.0 - np.exp(-optical_depth)), 0.20, 1.00))
 
     # Стилизация холодного рентгеновского свечения
     rgb_radiographic = (
