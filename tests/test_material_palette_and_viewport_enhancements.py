@@ -29,7 +29,6 @@ from gui.viewport_3d.material_palette import (
     get_pseudo_xray_rgba,
     compute_material_linear_attenuation,
     compute_xray_opacity,
-    normalize_material_name,
     DETECTOR_ACCENT_COLOR,
     DETECTOR_ACCENT_OPACITY,
     SELECTED_EDGE_HIGHLIGHT_COLOR,
@@ -193,17 +192,19 @@ class TestMaterialPaletteAndPhysicalAttenuation(unittest.TestCase):
         self.assertGreater(mu_mid_low, mu_mid_high)
         self.assertGreater(mu_mid_high, mu_high)
 
-    def test_material_synonyms_normalization(self) -> None:
-        """Проверка разрешения синонимов (Lead -> Pb, Water -> Water, Liquid и т.д.)."""
-        self.assertEqual(normalize_material_name("Lead"), "Pb")
-        self.assertEqual(normalize_material_name("water"), "Water, Liquid")
-        self.assertEqual(normalize_material_name("Air"), "Air, Dry (near sea level)")
-        self.assertEqual(normalize_material_name("Bone"), "Bone, Cortical (ICRU-44)")
-        self.assertEqual(normalize_material_name("CZT"), "Cadmium Zinc Telluride")
+    def test_strict_canonical_materials_and_synonym_rejection(self) -> None:
+        """Проверка строгого соответствия каноническим именам NIST и выброса KeyError для псевдонимов."""
+        all_materials_dict = database_setting.material_database
+        self.assertEqual(len(all_materials_dict), 144)
+        for mat_name in all_materials_dict.keys():
+            linear_attenuation = compute_material_linear_attenuation(mat_name, energy=140.0 * units.keV)
+            self.assertGreaterEqual(linear_attenuation, 0.0)
 
-        color_lead_full = get_material_color("Pb")
-        color_lead_synonym = get_material_color("Lead")
-        self.assertEqual(color_lead_full, color_lead_synonym)
+        # Псевдонимы и неточные имена вызывают KeyError
+        synonyms_to_reject = ["lead", "Lead", "tungsten", "Tungsten", "water", "Water", "air", "Air", "czt", "CZT"]
+        for synonym in synonyms_to_reject:
+            with self.assertRaises(KeyError):
+                compute_material_linear_attenuation(synonym, energy=140.0 * units.keV)
 
     def test_pseudo_xray_mode_generation(self) -> None:
         """Проверка генерации контрастного оттенка и непрозрачности в режиме псевдорентгена."""
@@ -223,6 +224,10 @@ class TestMaterialPaletteAndPhysicalAttenuation(unittest.TestCase):
             if mat_name not in MATERIAL_COLOR_PALETTE
         ]
         self.assertEqual(len(missing_materials), 0, f"Отсутствуют материалы в палитре: {missing_materials}")
+        self.assertEqual(len(MATERIAL_COLOR_PALETTE), len(all_materials_dict))
+        self.assertIn("Vacuum", MATERIAL_COLOR_PALETTE)
+        for synonym in ["Air", "Water", "Lead", "Tungsten", "Gold", "Silver", "Iron", "Aluminum"]:
+            self.assertNotIn(synonym, MATERIAL_COLOR_PALETTE)
 
     def test_dbc_and_exceptions_handling(self) -> None:
         """Проверка контрактного программирования (DbC): валидация энергии и выброс KeyError для неизвестных материалов."""

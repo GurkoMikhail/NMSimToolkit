@@ -13,7 +13,7 @@ from core.other.typing_definitions import Float
 import settings.database_setting as database_setting
 from gui.viewmodels.decorators import gui_field
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
-from gui.viewport_3d.material_palette import get_material_rgba, normalize_material_name
+from gui.viewport_3d.material_palette import get_material_rgba
 
 _logger = logging.getLogger(__name__)
 
@@ -69,13 +69,10 @@ class VolumeViewModel(NodeViewModel):
 
     @material_name.setter
     def material_name(self, new_material_name: str) -> None:
-        canonical_name = normalize_material_name(new_material_name)
-        if canonical_name == "Vacuum":
+        if new_material_name == "Vacuum":
             self.core_node.material = Material(name="Vacuum")
         elif new_material_name in database_setting.material_database:
             self.core_node.material = database_setting.material_database[new_material_name]
-        elif canonical_name in database_setting.material_database:
-            self.core_node.material = database_setting.material_database[canonical_name]
         else:
             raise KeyError(f"Material '{new_material_name}' is not found in the material database.")
         self.core_node.invalidate_geometry()

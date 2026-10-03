@@ -32,9 +32,7 @@ MATERIAL_COLOR_PALETTE: Dict[str, Tuple[float, float, float]] = {
     # Вакуум и фоновые среды
     "Vacuum": (0.45, 0.48, 0.55),
     "Air, Dry (near sea level)": (0.75, 0.88, 0.95),
-    "Air": (0.75, 0.88, 0.95),
     "Water, Liquid": (0.30, 0.65, 0.92),
-    "Water": (0.30, 0.65, 0.92),
 
     # Анатомические и биологические ткани (ICRU-44)
     "Adipose Tissue (ICRU-44)": (0.92, 0.86, 0.58),
@@ -99,21 +97,15 @@ MATERIAL_COLOR_PALETTE: Dict[str, Tuple[float, float, float]] = {
 
     # Тяжелые металлы радиационной защиты и коллиматоров
     "Pb": (0.30, 0.32, 0.38),
-    "Lead": (0.30, 0.32, 0.38),
     "W": (0.35, 0.36, 0.40),
-    "Tungsten": (0.35, 0.36, 0.40),
     "Ta": (0.40, 0.42, 0.45),
     "Mo": (0.45, 0.46, 0.50),
     "Au": (0.95, 0.80, 0.20),
-    "Gold": (0.95, 0.80, 0.20),
     "Ag": (0.88, 0.90, 0.92),
-    "Silver": (0.88, 0.90, 0.92),
     "Pt": (0.82, 0.84, 0.88),
     "Cu": (0.85, 0.45, 0.25),
     "Fe": (0.50, 0.52, 0.55),
-    "Iron": (0.50, 0.52, 0.55),
     "Al": (0.78, 0.80, 0.82),
-    "Aluminum": (0.78, 0.80, 0.82),
     "Ti": (0.55, 0.58, 0.62),
     "Ni": (0.60, 0.62, 0.65),
     "Cr": (0.65, 0.68, 0.72),
@@ -208,90 +200,6 @@ MATERIAL_COLOR_PALETTE: Dict[str, Tuple[float, float, float]] = {
     "Rn": (0.65, 0.70, 0.75),
 }
 
-# Синонимы и сокращенные наименования материалов
-MATERIAL_SYNONYMS: Dict[str, str] = {
-    "lead": "Pb",
-    "lead, metallic": "Pb",
-    "water": "Water, Liquid",
-    "air": "Air, Dry (near sea level)",
-    "bone": "Bone, Cortical (ICRU-44)",
-    "muscle": "Muscle, Skeletal (ICRU-44)",
-    "lung": "Lung Tissue (ICRU-44)",
-    "adipose": "Adipose Tissue (ICRU-44)",
-    "brain": "Brain, Grey\\White Matter (ICRU-44)",
-    "nai": "Sodium Iodide",
-    "csi": "Cesium Iodide",
-    "cdte": "Cadmium Telluride",
-    "czt": "Cadmium Zinc Telluride",
-    "teflon": "Polytetrafluoroethylene, (Teflon)",
-    "pmma": "Polymethyl Methacrylate",
-    "mylar": "Polyethylene Terephthalate, (Mylar)",
-    "pvc": "Polyvinyl Chloride",
-    "pe": "Polyethylene",
-    "tungsten": "W",
-    "gold": "Au",
-    "silver": "Ag",
-    "iron": "Fe",
-    "copper": "Cu",
-    "aluminum": "Al",
-    "silicon": "Si",
-    "titanium": "Ti",
-    "germanium": "Ge",
-    "gallium": "Ga",
-    "technetium": "Tc",
-    "gadolinium": "Gd",
-    "lutetium": "Lu",
-    "beryllium": "Be",
-    "lithium": "Li",
-    "boron": "B",
-    "zinc": "Zn",
-    "tin": "Sn",
-    "cadmium": "Cd",
-    "bismuth": "Bi",
-    "uranium": "U",
-    "thorium": "Th",
-    "mercury": "Hg",
-    "argon": "Ar",
-    "xenon": "Xe",
-    "krypton": "Kr",
-    "helium": "He",
-    "hydrogen": "H",
-    "oxygen": "O",
-    "nitrogen": "N",
-    "carbon": "C",
-    "platinum": "Pt",
-    "cobalt": "Co",
-    "nickel": "Ni",
-    "manganese": "Mn",
-    "chromium": "Cr",
-    "molybdenum": "Mo",
-    "iodine": "I",
-    "cesium": "Cs",
-    "barium": "Ba",
-    "calcium": "Ca",
-    "potassium": "K",
-    "sodium": "Na",
-    "radon": "Rn",
-    "radium": "Ra",
-}
-
-
-def normalize_material_name(material_name: str) -> str:
-    """
-    Нормализует наименование материала к каноническому имени базы данных NIST
-    с учетом регистра и известных синонимов.
-    """
-    cleaned_name = material_name.strip()
-    lowered_name = cleaned_name.lower()
-    if lowered_name in MATERIAL_SYNONYMS:
-        return MATERIAL_SYNONYMS[lowered_name]
-    if cleaned_name in database_setting.material_database:
-        return cleaned_name
-    if cleaned_name in MATERIAL_COLOR_PALETTE:
-        return cleaned_name
-    return cleaned_name
-
-
 def generate_deterministic_color(material_name: str) -> Tuple[float, float, float]:
     """
     Генерирует детерминированный, согласованный по контрасту RGB цвет
@@ -316,10 +224,9 @@ def get_material_color(material_name: str) -> Tuple[float, float, float]:
     """
     Возвращает RGB цвет материала [0.0, 1.0].
     """
-    canonical_name = normalize_material_name(material_name)
-    if canonical_name in MATERIAL_COLOR_PALETTE:
-        return MATERIAL_COLOR_PALETTE[canonical_name]
-    return generate_deterministic_color(canonical_name)
+    if material_name in MATERIAL_COLOR_PALETTE:
+        return MATERIAL_COLOR_PALETTE[material_name]
+    return generate_deterministic_color(material_name)
 
 
 def compute_material_linear_attenuation(
@@ -333,25 +240,18 @@ def compute_material_linear_attenuation(
     if energy <= 0.0:
         raise ValueError(f"Энергия фотонов должна быть строго положительной (> 0), получено: {energy}")
 
-    canonical_name = normalize_material_name(material_name)
-    if canonical_name == "Vacuum":
+    if material_name == "Vacuum":
         return 0.0
 
     materials_db = database_setting.material_database
+    if material_name not in materials_db:
+        raise KeyError(f"Материал '{material_name}' отсутствует в базе данных NIST.")
+
+    target_material = materials_db[material_name]
     attenuations_db = database_setting.attenuation_database
-
-    target_material = None
-    if canonical_name in materials_db:
-        target_material = materials_db[canonical_name]
-    else:
-        for registered_name, registered_mat in materials_db.items():
-            if registered_name.lower() == canonical_name.lower():
-                target_material = registered_mat
-                break
-
-    if target_material is None or target_material not in attenuations_db:
+    if target_material not in attenuations_db:
         raise KeyError(
-            f"Материал '{material_name}' (каноническое имя: '{canonical_name}') отсутствует в базе данных ослабления NIST."
+            f"Материал '{material_name}' отсутствует в базе данных ослабления NIST."
         )
 
     energy_table_scale = float(energy / units.MeV)
