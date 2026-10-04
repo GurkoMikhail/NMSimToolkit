@@ -19,6 +19,9 @@ from gui.viewmodels.data_handler_viewmodel import (
     DoseMapHandlerViewModel,
     DataManagerViewModel,
 )
+from gui.viewmodels.nodes.collimator_vm import (
+    CollimatorViewModel,
+)
 from gui.viewmodels.nodes.gamma_camera_vm import (
     GammaCameraViewModel,
     create_default_gamma_camera_vm,
@@ -40,6 +43,7 @@ __all__ = [
     'HistoryAssemblerHandlerViewModel',
     'DoseMapHandlerViewModel',
     'DataManagerViewModel',
+    'CollimatorViewModel',
     'GammaCameraViewModel',
     'create_default_gamma_camera_vm',
 ]

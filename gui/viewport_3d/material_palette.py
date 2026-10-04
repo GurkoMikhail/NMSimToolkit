@@ -227,10 +227,12 @@ def generate_deterministic_color(material_name: str) -> Tuple[float, float, floa
     return (float(red_clamped), float(green_clamped), float(blue_clamped))
 
 
-def get_material_color(material_name: str) -> Tuple[float, float, float]:
+def get_material_color(material_name: Optional[str]) -> Tuple[float, float, float]:
     """
     Возвращает RGB цвет материала [0.0, 1.0].
     """
+    if not material_name:
+        return (0.7, 0.7, 0.7)
     if material_name in MATERIAL_COLOR_PALETTE:
         return MATERIAL_COLOR_PALETTE[material_name]
     return generate_deterministic_color(material_name)
@@ -489,7 +491,7 @@ def get_collimator_visual_properties(
     else:
         body_rgb = get_material_color(body_material_name)
         body_opacity = COLLIMATOR_BODY_OPACITY
-        if hole_material_name in ("Vacuum", "Air, Dry (near sea level)"):
+        if not hole_material_name or hole_material_name in ("Vacuum", "Air, Dry (near sea level)"):
             hole_rgb = COLLIMATOR_HOLE_ACCENT_COLOR
         else:
             hole_rgb = get_material_color(hole_material_name)

@@ -31,6 +31,8 @@ def dump_simulation_config(config: SimulationConfig, filepath: str | Path):
     def extract_materials(node: dict):
         if 'material' in node and isinstance(node['material'], str):
             unique_materials.add(node['material'])
+        if 'hole_material' in node and isinstance(node['hole_material'], str):
+            unique_materials.add(node['hole_material'])
         if 'children' in node:
             for child in node['children']:
                 extract_materials(child)
@@ -63,6 +65,8 @@ def dump_simulation_config(config: SimulationConfig, filepath: str | Path):
     def inject_anchors(node: dict):
         if 'material' in node and node['material'] in anchored_materials_map:
             node['material'] = anchored_materials_map[node['material']]
+        if 'hole_material' in node and node['hole_material'] in anchored_materials_map:
+            node['hole_material'] = anchored_materials_map[node['hole_material']]
         if 'children' in node:
             for child in node['children']:
                 inject_anchors(child)

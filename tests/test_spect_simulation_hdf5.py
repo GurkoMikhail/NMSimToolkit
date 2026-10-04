@@ -37,10 +37,8 @@ class TestSpectSimulationHDF5(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.h5_path = os.path.join(self.temp_dir.name, "test_spect_output.h5")
-        VolumeViewModel.clear_sensitive_volumes()
 
     def tearDown(self) -> None:
-        VolumeViewModel.clear_sensitive_volumes()
         try:
             self.temp_dir.cleanup()
         except (OSError, RuntimeError):

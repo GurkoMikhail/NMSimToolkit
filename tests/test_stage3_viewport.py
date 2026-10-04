@@ -1025,6 +1025,11 @@ class TestStage3Viewport(unittest.TestCase):
                 self._actors[str(actor_name)] = True
                 return None
 
+            def add_actor(self, *args: Any, **kwargs: Any) -> Any:
+                actor_name = args[0] if args else kwargs.get('name', 'actor')
+                self._actors[str(actor_name)] = True
+                return None
+
             def update_actor_transform(self, *args: Any, **kwargs: Any) -> None:
                 pass
 

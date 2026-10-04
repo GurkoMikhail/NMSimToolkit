@@ -11,6 +11,12 @@ from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.viewport_3d.pet_manipulator import PETManipulator
 from gui.viewport_3d.track_renderer import TrackRenderer
 from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer
+from gui.viewport_3d.collimator_hole_renderer import (
+    CollimatorHoleRenderer,
+    create_hollow_hex_prism_prototype,
+    create_hole_prototype,
+    generate_hex_hole_centers,
+)
 from gui.viewport_3d.transform_gizmo import (
     TransformGizmo,
     GizmoMode,
@@ -49,6 +55,10 @@ __all__ = [
     'ISceneViewport',
     'VoxelVolumeRenderer',
     'DoseVolumeRenderer',
+    'CollimatorHoleRenderer',
+    'create_hollow_hex_prism_prototype',
+    'create_hole_prototype',
+    'generate_hex_hole_centers',
     'SPECTManipulator',
     'PETManipulator',
     'TrackRenderer',

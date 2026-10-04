@@ -6,11 +6,12 @@ import hepunits as units
 from core.scene.nodes import SpatialNode, CompositeNode
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
-from core.geometry.parametric_collimators import ParametricParallelSquareCollimator, ParametricParallelCollimator
+from core.geometry.direct_collimators import CollimatorHoleShape
+from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.source.sources import Source
 from core.transport.simulation_managers import SimulationManager, SimulationState
 from core.config.builder import SceneBuilder
-from core.config.models import SimulationConfig, ParametricParallelSquareCollimatorConfig
+from core.config.models import SimulationConfig, ParametricParallelCollimatorConfig
 import settings.database_setting as settings
 
 
@@ -69,20 +70,23 @@ class TestCoreHotfixStability(unittest.TestCase):
 
     def test_scene_builder_square_collimator(self):
         """
-        Проверка: SceneBuilder должен корректно создавать ParametricParallelSquareCollimator
-        без TypeError (ранее передавался hole_size вместо hole_width).
+        Проверка: SceneBuilder должен корректно создавать ParametricParallelCollimator
+        с формой каналов SQUARE и параметром septa.
         """
         builder = SceneBuilder()
-        cfg = ParametricParallelSquareCollimatorConfig(
+        cfg = ParametricParallelCollimatorConfig(
             name="test_collimator",
             size=[100.0, 100.0, 40.0],
-            hole_size=1.5,
-            septa_thickness=0.2,
-            material="Pb"
+            hole_diameter=1.5,
+            septa=0.2,
+            material="Pb",
+            hole_shape="square",
         )
-        collimator = builder._build_parametric_parallel_square_collimator(cfg)
-        self.assertIsInstance(collimator, ParametricParallelSquareCollimator)
+        collimator = builder.build_scene(cfg)
+        self.assertIsInstance(collimator, ParametricParallelCollimator)
+        self.assertEqual(collimator.hole_shape, CollimatorHoleShape.SQUARE)
         self.assertAlmostEqual(collimator.size[2], 40.0)
+        self.assertAlmostEqual(collimator.septa, 0.2)
         self.assertEqual(collimator.name, "test_collimator")
 
     def test_material_aliases_in_builder(self):

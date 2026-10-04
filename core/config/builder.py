@@ -6,7 +6,8 @@ import re
 import settings.database_setting as database_setting
 from core.config.models import (
     AnyNodeConfig, VolumeConfig, GammaCameraConfig, GammaCameraSlotsConfig, WoodcockVoxelVolumeConfig,
-    ParametricParallelCollimatorConfig, ParametricParallelSquareCollimatorConfig,
+    ParametricParallelCollimatorConfig,
+    DirectParallelCollimatorConfig,
     SourceConfig, BoxConfig, SimulationConfig, TranslateConfig, RotateConfig,
     MatrixTransformConfig,
     NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig,
@@ -16,7 +17,8 @@ from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
-from core.geometry.parametric_collimators import ParametricParallelCollimator, ParametricParallelSquareCollimator
+from core.geometry.parametric_collimators import ParametricParallelCollimator
+from core.geometry.direct_collimators import DirectParallelCollimator
 from core.materials.materials import MaterialArray
 from core.source.sources import Source
 from core.scene.nodes import SpatialNode, CompositeNode
@@ -35,7 +37,7 @@ class SceneBuilder:
             'GammaCamera': self._build_gamma_camera,
             'WoodcockVoxelVolume': self._build_woodcock_voxel_volume,
             'ParametricParallelCollimator': self._build_parametric_parallel_collimator,
-            'ParametricParallelSquareCollimator': self._build_parametric_parallel_square_collimator,
+            'DirectParallelCollimator': self._build_direct_parallel_collimator,
             'Source': self._build_source,
             'DoseGridNode': self._build_dose_grid_node,
             'Gantry': self._build_gantry,
@@ -218,26 +220,30 @@ class SceneBuilder:
         material = self._get_material(config.material)
         size = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
         hole_diameter = self._to_float(config.hole_diameter, check_positive=True)
-        septa = self._to_float(config.septa_thickness, check_positive=True)
+        septa = self._to_float(config.septa, check_positive=True)
         return ParametricParallelCollimator(
             size=size,
             hole_diameter=hole_diameter,
             septa=septa,
             material=material,
+            hole_shape=config.hole_shape,
             name=config.name
         )
 
-    def _build_parametric_parallel_square_collimator(self, config: ParametricParallelSquareCollimatorConfig) -> ParametricParallelSquareCollimator:
+    def _build_direct_parallel_collimator(self, config: DirectParallelCollimatorConfig) -> DirectParallelCollimator:
         material = self._get_material(config.material)
+        hole_material = self._get_material(config.hole_material) if config.hole_material is not None else None
         size = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
-        hole_size = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.hole_size] if isinstance(config.hole_size, (list, tuple)) else self._to_float(config.hole_size, check_positive=True)
-        septa = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.septa_thickness] if isinstance(config.septa_thickness, (list, tuple)) else self._to_float(config.septa_thickness, check_positive=True)
-        return ParametricParallelSquareCollimator(
+        hole_diameter = self._to_float(config.hole_diameter, check_positive=True)
+        septa = self._to_float(config.septa, check_positive=True)
+        return DirectParallelCollimator(
             size=size,
-            hole_width=hole_size,
+            hole_diameter=hole_diameter,
             septa=septa,
             material=material,
-            name=config.name
+            hole_material=hole_material,
+            hole_shape=config.hole_shape,
+            name=config.name,
         )
 
     def _build_source(self, config: SourceConfig) -> Source:

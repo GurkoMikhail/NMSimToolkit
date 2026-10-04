@@ -154,13 +154,13 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         tree_widget = SceneTreeWidget(self.scene_vm)
         self.assertEqual(tree_widget.sensitive_list.count(), 0)
 
-        # Установка флага детектора реактивно обновляет список
-        vol_vm.is_sensitive_detector = True
+        # Добавление в единый реестр сцены реактивно обновляет список
+        self.scene_vm.set_volume_sensitive(vol_vm, True)
         self.assertEqual(tree_widget.sensitive_list.count(), 1)
         self.assertIn("Scintillator", tree_widget.sensitive_list.item(0).text())
 
-        # Снятие флага удаляет из списка
-        vol_vm.is_sensitive_detector = False
+        # Исключение из реестра удаляет из списка
+        self.scene_vm.set_volume_sensitive(vol_vm, False)
         self.assertEqual(tree_widget.sensitive_list.count(), 0)
 
         # Эмуляция Drag-and-Drop из дерева в список чувствительных объемов
@@ -176,13 +176,13 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         drop_ev = DummyDropEvent()
         tree_widget.sensitive_list.dropEvent(drop_ev)
         self.assertTrue(drop_ev.accepted)
-        self.assertTrue(vol_vm.is_sensitive_detector)
+        self.assertTrue(self.scene_vm.is_sensitive_volume(vol_vm))
         self.assertEqual(tree_widget.sensitive_list.count(), 1)
 
         # Проверка удаления через кнопку "- Исключить из детекторов"
         tree_widget.sensitive_list.setCurrentRow(0)
         tree_widget._on_remove_detector_clicked()
-        self.assertFalse(vol_vm.is_sensitive_detector)
+        self.assertFalse(self.scene_vm.is_sensitive_volume(vol_vm))
         self.assertEqual(tree_widget.sensitive_list.count(), 0)
 
         # Запрет перетаскивания не-Volume узлов
@@ -510,7 +510,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
     def test_nema_yaml_loading_detector_in_gui(self):
         """
         Проверяет, что при загрузке nema_1_cam.yaml через MainWindow._on_open_yaml:
-        1. Узел Detector присутствует в сцене и помечен как is_sensitive_detector = True.
+        1. Узел Detector присутствует в сцене и зарегистрирован в scene_vm.sensitive_volumes.
         2. Detector отображается в списке SensitiveVolumesList (виджет scene_tree.sensitive_list).
         3. В PropertyInspector флаг chk_is_detector установлен в True.
         4. При создании новой сцены через _on_new_scene список детекторов сбрасывается.
@@ -525,7 +525,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
             det_vm = win.scene_vm.find_by_name("Detector")
             self.assertIsNotNone(det_vm)
             self.assertIsInstance(det_vm, VolumeViewModel)
-            self.assertTrue(det_vm.is_sensitive_detector)
+            self.assertTrue(win.scene_vm.is_sensitive_volume(det_vm))
 
             # Проверка синхронизации с PropertyInspector
             win.scene_vm.select_node(det_vm)
@@ -537,21 +537,21 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         finally:
             win.close()
 
-    # 11. Автоматическая активация детектора в GammaCameraViewModel и типизированные свойства
+    # 11. Доступ к компонентам в GammaCameraViewModel и типизированные свойства
     def test_gamma_camera_viewmodel_detector_auto_activation(self):
         """
         Проверяет свойства detector_vm и collimator_vm в GammaCameraViewModel,
-        а также автоматическую установку флага is_sensitive_detector = True для кристалла детектора.
+        а также отсутствие устаревших локальных флагов чувствительности на узлах.
         """
         cam_vm = create_default_gamma_camera_vm(name="SPECT_Head")
 
         self.assertIsNotNone(cam_vm.detector_vm)
         self.assertIn("SPECT_Head", cam_vm.detector_vm.name)
-        self.assertTrue(cam_vm.detector_vm.is_sensitive_detector)
+        self.assertFalse(hasattr(cam_vm.detector_vm, "is_sensitive_detector"))
 
         self.assertIsNotNone(cam_vm.collimator_vm)
         self.assertIn("SPECT_Head", cam_vm.collimator_vm.name)
-        self.assertFalse(cam_vm.collimator_vm.is_sensitive_detector)
+        self.assertFalse(hasattr(cam_vm.collimator_vm, "is_sensitive_detector"))
 
     # 12. Применение конфигурации SimulationConfig к SceneViewModel (apply_simulation_config)
     def test_scene_viewmodel_apply_simulation_config(self):
@@ -568,10 +568,10 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         det_vm = scene_vm.find_by_name("Detector")
         self.assertIsNotNone(det_vm)
         self.assertIsInstance(det_vm, VolumeViewModel)
-        self.assertTrue(det_vm.is_sensitive_detector)
-
-        sensitive_vols = VolumeViewModel.get_sensitive_volumes()
-        self.assertIn(det_vm.core_node, sensitive_vols)
+        self.assertTrue(scene_vm.is_sensitive_volume("Detector"))
+        self.assertTrue(scene_vm.is_sensitive_volume(det_vm))
+        self.assertIn("Detector", scene_vm.sensitive_volumes)
+        self.assertFalse(hasattr(VolumeViewModel, "get_sensitive_volumes"))
 
     # 13. Проверка генерации задач и валидности реконструкции геометрии для nema_1_cam.yaml
     def test_nema_yaml_jobs_generation_and_worker_scene_build(self):

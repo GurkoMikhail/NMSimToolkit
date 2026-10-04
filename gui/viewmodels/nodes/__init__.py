@@ -1,10 +1,6 @@
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
-from gui.viewmodels.nodes.volume_vm import (
-    VolumeViewModel,
-    CollimatorViewModel,
-    ParametricParallelCollimatorViewModel,
-    ParametricParallelSquareCollimatorViewModel,
-)
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.collimator_vm import CollimatorViewModel
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
 from gui.viewmodels.nodes.gantry_vm import GantryViewModel
@@ -17,8 +13,6 @@ __all__ = [
     'NodeViewModel',
     'VolumeViewModel',
     'CollimatorViewModel',
-    'ParametricParallelCollimatorViewModel',
-    'ParametricParallelSquareCollimatorViewModel',
     'VoxelVolumeViewModel',
     'GammaCameraViewModel',
     'GantryViewModel',

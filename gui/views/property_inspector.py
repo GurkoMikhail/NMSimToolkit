@@ -11,12 +11,13 @@ from PySide6.QtWidgets import (
 )
 
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
-from gui.viewmodels.nodes.volume_vm import (
-    VolumeViewModel,
-    CollimatorViewModel,
-    ParametricParallelCollimatorViewModel,
-    ParametricParallelSquareCollimatorViewModel,
-)
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.collimator_vm import CollimatorViewModel
+from core.geometry.parametric_collimators import ParametricParallelCollimator
+from core.geometry.geometries import Box
+from core.geometry.volumes import Volume
+from core.geometry.direct_collimators import DirectParallelCollimator, CollimatorHoleShape
+from core.materials.materials import Material
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
 from gui.viewmodels.nodes.gantry_vm import GantryViewModel
@@ -57,14 +58,32 @@ class PropertyInspector(QWidget):
         super().__init__(parent)
         self.current_vm: Optional[NodeViewModel] = None
         self.scene_vm: Optional[SceneViewModel] = None
+        self._sensitive_conn: Optional[Any] = None
         self._is_updating_ui: bool = False
         self._min_buffer_capacity: int = 1
 
         self._init_ui()
 
     def set_scene_viewmodel(self, scene_vm: Optional[SceneViewModel]) -> None:
-        """Привязка модели сцены для доступа к узлам (например, DoseGridNode)."""
+        """Привязка модели сцены для доступа к узлам и единому реестру детекторов."""
+        if self._sensitive_conn is not None:
+            try:
+                QObject.disconnect(self._sensitive_conn)
+            except (RuntimeError, TypeError):
+                pass
+            self._sensitive_conn = None
         self.scene_vm = scene_vm
+        if self.scene_vm is not None:
+            self._sensitive_conn = self.scene_vm.sensitive_volumes_changed.connect(self._on_sensitive_volumes_changed)
+
+    def _on_sensitive_volumes_changed(self) -> None:
+        """Синхронизация состояния чекбокса детектора при изменении единого реестра сцены."""
+        if isinstance(self.current_vm, VolumeViewModel) and self.scene_vm is not None:
+            self._is_updating_ui = True
+            try:
+                self.chk_is_detector.setChecked(self.scene_vm.is_sensitive_volume(self.current_vm))
+            finally:
+                self._is_updating_ui = False
 
     def set_min_buffer_capacity(self, min_capacity: int) -> None:
         """Устанавливает нижнюю границу емкости буфера данных (не менее числа частиц)."""
@@ -179,8 +198,25 @@ class PropertyInspector(QWidget):
         self.collimator_group = QGroupBox("Параметры коллиматора (Collimator)")
         col_form = QFormLayout(self.collimator_group)
 
-        self.lbl_collimator_type = QLabel("–")
-        col_form.addRow("Тип коллиматора:", self.lbl_collimator_type)
+        self.combo_collimator_type = QComboBox()
+        self.combo_collimator_type.addItem("Детерминированный (Сквозные каналы)", "direct")
+        self.combo_collimator_type.addItem("Параметрический (RayCasting)", "parametric")
+        self.combo_collimator_type.currentIndexChanged.connect(self._on_collimator_type_changed)
+        col_form.addRow("Тип коллиматора:", self.combo_collimator_type)
+
+        self.lbl_collimator_shape = QLabel("Форма каналов:")
+        self.combo_collimator_shape = QComboBox()
+        self.combo_collimator_shape.addItem("Гексагональный", CollimatorHoleShape.HEXAGONAL)
+        self.combo_collimator_shape.addItem("Квадратный", CollimatorHoleShape.SQUARE)
+        self.combo_collimator_shape.addItem("Круглый", CollimatorHoleShape.ROUND)
+        self.combo_collimator_shape.currentIndexChanged.connect(self._on_collimator_shape_changed)
+        col_form.addRow(self.lbl_collimator_shape, self.combo_collimator_shape)
+
+        self.lbl_hole_material = QLabel("Материал каналов:")
+        self.combo_hole_material = QComboBox()
+        self._populate_hole_materials()
+        self.combo_hole_material.currentIndexChanged.connect(self._on_hole_material_changed)
+        col_form.addRow(self.lbl_hole_material, self.combo_hole_material)
 
         self.lbl_collimator_hole = QLabel("Диаметр отверстий:")
         self.spin_collimator_hole = QDoubleSpinBox()
@@ -436,6 +472,16 @@ class PropertyInspector(QWidget):
                 self.combo_material.addItem(name)
         else:
             self.combo_material.addItems(["Water", "Air", "Lead", "Vacuum"])
+
+    def _populate_hole_materials(self) -> None:
+        self.combo_hole_material.clear()
+        self.combo_hole_material.addItem("По умолчанию (от родителя)", None)
+        if database_setting.material_database:
+            for name in sorted(database_setting.material_database.keys()):
+                self.combo_hole_material.addItem(name, name)
+        else:
+            for name in ["Air", "Vacuum", "Water"]:
+                self.combo_hole_material.addItem(name, name)
 
     def _create_coord_spinbox(self, callback: Any) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
@@ -704,7 +750,7 @@ class PropertyInspector(QWidget):
         is_src = isinstance(self.current_vm, SourceViewModel)
         is_dose_grid = isinstance(self.current_vm, DoseGridViewModel)
         is_col = isinstance(self.current_vm, CollimatorViewModel)
-        is_vol = isinstance(self.current_vm, VolumeViewModel) and not is_spect and not is_vox
+        is_vol = (isinstance(self.current_vm, VolumeViewModel) or is_col) and not is_spect and not is_vox
         is_root_vol = is_vol and (self.current_vm.parent_vm is None or 'world' in str(self.current_vm.name).lower())
 
         self.volume_group.setVisible(is_vol)
@@ -717,15 +763,42 @@ class PropertyInspector(QWidget):
         self.gantry_group.setVisible(is_gantry)
 
         if is_col:
-            self.lbl_collimator_type.setText(self.current_vm.collimator_type)
-            if isinstance(self.current_vm, ParametricParallelCollimatorViewModel):
+            col_kind = self.current_vm.collimator_kind
+            type_index = self.combo_collimator_type.findData(col_kind)
+            if type_index >= 0:
+                self.combo_collimator_type.setCurrentIndex(type_index)
+
+            is_direct = (col_kind == "direct")
+            self.lbl_collimator_shape.setVisible(True)
+            self.combo_collimator_shape.setVisible(True)
+            self.lbl_hole_material.setVisible(is_direct)
+            self.combo_hole_material.setVisible(is_direct)
+
+            current_shape = self.current_vm.hole_shape
+            if current_shape == CollimatorHoleShape.SQUARE:
+                self.lbl_collimator_hole.setText("Ширина отверстий:")
+            else:
                 self.lbl_collimator_hole.setText("Диаметр отверстий:")
-                self.spin_collimator_hole.setValue(float(self.current_vm.hole_diameter))
-                self.spin_collimator_septa.setValue(float(self.current_vm.septa_thickness))
-            elif isinstance(self.current_vm, ParametricParallelSquareCollimatorViewModel):
-                self.lbl_collimator_hole.setText("Ширина отверстия:")
-                self.spin_collimator_hole.setValue(float(self.current_vm.hole_width))
-                self.spin_collimator_septa.setValue(float(self.current_vm.septa_thickness))
+            self.spin_collimator_hole.setValue(float(self.current_vm.hole_diameter))
+            self.spin_collimator_septa.setValue(float(self.current_vm.septa))
+
+            current_shape_val = current_shape.value if isinstance(current_shape, CollimatorHoleShape) else current_shape
+            for shape_index in range(self.combo_collimator_shape.count()):
+                item_shape = self.combo_collimator_shape.itemData(shape_index)
+                if item_shape == current_shape or item_shape == current_shape_val:
+                    self.combo_collimator_shape.setCurrentIndex(shape_index)
+                    break
+
+            if is_direct:
+                hole_mat_name = self.current_vm.hole_material_name
+                if hole_mat_name is None:
+                    self.combo_hole_material.setCurrentIndex(0)
+                else:
+                    material_index = self.combo_hole_material.findData(hole_mat_name)
+                    if material_index >= 0:
+                        self.combo_hole_material.setCurrentIndex(material_index)
+                    else:
+                        self.combo_hole_material.setCurrentIndex(0)
 
         if is_dose_grid:
             grid_size = self.current_vm.size
@@ -803,7 +876,8 @@ class PropertyInspector(QWidget):
             material_index = self.combo_material.findText(self.current_vm.material_name)
             if material_index >= 0:
                 self.combo_material.setCurrentIndex(material_index)
-            self.chk_is_detector.setChecked(bool(self.current_vm.is_sensitive_detector))
+            is_detector = self.scene_vm.is_sensitive_volume(self.current_vm) if self.scene_vm is not None else False
+            self.chk_is_detector.setChecked(is_detector)
 
         self._is_updating_ui = False
 
@@ -868,7 +942,16 @@ class PropertyInspector(QWidget):
     def _on_name_changed(self) -> None:
         if self._is_updating_ui or self.current_vm is None:
             return
-        self.current_vm.name = self.txt_name.text()
+        old_name = self.current_vm.name
+        new_name = self.txt_name.text().strip()
+        if not new_name or old_name == new_name:
+            return
+        self.current_vm.name = new_name
+        if self.scene_vm is not None and old_name in self.scene_vm.sensitive_volumes:
+            vols = self.scene_vm.sensitive_volumes
+            idx = vols.index(old_name)
+            vols[idx] = new_name
+            self.scene_vm.sensitive_volumes = vols
 
     def _on_transform_changed(self) -> None:
         if self._is_updating_ui or self.current_vm is None:
@@ -891,7 +974,7 @@ class PropertyInspector(QWidget):
         self.current_vm.local_matrix = mat
 
     def _on_volume_size_changed(self) -> None:
-        if self._is_updating_ui or not isinstance(self.current_vm, VolumeViewModel):
+        if self._is_updating_ui or not isinstance(self.current_vm, (VolumeViewModel, CollimatorViewModel)):
             return
         self.current_vm.size = [
             self.spin_size_x.value(),
@@ -900,7 +983,7 @@ class PropertyInspector(QWidget):
         ]
 
     def _on_material_changed(self, mat_name: str) -> None:
-        if self._is_updating_ui or not isinstance(self.current_vm, VolumeViewModel):
+        if self._is_updating_ui or not isinstance(self.current_vm, (VolumeViewModel, CollimatorViewModel)):
             return
         self.current_vm.material_name = mat_name
 
@@ -989,7 +1072,8 @@ class PropertyInspector(QWidget):
     def _on_is_detector_toggled(self, checked: bool) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, VolumeViewModel):
             return
-        self.current_vm.is_sensitive_detector = checked
+        if self.scene_vm is not None:
+            self.scene_vm.set_volume_sensitive(self.current_vm, checked)
 
     def _update_dose_grid_metrics(self) -> None:
         """
@@ -1086,15 +1170,85 @@ class PropertyInspector(QWidget):
     def _on_collimator_hole_changed(self, value: float) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, CollimatorViewModel):
             return
-        if isinstance(self.current_vm, ParametricParallelCollimatorViewModel):
-            self.current_vm.hole_diameter = float(value)
-        elif isinstance(self.current_vm, ParametricParallelSquareCollimatorViewModel):
-            self.current_vm.hole_width = float(value)
+        self.current_vm.hole_diameter = float(value)
 
     def _on_collimator_septa_changed(self, value: float) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, CollimatorViewModel):
             return
-        self.current_vm.septa_thickness = float(value)
+        self.current_vm.septa = float(value)
+
+    def _on_collimator_shape_changed(self, index: int) -> None:
+        if self._is_updating_ui or not isinstance(self.current_vm, CollimatorViewModel):
+            return
+        shape_data = self.combo_collimator_shape.itemData(index)
+        if shape_data is None:
+            return
+        try:
+            self.current_vm.hole_shape = shape_data
+        except NotImplementedError as err:
+            _logger.warning(f"Выбранная форма каналов коллиматора еще не реализована: {err}")
+            # Возвращаем предыдущее корректное значение
+            self._is_updating_ui = True
+            try:
+                current_shape = self.current_vm.hole_shape
+                current_shape_val = current_shape.value if isinstance(current_shape, CollimatorHoleShape) else current_shape
+                for shape_index in range(self.combo_collimator_shape.count()):
+                    item_shape = self.combo_collimator_shape.itemData(shape_index)
+                    if item_shape == current_shape or item_shape == current_shape_val:
+                        self.combo_collimator_shape.setCurrentIndex(shape_index)
+                        break
+            finally:
+                self._is_updating_ui = False
+
+    def _on_hole_material_changed(self, index: int) -> None:
+        if self._is_updating_ui or not isinstance(self.current_vm, CollimatorViewModel):
+            return
+        selected_hole_mat_name = self.combo_hole_material.itemData(index)
+        self.current_vm.hole_material_name = selected_hole_mat_name
+
+    def _on_collimator_type_changed(self, index: int) -> None:
+        if self._is_updating_ui or not isinstance(self.current_vm, CollimatorViewModel):
+            return
+        collimator_vm = self.current_vm
+        target_kind = self.combo_collimator_type.itemData(index)
+        if target_kind == collimator_vm.collimator_kind:
+            return
+
+        col_size = np.copy(collimator_vm.size)
+        hole_diameter = float(collimator_vm.hole_diameter)
+        septa = float(collimator_vm.septa)
+        hole_shape = collimator_vm.hole_shape
+        material_name = collimator_vm.material_name
+        lead_mat = database_setting.material_database.get(material_name, Material(name=material_name))
+
+        if target_kind == "direct":
+            new_core = DirectParallelCollimator(
+                size=col_size,
+                hole_diameter=hole_diameter,
+                septa=septa,
+                material=lead_mat,
+                hole_material=None,
+                hole_shape=hole_shape,
+                name=collimator_vm.name,
+            )
+        elif target_kind == "parametric":
+            new_core = ParametricParallelCollimator(
+                size=col_size,
+                hole_diameter=hole_diameter,
+                septa=septa,
+                material=lead_mat,
+                hole_shape=hole_shape,
+                name=collimator_vm.name,
+            )
+        else:
+            return
+
+        new_core.local_matrix = np.copy(collimator_vm.local_matrix)
+        new_col_vm = CollimatorViewModel(new_core)
+
+        if self.scene_vm is not None:
+            self.scene_vm.replace_node(collimator_vm, new_col_vm)
+            self.set_target_viewmodel(new_col_vm)
 
     def _on_voxel_size_changed(self) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, VoxelVolumeViewModel):
@@ -1139,7 +1293,7 @@ class PropertyInspector(QWidget):
                 self.txt_name.setText(str(new_val))
             finally:
                 self._is_updating_ui = False
-        elif prop_name == 'size' and isinstance(self.current_vm, VolumeViewModel):
+        elif prop_name == 'size' and isinstance(self.current_vm, (VolumeViewModel, CollimatorViewModel)):
             volume_size = new_val if isinstance(new_val, (list, tuple, np.ndarray)) else self.current_vm.size
             self._is_updating_ui = True
             try:
@@ -1148,7 +1302,7 @@ class PropertyInspector(QWidget):
                 self.spin_size_z.setValue(float(volume_size[2]))
             finally:
                 self._is_updating_ui = False
-        elif prop_name == 'material_name' and isinstance(self.current_vm, VolumeViewModel):
+        elif prop_name == 'material_name' and isinstance(self.current_vm, (VolumeViewModel, CollimatorViewModel)):
             material_index = self.combo_material.findText(str(new_val))
             if material_index >= 0:
                 self._is_updating_ui = True
@@ -1156,10 +1310,38 @@ class PropertyInspector(QWidget):
                     self.combo_material.setCurrentIndex(material_index)
                 finally:
                     self._is_updating_ui = False
-        elif prop_name in ('is_sensitive_detector', 'is_detector') and isinstance(self.current_vm, VolumeViewModel):
+        elif prop_name == 'hole_material_name' and isinstance(self.current_vm, CollimatorViewModel):
             self._is_updating_ui = True
             try:
-                self.chk_is_detector.setChecked(bool(new_val))
+                hole_material_index = 0
+                if new_val is not None:
+                    found_mat_index = self.combo_hole_material.findData(str(new_val))
+                    if found_mat_index >= 0:
+                        hole_material_index = found_mat_index
+                self.combo_hole_material.setCurrentIndex(hole_material_index)
+            finally:
+                self._is_updating_ui = False
+        elif prop_name in ('hole_diameter', 'hole_width') and isinstance(self.current_vm, CollimatorViewModel):
+            self._is_updating_ui = True
+            try:
+                self.spin_collimator_hole.setValue(float(new_val))
+            finally:
+                self._is_updating_ui = False
+        elif prop_name == 'septa' and isinstance(self.current_vm, CollimatorViewModel):
+            self._is_updating_ui = True
+            try:
+                self.spin_collimator_septa.setValue(float(new_val))
+            finally:
+                self._is_updating_ui = False
+        elif prop_name == 'hole_shape' and isinstance(self.current_vm, CollimatorViewModel):
+            self._is_updating_ui = True
+            try:
+                new_val_shape = new_val.value if isinstance(new_val, CollimatorHoleShape) else new_val
+                for shape_index in range(self.combo_collimator_shape.count()):
+                    item_shape = self.combo_collimator_shape.itemData(shape_index)
+                    if item_shape == new_val or item_shape == new_val_shape:
+                        self.combo_collimator_shape.setCurrentIndex(shape_index)
+                        break
             finally:
                 self._is_updating_ui = False
         elif prop_name == 'colormap_name' and isinstance(self.current_vm, VoxelVolumeViewModel):
@@ -1254,15 +1436,6 @@ class PropertyInspector(QWidget):
                     self.chk_wireframe_visible.setChecked(bool(new_val))
             finally:
                 self._is_updating_ui = False
-        elif isinstance(self.current_vm, CollimatorViewModel) and prop_name in ('hole_diameter', 'hole_width', 'septa_thickness'):
-            self._is_updating_ui = True
-            try:
-                if prop_name in ('hole_diameter', 'hole_width'):
-                    self.spin_collimator_hole.setValue(float(new_val))
-                elif prop_name == 'septa_thickness':
-                    self.spin_collimator_septa.setValue(float(new_val))
-            finally:
-                self._is_updating_ui = False
         elif prop_name == 'voxel_size':
             self._is_updating_ui = True
             try:
@@ -1344,6 +1517,8 @@ class PropertyInspector(QWidget):
             is_sens = isinstance(vm, (SensitiveVolumeHandlerViewModel, HistoryAssemblerHandlerViewModel))
             self.txt_dh_vols.setVisible(is_sens)
             if is_sens:
+                if not vm.sensitive_volumes and self.scene_vm is not None and self.scene_vm.sensitive_volumes:
+                    vm.sensitive_volumes = self.scene_vm.sensitive_volumes
                 self.txt_dh_vols.setText(", ".join(vm.sensitive_volumes))
 
             is_hist = isinstance(vm, HistoryAssemblerHandlerViewModel)

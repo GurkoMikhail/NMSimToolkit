@@ -127,13 +127,15 @@ scene:
                 - 1.0
               in_local: false
             children: []
-            type: Volume
-            geometry:
-              type: Box
-              x: 540.0
-              y: 400.0
-              z: 30.0
+            type: ParametricParallelCollimator
+            size:
+            - 540.0
+            - 400.0
+            - 30.0
+            hole_diameter: 1.5
+            septa: 0.2
             material: *pb_0789
+            hole_shape: hexagonal
           - name: Detector_1
             transformations:
             - type: matrix
@@ -282,13 +284,15 @@ scene:
                 - 1.0
               in_local: false
             children: []
-            type: Volume
-            geometry:
-              type: Box
-              x: 540.0
-              y: 400.0
-              z: 30.0
+            type: ParametricParallelCollimator
+            size:
+            - 540.0
+            - 400.0
+            - 30.0
+            hole_diameter: 1.5
+            septa: 0.2
             material: *pb_0789
+            hole_shape: hexagonal
           - name: Detector_2
             transformations:
             - type: matrix

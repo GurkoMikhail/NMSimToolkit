@@ -8,7 +8,6 @@ from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.geometry.pet_scanners import PetScanner
 from core.geometry.parametric_collimators import (
     ParametricParallelCollimator,
-    ParametricParallelSquareCollimator,
 )
 from core.geometry.direct_collimators import (
     CollimatorHoleShape,
@@ -27,7 +26,6 @@ __all__ = [
     'WoodcockVoxelVolume',
     'PetScanner',
     'ParametricParallelCollimator',
-    'ParametricParallelSquareCollimator',
     'CollimatorHoleShape',
     'DirectParallelCollimator',
     'NavigationState',

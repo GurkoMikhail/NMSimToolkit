@@ -20,7 +20,7 @@ from core.config.models import (
     GammaCameraSlotsConfig,
     NumpyDistributionConfig,
     ParametricParallelCollimatorConfig,
-    ParametricParallelSquareCollimatorConfig,
+    DirectParallelCollimatorConfig,
     RotateConfig,
     SimulationConfig,
     SimulationManagerConfig,
@@ -39,7 +39,10 @@ from core.geometry.geometries import Box
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.geometry.parametric_collimators import (
     ParametricParallelCollimator,
-    ParametricParallelSquareCollimator,
+)
+from core.geometry.direct_collimators import (
+    DirectParallelCollimator,
+    CollimatorHoleShape,
 )
 from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
@@ -144,26 +147,32 @@ class SceneExporter:
         if isinstance(node, ParametricParallelCollimator):
             size_tuple = (float(node.size[0]), float(node.size[1]), float(node.size[2]))
             mat_name = node.material.name
+            hole_shape_val = node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape)
             return ParametricParallelCollimatorConfig(
                 name=node_name,
                 transformations=transforms,
                 size=size_tuple,
                 hole_diameter=float(node.hole_diameter),
-                septa_thickness=float(node.septa),
+                septa=float(node.septa),
                 material=mat_name,
+                hole_shape=hole_shape_val,
             )
 
-        # 3. ParametricParallelSquareCollimator
-        if isinstance(node, ParametricParallelSquareCollimator):
+        # 3.1. DirectParallelCollimator
+        if isinstance(node, DirectParallelCollimator):
             size_tuple = (float(node.size[0]), float(node.size[1]), float(node.size[2]))
             mat_name = node.material.name
-            return ParametricParallelSquareCollimatorConfig(
+            hole_mat_name = node.explicit_hole_material.name if node.explicit_hole_material is not None else None
+            hole_shape_val = node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape)
+            return DirectParallelCollimatorConfig(
                 name=node_name,
                 transformations=transforms,
                 size=size_tuple,
-                hole_size=float(node.hole_width),
-                septa_thickness=float(node.septa),
+                hole_diameter=float(node.hole_diameter),
+                septa=float(node.septa),
                 material=mat_name,
+                hole_material=hole_mat_name,
+                hole_shape=hole_shape_val,
             )
 
         # 4. WoodcockVoxelVolume

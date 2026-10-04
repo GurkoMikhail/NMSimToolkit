@@ -2,10 +2,19 @@
 Модуль кинематики ракурсов гантри и детекторов ОФЭКТ (SPECT).
 """
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Protocol, runtime_checkable
 import numpy as np
 
-from core.config.models import SpectProtocolConfig
+
+@runtime_checkable
+class ISpectProtocolConfig(Protocol):
+    """Протокол параметров кинематики сканирования гантри ОФЭКТ."""
+    views: int
+    gamma_cameras: int
+    start_angle: float
+    end_angle: float
+    head_angles: Optional[List[float]]
+    endpoint: bool
 
 
 def compute_spect_poses(
@@ -19,9 +28,9 @@ def compute_spect_poses(
     """
     Вычисляет список углов для всех детекторных головок на каждом шаге гантри ОФЭКТ.
     Возвращает список позиций гантри, где каждая позиция — список углов [head_0, head_1, ..., head_{N-1}].
-    Поддерживает передачу как объекта SpectProtocolConfig, так и скалярных параметров.
+    Поддерживает передачу как объекта протокола ISpectProtocolConfig, так и скалярных параметров.
     """
-    if isinstance(views_or_protocol, SpectProtocolConfig):
+    if isinstance(views_or_protocol, ISpectProtocolConfig):
         total_views = int(views_or_protocol.views)
         cameras_count = max(1, int(views_or_protocol.gamma_cameras))
         start_angle_deg = float(np.degrees(views_or_protocol.start_angle))

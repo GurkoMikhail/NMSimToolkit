@@ -104,15 +104,18 @@ class ParametricParallelCollimatorConfig(CompositeNodeConfig):
     type: Literal['ParametricParallelCollimator'] = 'ParametricParallelCollimator'
     size: Tuple[LengthConfig, LengthConfig, LengthConfig]
     hole_diameter: LengthConfig
-    septa_thickness: LengthConfig
+    septa: LengthConfig
     material: str
+    hole_shape: str = 'hexagonal'
 
-class ParametricParallelSquareCollimatorConfig(CompositeNodeConfig):
-    type: Literal['ParametricParallelSquareCollimator'] = 'ParametricParallelSquareCollimator'
+class DirectParallelCollimatorConfig(CompositeNodeConfig):
+    type: Literal['DirectParallelCollimator'] = 'DirectParallelCollimator'
     size: Tuple[LengthConfig, LengthConfig, LengthConfig]
-    hole_size: LengthConfig
-    septa_thickness: LengthConfig
-    material: str
+    hole_diameter: LengthConfig
+    septa: LengthConfig
+    material: str = 'Pb'
+    hole_material: Optional[str] = None
+    hole_shape: str = 'hexagonal'
 
 class SourceConfig(CompositeNodeConfig):
     type: Literal['Source'] = 'Source'
@@ -148,7 +151,7 @@ AnyNodeConfig = Annotated[
         WoodcockVoxelVolumeConfig,
         GammaCameraConfig,
         ParametricParallelCollimatorConfig,
-        ParametricParallelSquareCollimatorConfig,
+        DirectParallelCollimatorConfig,
         SourceConfig,
         DoseGridNodeConfig,
         GantryConfig,
@@ -161,7 +164,7 @@ VolumeConfig.model_rebuild()
 WoodcockVoxelVolumeConfig.model_rebuild()
 GammaCameraConfig.model_rebuild()
 ParametricParallelCollimatorConfig.model_rebuild()
-ParametricParallelSquareCollimatorConfig.model_rebuild()
+DirectParallelCollimatorConfig.model_rebuild()
 SourceConfig.model_rebuild()
 DoseGridNodeConfig.model_rebuild()
 GantryConfig.model_rebuild()

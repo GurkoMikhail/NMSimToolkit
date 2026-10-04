@@ -9,21 +9,28 @@ from gui.viewport_3d.vtk_viewport import VTKViewport, ISceneViewport
 from gui.viewport_3d.material_palette import (
     get_material_rgba,
     get_material_opacity,
+    get_material_color,
     get_pseudo_xray_rgba,
     DETECTOR_ACCENT_COLOR,
     DETECTOR_ACCENT_OPACITY,
     SELECTED_EDGE_HIGHLIGHT_COLOR,
     SELECTED_EDGE_HIGHLIGHT_WIDTH,
+    COLLIMATOR_BODY_OPACITY,
+    COLLIMATOR_HOLE_ACCENT_COLOR,
+    COLLIMATOR_HOLE_OPACITY,
+    get_collimator_visual_properties,
 )
 from gui.viewport_3d.track_renderer import TrackRenderer
 from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.viewport_3d.pet_manipulator import PETManipulator
 from gui.viewport_3d.voxel_volume_renderer import VoxelVolumeRenderer
 from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer
+from gui.viewport_3d.collimator_hole_renderer import CollimatorHoleRenderer
 from gui.viewport_3d.transform_gizmo import TransformGizmo, GizmoMode
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.collimator_vm import CollimatorViewModel
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.nodes.source_vm import SourceViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
@@ -38,6 +45,9 @@ from gui.viewport_3d.kinematic_constraints import (
 )
 
 from core.geometry import compute_spect_poses, compute_orbit_matrix
+from core.geometry.geometries import PeriodicHexPrism
+from core.geometry.direct_collimators import DirectParallelCollimator
+from core.geometry.volumes import Volume
 
 _logger = logging.getLogger(__name__)
 
@@ -84,6 +94,7 @@ class SceneViewportController(QObject):
         self.pet_manipulator = PETManipulator(self.viewport)
         self.voxel_renderer = VoxelVolumeRenderer(self.viewport)
         self.dose_renderer = DoseVolumeRenderer(self.viewport)
+        self.collimator_hole_renderer = CollimatorHoleRenderer(self.viewport)
         self.transform_gizmo = TransformGizmo(self.viewport)
 
         # Кэш параметров активной воксельной сетки дозы
@@ -99,6 +110,7 @@ class SceneViewportController(QObject):
 
         # Словарь подписок на события узлов: node_id -> (node_vm, [connections])
         self._node_connections: Dict[int, Tuple[NodeViewModel, List[Any]]] = {}
+        self._sensitive_conn: Optional[Any] = None
 
         if self.scene_vm is not None:
             self.set_scene_viewmodel(self.scene_vm)
@@ -136,7 +148,7 @@ class SceneViewportController(QObject):
         self._xray_mode = bool(pseudo_xray_mode)
         if self.scene_vm is not None:
             for node_vm in self.scene_vm.all_nodes():
-                if isinstance(node_vm, VolumeViewModel):
+                if isinstance(node_vm, (VolumeViewModel, CollimatorViewModel)):
                     self.add_or_update_node_actor(node_vm)
                 elif isinstance(node_vm, VoxelVolumeViewModel):
                     if self.voxel_renderer is not None and self.voxel_renderer.volume_actor is not None:
@@ -192,9 +204,16 @@ class SceneViewportController(QObject):
         if self._selected_node_vm is not None:
             self._set_node_edge_highlight(self._selected_node_vm, False)
             self._selected_node_vm = None
+        if self._sensitive_conn is not None:
+            try:
+                QObject.disconnect(self._sensitive_conn)
+            except (RuntimeError, TypeError):
+                pass
+            self._sensitive_conn = None
         self.disconnect_all_nodes()
         self.scene_vm = scene_vm
         if self.scene_vm is not None:
+            self._sensitive_conn = self.scene_vm.sensitive_volumes_changed.connect(self.sync_viewport_scene)
             self.sync_viewport_scene()
             if self.scene_vm.selected_node is not None:
                 self.on_node_selected(self.scene_vm.selected_node)
@@ -208,12 +227,17 @@ class SceneViewportController(QObject):
 
         all_nodes = self.scene_vm.all_nodes()
         current_actor_names = set()
+        current_hole_actor_names = set()
         has_spect = False
         has_pet = False
 
         for node_vm in all_nodes:
             actor_name = f"mesh_{id(node_vm)}"
             current_actor_names.add(actor_name)
+            if isinstance(node_vm, VolumeViewModel) and isinstance(node_vm.core_node.geometry, PeriodicHexPrism):
+                current_hole_actor_names.add(f"holes_{id(node_vm)}")
+            elif isinstance(node_vm, CollimatorViewModel) and isinstance(node_vm.core_node, Volume):
+                current_hole_actor_names.add(f"holes_{id(node_vm)}")
             self.add_or_update_node_actor(node_vm)
             if isinstance(node_vm, GammaCameraViewModel):
                 has_spect = True
@@ -235,6 +259,8 @@ class SceneViewportController(QObject):
         for existing in list(self.viewport._actors.keys()):
             if existing.startswith("mesh_") and existing not in current_actor_names:
                 self.viewport.remove_actor(existing)
+            elif existing.startswith("holes_") and existing not in current_hole_actor_names:
+                self.collimator_hole_renderer.remove_actor(existing)
 
         self.viewport.render()
 
@@ -247,6 +273,8 @@ class SceneViewportController(QObject):
                     QObject.disconnect(conn)
                 except (RuntimeError, TypeError):
                     pass
+        if self.collimator_hole_renderer is not None:
+            self.collimator_hole_renderer.remove_actor(f"holes_{node_id}")
 
     def disconnect_all_nodes(self) -> None:
         """Полное отключение подписок на все узлы сцены."""
@@ -258,18 +286,67 @@ class SceneViewportController(QObject):
         Добавление или обновление геометрического актора узла в 3D вьюпорте.
         """
         actor_name = f"mesh_{id(node_vm)}"
+        holes_actor_name = f"holes_{id(node_vm)}"
 
-        if isinstance(node_vm, VolumeViewModel):
+        if isinstance(node_vm, VolumeViewModel) and isinstance(node_vm.core_node.geometry, PeriodicHexPrism):
+            # Каналы коллиматора: удаляем сплошной меш Box и визуализируем через CollimatorHoleRenderer
+            self.viewport.remove_actor(actor_name)
+            prism_geometry: PeriodicHexPrism = node_vm.core_node.geometry
+
+            parent_material_name = "Pb"
+            if node_vm.parent_vm is not None and isinstance(node_vm.parent_vm, (VolumeViewModel, CollimatorViewModel)):
+                parent_material_name = node_vm.parent_vm.material_name
+            elif isinstance(node_vm.core_node.parent, Volume):
+                parent_material_name = node_vm.core_node.parent.material.name
+            elif isinstance(node_vm.core_node.parent, DirectParallelCollimator):
+                parent_material_name = node_vm.core_node.parent.material.name
+
+            ((_, _), (hole_rgb, hole_opacity)) = get_collimator_visual_properties(
+                body_material_name=parent_material_name,
+                hole_material_name=node_vm.material_name,
+                energy=self._xray_energy,
+                pseudo_xray_mode=self._xray_mode,
+            )
+
+            self.collimator_hole_renderer.render_holes(
+                actor_name=holes_actor_name,
+                geometry=prism_geometry,
+                global_matrix=node_vm.global_matrix,
+                hole_color=hole_rgb,
+                hole_opacity=hole_opacity,
+            )
+
+        elif isinstance(node_vm, CollimatorViewModel) and isinstance(node_vm.core_node, DirectParallelCollimator):
+            # Составной узел прямого коллиматора: рекурсивно обновляем акторы его дочерних узлов (lead_body и channels)
+            for child_vm in node_vm.children:
+                self.add_or_update_node_actor(child_vm)
+
+        elif isinstance(node_vm, VolumeViewModel) or (isinstance(node_vm, CollimatorViewModel) and isinstance(node_vm.core_node, Volume)):
             volume_size = node_vm.size
             box = pv.Box(bounds=(-volume_size[0]/2, volume_size[0]/2, -volume_size[1]/2, volume_size[1]/2, -volume_size[2]/2, volume_size[2]/2))
+
+            # Проверяем, является ли объем свинцовым корпусом коллиматора
+            is_collimator_body = False
+            if isinstance(node_vm, CollimatorViewModel):
+                is_collimator_body = True
+            elif isinstance(node_vm.parent_vm, CollimatorViewModel):
+                is_collimator_body = True
+            elif isinstance(node_vm.core_node.parent, DirectParallelCollimator):
+                is_collimator_body = True
+            elif any(isinstance(child_core.geometry, PeriodicHexPrism) for child_core in node_vm.core_node.childs if isinstance(child_core, Volume)):
+                is_collimator_body = True
+
             if self._xray_mode:
                 rgb_color, calculated_opacity = get_pseudo_xray_rgba(
                     node_vm.material_name,
                     energy=self._xray_energy,
                 )
-            elif node_vm.is_sensitive_detector:
+            elif self.scene_vm is not None and self.scene_vm.is_sensitive_volume(node_vm):
                 rgb_color = DETECTOR_ACCENT_COLOR
                 calculated_opacity = DETECTOR_ACCENT_OPACITY
+            elif is_collimator_body:
+                rgb_color = get_material_color(node_vm.material_name)
+                calculated_opacity = COLLIMATOR_BODY_OPACITY
             else:
                 volume_color = node_vm.color
                 if isinstance(volume_color, (tuple, list)) and len(volume_color) >= 3:
@@ -292,6 +369,24 @@ class SceneViewportController(QObject):
                         color=SELECTED_EDGE_HIGHLIGHT_COLOR,
                         line_width=SELECTED_EDGE_HIGHLIGHT_WIDTH,
                     )
+
+            if isinstance(node_vm, CollimatorViewModel) and isinstance(node_vm.core_node, Volume):
+                ((_, _), (hole_rgb, hole_opacity)) = get_collimator_visual_properties(
+                    body_material_name=node_vm.material_name,
+                    hole_material_name=node_vm.hole_material_name,
+                    energy=self._xray_energy,
+                    pseudo_xray_mode=self._xray_mode,
+                )
+                self.collimator_hole_renderer.render_holes(
+                    actor_name=holes_actor_name,
+                    geometry_or_size=node_vm.size,
+                    global_matrix=node_vm.global_matrix,
+                    hole_diameter=node_vm.hole_diameter,
+                    septa=node_vm.septa,
+                    hole_shape=node_vm.hole_shape,
+                    hole_color=hole_rgb,
+                    hole_opacity=hole_opacity,
+                )
 
         elif isinstance(node_vm, VoxelVolumeViewModel):
             dist = node_vm.core_node.material_distribution
@@ -402,6 +497,9 @@ class SceneViewportController(QObject):
         """
         actor_name = f"mesh_{id(node_vm)}"
         self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
+        holes_actor_name = f"holes_{id(node_vm)}"
+        if self.viewport.get_actor(holes_actor_name) is not None:
+            self.viewport.update_actor_transform(holes_actor_name, node_vm.global_matrix)
         if isinstance(node_vm, VoxelVolumeViewModel) and self.voxel_renderer is not None:
             self.viewport.update_actor_transform(self.voxel_renderer.actor_name, node_vm.global_matrix)
             box_actor_name = f"selection_box_{id(node_vm)}"
@@ -416,7 +514,7 @@ class SceneViewportController(QObject):
         """
         Инкрементальное обновление параметров актора при смене геометрии, цвета или физических свойств.
         """
-        if prop_name in ('size', 'color', 'voxel_size', 'is_point_source', 'file_path', 'dose_voxel_size', 'is_active', 'material_name', 'is_sensitive_detector'):
+        if prop_name in ('size', 'color', 'voxel_size', 'is_point_source', 'file_path', 'dose_voxel_size', 'is_active', 'material_name', 'is_sensitive_detector', 'hole_diameter', 'hole_width', 'septa', 'hole_shape', 'hole_material_name'):
             self.add_or_update_node_actor(node_vm)
             self.viewport.render()
         elif prop_name in ('diameter', 'axial_length', 'num_sectors') and isinstance(node_vm, PetScannerViewModel):

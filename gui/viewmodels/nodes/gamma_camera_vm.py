@@ -18,6 +18,7 @@ from core.config.models import GammaCameraSlotsConfig
 from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.collimator_vm import CollimatorViewModel
 from gui.viewport_3d.kinematic_constraints import FixedSubcomponentKinematicConstraint
 
 _logger = logging.getLogger(__name__)
@@ -68,10 +69,6 @@ class GammaCameraViewModel(NodeViewModel):
         else:
             self._stored_shielding_thickness = 20.0
 
-        crystal_viewmodel = self.crystal_vm
-        if crystal_viewmodel is not None:
-            crystal_viewmodel.is_sensitive_detector = True
-
         self._apply_fixed_constraints_to_subcomponents()
 
     def _find_volume_by_name(self, target_name: Optional[str]) -> Optional[VolumeViewModel]:
@@ -84,6 +81,23 @@ class GammaCameraViewModel(NodeViewModel):
         while search_stack:
             current_vm = search_stack.pop()
             if current_vm.name == target_name and isinstance(current_vm, VolumeViewModel):
+                return current_vm
+            search_stack.extend(current_vm.children)
+        return None
+
+    def _find_collimator_by_name(
+        self,
+        target_name: Optional[str]
+    ) -> Optional[CollimatorViewModel]:
+        """
+        Ищет узел коллиматора (CollimatorViewModel) по имени в иерархии потомков.
+        """
+        if not target_name:
+            return None
+        search_stack = list(self.children)
+        while search_stack:
+            current_vm = search_stack.pop()
+            if current_vm.name == target_name and isinstance(current_vm, CollimatorViewModel):
                 return current_vm
             search_stack.extend(current_vm.children)
         return None
@@ -102,9 +116,9 @@ class GammaCameraViewModel(NodeViewModel):
         return self.crystal_vm
 
     @property
-    def collimator_vm(self) -> Optional[VolumeViewModel]:
+    def collimator_vm(self) -> Optional[CollimatorViewModel]:
         """ViewModel коллиматора (слот collimator)."""
-        return self._find_volume_by_name(self.slots.collimator)
+        return self._find_collimator_by_name(self.slots.collimator)
 
     @property
     def casing_vm(self) -> Optional[VolumeViewModel]:

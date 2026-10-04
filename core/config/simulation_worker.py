@@ -20,7 +20,9 @@ from core.data.dose_map_handler import DoseMapHandler
 from core.scene.dose_grid_node import DoseGridNode
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.source.sources import Source
-from core.transport import IpcPauseBridge, ParticlePropagator, SimulationManager
+from core.transport.ipc_pause_bridge import IpcPauseBridge
+from core.transport.propagator import ParticlePropagator
+from core.transport.simulation_managers import SimulationManager
 
 
 def _find_nodes_by_names(root_node: Any, target_names: List[str]) -> List[Any]:

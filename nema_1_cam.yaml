@@ -82,7 +82,8 @@ scene:
                   name: Collimator
                   size: [54.0 cm, 40.0 cm, 3.5 cm]
                   hole_diameter: 1.5 mm
-                  septa_thickness: 0.2 mm
+                  septa: 0.2 mm
+                  hole_shape: hexagonal
                   material: 'Pb'
                   transformations:
                     - type: translate

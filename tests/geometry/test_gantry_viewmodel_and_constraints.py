@@ -465,6 +465,9 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
             def add_mesh_actor(self, actor_name: str, mesh: Any, **kwargs: Any) -> None:
                 self._actors[actor_name] = mesh
 
+            def add_actor(self, actor_name: str, actor: Any, **kwargs: Any) -> None:
+                self._actors[actor_name] = actor
+
             def remove_actor(self, actor_name: str) -> None:
                 self._actors.pop(actor_name, None)
 

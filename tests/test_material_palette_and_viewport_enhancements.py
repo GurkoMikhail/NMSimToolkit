@@ -318,22 +318,25 @@ class TestVolumeViewModelMaterialIntegration(unittest.TestCase):
         self.assertAlmostEqual(volume_view_model.color[3], get_material_opacity("Pb", energy=140.0 * units.keV))
 
     def test_detector_flag_reactivity(self) -> None:
-        """Проверка свойства is_sensitive_detector и глобального реестра чувствительных объемов."""
+        """Проверка отсутствия локального флага в ноде и управления через единый реестр сцены SceneViewModel."""
         geometry_box = Box(50.0, 50.0, 50.0)
         material_crystal = Material(name="Sodium Iodide")
         volume_core = Volume(geometry=geometry_box, material=material_crystal, name="Scintillator")
         volume_view_model = VolumeViewModel(volume_core)
 
-        self.assertFalse(volume_view_model.is_sensitive_detector)
-        self.assertNotIn(volume_core, VolumeViewModel.get_sensitive_volumes())
+        self.assertFalse(hasattr(volume_view_model, 'is_sensitive_detector'))
+        self.assertFalse(hasattr(VolumeViewModel, 'get_sensitive_volumes'))
 
-        volume_view_model.is_sensitive_detector = True
-        self.assertTrue(volume_view_model.is_sensitive_detector)
-        self.assertIn(volume_core, VolumeViewModel.get_sensitive_volumes())
+        scene_viewmodel = SceneViewModel(root_core_node=volume_core)
+        self.assertFalse(scene_viewmodel.is_sensitive_volume(volume_view_model))
 
-        volume_view_model.is_sensitive_detector = False
-        self.assertFalse(volume_view_model.is_sensitive_detector)
-        self.assertNotIn(volume_core, VolumeViewModel.get_sensitive_volumes())
+        scene_viewmodel.set_volume_sensitive(volume_view_model, True)
+        self.assertTrue(scene_viewmodel.is_sensitive_volume(volume_view_model))
+        self.assertIn("Scintillator", scene_viewmodel.sensitive_volumes)
+
+        scene_viewmodel.set_volume_sensitive(volume_view_model, False)
+        self.assertFalse(scene_viewmodel.is_sensitive_volume(volume_view_model))
+        self.assertNotIn("Scintillator", scene_viewmodel.sensitive_volumes)
 
 
 class TestViewportControllerEnhancements(unittest.TestCase):

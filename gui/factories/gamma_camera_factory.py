@@ -4,11 +4,13 @@
 GammaCameraNode -> Casing -> Detector_box -> (Collimator, Crystal, Glass_backend).
 """
 
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, Union
 import numpy as np
 
 import settings.database_setting as database_setting
+from core.scene.nodes import SpatialNode
 from core.geometry.geometries import Box
+from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.other.typing_definitions import Float
@@ -29,7 +31,7 @@ def create_default_gamma_camera(
     casing_material_name: str = "Pb",
     internal_material_name: str = "Air, Dry (near sea level)",
     glass_material_name: str = "Glass, Borosilicate (Pyrex)",
-    collimator: Optional[Volume] = None,
+    collimator: Optional[Union[Volume, SpatialNode]] = None,
     detector: Optional[Volume] = None,
     shielding_material: Optional[Material] = None,
     internal_medium: Optional[Material] = None,
@@ -104,10 +106,12 @@ def create_default_gamma_camera(
         name=f"Detector_box_{effective_name}"
     )
 
-    collimator_volume = collimator if collimator is not None else Volume(
-        geometry=Box(det_size_x, det_size_y, eff_collimator_thickness),
+    collimator_volume = collimator if collimator is not None else ParametricParallelCollimator(
+        size=[det_size_x, det_size_y, eff_collimator_thickness],
+        hole_diameter=1.5,
+        septa=0.2,
         material=collimator_mat,
-        name=f"Collimator_{effective_name}"
+        name=f"Collimator_{effective_name}",
     )
 
     crystal_volume = detector if detector is not None else Volume(

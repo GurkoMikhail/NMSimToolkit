@@ -9,17 +9,14 @@ from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.geometry.parametric_collimators import (
     ParametricParallelCollimator,
-    ParametricParallelSquareCollimator,
 )
+from core.geometry.direct_collimators import DirectParallelCollimator
 from core.geometry.pet_scanners import PetScanner
 from core.source.sources import Source
 
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
-from gui.viewmodels.nodes.volume_vm import (
-    VolumeViewModel,
-    ParametricParallelCollimatorViewModel,
-    ParametricParallelSquareCollimatorViewModel,
-)
+from gui.viewmodels.nodes.collimator_vm import CollimatorViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
 from gui.viewmodels.nodes.gantry_vm import GantryViewModel
@@ -39,10 +36,8 @@ def create_node_viewmodel(core_node: SpatialNode, parent_vm: Optional[NodeViewMo
         return DoseGridViewModel(core_node, parent_vm)
     if isinstance(core_node, GantryNode):
         return GantryViewModel(core_node, parent_vm)
-    if isinstance(core_node, ParametricParallelCollimator):
-        return ParametricParallelCollimatorViewModel(core_node, parent_vm)
-    if isinstance(core_node, ParametricParallelSquareCollimator):
-        return ParametricParallelSquareCollimatorViewModel(core_node, parent_vm)
+    if isinstance(core_node, (ParametricParallelCollimator, DirectParallelCollimator)):
+        return CollimatorViewModel(core_node, parent_vm)
     if isinstance(core_node, WoodcockVoxelVolume):
         return VoxelVolumeViewModel(core_node, parent_vm)
     if isinstance(core_node, GammaCameraNode):

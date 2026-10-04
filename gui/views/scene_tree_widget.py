@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.collimator_vm import CollimatorViewModel
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.nodes.source_vm import SourceViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
@@ -20,6 +21,7 @@ from gui.viewmodels.nodes.factory import create_node_viewmodel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
+from core.geometry.direct_collimators import DirectParallelCollimator
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.scene.gamma_camera_node import GammaCameraNode
 from gui.factories.gamma_camera_factory import create_default_gamma_camera
@@ -136,7 +138,8 @@ class SensitiveVolumesList(QListWidget):
         vm = self.owner._dragged_vm
         if self._is_valid_drop_target(vm):
             assert isinstance(vm, VolumeViewModel)
-            vm.is_sensitive_detector = True
+            if self.owner.scene_vm is not None:
+                self.owner.scene_vm.add_sensitive_volume(vm)
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -263,7 +266,8 @@ class SceneTreeWidget(QWidget):
             c2 = self.scene_vm.node_selected.connect(self._on_node_selected_externally)
             c3 = self.scene_vm.node_added.connect(lambda n: self.rebuild_tree())
             c4 = self.scene_vm.node_removed.connect(lambda n: self.rebuild_tree())
-            self._scene_vm_conns.extend([c1, c2, c3, c4])
+            c5 = self.scene_vm.sensitive_volumes_changed.connect(self._refresh_sensitive_volumes_list)
+            self._scene_vm_conns.extend([c1, c2, c3, c4, c5])
 
             if self.scene_vm.root_vm is not None:
                 self.rebuild_tree()
@@ -325,11 +329,6 @@ class SceneTreeWidget(QWidget):
                 sens_item = self._sensitive_item_map.get(id(node_vm))
                 if sens_item is not None:
                     sens_item.setText(f"🎯 {value} ({node_vm.node_type})")
-        elif prop_name == 'is_sensitive_detector' and isinstance(node_vm, VolumeViewModel):
-            if bool(value):
-                self._add_sensitive_item(node_vm)
-            else:
-                self._remove_sensitive_item(node_vm)
 
     def _on_tree_selection_changed(self) -> None:
         selected_items = self.tree.selectedItems()
@@ -368,7 +367,7 @@ class SceneTreeWidget(QWidget):
 
     def _refresh_sensitive_volumes_list(self) -> None:
         """
-        Полное обновление списка чувствительных детекторов по всем узлам ViewModel сцены.
+        Полное обновление списка чувствительных детекторов по единому реестру сцены.
         """
         self.sensitive_list.clear()
         self._sensitive_item_map.clear()
@@ -377,8 +376,9 @@ class SceneTreeWidget(QWidget):
         if self.scene_vm is None:
             return
 
-        for node_vm in self.scene_vm.all_nodes():
-            if isinstance(node_vm, VolumeViewModel) and node_vm.is_sensitive_detector:
+        for volume_name in self.scene_vm.sensitive_volumes:
+            node_vm = self.scene_vm.find_by_name(volume_name)
+            if isinstance(node_vm, VolumeViewModel):
                 self._add_sensitive_item(node_vm)
 
     def _add_sensitive_item(self, vm: VolumeViewModel) -> None:
@@ -420,11 +420,11 @@ class SceneTreeWidget(QWidget):
         Снятие статуса детектора с выбранного в списке объема.
         """
         items = self.sensitive_list.selectedItems()
-        if not items:
+        if not items or self.scene_vm is None:
             return
         vm = self._vm_by_sensitive_item.get(id(items[0]))
         if vm is not None:
-            vm.is_sensitive_detector = False
+            self.scene_vm.remove_sensitive_volume(vm)
 
     def _show_sensitive_context_menu(self, pos: QPoint) -> None:
         """
@@ -443,10 +443,12 @@ class SceneTreeWidget(QWidget):
         menu.exec(self.sensitive_list.viewport().mapToGlobal(pos))
 
     def _disable_detector(self, vm: VolumeViewModel) -> None:
-        vm.is_sensitive_detector = False
+        if self.scene_vm is not None:
+            self.scene_vm.remove_sensitive_volume(vm)
 
     def _enable_detector(self, vm: VolumeViewModel) -> None:
-        vm.is_sensitive_detector = True
+        if self.scene_vm is not None:
+            self.scene_vm.add_sensitive_volume(vm)
 
     def _show_context_menu(self, pos: QPoint) -> None:
         if self.scene_vm is None:
@@ -469,7 +471,7 @@ class SceneTreeWidget(QWidget):
 
         if isinstance(target_vm, VolumeViewModel) and target_vm is not self.scene_vm.root_vm:
             menu.addSeparator()
-            if target_vm.is_sensitive_detector:
+            if self.scene_vm.is_sensitive_volume(target_vm):
                 act_det = menu.addAction("Снять статус чувствительного детектора")
                 act_det.triggered.connect(lambda: self._disable_detector(target_vm))
             else:
@@ -492,6 +494,9 @@ class SceneTreeWidget(QWidget):
         """
         act_box = menu.addAction("Объем (Параллелепипед / Box)")
         act_box.triggered.connect(lambda: self._add_box_volume(parent_vm))
+
+        act_collimator = menu.addAction("Параллельный коллиматор (DirectParallelCollimator)")
+        act_collimator.triggered.connect(lambda: self._add_direct_collimator(parent_vm))
 
         act_voxel = menu.addAction("Воксельный фантом (WoodcockVoxelVolume)")
         act_voxel.triggered.connect(lambda: self._add_voxel_volume(parent_vm))
@@ -539,8 +544,30 @@ class SceneTreeWidget(QWidget):
         vol_vm = VolumeViewModel(vol)
         try:
             self.scene_vm.add_node(parent, vol_vm)
-        except (TypeError, ValueError) as e:
-            QMessageBox.warning(self, "Ошибка добавления", str(e))
+        except (TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Ошибка добавления", str(error))
+
+    def _add_direct_collimator(self, parent_vm: Optional[NodeViewModel] = None) -> None:
+        parent = self._get_parent_vm(parent_vm)
+        if self.scene_vm is None or parent is None:
+            return
+
+        collimator_name = self._get_unique_name("DirectCollimator")
+        lead_material = database_setting.material_database.get("Pb", Material(name="Pb"))
+        vacuum_material = database_setting.material_database.get("Vacuum", Material(name="Vacuum"))
+        collimator = DirectParallelCollimator(
+            size=[400.0, 400.0, 30.0],
+            hole_diameter=2.5,
+            septa=0.5,
+            material=lead_material,
+            hole_material=vacuum_material,
+            name=collimator_name,
+        )
+        collimator_vm = CollimatorViewModel(collimator)
+        try:
+            self.scene_vm.add_node(parent, collimator_vm)
+        except (TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Ошибка добавления", str(error))
 
     def _add_voxel_volume(self, parent_vm: Optional[NodeViewModel] = None) -> None:
         parent = self._get_parent_vm(parent_vm)

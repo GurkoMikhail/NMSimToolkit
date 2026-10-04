@@ -41,6 +41,8 @@ class DirectParallelCollimator(CompositeNode):
     _septa: Float
     _size: Vector3D
     _hole_shape: CollimatorHoleShape
+    _explicit_hole_material: Optional[Material]
+    _channels_initialized: bool
 
     def __init__(
         self,
@@ -55,6 +57,8 @@ class DirectParallelCollimator(CompositeNode):
         collimator_name = name if name is not None else "DirectParallelCollimator"
         super().__init__(name=collimator_name)
 
+        self._channels_initialized = False
+        self._explicit_hole_material = hole_material
         self._hole_diameter = Float(hole_diameter)
         self._septa = Float(septa)
         self._size = np.array(size, dtype=Float)
@@ -87,7 +91,7 @@ class DirectParallelCollimator(CompositeNode):
             raise ValueError(f"Толщина септы должна быть строго положительной (> 0), получено {septa}")
 
         lead_material = settings.material_database['Pb'] if material is None else material
-        vacuum_material = settings.material_database['Vacuum'] if hole_material is None else hole_material
+        resolved_hole_material = self._resolve_hole_material()
 
         self.lead_body = Volume(
             geometry=Box(*self._size),
@@ -104,9 +108,10 @@ class DirectParallelCollimator(CompositeNode):
 
         self.channels = Volume(
             geometry=channel_geometry,
-            material=vacuum_material,
+            material=resolved_hole_material,
             name=f"{collimator_name}_channels"
         )
+        self._channels_initialized = True
 
         self.lead_body.add_child(self.channels)
         self.add_child(self.lead_body)
@@ -177,6 +182,46 @@ class DirectParallelCollimator(CompositeNode):
         self.invalidate_geometry()
 
     @property
+    def parent(self) -> Optional[CompositeNode]:
+        return self._parent
+
+    @parent.setter
+    def parent(self, value: Optional[CompositeNode]) -> None:
+        self._parent = value
+        self.invalidate_matrix_cache()
+        self._sync_hole_material()
+
+    def set_parent(self, parent: CompositeNode) -> None:
+        """Устанавливает родительский узел и актуализирует унаследованный материал каналов."""
+        parent.add_child(self)
+        self._sync_hole_material()
+
+    def _resolve_hole_material(self) -> Material:
+        """
+        Определяет материал наполнения каналов коллиматора:
+        - если материал задан явно (explicit_hole_material), возвращает его;
+        - если None, динамически ищет материал в родительских объемах Volume вверх по иерархии сцены;
+        - при отсутствии родительского Volume с материалом возвращает Vacuum из БД материалов.
+        """
+        if self._explicit_hole_material is not None:
+            return self._explicit_hole_material
+        current_node = self.parent
+        while current_node is not None:
+            if isinstance(current_node, Volume) and current_node.material is not None:
+                return current_node.material
+            current_node = current_node.parent
+        if "Vacuum" in settings.material_database:
+            return settings.material_database["Vacuum"]
+        return Material(name="Vacuum")
+
+    def _sync_hole_material(self) -> None:
+        """
+        Актуализирует материал каналов в соответствии с текущим режимом и родителем.
+        """
+        if self._channels_initialized:
+            self.channels.material = self._resolve_hole_material()
+
+    @property
     def material(self) -> Material:
         """Основной материал корпуса коллиматора (Pb)."""
         return self.lead_body.material
@@ -186,13 +231,23 @@ class DirectParallelCollimator(CompositeNode):
         self.lead_body.material = value
 
     @property
+    def explicit_hole_material(self) -> Optional[Material]:
+        """Явно назначенный материал каналов (None, если материал наследуется от родителя)."""
+        return self._explicit_hole_material
+
+    @property
     def hole_material(self) -> Material:
-        """Материал внутри каналов (Vacuum или Air)."""
+        """Материал внутри каналов (Vacuum, Air или унаследованный от родителя)."""
         return self.channels.material
 
     @hole_material.setter
-    def hole_material(self, value: Material) -> None:
-        self.channels.material = value
+    def hole_material(self, value: Optional[Material]) -> None:
+        """
+        Устанавливает материал каналов.
+        При передаче None сбрасывает в режим наследования от родителя и синхронизирует материал channels.
+        """
+        self._explicit_hole_material = value
+        self._sync_hole_material()
 
     @property
     def material_list(self) -> List[Material]:
