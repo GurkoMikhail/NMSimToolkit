@@ -371,6 +371,86 @@ class TestDirectParallelCollimator(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.collimator.size = (100.0, -50.0, 30.0)
 
+    def test_hole_shape_universalization(self) -> None:
+        """Проверка поддержки и валидации параметра hole_shape (универсализация форм каналов)."""
+        from core.geometry.direct_collimators import CollimatorHoleShape
+
+        # 1. Значение по умолчанию - гексагональная форма
+        self.assertEqual(self.collimator.hole_shape, CollimatorHoleShape.HEXAGONAL)
+
+        # 2. Создание с явным перечислением CollimatorHoleShape.HEXAGONAL и строкой
+        collimator_enum = DirectParallelCollimator(
+            size=self.size,
+            hole_diameter=self.hole_diameter,
+            septa=self.septa,
+            hole_shape=CollimatorHoleShape.HEXAGONAL
+        )
+        self.assertEqual(collimator_enum.hole_shape, CollimatorHoleShape.HEXAGONAL)
+
+        collimator_str = DirectParallelCollimator(
+            size=self.size,
+            hole_diameter=self.hole_diameter,
+            septa=self.septa,
+            hole_shape="hexagonal"
+        )
+        self.assertEqual(collimator_str.hole_shape, CollimatorHoleShape.HEXAGONAL)
+
+        collimator_upper = DirectParallelCollimator(
+            size=self.size,
+            hole_diameter=self.hole_diameter,
+            septa=self.septa,
+            hole_shape="HEXAGONAL"
+        )
+        self.assertEqual(collimator_upper.hole_shape, CollimatorHoleShape.HEXAGONAL)
+
+        # 3. Будущие формы каналов (SQUARE, ROUND) вызывают NotImplementedError в ядре
+        with self.assertRaises(NotImplementedError):
+            DirectParallelCollimator(
+                size=self.size,
+                hole_diameter=self.hole_diameter,
+                septa=self.septa,
+                hole_shape=CollimatorHoleShape.SQUARE
+            )
+
+        with self.assertRaises(NotImplementedError):
+            DirectParallelCollimator(
+                size=self.size,
+                hole_diameter=self.hole_diameter,
+                septa=self.septa,
+                hole_shape="round"
+            )
+
+        # 4. Некорректные имена форм вызывают ValueError
+        with self.assertRaises(ValueError):
+            DirectParallelCollimator(
+                size=self.size,
+                hole_diameter=self.hole_diameter,
+                septa=self.septa,
+                hole_shape="triangular"
+            )
+
+        # 5. Некорректные типы аргумента вызывают TypeError
+        with self.assertRaises(TypeError):
+            DirectParallelCollimator(
+                size=self.size,
+                hole_diameter=self.hole_diameter,
+                septa=self.septa,
+                hole_shape=123  # type: ignore
+            )
+
+        # 6. Сеттер hole_shape
+        self.collimator.hole_shape = "hexagonal"
+        self.assertEqual(self.collimator.hole_shape, CollimatorHoleShape.HEXAGONAL)
+
+        with self.assertRaises(NotImplementedError):
+            self.collimator.hole_shape = CollimatorHoleShape.SQUARE
+
+        with self.assertRaises(ValueError):
+            self.collimator.hole_shape = "unknown_shape"
+
+        with self.assertRaises(TypeError):
+            self.collimator.hole_shape = 456  # type: ignore
+
 
 if __name__ == '__main__':
     unittest.main()
