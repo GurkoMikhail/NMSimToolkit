@@ -8,9 +8,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import hepunits as units
 
+from PySide6.QtWidgets import QApplication
+
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
-from core.materials.materials import Material
+from core.geometry.voxel_volumes import WoodcockVoxelVolume
+from core.materials.materials import Material, MaterialArray
 from core.scene.nodes import SpatialNode, CompositeNode
 from pydantic import ValidationError
 
@@ -19,14 +22,18 @@ import settings.database_setting as database_setting
 from gui.app import DARK_STYLE_SHEET
 from gui.models.gui_settings import GuiSimulationSettings
 from gui.views.simulation_settings_dialog import SimulationSettingsDialog
+from gui.views.property_inspector import PropertyInspector
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewport_3d.material_palette import (
     get_material_color,
     get_material_opacity,
     get_material_rgba,
     get_pseudo_xray_rgba,
+    build_material_volume_color_tf,
+    build_material_volume_opacity_tf,
     compute_material_linear_attenuation,
     compute_xray_opacity,
     DETECTOR_ACCENT_COLOR,
@@ -45,9 +52,23 @@ class MockHighlightActor:
         self.edge_visibility: bool = False
         self.edge_color: Tuple[float, float, float] = (0.0, 0.0, 0.0)
         self.line_width: float = 1.0
+        self.color_transfer_function: Any = None
+        self.opacity_transfer_function: Any = None
 
     def GetProperty(self) -> 'MockHighlightActor':
         return self
+
+    def GetMapper(self) -> 'MockHighlightActor':
+        return self
+
+    def SetColor(self, color_tf: Any) -> None:
+        self.color_transfer_function = color_tf
+
+    def SetScalarOpacity(self, opacity_tf: Any) -> None:
+        self.opacity_transfer_function = opacity_tf
+
+    def SetSampleDistance(self, sample_dist: float) -> None:
+        pass
 
     def SetEdgeVisibility(self, visible_flag: bool) -> None:
         self.edge_visibility = bool(visible_flag)
@@ -97,6 +118,20 @@ class MockSceneViewport:
         style: str = 'surface',
         wireframe: bool = False,
         rgb: bool = False,
+        **kwargs: Any
+    ) -> Optional[Any]:
+        mock_actor_instance = MockHighlightActor()
+        self.actors_registry[name] = mock_actor_instance
+        return mock_actor_instance
+
+    def add_actor(self, name: str, actor: Any) -> Optional[Any]:
+        self.actors_registry[name] = actor
+        return actor
+
+    def add_volume_actor(
+        self,
+        name: str,
+        grid: Any,
         **kwargs: Any
     ) -> Optional[Any]:
         mock_actor_instance = MockHighlightActor()
@@ -509,6 +544,256 @@ class TestSimulationSettingsDialogXrayIntegration(unittest.TestCase):
 
         self.assertAlmostEqual(dialog.spin_xray_energy.value(), 80.0)
         self.assertTrue(dialog.chk_pseudo_xray.isChecked())
+
+
+class TestMaterialVolumeTransferFunctions(unittest.TestCase):
+    """Тестирование построения кусочно-постоянных функций VTK для воксельных фантомов."""
+
+    def setUp(self) -> None:
+        self.element_list = [
+            Material(name="Vacuum", ID=0),
+            Material(name="Air, Dry (near sea level)", ID=1),
+            Material(name="Water, Liquid", ID=2),
+            Material(name="Bone, Cortical (ICRU-44)", ID=3),
+        ]
+
+    def test_build_material_volume_color_tf_normal_mode(self) -> None:
+        """Проверка ступенчатой цветовой функции в обычном режиме (Physical Materials)."""
+        color_function = build_material_volume_color_tf(
+            self.element_list,
+            pseudo_xray_mode=False,
+            energy=140.0 * units.keV,
+        )
+        self.assertIsNotNone(color_function)
+
+        for material_index, material_instance in enumerate(self.element_list):
+            expected_color = get_material_color(material_instance.name)
+            for sample_coordinate in [float(material_index), float(material_index) - 0.45, float(material_index) + 0.45]:
+                sampled_rgb = [0.0, 0.0, 0.0]
+                color_function.GetColor(sample_coordinate, sampled_rgb)
+                np.testing.assert_allclose(sampled_rgb, expected_color, atol=1e-3)
+
+    def test_build_material_volume_color_tf_pseudo_xray_mode(self) -> None:
+        """Проверка ступенчатой цветовой функции в режиме псевдорентгена."""
+        color_function = build_material_volume_color_tf(
+            self.element_list,
+            pseudo_xray_mode=True,
+            energy=140.0 * units.keV,
+        )
+        self.assertIsNotNone(color_function)
+
+        for material_index, material_instance in enumerate(self.element_list):
+            expected_xray_color, _ = get_pseudo_xray_rgba(material_instance.name, energy=140.0 * units.keV)
+            sampled_rgb = [0.0, 0.0, 0.0]
+            color_function.GetColor(float(material_index), sampled_rgb)
+            np.testing.assert_allclose(sampled_rgb, expected_xray_color, atol=1e-3)
+
+    def test_build_material_volume_opacity_tf_vacuum_and_air_zero(self) -> None:
+        """Проверка, что для вакуума и воздуха непрозрачность строго равна 0.0."""
+        opacity_function = build_material_volume_opacity_tf(
+            self.element_list,
+            pseudo_xray_mode=False,
+            energy=140.0 * units.keV,
+            characteristic_length=2.0 * units.mm,
+        )
+        self.assertIsNotNone(opacity_function)
+
+        # Индекс 0: Vacuum -> строго 0.0
+        self.assertAlmostEqual(opacity_function.GetValue(0.0), 0.0, places=5)
+        self.assertAlmostEqual(opacity_function.GetValue(-0.4), 0.0, places=5)
+        self.assertAlmostEqual(opacity_function.GetValue(0.4), 0.0, places=5)
+
+        # Индекс 1: Air, Dry -> строго 0.0
+        self.assertAlmostEqual(opacity_function.GetValue(1.0), 0.0, places=5)
+        self.assertAlmostEqual(opacity_function.GetValue(0.6), 0.0, places=5)
+        self.assertAlmostEqual(opacity_function.GetValue(1.4), 0.0, places=5)
+
+    def test_build_material_volume_opacity_tf_physical_scaling(self) -> None:
+        """Проверка физического закона ослабления для плотных тканей и зависимости от энергии."""
+        opacity_function_high_energy = build_material_volume_opacity_tf(
+            self.element_list,
+            pseudo_xray_mode=False,
+            energy=140.0 * units.keV,
+            characteristic_length=2.0 * units.mm,
+        )
+        water_opacity_high = opacity_function_high_energy.GetValue(2.0)
+        bone_opacity_high = opacity_function_high_energy.GetValue(3.0)
+
+        self.assertGreater(water_opacity_high, 0.0)
+        self.assertGreater(bone_opacity_high, water_opacity_high)
+
+        # При меньшей энергии фотонов ослабление фотоэффекта выше -> непрозрачность должна возрасти
+        opacity_function_low_energy = build_material_volume_opacity_tf(
+            self.element_list,
+            pseudo_xray_mode=False,
+            energy=30.0 * units.keV,
+            characteristic_length=2.0 * units.mm,
+        )
+        water_opacity_low = opacity_function_low_energy.GetValue(2.0)
+        bone_opacity_low = opacity_function_low_energy.GetValue(3.0)
+
+        self.assertGreater(water_opacity_low, water_opacity_high)
+        self.assertGreater(bone_opacity_low, bone_opacity_high)
+
+    def test_empty_element_list_handling(self) -> None:
+        """Проверка корректной обработки пустого списка материалов."""
+        color_function = build_material_volume_color_tf([])
+        opacity_function = build_material_volume_opacity_tf([])
+        self.assertIsNotNone(color_function)
+        self.assertIsNotNone(opacity_function)
+
+
+class TestVoxelVolumeViewModelAndPropertyInspector(unittest.TestCase):
+    """Тестирование модели представления VoxelVolumeViewModel и интерфейса PropertyInspector."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt_application = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        material_array_instance = MaterialArray((6, 6, 6))
+        self.materials_list = [
+            Material(name="Vacuum", ID=0),
+            Material(name="Water, Liquid", ID=1),
+            Material(name="Bone, Cortical (ICRU-44)", ID=2),
+        ]
+        material_array_instance.element_list = self.materials_list
+        material_array_instance.view(np.ndarray)[:2, :, :] = 0
+        material_array_instance.view(np.ndarray)[2:4, :, :] = 1
+        material_array_instance.view(np.ndarray)[4:, :, :] = 2
+
+        self.voxel_phantom = WoodcockVoxelVolume(
+            voxel_size=2.0 * units.mm,
+            material_distribution=material_array_instance,
+            name="TestPhantom",
+        )
+        self.voxel_vm = VoxelVolumeViewModel(self.voxel_phantom)
+
+    def test_voxel_volume_vm_defaults_and_material_list(self) -> None:
+        """Проверка значений по умолчанию и свойства material_list в VoxelVolumeViewModel."""
+        self.assertEqual(self.voxel_vm.colormap_name, "Physical Materials")
+        self.assertEqual(len(self.voxel_vm.material_list), 3)
+        self.assertEqual(self.voxel_vm.material_list[0].name, "Vacuum")
+        self.assertEqual(self.voxel_vm.material_list[1].name, "Water, Liquid")
+        self.assertEqual(self.voxel_vm.material_list[2].name, "Bone, Cortical (ICRU-44)")
+
+    def test_property_inspector_colormap_physical_materials_blocking(self) -> None:
+        """Проверка блокировки эвристических регуляторов прозрачности при выборе 'Physical Materials'."""
+        inspector_widget = PropertyInspector()
+
+        # Первый элемент в списке палитр обязан быть 'Physical Materials'
+        self.assertEqual(inspector_widget.combo_colormap.itemText(0), "Physical Materials")
+
+        # При назначении воксельного фантома с 'Physical Materials' ползунки прозрачности заблокированы
+        inspector_widget.set_target_viewmodel(self.voxel_vm)
+        self.assertEqual(inspector_widget.combo_colormap.currentText(), "Physical Materials")
+        self.assertFalse(inspector_widget.spin_opacity_thresh.isEnabled())
+        self.assertFalse(inspector_widget.spin_max_opacity.isEnabled())
+        self.assertFalse(inspector_widget.combo_opacity_preset.isEnabled())
+
+        # Переключаем палитру на 'Hot Iron' -> регуляторы прозрачности становятся активными
+        inspector_widget.combo_colormap.setCurrentText("Hot Iron")
+        self.assertEqual(self.voxel_vm.colormap_name, "Hot Iron")
+        self.assertTrue(inspector_widget.spin_opacity_thresh.isEnabled())
+        self.assertTrue(inspector_widget.spin_max_opacity.isEnabled())
+        self.assertTrue(inspector_widget.combo_opacity_preset.isEnabled())
+
+        # Возвращаем 'Physical Materials' -> регуляторы вновь заблокированы
+        inspector_widget.combo_colormap.setCurrentText("Physical Materials")
+        self.assertEqual(self.voxel_vm.colormap_name, "Physical Materials")
+        self.assertFalse(inspector_widget.spin_opacity_thresh.isEnabled())
+        self.assertFalse(inspector_widget.spin_max_opacity.isEnabled())
+        self.assertFalse(inspector_widget.combo_opacity_preset.isEnabled())
+
+
+class TestVoxelVolumeViewportControllerIntegration(unittest.TestCase):
+    """Интеграционное тестирование визуализации воксельного фантома в SceneViewportController."""
+
+    def setUp(self) -> None:
+        self.mock_viewport = MockSceneViewport()
+        material_array_instance = MaterialArray((4, 4, 4))
+        self.materials_list = [
+            Material(name="Vacuum", ID=0),
+            Material(name="Water, Liquid", ID=1),
+            Material(name="Bone, Cortical (ICRU-44)", ID=2),
+        ]
+        material_array_instance.element_list = self.materials_list
+        material_array_instance.view(np.ndarray)[:2, :, :] = 0
+        material_array_instance.view(np.ndarray)[2:, :, :] = 1
+
+        self.root_node = Volume(
+            geometry=Box(500.0, 500.0, 500.0),
+            material=Material(name="Air, Dry (near sea level)"),
+            name="World",
+        )
+        self.voxel_node = WoodcockVoxelVolume(
+            voxel_size=2.5 * units.mm,
+            material_distribution=material_array_instance,
+            name="Phantom",
+        )
+        self.scene_view_model = SceneViewModel(root_core_node=self.root_node)
+        self.voxel_vm = VoxelVolumeViewModel(self.voxel_node)
+        self.controller = SceneViewportController(viewport=self.mock_viewport, scene_vm=self.scene_view_model)
+        self.scene_view_model.node_added.connect(self.controller.on_node_added)
+        self.scene_view_model.node_removed.connect(self.controller.on_node_removed)
+        self.scene_view_model.node_selected.connect(self.controller.on_node_selected)
+
+    def test_voxel_phantom_renders_with_physical_materials_by_default(self) -> None:
+        """Воксельный фантом по умолчанию рендерится через физическую передаточную функцию материалов."""
+        self.scene_view_model.add_node(self.scene_view_model.root_vm, self.voxel_vm)
+
+        self.assertTrue(self.controller.voxel_renderer.is_physical_mode)
+        self.assertEqual(self.controller.voxel_renderer.current_element_list, self.materials_list)
+        self.assertFalse(self.controller.voxel_renderer.last_xray_mode)
+
+    def test_voxel_phantom_reacts_to_global_pseudo_xray_mode_and_energy(self) -> None:
+        """Фантом синхронно переключается на рентгеновский режим и пересчитывает свойства при смене энергии."""
+        self.scene_view_model.add_node(self.scene_view_model.root_vm, self.voxel_vm)
+
+        # Переключаем глобальный псевдорентген на 40 кэВ
+        self.controller.set_xray_parameters(energy=40.0 * units.keV, pseudo_xray_mode=True)
+        self.assertTrue(self.controller.voxel_renderer.last_xray_mode)
+        self.assertAlmostEqual(self.controller.voxel_renderer.last_energy, 40.0 * units.keV)
+        self.assertTrue(self.controller.voxel_renderer.is_physical_mode)
+
+        # Возвращаем нормальный режим на 140 кэВ
+        self.controller.set_xray_parameters(energy=140.0 * units.keV, pseudo_xray_mode=False)
+        self.assertFalse(self.controller.voxel_renderer.last_xray_mode)
+        self.assertAlmostEqual(self.controller.voxel_renderer.last_energy, 140.0 * units.keV)
+
+    def test_voxel_selection_bounding_box_lifecycle(self) -> None:
+        """Вокруг выделенного фантома появляется янтарная габаритная рамка и удаляется при снятии выделения."""
+        self.scene_view_model.add_node(self.scene_view_model.root_vm, self.voxel_vm)
+
+        box_actor_name = f"selection_box_{id(self.voxel_vm)}"
+
+        # При выборе фантома актор рамки выделения добавляется во вьюпорт
+        self.controller.on_node_selected(self.voxel_vm)
+        self.assertIn(box_actor_name, self.mock_viewport.actors_registry)
+
+        # Снимаем выделение -> рамка удаляется
+        self.controller.on_node_selected(None)
+        self.assertNotIn(box_actor_name, self.mock_viewport.actors_registry)
+
+        # Повторно выбираем фантом -> рамка вновь появляется
+        self.controller.on_node_selected(self.voxel_vm)
+        self.assertIn(box_actor_name, self.mock_viewport.actors_registry)
+
+    def test_voxel_selection_box_transform_sync(self) -> None:
+        """Трансформация рамки выделения синхронизируется при перемещении фантома."""
+        self.scene_view_model.add_node(self.scene_view_model.root_vm, self.voxel_vm)
+        self.controller.on_node_selected(self.voxel_vm)
+
+        box_actor_name = f"selection_box_{id(self.voxel_vm)}"
+        self.assertIn(box_actor_name, self.mock_viewport.actors_registry)
+
+        # Изменяем матрицу фантома
+        translated_matrix = np.eye(4, dtype=float)
+        translated_matrix[0, 3] = 120.0
+        self.voxel_vm.local_matrix = translated_matrix
+
+        # Проверяем обновление трансформации рамки
+        self.assertTrue(box_actor_name in self.mock_viewport.actors_registry)
 
 
 if __name__ == "__main__":

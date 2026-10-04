@@ -93,6 +93,7 @@ class SceneViewportController(QObject):
 
         # Состояние выделения узлов и параметров рентгеновской визуализации
         self._selected_node_vm: Optional[NodeViewModel] = None
+        self._active_selection_box_actor: Optional[str] = None
         self._xray_mode: bool = False
         self._xray_energy: float = 140.0 * units.keV
 
@@ -135,7 +136,7 @@ class SceneViewportController(QObject):
         self._xray_mode = bool(pseudo_xray_mode)
         if self.scene_vm is not None:
             for node_vm in self.scene_vm.all_nodes():
-                if isinstance(node_vm, VolumeViewModel):
+                if isinstance(node_vm, (VolumeViewModel, VoxelVolumeViewModel)):
                     self.add_or_update_node_actor(node_vm)
             self.viewport.render()
 
@@ -279,24 +280,32 @@ class SceneViewportController(QObject):
         elif isinstance(node_vm, VoxelVolumeViewModel):
             dist = node_vm.core_node.material_distribution
             if dist is not None:
-                data = np.asarray(dist.ID, dtype=np.float32)
-                if float(np.max(data)) == 0.0:
-                    data = np.asarray(dist.view(np.ndarray), dtype=np.float32)
-                if float(np.max(data)) == 0.0:
-                    data = np.asarray(dist.density, dtype=np.float32)
+                data = np.asarray(dist.view(np.ndarray), dtype=np.float32)
                 self.voxel_renderer.set_volume_data(
                     data,
                     voxel_size=node_vm.voxel_size,
                     origin=node_vm.origin
                 )
-                self.voxel_renderer.set_colormap(node_vm.colormap_name)
-                self.voxel_renderer.set_opacity_parameters(
-                    max_opacity=float(node_vm.max_opacity),
-                    threshold=float(node_vm.opacity_threshold),
-                    preset=node_vm.opacity_preset
-                )
+                if node_vm.colormap_name == 'Physical Materials' or self._xray_mode:
+                    voxel_characteristic_length = float(np.mean(node_vm.voxel_size))
+                    self.voxel_renderer.apply_material_transfer_functions(
+                        element_list=dist.element_list,
+                        pseudo_xray_mode=self._xray_mode,
+                        energy=self._xray_energy,
+                        characteristic_length=voxel_characteristic_length,
+                    )
+                else:
+                    self.voxel_renderer.set_colormap(node_vm.colormap_name)
+                    self.voxel_renderer.set_opacity_parameters(
+                        max_opacity=float(node_vm.max_opacity),
+                        threshold=float(node_vm.opacity_threshold),
+                        preset=node_vm.opacity_preset
+                    )
                 self.voxel_renderer.set_lod_factor(float(node_vm.lod_factor))
                 self.viewport.update_actor_transform(self.voxel_renderer.actor_name, node_vm.global_matrix)
+
+                if self._is_node_selected_or_child(node_vm):
+                    self._create_or_update_voxel_selection_box(node_vm)
 
         elif isinstance(node_vm, SourceViewModel):
             if node_vm.is_point_source:
@@ -376,6 +385,9 @@ class SceneViewportController(QObject):
         self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
         if isinstance(node_vm, VoxelVolumeViewModel) and self.voxel_renderer is not None:
             self.viewport.update_actor_transform(self.voxel_renderer.actor_name, node_vm.global_matrix)
+            box_actor_name = f"selection_box_{id(node_vm)}"
+            if self.viewport.get_actor(box_actor_name) is not None:
+                self.viewport.update_actor_transform(box_actor_name, node_vm.global_matrix)
         elif isinstance(node_vm, PetScannerViewModel) and self.pet_manipulator is not None:
             self.viewport.update_actor_transform(self.pet_manipulator.actor_name, node_vm.global_matrix)
         if self.transform_gizmo is not None and self.transform_gizmo.target_node is node_vm:
@@ -397,7 +409,18 @@ class SceneViewportController(QObject):
             self.viewport.render()
         elif prop_name == 'colormap_name' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
-                self.voxel_renderer.set_colormap(str(value))
+                if str(value) == 'Physical Materials' or self._xray_mode:
+                    dist = node_vm.core_node.material_distribution
+                    if dist is not None:
+                        voxel_characteristic_length = float(np.mean(node_vm.voxel_size))
+                        self.voxel_renderer.apply_material_transfer_functions(
+                            element_list=dist.element_list,
+                            pseudo_xray_mode=self._xray_mode,
+                            energy=self._xray_energy,
+                            characteristic_length=voxel_characteristic_length,
+                        )
+                else:
+                    self.voxel_renderer.set_colormap(str(value))
                 self.viewport.render()
         elif prop_name == 'opacity_threshold' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
@@ -434,8 +457,11 @@ class SceneViewportController(QObject):
         def _remove_recursive(vm: NodeViewModel) -> None:
             actor_name = f"mesh_{id(vm)}"
             self.viewport.remove_actor(actor_name)
-            if isinstance(vm, VoxelVolumeViewModel) and self.voxel_renderer is not None:
-                self.viewport.remove_actor(self.voxel_renderer.actor_name)
+            if isinstance(vm, VoxelVolumeViewModel):
+                box_actor_name = f"selection_box_{id(vm)}"
+                self.viewport.remove_actor(box_actor_name)
+                if self.voxel_renderer is not None:
+                    self.viewport.remove_actor(self.voxel_renderer.actor_name)
             self.disconnect_node(id(vm))
             for child in vm.children:
                 _remove_recursive(child)
@@ -539,13 +565,67 @@ class SceneViewportController(QObject):
 
         _apply_highlight_recursive(node_vm)
 
+    def _create_or_update_voxel_selection_box(self, node_vm: VoxelVolumeViewModel) -> None:
+        """
+        Создает или обновляет контурную янтарную рамку выделения вокруг воксельного фантома.
+        """
+        box_actor_name = f"selection_box_{id(node_vm)}"
+        self._active_selection_box_actor = box_actor_name
+
+        if self.voxel_renderer is not None and self.voxel_renderer.grid is not None:
+            box_bounds = self.voxel_renderer.grid.bounds
+        else:
+            voxel_origin = node_vm.origin
+            voxel_dimensions = node_vm.dimensions
+            voxel_spacing = node_vm.voxel_size
+            box_bounds = (
+                voxel_origin[0], voxel_origin[0] + max(0, voxel_dimensions[0] - 1) * voxel_spacing[0],
+                voxel_origin[1], voxel_origin[1] + max(0, voxel_dimensions[1] - 1) * voxel_spacing[1],
+                voxel_origin[2], voxel_origin[2] + max(0, voxel_dimensions[2] - 1) * voxel_spacing[2],
+            )
+
+        bounding_box = pv.Box(bounds=box_bounds)
+        self.viewport.add_mesh_actor(
+            box_actor_name,
+            bounding_box,
+            color=SELECTED_EDGE_HIGHLIGHT_COLOR,
+            style='wireframe',
+            line_width=2.5,
+        )
+        self.viewport.update_actor_transform(box_actor_name, node_vm.global_matrix)
+
+    def _remove_voxel_selection_box(self, node_vm: Optional[NodeViewModel] = None) -> None:
+        """
+        Удаляет актор контурной рамки выделения воксельного фантома.
+        """
+        if node_vm is not None:
+            box_actor_name = f"selection_box_{id(node_vm)}"
+            self.viewport.remove_actor(box_actor_name)
+        if self._active_selection_box_actor is not None:
+            self.viewport.remove_actor(self._active_selection_box_actor)
+            self._active_selection_box_actor = None
+
+    def _apply_voxel_selection_recursive(self, target_node_vm: NodeViewModel, is_selected: bool) -> None:
+        """
+        Рекурсивно включает или выключает контурную рамку выделения для воксельных фантомов.
+        """
+        if isinstance(target_node_vm, VoxelVolumeViewModel):
+            if is_selected:
+                self._create_or_update_voxel_selection_box(target_node_vm)
+            else:
+                self._remove_voxel_selection_box(target_node_vm)
+        for child_node_vm in target_node_vm.children:
+            self._apply_voxel_selection_recursive(child_node_vm, is_selected)
+
     def on_node_selected(self, selected_node_vm: Optional[NodeViewModel]) -> None:
         """Синхронизация подсветки ребер, ОФЭКТ/ПЭТ-манипулятора и Transform Gizmo при выборе узла в сцене."""
         if self._selected_node_vm is not None:
             self._set_node_edge_highlight(self._selected_node_vm, False)
+            self._apply_voxel_selection_recursive(self._selected_node_vm, False)
         self._selected_node_vm = selected_node_vm
         if selected_node_vm is not None:
             self._set_node_edge_highlight(selected_node_vm, True)
+            self._apply_voxel_selection_recursive(selected_node_vm, True)
 
         if selected_node_vm is None:
             if self.transform_gizmo is not None:

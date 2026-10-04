@@ -33,6 +33,8 @@ class ISceneViewport(Protocol):
         **kwargs: Any
     ) -> Optional[Any]: ...
 
+    def add_actor(self, name: str, actor: Any) -> Optional[Any]: ...
+
     def update_actor_transform(self, name: str, matrix: np.ndarray) -> bool: ...
 
     def remove_actor(self, name: str) -> None: ...
@@ -162,6 +164,22 @@ class VTKViewport(QWidget):
             return actor
         except (RuntimeError, ValueError, TypeError) as mesh_error:
             _logger.error(f"Ошибка добавления меша {name}: {mesh_error}")
+            return None
+
+    def add_actor(self, name: str, actor: Any) -> Optional[Any]:
+        """
+        Добавляет готовый VTK-актор (например, с vtkGlyph3DMapper) в 3D-сцену вьюпорта.
+        """
+        if self.plotter is None:
+            return None
+
+        self.remove_actor(name)
+        try:
+            self.plotter.add_actor(actor, reset_camera=False, name=name)
+            self._actors[name] = actor
+            return actor
+        except (RuntimeError, ValueError, TypeError) as actor_error:
+            _logger.error(f"Ошибка добавления актора {name}: {actor_error}")
             return None
 
     def update_actor_transform(self, name: str, matrix: np.ndarray) -> bool:

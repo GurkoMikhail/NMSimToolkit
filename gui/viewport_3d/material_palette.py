@@ -12,10 +12,12 @@
 
 import hashlib
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 import numpy as np
 import hepunits as units
+import vtk
 
+from core.materials.materials import Material
 import settings.database_setting as database_setting
 
 _logger = logging.getLogger(__name__)
@@ -26,6 +28,11 @@ DETECTOR_ACCENT_OPACITY: float = 0.75
 
 SELECTED_EDGE_HIGHLIGHT_COLOR: Tuple[float, float, float] = (1.0, 0.55, 0.0)
 SELECTED_EDGE_HIGHLIGHT_WIDTH: float = 2.5
+
+# Визуальные акценты для коллиматоров и каналов
+COLLIMATOR_BODY_OPACITY: float = 0.65
+COLLIMATOR_HOLE_ACCENT_COLOR: Tuple[float, float, float] = (0.75, 0.88, 0.95)
+COLLIMATOR_HOLE_OPACITY: float = 0.90
 
 # Базовая семантическая палитра материалов (RGB в диапазоне [0.0, 1.0])
 MATERIAL_COLOR_PALETTE: Dict[str, Tuple[float, float, float]] = {
@@ -364,3 +371,113 @@ def get_pseudo_xray_rgba(
         float(np.clip(radiographic_brightness * 1.00, 0.0, 1.0)),
     )
     return (rgb_radiographic, opacity_value)
+
+
+def build_material_volume_color_tf(
+    element_list: Sequence[Material],
+    pseudo_xray_mode: bool = False,
+    energy: float = 140.0 * units.keV,
+) -> vtk.vtkColorTransferFunction:
+    """
+    Строит ступенчатую кусочно-постоянную передаточную функцию цвета VTK (vtkColorTransferFunction)
+    для дискретного набора материалов воксельного фантома.
+    Для каждого целочисленного индекса материала задается постоянный цвет в диапазоне [i - 0.499, i + 0.499].
+    """
+    color_transfer_function = vtk.vtkColorTransferFunction()
+    if not element_list:
+        return color_transfer_function
+
+    for material_index, material_instance in enumerate(element_list):
+        if pseudo_xray_mode:
+            rgb_components, _ = get_pseudo_xray_rgba(material_instance.name, energy=energy)
+        else:
+            rgb_components = get_material_color(material_instance.name)
+
+        lower_bound = float(material_index) - 0.499
+        upper_bound = float(material_index) + 0.499
+        color_transfer_function.AddRGBPoint(
+            lower_bound,
+            float(rgb_components[0]),
+            float(rgb_components[1]),
+            float(rgb_components[2]),
+        )
+        color_transfer_function.AddRGBPoint(
+            upper_bound,
+            float(rgb_components[0]),
+            float(rgb_components[1]),
+            float(rgb_components[2]),
+        )
+
+    return color_transfer_function
+
+
+def build_material_volume_opacity_tf(
+    element_list: Sequence[Material],
+    pseudo_xray_mode: bool = False,
+    energy: float = 140.0 * units.keV,
+    characteristic_length: float = 2.0 * units.mm,
+) -> vtk.vtkPiecewiseFunction:
+    """
+    Строит ступенчатую кусочно-постоянную функцию непрозрачности VTK (vtkPiecewiseFunction)
+    для дискретного набора материалов воксельного фантома по закону Бугера-Ламберта-Бера.
+    Для вакуума (Vacuum) и фонового воздуха (Air) непрозрачность строго равна 0.0 (абсолютная прозрачность).
+    """
+    opacity_function = vtk.vtkPiecewiseFunction()
+    if not element_list:
+        return opacity_function
+
+    for material_index, material_instance in enumerate(element_list):
+        material_name_lower = material_instance.name.lower()
+        if material_instance.name == "Vacuum" or "air" in material_name_lower:
+            calculated_opacity = 0.0
+        elif pseudo_xray_mode:
+            _, calculated_opacity = get_pseudo_xray_rgba(
+                material_instance.name,
+                energy=energy,
+                characteristic_length=characteristic_length,
+            )
+        else:
+            calculated_opacity = get_material_opacity(
+                material_instance.name,
+                energy=energy,
+                characteristic_length=characteristic_length,
+            )
+
+        lower_bound = float(material_index) - 0.499
+        upper_bound = float(material_index) + 0.499
+        opacity_function.AddPoint(lower_bound, float(calculated_opacity))
+        opacity_function.AddPoint(upper_bound, float(calculated_opacity))
+
+    return opacity_function
+
+
+def get_collimator_visual_properties(
+    body_material_name: str = "Pb",
+    hole_material_name: str = "Vacuum",
+    energy: float = 140.0 * units.keV,
+    pseudo_xray_mode: bool = False,
+    characteristic_length: float = 25.0 * units.mm,
+) -> Tuple[Tuple[Tuple[float, float, float], float], Tuple[Tuple[float, float, float], float]]:
+    """
+    Рассчитывает согласованные параметры отображения ((body_rgb, body_opacity), (hole_rgb, hole_opacity))
+    для корпуса коллиматора и его каналов с учетом режима 'Псевдорентген' и физической палитры.
+    """
+    if pseudo_xray_mode:
+        body_rgb, body_opacity = get_pseudo_xray_rgba(
+            body_material_name,
+            energy=energy,
+            characteristic_length=characteristic_length
+        )
+        hole_rgb = (0.18, 0.20, 0.25)
+        hole_opacity = 0.40
+    else:
+        body_rgb = get_material_color(body_material_name)
+        body_opacity = COLLIMATOR_BODY_OPACITY
+        if hole_material_name in ("Vacuum", "Air, Dry (near sea level)"):
+            hole_rgb = COLLIMATOR_HOLE_ACCENT_COLOR
+        else:
+            hole_rgb = get_material_color(hole_material_name)
+        hole_opacity = COLLIMATOR_HOLE_OPACITY
+
+    return ((body_rgb, body_opacity), (hole_rgb, hole_opacity))
+

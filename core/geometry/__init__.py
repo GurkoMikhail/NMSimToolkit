@@ -10,7 +10,10 @@ from core.geometry.parametric_collimators import (
     ParametricParallelCollimator,
     ParametricParallelSquareCollimator,
 )
-from core.geometry.direct_collimators import DirectParallelCollimator
+from core.geometry.direct_collimators import (
+    CollimatorHoleShape,
+    DirectParallelCollimator,
+)
 from core.geometry.navigation_state import NavigationState
 from core.geometry.geometry_compiler import GeometryCompiler
 from core.geometry.spect_kinematics import compute_spect_poses, compute_orbit_matrix
@@ -25,6 +28,7 @@ __all__ = [
     'PetScanner',
     'ParametricParallelCollimator',
     'ParametricParallelSquareCollimator',
+    'CollimatorHoleShape',
     'DirectParallelCollimator',
     'NavigationState',
     'GeometryCompiler',

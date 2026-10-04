@@ -1,15 +1,21 @@
 import logging
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Sequence, Tuple, Union
 
 from matplotlib.colors import ListedColormap
 import numpy as np
 import pyvista as pv
+import hepunits as units
 
+from core.materials.materials import Material
 from gui.viewport_3d.dicom_colormaps import (
     get_available_colormaps,
     get_colormap_lut,
     to_vtk_color_transfer_function,
     to_vtk_piecewise_function,
+)
+from gui.viewport_3d.material_palette import (
+    build_material_volume_color_tf,
+    build_material_volume_opacity_tf,
 )
 
 _logger = logging.getLogger(__name__)
@@ -41,6 +47,11 @@ class VoxelVolumeRenderer:
         self.max_opacity: float = 0.4
         self.opacity_threshold: float = 0.05
         self.opacity_preset: str = 'air_cutoff'
+        self.current_element_list: Optional[Sequence[Material]] = None
+        self.is_physical_mode: bool = False
+        self.last_xray_mode: bool = False
+        self.last_energy: float = 140.0 * units.keV
+        self.last_characteristic_length: float = 2.0 * units.mm
 
         # Подписка на события камеры во вьюпорте для переключения LOD
         if self.viewport is not None:
@@ -81,17 +92,29 @@ class VoxelVolumeRenderer:
                     scalars.Modified()
                 self.grid.Modified()
 
-                color_tf = to_vtk_color_transfer_function(self.colormap, scalar_range=self.scalar_range)
+                if (self.colormap == 'Physical Materials' or self.is_physical_mode) and self.current_element_list is not None:
+                    color_tf = build_material_volume_color_tf(
+                        element_list=self.current_element_list,
+                        pseudo_xray_mode=self.last_xray_mode,
+                        energy=self.last_energy,
+                    )
+                    opacity_tf = build_material_volume_opacity_tf(
+                        element_list=self.current_element_list,
+                        pseudo_xray_mode=self.last_xray_mode,
+                        energy=self.last_energy,
+                        characteristic_length=self.last_characteristic_length,
+                    )
+                else:
+                    color_tf = to_vtk_color_transfer_function(self.colormap, scalar_range=self.scalar_range)
+                    opacity_tf = to_vtk_piecewise_function(
+                        scalar_range=self.scalar_range,
+                        min_alpha=0.0,
+                        max_alpha=self.max_opacity,
+                        threshold=self.opacity_threshold,
+                        preset=self.opacity_preset
+                    )
                 if color_tf is not None and self.volume_property is not None:
                     self.volume_property.SetColor(color_tf)
-
-                opacity_tf = to_vtk_piecewise_function(
-                    scalar_range=self.scalar_range,
-                    min_alpha=0.0,
-                    max_alpha=self.max_opacity,
-                    threshold=self.opacity_threshold,
-                    preset=self.opacity_preset
-                )
                 if opacity_tf is not None and self.volume_property is not None:
                     self.volume_property.SetScalarOpacity(opacity_tf)
 
@@ -109,22 +132,38 @@ class VoxelVolumeRenderer:
             self.grid = grid
 
             # Создание структуры VTK для Smart Volume Mapping
-            color_tf = to_vtk_color_transfer_function(
-                self.colormap,
-                scalar_range=self.scalar_range
-            )
-            opacity_tf = to_vtk_piecewise_function(
-                scalar_range=self.scalar_range,
-                min_alpha=0.0,
-                max_alpha=self.max_opacity,
-                threshold=self.opacity_threshold,
-                preset=self.opacity_preset
-            )
+            if (self.colormap == 'Physical Materials' or self.is_physical_mode) and self.current_element_list is not None:
+                color_tf = build_material_volume_color_tf(
+                    element_list=self.current_element_list,
+                    pseudo_xray_mode=self.last_xray_mode,
+                    energy=self.last_energy,
+                )
+                opacity_tf = build_material_volume_opacity_tf(
+                    element_list=self.current_element_list,
+                    pseudo_xray_mode=self.last_xray_mode,
+                    energy=self.last_energy,
+                    characteristic_length=self.base_voxel_size,
+                )
+            else:
+                color_tf = to_vtk_color_transfer_function(
+                    self.colormap,
+                    scalar_range=self.scalar_range
+                )
+                opacity_tf = to_vtk_piecewise_function(
+                    scalar_range=self.scalar_range,
+                    min_alpha=0.0,
+                    max_alpha=self.max_opacity,
+                    threshold=self.opacity_threshold,
+                    preset=self.opacity_preset
+                )
 
             # Получение палитры для PyVista
             cmap_arg: Any = self.colormap
             if isinstance(self.colormap, str) and self.colormap in get_available_colormaps():
                 lut = get_colormap_lut(self.colormap)
+                cmap_arg = ListedColormap(lut)
+            else:
+                lut = get_colormap_lut('Hot Iron')
                 cmap_arg = ListedColormap(lut)
 
             # Добавляем в сцену через viewport с reset_camera=False
@@ -151,15 +190,61 @@ class VoxelVolumeRenderer:
         except Exception as e:
             _logger.info(f"VoxelVolumeRenderer: инициализация через fallback без VTK: {e}")
 
+    def apply_material_transfer_functions(
+        self,
+        element_list: Sequence[Material],
+        pseudo_xray_mode: bool,
+        energy: float,
+        characteristic_length: float,
+    ) -> None:
+        """
+        Применяет дискретные физические передаточные функции цвета и непрозрачности материалов.
+        Обновление выполняется in-place в volume_property без пересоздания сетки и без сброса камеры.
+        """
+        self.current_element_list = element_list
+        self.is_physical_mode = True
+        self.last_xray_mode = bool(pseudo_xray_mode)
+        self.last_energy = float(energy)
+        self.last_characteristic_length = float(characteristic_length)
+
+        color_transfer_function = build_material_volume_color_tf(
+            element_list=element_list,
+            pseudo_xray_mode=pseudo_xray_mode,
+            energy=energy,
+        )
+        opacity_transfer_function = build_material_volume_opacity_tf(
+            element_list=element_list,
+            pseudo_xray_mode=pseudo_xray_mode,
+            energy=energy,
+            characteristic_length=characteristic_length,
+        )
+
+        if self.volume_property is not None:
+            self.volume_property.SetColor(color_transfer_function)
+            self.volume_property.SetScalarOpacity(opacity_transfer_function)
+            if self.viewport is not None:
+                self.viewport.render()
+
     def set_colormap(self, colormap_name: str) -> None:
         """
         Динамическое переключение цветовой шкалы без пересоздания воксельной сетки.
         """
         self.colormap = colormap_name
+        if colormap_name == 'Physical Materials':
+            if self.current_element_list is not None:
+                self.apply_material_transfer_functions(
+                    element_list=self.current_element_list,
+                    pseudo_xray_mode=self.last_xray_mode,
+                    energy=self.last_energy,
+                    characteristic_length=self.last_characteristic_length,
+                )
+            return
+
+        self.is_physical_mode = False
         if self.volume_property is not None:
-            color_tf = to_vtk_color_transfer_function(colormap_name, scalar_range=self.scalar_range)
-            if color_tf is not None:
-                self.volume_property.SetColor(color_tf)
+            color_transfer_function = to_vtk_color_transfer_function(colormap_name, scalar_range=self.scalar_range)
+            if color_transfer_function is not None:
+                self.volume_property.SetColor(color_transfer_function)
                 if self.viewport is not None:
                     self.viewport.render()
 
@@ -263,3 +348,5 @@ class VoxelVolumeRenderer:
         self.volume_mapper = None
         self.volume_property = None
         self.grid = None
+        self.current_element_list = None
+        self.is_physical_mode = False

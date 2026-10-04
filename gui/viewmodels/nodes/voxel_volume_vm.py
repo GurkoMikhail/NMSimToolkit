@@ -17,7 +17,7 @@ class VoxelVolumeViewModel(NodeViewModel):
     """
     ViewModel для воксельного фантома WoodcockVoxelVolume.
     """
-    colormap_name = gui_field(default='Hot Iron')
+    colormap_name = gui_field(default='Physical Materials')
     lod_factor = gui_field(default=1.0)
     opacity_threshold = gui_field(default=0.05)
     max_opacity = gui_field(default=0.4)
@@ -67,13 +67,23 @@ class VoxelVolumeViewModel(NodeViewModel):
         return (0, 0, 0)
 
     @property
+    def material_list(self) -> List[Material]:
+        """
+        Возвращает список материалов фантома (element_list) из material_distribution.
+        """
+        distribution_instance = self.core_node.material_distribution
+        if distribution_instance is not None:
+            return list(distribution_instance.element_list)
+        return []
+
+    @property
     def origin(self) -> Tuple[float, float, float]:
         """
         Возвращает смещение начала координат сетки фантома для центрирования в локальной СК.
         """
-        sp = self.voxel_size
+        spacing_array = self.voxel_size
         dims = self.dimensions
-        return tuple(-0.5 * d * s for d, s in zip(dims, sp))
+        return tuple(-0.5 * float(dimension_len) * float(voxel_step) for dimension_len, voxel_step in zip(dims, spacing_array))
 
     def reload_distribution(self, path: str, shape: Optional[Tuple[int, ...]] = None, order: str = 'F') -> bool:
         """

@@ -244,6 +244,7 @@ class PropertyInspector(QWidget):
         vox_form.addRow("Шаг вокселей (X, Y, Z):", v_box)
 
         self.combo_colormap = QComboBox()
+        self.combo_colormap.addItem("Physical Materials")
         self.combo_colormap.addItems(get_available_colormaps())
         self.combo_colormap.currentTextChanged.connect(self._on_colormap_changed)
         vox_form.addRow("Палитра:", self.combo_colormap)
@@ -785,6 +786,7 @@ class PropertyInspector(QWidget):
             colormap_index = self.combo_colormap.findText(self.current_vm.colormap_name)
             if colormap_index >= 0:
                 self.combo_colormap.setCurrentIndex(colormap_index)
+            self._update_voxel_opacity_controls_state(self.current_vm.colormap_name)
             self.slider_lod.setValue(int(round(float(self.current_vm.lod_factor) * 5.0)))
             self.spin_opacity_thresh.setValue(float(self.current_vm.opacity_threshold))
             self.spin_max_opacity.setValue(float(self.current_vm.max_opacity))
@@ -902,10 +904,20 @@ class PropertyInspector(QWidget):
             return
         self.current_vm.material_name = mat_name
 
+    def _update_voxel_opacity_controls_state(self, colormap_name: str) -> None:
+        """
+        Блокирует эвристические регуляторы прозрачности при активном физическом режиме 'Physical Materials'.
+        """
+        is_physical_mode = (str(colormap_name) == "Physical Materials")
+        self.spin_opacity_thresh.setEnabled(not is_physical_mode)
+        self.spin_max_opacity.setEnabled(not is_physical_mode)
+        self.combo_opacity_preset.setEnabled(not is_physical_mode)
+
     def _on_colormap_changed(self, cmap_name: str) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, VoxelVolumeViewModel):
             return
         self.current_vm.colormap_name = cmap_name
+        self._update_voxel_opacity_controls_state(cmap_name)
 
     def _on_lod_changed(self, value: int) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, VoxelVolumeViewModel):
@@ -1156,6 +1168,7 @@ class PropertyInspector(QWidget):
                 self._is_updating_ui = True
                 try:
                     self.combo_colormap.setCurrentIndex(colormap_index)
+                    self._update_voxel_opacity_controls_state(str(new_val))
                 finally:
                     self._is_updating_ui = False
         elif prop_name == 'opacity_threshold' and isinstance(self.current_vm, VoxelVolumeViewModel):
