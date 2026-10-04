@@ -31,7 +31,7 @@ class VoxelVolumeRenderer:
         self,
         viewport: Any,
         actor_name: str = "voxel_volume",
-        colormap: str = "Hot Iron"
+        colormap: str = "Physical Materials"
     ) -> None:
         self.viewport = viewport
         self.actor_name = actor_name
@@ -48,7 +48,7 @@ class VoxelVolumeRenderer:
         self.opacity_threshold: float = 0.05
         self.opacity_preset: str = 'air_cutoff'
         self.current_element_list: Optional[Sequence[Material]] = None
-        self.is_physical_mode: bool = False
+        self.is_physical_mode: bool = (colormap == "Physical Materials")
         self.last_xray_mode: bool = False
         self.last_energy: float = 140.0 * units.keV
         self.last_characteristic_length: float = 2.0 * units.mm
@@ -62,21 +62,31 @@ class VoxelVolumeRenderer:
         self,
         data_3d: np.ndarray,
         voxel_size: Union[float, Tuple[float, float, float]] = 1.0,
-        origin: Optional[Tuple[float, float, float]] = None
+        origin: Optional[Tuple[float, float, float]] = None,
+        element_list: Optional[Sequence[Material]] = None,
     ) -> None:
         """
         Загружает трехмерный массив данных воксельного фантома и инициализирует объемный рендеринг.
         При совпадении размерностей сетка обновляется in-place без сброса камеры и пересоздания актора.
         """
+        if data_3d.size == 0:
+            raise ValueError("Массив данных воксельного фантома не должен быть пустым.")
+
+        if element_list is not None:
+            self.current_element_list = element_list
+
         if isinstance(voxel_size, (int, float)):
             spacing = (float(voxel_size), float(voxel_size), float(voxel_size))
             self.base_voxel_size = float(voxel_size)
         else:
-            spacing = tuple(float(v) for v in voxel_size)
+            spacing = tuple(float(spacing_component) for spacing_component in voxel_size)
             self.base_voxel_size = float(np.mean(spacing))
 
         if origin is None:
-            origin = tuple(-0.5 * s * sp for s, sp in zip(data_3d.shape, spacing))
+            origin = tuple(
+                -0.5 * float(dimension_size) * float(spacing_step)
+                for dimension_size, spacing_step in zip(data_3d.shape, spacing)
+            )
 
         try:
             self.scalar_range = (float(np.min(data_3d)), float(np.max(data_3d)))
@@ -184,11 +194,15 @@ class VoxelVolumeRenderer:
                         self.volume_property.SetColor(color_tf)
                     if opacity_tf is not None:
                         self.volume_property.SetScalarOpacity(opacity_tf)
+                    if self.is_physical_mode or self.colormap == 'Physical Materials':
+                        self.volume_property.SetInterpolationTypeToNearest()
+                    else:
+                        self.volume_property.SetInterpolationTypeToLinear()
                     self._apply_lod_sampling()
                 self.viewport.render()
 
-        except Exception as e:
-            _logger.info(f"VoxelVolumeRenderer: инициализация через fallback без VTK: {e}")
+        except (RuntimeError, ValueError, TypeError) as rendering_error:
+            _logger.info(f"VoxelVolumeRenderer: инициализация через fallback без VTK: {rendering_error}")
 
     def apply_material_transfer_functions(
         self,
@@ -211,6 +225,7 @@ class VoxelVolumeRenderer:
             element_list=element_list,
             pseudo_xray_mode=pseudo_xray_mode,
             energy=energy,
+            characteristic_length=characteristic_length,
         )
         opacity_transfer_function = build_material_volume_opacity_tf(
             element_list=element_list,
@@ -222,6 +237,7 @@ class VoxelVolumeRenderer:
         if self.volume_property is not None:
             self.volume_property.SetColor(color_transfer_function)
             self.volume_property.SetScalarOpacity(opacity_transfer_function)
+            self.volume_property.SetInterpolationTypeToNearest()
             if self.viewport is not None:
                 self.viewport.render()
 
@@ -245,8 +261,18 @@ class VoxelVolumeRenderer:
             color_transfer_function = to_vtk_color_transfer_function(colormap_name, scalar_range=self.scalar_range)
             if color_transfer_function is not None:
                 self.volume_property.SetColor(color_transfer_function)
-                if self.viewport is not None:
-                    self.viewport.render()
+            opacity_tf = to_vtk_piecewise_function(
+                scalar_range=self.scalar_range,
+                min_alpha=0.0,
+                max_alpha=self.max_opacity,
+                threshold=self.opacity_threshold,
+                preset=self.opacity_preset
+            )
+            if opacity_tf is not None:
+                self.volume_property.SetScalarOpacity(opacity_tf)
+            self.volume_property.SetInterpolationTypeToLinear()
+            if self.viewport is not None:
+                self.viewport.render()
 
     def set_lod_factor(self, factor: float) -> None:
         """
@@ -323,19 +349,19 @@ class VoxelVolumeRenderer:
         if self.volume_mapper is not None:
             try:
                 # Чем выше lod_factor, тем меньше шаг трассировки (выше детальность)
-                mult = 1.0 / max(0.1, self.lod_factor)
+                sampling_scale_factor = 1.0 / max(0.1, self.lod_factor)
                 if self.is_interactive_mode:
                     # Увеличенный шаг выборки для высокого FPS в динамике (>30 FPS)
-                    sample_dist = self.base_voxel_size * 2.5 * mult
+                    sample_dist = self.base_voxel_size * 2.5 * sampling_scale_factor
                 else:
                     # Физический шаг для максимальной четкости в статике
-                    sample_dist = self.base_voxel_size * 0.5 * mult
+                    sample_dist = self.base_voxel_size * 0.5 * sampling_scale_factor
 
                 self.volume_mapper.SetSampleDistance(sample_dist)
                 if self.viewport is not None:
                     self.viewport.render()
-            except Exception as e:
-                _logger.debug(f"Ошибка применения шага трассировки LOD: {e}")
+            except (RuntimeError, AttributeError, ValueError) as lod_error:
+                _logger.debug(f"Ошибка применения шага трассировки LOD: {lod_error}")
 
     def clear(self) -> None:
         """

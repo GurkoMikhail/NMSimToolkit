@@ -54,6 +54,7 @@ class MockHighlightActor:
         self.line_width: float = 1.0
         self.color_transfer_function: Any = None
         self.opacity_transfer_function: Any = None
+        self.interpolation_type: str = "Linear"
 
     def GetProperty(self) -> 'MockHighlightActor':
         return self
@@ -69,6 +70,12 @@ class MockHighlightActor:
 
     def SetSampleDistance(self, sample_dist: float) -> None:
         pass
+
+    def SetInterpolationTypeToNearest(self) -> None:
+        self.interpolation_type = "NearestNeighbor"
+
+    def SetInterpolationTypeToLinear(self) -> None:
+        self.interpolation_type = "Linear"
 
     def SetEdgeVisibility(self, visible_flag: bool) -> None:
         self.edge_visibility = bool(visible_flag)
@@ -778,6 +785,56 @@ class TestVoxelVolumeViewportControllerIntegration(unittest.TestCase):
         # Повторно выбираем фантом -> рамка вновь появляется
         self.controller.on_node_selected(self.voxel_vm)
         self.assertIn(box_actor_name, self.mock_viewport.actors_registry)
+
+    def test_voxel_selection_box_ancestor_removal_cleanup(self) -> None:
+        """При удалении родительского узла рамка выделения дочернего фантома корректно удаляется."""
+        composite_parent = Volume(
+            geometry=Box(200.0, 200.0, 200.0),
+            material=Material(name="Water, Liquid"),
+            name="ParentAssembly",
+        )
+        parent_vm = VolumeViewModel(composite_parent)
+        self.scene_view_model.add_node(self.scene_view_model.root_vm, parent_vm)
+        self.scene_view_model.add_node(parent_vm, self.voxel_vm)
+
+        self.controller.on_node_selected(self.voxel_vm)
+        box_actor_name = f"selection_box_{id(self.voxel_vm)}"
+        self.assertIn(box_actor_name, self.mock_viewport.actors_registry)
+
+        # Удаляем родительский узел -> выделение и рамка фантома должны очиститься
+        self.scene_view_model.remove_node(parent_vm)
+        self.assertNotIn(box_actor_name, self.mock_viewport.actors_registry)
+        self.assertIsNone(self.controller.selected_node_vm)
+
+    def test_voxel_renderer_nearest_interpolation_and_colormap_switching(self) -> None:
+        """Проверка переключения интерполяции на Nearest Neighbor в физическом режиме и восстановления Linear."""
+        self.scene_view_model.add_node(self.scene_view_model.root_vm, self.voxel_vm)
+        actor_instance = self.mock_viewport.actors_registry[self.controller.voxel_renderer.actor_name]
+
+        # В режиме Physical Materials интерполяция строго Nearest Neighbor для дискретных ID
+        self.assertEqual(actor_instance.interpolation_type, "NearestNeighbor")
+
+        # Переключаем палитру на Hot Iron -> интерполяция возвращается к Linear
+        self.voxel_vm.colormap_name = "Hot Iron"
+        self.assertEqual(actor_instance.interpolation_type, "Linear")
+        self.assertFalse(self.controller.voxel_renderer.is_physical_mode)
+
+        # Возвращаем Physical Materials -> интерполяция вновь Nearest Neighbor
+        self.voxel_vm.colormap_name = "Physical Materials"
+        self.assertEqual(actor_instance.interpolation_type, "NearestNeighbor")
+        self.assertTrue(self.controller.voxel_renderer.is_physical_mode)
+
+    def test_build_material_volume_opacity_tf_various_vacuum_air_names(self) -> None:
+        """Проверка строго нулевой прозрачности для различных вариантов именования вакуума и воздуха."""
+        test_materials = [
+            Material(name="vacuum", ID=0),
+            Material(name="Air", ID=1),
+            Material(name="Воздух", ID=2),
+            Material(name="Вакуум", ID=3),
+        ]
+        opacity_tf = build_material_volume_opacity_tf(test_materials)
+        for material_idx in range(len(test_materials)):
+            self.assertEqual(opacity_tf.GetValue(float(material_idx)), 0.0)
 
     def test_voxel_selection_box_transform_sync(self) -> None:
         """Трансформация рамки выделения синхронизируется при перемещении фантома."""

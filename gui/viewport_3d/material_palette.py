@@ -377,6 +377,7 @@ def build_material_volume_color_tf(
     element_list: Sequence[Material],
     pseudo_xray_mode: bool = False,
     energy: float = 140.0 * units.keV,
+    characteristic_length: Optional[float] = None,
 ) -> vtk.vtkColorTransferFunction:
     """
     Строит ступенчатую кусочно-постоянную передаточную функцию цвета VTK (vtkColorTransferFunction)
@@ -389,7 +390,17 @@ def build_material_volume_color_tf(
 
     for material_index, material_instance in enumerate(element_list):
         if pseudo_xray_mode:
-            rgb_components, _ = get_pseudo_xray_rgba(material_instance.name, energy=energy)
+            if characteristic_length is not None:
+                rgb_components, _ = get_pseudo_xray_rgba(
+                    material_instance.name,
+                    energy=energy,
+                    characteristic_length=characteristic_length,
+                )
+            else:
+                rgb_components, _ = get_pseudo_xray_rgba(
+                    material_instance.name,
+                    energy=energy,
+                )
         else:
             rgb_components = get_material_color(material_instance.name)
 
@@ -428,7 +439,12 @@ def build_material_volume_opacity_tf(
 
     for material_index, material_instance in enumerate(element_list):
         material_name_lower = material_instance.name.lower()
-        if material_instance.name == "Vacuum" or "air" in material_name_lower:
+        if (
+            "vacuum" in material_name_lower
+            or "air" in material_name_lower
+            or "вакуум" in material_name_lower
+            or "воздух" in material_name_lower
+        ):
             calculated_opacity = 0.0
         elif pseudo_xray_mode:
             _, calculated_opacity = get_pseudo_xray_rgba(

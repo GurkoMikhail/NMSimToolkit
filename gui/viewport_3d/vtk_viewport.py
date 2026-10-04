@@ -35,6 +35,16 @@ class ISceneViewport(Protocol):
 
     def add_actor(self, name: str, actor: Any) -> Optional[Any]: ...
 
+    def add_volume_actor(
+        self,
+        name: str,
+        grid: Any,
+        cmap: Any = 'Hot Iron',
+        opacity: Any = 'linear',
+        mapper: str = 'smart',
+        **kwargs: Any
+    ) -> Optional[Any]: ...
+
     def update_actor_transform(self, name: str, matrix: np.ndarray) -> bool: ...
 
     def remove_actor(self, name: str) -> None: ...

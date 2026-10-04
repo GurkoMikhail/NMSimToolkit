@@ -136,8 +136,24 @@ class SceneViewportController(QObject):
         self._xray_mode = bool(pseudo_xray_mode)
         if self.scene_vm is not None:
             for node_vm in self.scene_vm.all_nodes():
-                if isinstance(node_vm, (VolumeViewModel, VoxelVolumeViewModel)):
+                if isinstance(node_vm, VolumeViewModel):
                     self.add_or_update_node_actor(node_vm)
+                elif isinstance(node_vm, VoxelVolumeViewModel):
+                    if self.voxel_renderer is not None and self.voxel_renderer.volume_actor is not None:
+                        if node_vm.colormap_name == 'Physical Materials' or self._xray_mode:
+                            distribution_instance = node_vm.core_node.material_distribution
+                            if distribution_instance is not None:
+                                voxel_characteristic_length = float(np.mean(node_vm.voxel_size))
+                                self.voxel_renderer.apply_material_transfer_functions(
+                                    element_list=distribution_instance.element_list,
+                                    pseudo_xray_mode=self._xray_mode,
+                                    energy=self._xray_energy,
+                                    characteristic_length=voxel_characteristic_length,
+                                )
+                        else:
+                            self.voxel_renderer.set_colormap(node_vm.colormap_name)
+                    else:
+                        self.add_or_update_node_actor(node_vm)
             self.viewport.render()
 
     @property
@@ -284,7 +300,8 @@ class SceneViewportController(QObject):
                 self.voxel_renderer.set_volume_data(
                     data,
                     voxel_size=node_vm.voxel_size,
-                    origin=node_vm.origin
+                    origin=node_vm.origin,
+                    element_list=dist.element_list,
                 )
                 if node_vm.colormap_name == 'Physical Materials' or self._xray_mode:
                     voxel_characteristic_length = float(np.mean(node_vm.voxel_size))
@@ -306,6 +323,8 @@ class SceneViewportController(QObject):
 
                 if self._is_node_selected_or_child(node_vm):
                     self._create_or_update_voxel_selection_box(node_vm)
+                else:
+                    self._remove_voxel_selection_box(node_vm)
 
         elif isinstance(node_vm, SourceViewModel):
             if node_vm.is_point_source:
@@ -421,6 +440,11 @@ class SceneViewportController(QObject):
                         )
                 else:
                     self.voxel_renderer.set_colormap(str(value))
+                    self.voxel_renderer.set_opacity_parameters(
+                        max_opacity=float(node_vm.max_opacity),
+                        threshold=float(node_vm.opacity_threshold),
+                        preset=node_vm.opacity_preset
+                    )
                 self.viewport.render()
         elif prop_name == 'opacity_threshold' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
@@ -451,8 +475,14 @@ class SceneViewportController(QObject):
 
     def on_node_removed(self, node_vm: NodeViewModel) -> None:
         """Точечное удаление актора из сцены (рекурсивно для дочерних узлов)."""
-        if self._selected_node_vm is node_vm:
-            self._selected_node_vm = None
+        if self._selected_node_vm is not None:
+            current_ancestor: Optional[NodeViewModel] = self._selected_node_vm
+            while current_ancestor is not None:
+                if current_ancestor is node_vm:
+                    self._selected_node_vm = None
+                    self._remove_voxel_selection_box()
+                    break
+                current_ancestor = current_ancestor.parent_vm
 
         def _remove_recursive(vm: NodeViewModel) -> None:
             actor_name = f"mesh_{id(vm)}"
@@ -575,8 +605,10 @@ class SceneViewportController(QObject):
         if self.voxel_renderer is not None and self.voxel_renderer.grid is not None:
             box_bounds = self.voxel_renderer.grid.bounds
         else:
-            voxel_origin = node_vm.origin
             voxel_dimensions = node_vm.dimensions
+            if any(dim_val <= 0 for dim_val in voxel_dimensions):
+                return
+            voxel_origin = node_vm.origin
             voxel_spacing = node_vm.voxel_size
             box_bounds = (
                 voxel_origin[0], voxel_origin[0] + max(0, voxel_dimensions[0] - 1) * voxel_spacing[0],
@@ -590,7 +622,7 @@ class SceneViewportController(QObject):
             bounding_box,
             color=SELECTED_EDGE_HIGHLIGHT_COLOR,
             style='wireframe',
-            line_width=2.5,
+            line_width=SELECTED_EDGE_HIGHLIGHT_WIDTH,
         )
         self.viewport.update_actor_transform(box_actor_name, node_vm.global_matrix)
 
