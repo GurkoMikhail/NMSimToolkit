@@ -4,10 +4,12 @@ from typing import Any, Optional
 import numpy as np
 from scipy.spatial.transform import Rotation
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLineEdit, QLabel, QSpinBox, QDoubleSpinBox, QComboBox,
-    QSlider, QScrollArea, QPushButton, QCheckBox, QFileDialog
+    QSlider, QScrollArea, QPushButton, QCheckBox, QFileDialog,
+    QTableWidget, QTableWidgetItem, QHeaderView, QDialog
 )
 
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
@@ -40,6 +42,9 @@ from gui.viewmodels.data_handler_viewmodel import (
 )
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewport_3d.dicom_colormaps import get_available_colormaps
+from gui.viewport_3d.material_palette import get_material_color
+from gui.models.distribution_import_params import ImportTargetKind
+from gui.views.distribution_import_dialog import DistributionImportDialog
 import settings.database_setting as database_setting
 
 _logger = logging.getLogger(__name__)
@@ -54,7 +59,7 @@ class PropertyInspector(QWidget):
 
     dose_voxel_size_changed = Signal(float)
 
-    def __init__(self, parent: Optional[Any] = None) -> None:
+    def __init__(self, parent: Optional[Any] = None, scene_vm: Optional[SceneViewModel] = None) -> None:
         super().__init__(parent)
         self.current_vm: Optional[NodeViewModel] = None
         self.scene_vm: Optional[SceneViewModel] = None
@@ -63,6 +68,8 @@ class PropertyInspector(QWidget):
         self._min_buffer_capacity: int = 1
 
         self._init_ui()
+        if scene_vm is not None:
+            self.set_scene_viewmodel(scene_vm)
 
     def set_scene_viewmodel(self, scene_vm: Optional[SceneViewModel]) -> None:
         """Привязка модели сцены для доступа к узлам и единому реестру детекторов."""
@@ -315,6 +322,15 @@ class PropertyInspector(QWidget):
         self.combo_opacity_preset.addItem("Ступенчатый (Step)", "step")
         self.combo_opacity_preset.currentIndexChanged.connect(self._on_opacity_preset_changed)
         vox_form.addRow("Карта прозрачности:", self.combo_opacity_preset)
+
+        self.tbl_material_mapping = QTableWidget()
+        self.tbl_material_mapping.setColumnCount(3)
+        self.tbl_material_mapping.setHorizontalHeaderLabels(["ID", "Цвет", "Материал NIST"])
+        self.tbl_material_mapping.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.tbl_material_mapping.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.tbl_material_mapping.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.tbl_material_mapping.setMinimumHeight(150)
+        vox_form.addRow("Таблица материалов:", self.tbl_material_mapping)
         self.content_layout.addWidget(self.voxel_group)
 
         # 5. Секция источника излучения (Source)
@@ -758,6 +774,8 @@ class PropertyInspector(QWidget):
         self.dose_grid_group.setVisible(is_dose_grid)
         self.collimator_group.setVisible(is_col)
         self.voxel_group.setVisible(is_vox)
+        if not is_vox:
+            self.tbl_material_mapping.setRowCount(0)
         self.source_group.setVisible(is_src)
         self.spect_group.setVisible(is_spect)
         self.gantry_group.setVisible(is_gantry)
@@ -867,6 +885,7 @@ class PropertyInspector(QWidget):
             preset_index = self.combo_opacity_preset.findData(preset)
             if preset_index >= 0:
                 self.combo_opacity_preset.setCurrentIndex(preset_index)
+            self._update_material_mapping_table()
 
         elif is_vol:
             volume_size = self.current_vm.size
@@ -899,9 +918,15 @@ class PropertyInspector(QWidget):
             self.spin_rot_y.setEnabled(GizmoAxis.Y in allowed_rot)
             self.spin_rot_z.setEnabled(GizmoAxis.Z in allowed_rot)
 
-            self.spin_size_x.setEnabled(scale_allowed)
-            self.spin_size_y.setEnabled(scale_allowed)
-            self.spin_size_z.setEnabled(scale_allowed)
+            is_root_volume = isinstance(self.current_vm, VolumeViewModel) and self.current_vm.parent_vm is None
+            if is_root_volume:
+                self.spin_size_x.setEnabled(True)
+                self.spin_size_y.setEnabled(True)
+                self.spin_size_z.setEnabled(True)
+            else:
+                self.spin_size_x.setEnabled(scale_allowed)
+                self.spin_size_y.setEnabled(scale_allowed)
+                self.spin_size_z.setEnabled(scale_allowed)
         else:
             self.spin_x.setEnabled(True)
             self.spin_y.setEnabled(True)
@@ -1030,11 +1055,49 @@ class PropertyInspector(QWidget):
             self,
             "Выбрать файл воксельного фантома",
             "",
-            "Файлы данных (*.npy *.dat *.raw *.h5);;Все файлы (*.*)"
+            "Файлы данных (*.npy *.dat *.raw *.bin *.h5);;Все файлы (*.*)"
         )
-        if path:
-            self.txt_voxel_path.setText(path)
-            self.current_vm.reload_distribution(path)
+        if not path:
+            return
+
+        dialog = DistributionImportDialog(
+            parent=self,
+            file_path=path,
+            target_kind=ImportTargetKind.PHANTOM,
+            default_voxel_size=self.current_vm.voxel_size,
+        )
+        if dialog.exec() == QDialog.Accepted:
+            params = dialog.get_parameters()
+            file_path_str = str(params.file_path)
+            self.txt_voxel_path.setText(file_path_str)
+            success = self.current_vm.reload_distribution(
+                path=file_path_str,
+                shape=params.shape,
+                order=params.order,
+                dtype=params.dtype,
+                encoding=params.encoding,
+                voxel_size=params.voxel_size,
+                mapping=params.material_mapping,
+                fill_value=params.fill_value,
+            )
+            if success:
+                self._is_updating_ui = True
+                try:
+                    self.spin_voxel_size_x.setValue(params.voxel_size[0])
+                    self.spin_voxel_size_y.setValue(params.voxel_size[1])
+                    self.spin_voxel_size_z.setValue(params.voxel_size[2])
+                    dims = self.current_vm.dimensions
+                    self.lbl_voxel_shape.setText(f"{dims[0]} × {dims[1]} × {dims[2]}")
+                finally:
+                    self._is_updating_ui = False
+
+                if self.scene_vm is not None:
+                    self.scene_vm.update_distribution_path(
+                        self.current_vm.core_node,
+                        file_path_str,
+                        mapping=params.material_mapping,
+                    )
+                self._update_material_mapping_table()
 
     def _on_browse_source_file(self) -> None:
         if not isinstance(self.current_vm, SourceViewModel):
@@ -1043,11 +1106,105 @@ class PropertyInspector(QWidget):
             self,
             "Выбрать файл распределения источника",
             "",
-            "Файлы данных (*.npy *.dat *.raw *.h5);;Все файлы (*.*)"
+            "Файлы данных (*.npy *.dat *.raw *.bin *.h5);;Все файлы (*.*)"
         )
-        if path:
-            self.txt_source_path.setText(path)
-            self.current_vm.reload_distribution(path)
+        if not path:
+            return
+
+        phantom_node = None
+        if self.scene_vm is not None:
+            for node in self.scene_vm.all_nodes():
+                if isinstance(node, VoxelVolumeViewModel):
+                    phantom_node = node
+                    break
+
+        dialog = DistributionImportDialog(
+            parent=self,
+            file_path=path,
+            target_kind=ImportTargetKind.SOURCE,
+            scene_phantom_node=phantom_node,
+            default_voxel_size=self.current_vm.voxel_size,
+        )
+        if dialog.exec() == QDialog.Accepted:
+            params = dialog.get_parameters()
+            file_path_str = str(params.file_path)
+            self.txt_source_path.setText(file_path_str)
+            source_v_size = float(params.voxel_size[0]) if isinstance(params.voxel_size, (tuple, list, np.ndarray)) else float(params.voxel_size)
+            success = self.current_vm.reload_distribution(
+                path=file_path_str,
+                shape=params.shape,
+                order=params.order,
+                dtype=params.dtype,
+                encoding=params.encoding,
+                voxel_size=source_v_size,
+                total_activity=params.total_activity,
+                noise_threshold=params.noise_threshold,
+            )
+            if success:
+                self._is_updating_ui = True
+                try:
+                    self.spin_source_voxel_size.setValue(source_v_size)
+                    if params.total_activity is not None:
+                        self.spin_source_activity.setValue(float(params.total_activity))
+                    dims = self.current_vm.dimensions
+                    self.lbl_source_shape.setText(f"{dims[0]} × {dims[1]} × {dims[2]}")
+                finally:
+                    self._is_updating_ui = False
+
+                if self.scene_vm is not None:
+                    self.scene_vm.update_distribution_path(self.current_vm.core_node, file_path_str)
+
+    def _on_mapping_material_changed(self, material_id: int, material_name: str) -> None:
+        if self._is_updating_ui or not isinstance(self.current_vm, VoxelVolumeViewModel):
+            return
+        self._is_updating_ui = True
+        try:
+            self.current_vm.set_material_mapping(material_id, material_name)
+        finally:
+            self._is_updating_ui = False
+        color_item = self.tbl_material_mapping.item(material_id, 1)
+        if color_item is not None:
+            red, green, blue = get_material_color(material_name)
+            color_item.setBackground(QBrush(QColor.fromRgbF(red, green, blue)))
+        if self.scene_vm is not None:
+            mapping_dict = {
+                float(idx): mat.name
+                for idx, mat in enumerate(self.current_vm.material_list)
+            }
+            self.scene_vm.update_distribution_mapping(self.current_vm.core_node, mapping_dict)
+
+    def _update_material_mapping_table(self) -> None:
+        if not isinstance(self.current_vm, VoxelVolumeViewModel):
+            self.tbl_material_mapping.setRowCount(0)
+            return
+        materials = self.current_vm.material_list
+        all_materials = ["Vacuum"] + sorted(database_setting.material_database.keys())
+        self.tbl_material_mapping.blockSignals(True)
+        try:
+            self.tbl_material_mapping.setRowCount(len(materials))
+            for material_id, material in enumerate(materials):
+                id_item = QTableWidgetItem(str(material_id))
+                id_item.setTextAlignment(Qt.AlignCenter)
+                id_item.setFlags(Qt.ItemIsEnabled)
+                self.tbl_material_mapping.setItem(material_id, 0, id_item)
+
+                color_item = QTableWidgetItem()
+                red, green, blue = get_material_color(material.name)
+                color_item.setBackground(QBrush(QColor.fromRgbF(red, green, blue)))
+                color_item.setFlags(Qt.ItemIsEnabled)
+                self.tbl_material_mapping.setItem(material_id, 1, color_item)
+
+                combo = QComboBox()
+                combo.addItems(all_materials)
+                combo_idx = combo.findText(material.name)
+                if combo_idx >= 0:
+                    combo.setCurrentIndex(combo_idx)
+                combo.currentTextChanged.connect(
+                    lambda text, m_id=material_id: self._on_mapping_material_changed(m_id, text)
+                )
+                self.tbl_material_mapping.setCellWidget(material_id, 2, combo)
+        finally:
+            self.tbl_material_mapping.blockSignals(False)
 
     def _on_source_rad_type_changed(self, text: str) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, SourceViewModel):
@@ -1387,6 +1544,8 @@ class PropertyInspector(QWidget):
                         self.lbl_source_shape.setText(f"{dims[0]} × {dims[1]} × {dims[2]}")
             finally:
                 self._is_updating_ui = False
+        elif prop_name == 'material_distribution' and isinstance(self.current_vm, VoxelVolumeViewModel):
+            self._update_material_mapping_table()
         elif prop_name == 'activity' and isinstance(self.current_vm, SourceViewModel):
             self._is_updating_ui = True
             try:

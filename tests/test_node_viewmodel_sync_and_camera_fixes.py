@@ -58,7 +58,9 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         self.assertEqual(renderer.grid.origin, (-5.0, -5.0, -5.0))
 
         # Симулируем наличие volume_actor для входа в in-place ветку
-        renderer.volume_actor = object()
+        from unittest.mock import MagicMock
+        renderer.volume_actor = MagicMock()
+        renderer.volume_mapper = MagicMock()
 
         # In-place обновление с другим origin
         custom_origin = (10.0, 20.0, 30.0)

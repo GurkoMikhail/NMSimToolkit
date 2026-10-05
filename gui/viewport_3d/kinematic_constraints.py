@@ -130,6 +130,54 @@ class FixedSubcomponentKinematicConstraint:
 
 
 
+class RootVolumeKinematicConstraint:
+    """
+    Кинематическое ограничение для корневого объема сцены (World Volume).
+    Блокирует любые перемещения и вращения в пространстве через манипулятор Gizmo,
+    гарантируя неподвижность мировой системы отсчета относительно центра координат.
+    """
+
+    def filter_translation(
+        self,
+        target_node: Any,
+        proposed_world_delta: np.ndarray,
+        initial_matrix: np.ndarray,
+        active_axis: Optional[GizmoAxis] = None,
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        return (np.zeros(3, dtype=np.float64), {'status_message': 'Перемещение рутового объема заблокировано'})
+
+    def filter_rotation(
+        self,
+        target_node: Any,
+        axis: np.ndarray,
+        proposed_angle_deg: float,
+        initial_matrix: np.ndarray,
+    ) -> Tuple[np.ndarray, float, Dict[str, Any]]:
+        return (axis, 0.0, {'status_message': 'Вращение рутового объема заблокировано'})
+
+    def is_translation_allowed(self) -> bool:
+        return False
+
+    def is_rotation_allowed(self) -> bool:
+        return False
+
+    def is_scale_allowed(self) -> bool:
+        return False
+
+    def get_forced_space(self) -> Optional[GizmoSpace]:
+        return None
+
+    def get_allowed_axes(self, mode: GizmoMode) -> Set[GizmoAxis]:
+        return set()
+
+    def on_transform_changed(self, target_node: Any, changed_data: Dict[str, Any]) -> None:
+        pass
+
+    def on_transform_committed(self, target_node: Any, commit_data: Dict[str, Any]) -> None:
+        pass
+
+
+
 class SpectOrbitKinematicConstraint:
     """
     Кинематическое ограничение для гамма-камер в протоколе ОФЭКТ (круговая орбита гантри).

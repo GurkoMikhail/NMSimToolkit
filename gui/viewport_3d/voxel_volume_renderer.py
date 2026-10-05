@@ -102,6 +102,16 @@ class VoxelVolumeRenderer:
                     scalars.Modified()
                 self.grid.Modified()
 
+                self.last_characteristic_length = self.base_voxel_size
+
+                if self.volume_mapper is not None:
+                    self.volume_mapper.SetInputData(self.grid)
+                    self.volume_mapper.Modified()
+                if self.volume_actor is not None:
+                    self.volume_actor.Modified()
+
+                self._apply_lod_sampling()
+
                 if (self.colormap == 'Physical Materials' or self.is_physical_mode) and self.current_element_list is not None:
                     color_tf = build_material_volume_color_tf(
                         element_list=self.current_element_list,

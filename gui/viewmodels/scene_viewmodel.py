@@ -1,17 +1,27 @@
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Union
 import numpy as np
 
 from PySide6.QtCore import QObject, Signal
 
 from core.geometry.volumes import Volume
+from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.scene.nodes import SpatialNode, CompositeNode
+from core.source.sources import Source
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
+from gui.viewmodels.nodes.source_vm import SourceViewModel
 from gui.viewmodels.nodes.factory import create_node_viewmodel
+from gui.viewport_3d.kinematic_constraints import RootVolumeKinematicConstraint
 from core.config.models import (
     SimulationConfig,
     SensitiveVolumeHandlerConfig,
     HistoryAssemblerHandlerConfig,
+    NumpyDistributionConfig,
+    RawDistributionConfig,
+    AnyDistributionConfig,
 )
 
 
@@ -28,7 +38,11 @@ class SceneViewModel(QObject):
     node_removed = Signal(object)
     sensitive_volumes_changed = Signal()
 
-    def __init__(self, root_core_node: Optional[SpatialNode] = None) -> None:
+    def __init__(
+        self,
+        root_core_node: Optional[SpatialNode] = None,
+        base_dir: Optional[Union[str, Path]] = None,
+    ) -> None:
         super().__init__()
         self.root_vm: Optional[NodeViewModel] = None
         self.selected_node: Optional[NodeViewModel] = None
@@ -38,13 +52,14 @@ class SceneViewModel(QObject):
         self._sensitive_volumes: List[str] = []
 
         if root_core_node is not None:
-            self.load_scene(root_core_node)
+            self.load_scene(root_core_node, base_dir=base_dir)
 
     def load_scene(
         self,
         root_core_node: SpatialNode,
         distribution_registry: Optional[Dict[Any, Any]] = None,
         slots_registry: Optional[Dict[Any, Any]] = None,
+        base_dir: Optional[Union[str, Path]] = None,
     ) -> NodeViewModel:
         """
         Загружает граф сцены из ядра и строит иерархию ViewModel.
@@ -54,10 +69,100 @@ class SceneViewModel(QObject):
         self.distribution_registry = dict(distribution_registry) if distribution_registry is not None else {}
         self.slots_registry = dict(slots_registry) if slots_registry is not None else {}
         self.root_vm = create_node_viewmodel(root_core_node)
+        if isinstance(self.root_vm, VolumeViewModel):
+            self.root_vm.set_self_kinematic_constraint(RootVolumeKinematicConstraint())
         self._register_node_recursive(self.root_vm)
+
+        base_dir_path = Path(base_dir) if base_dir is not None else None
+        for node_vm in self.all_nodes():
+            if isinstance(node_vm, (VoxelVolumeViewModel, SourceViewModel)):
+                dist_cfg = self.distribution_registry.get(node_vm.core_node)
+                if dist_cfg is not None and isinstance(dist_cfg, (NumpyDistributionConfig, RawDistributionConfig)):
+                    if dist_cfg.path:
+                        raw_path = str(dist_cfg.path)
+                        candidate_path = Path(raw_path)
+                        if candidate_path.is_absolute() and candidate_path.is_file():
+                            node_vm.file_path = str(candidate_path)
+                        elif base_dir_path is not None and (base_dir_path / candidate_path).is_file():
+                            node_vm.file_path = str((base_dir_path / candidate_path).resolve())
+                        elif candidate_path.is_file():
+                            node_vm.file_path = str(candidate_path.resolve())
+                        else:
+                            node_vm.file_path = raw_path
+
+                        if Path(node_vm.file_path).is_file():
+                            dist_cfg.path = node_vm.file_path
+
         self.select_node(self.root_vm)
         self.scene_loaded.emit(self.root_vm)
         return self.root_vm
+
+    def update_distribution_path(
+        self,
+        core_node: SpatialNode,
+        file_path: str,
+        mapping: Optional[Dict[float, Union[float, str]]] = None,
+    ) -> None:
+        """
+        Регистрирует или обновляет путь к файлу распределения в distribution_registry.
+        Адаптирует тип конфигурации (NumpyDistributionConfig / RawDistributionConfig) под расширение файла.
+        """
+        path_obj = Path(file_path)
+        file_suffix = path_obj.suffix.lower()
+        needs_numpy = (file_suffix == '.npy')
+        needs_raw = (file_suffix in ('.raw', '.dat'))
+
+        existing_cfg = self.distribution_registry.get(core_node)
+        effective_mapping = dict(mapping) if mapping is not None else None
+        if existing_cfg is not None and effective_mapping is None and existing_cfg.mapping is not None:
+            effective_mapping = dict(existing_cfg.mapping)
+
+        if existing_cfg is not None:
+            if needs_numpy and isinstance(existing_cfg, NumpyDistributionConfig):
+                existing_cfg.path = str(file_path)
+                if effective_mapping is not None:
+                    existing_cfg.mapping = effective_mapping
+                return
+            elif needs_raw and isinstance(existing_cfg, RawDistributionConfig):
+                existing_cfg.path = str(file_path)
+                if effective_mapping is not None:
+                    existing_cfg.mapping = effective_mapping
+                return
+
+        if needs_raw:
+            shape = (1, 1, 1)
+            if isinstance(core_node, WoodcockVoxelVolume) and core_node.material_distribution is not None:
+                shape = tuple(core_node.material_distribution.shape)
+            elif isinstance(core_node, Source) and core_node.distribution is not None:
+                shape = tuple(core_node.distribution.shape)
+            self.distribution_registry[core_node] = RawDistributionConfig(
+                path=str(file_path),
+                shape=shape,
+                mapping=effective_mapping,
+            )
+        else:
+            self.distribution_registry[core_node] = NumpyDistributionConfig(
+                path=str(file_path),
+                mapping=effective_mapping,
+            )
+
+    def update_distribution_mapping(
+        self,
+        core_node: SpatialNode,
+        mapping: Dict[float, Union[float, str]],
+    ) -> None:
+        """
+        Актуализирует словарь соответствия ID -> Material для узла распределения.
+        """
+        dist_cfg = self.distribution_registry.get(core_node)
+        if dist_cfg is not None and isinstance(dist_cfg, (NumpyDistributionConfig, RawDistributionConfig)):
+            dist_cfg.mapping = dict(mapping)
+        else:
+            node_name = core_node.name or 'distribution'
+            self.distribution_registry[core_node] = NumpyDistributionConfig(
+                path=f"{node_name}.npy",
+                mapping=dict(mapping),
+            )
 
     @property
     def sensitive_volumes(self) -> List[str]:

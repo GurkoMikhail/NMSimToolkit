@@ -5,6 +5,7 @@ from gui.views.procedure_selector_widget import ProcedureSelectorWidget
 from gui.views.data_handler_list_widget import DataHandlerListWidget
 from gui.views.simulation_jobs_widget import SimulationJobsWidget
 from gui.views.main_window import MainWindow
+from gui.views.distribution_import_dialog import DistributionImportDialog
 
 __all__ = [
     'SceneTreeWidget',
@@ -14,5 +15,6 @@ __all__ = [
     'DataHandlerListWidget',
     'SimulationJobsWidget',
     'MainWindow',
+    'DistributionImportDialog',
 ]
 

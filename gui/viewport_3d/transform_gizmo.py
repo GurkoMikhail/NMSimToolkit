@@ -298,6 +298,18 @@ class TransformGizmo(QObject):
 
         self._target_node = node_vm
         if self._target_node is not None:
+            node_constraint = self._target_node.get_effective_kinematic_constraint()
+            if node_constraint is not None and self._constraint is None:
+                self._constraint = node_constraint
+            if self._constraint is not None:
+                has_trans = len(self._constraint.get_allowed_axes(GizmoMode.TRANSLATE)) > 0
+                has_rot = len(self._constraint.get_allowed_axes(GizmoMode.ROTATE)) > 0
+                has_scale = self._constraint.is_scale_allowed()
+                if not has_trans and not has_rot and not has_scale:
+                    self.remove_visuals()
+                    if self.viewport is not None:
+                        self.viewport.render()
+                    return
             self._setup_interactor()
             self.update_visuals(render=True)
         else:
@@ -1429,6 +1441,8 @@ class TransformGizmo(QObject):
     def _apply_drag_scale(self, total_scale_factor: float, shift_modifier: bool) -> None:
         """Применение суммарного масштабирования относительно начальной матрицы."""
         if self._initial_drag_matrix is None or self._target_node is None:
+            return
+        if self._constraint is not None and not self._constraint.is_scale_allowed():
             return
 
         snapped_scale = self.snap_scale_factor(total_scale_factor, shift_modifier=shift_modifier)

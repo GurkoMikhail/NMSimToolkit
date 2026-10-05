@@ -1,9 +1,12 @@
 Materials:
+- &adipose_tissue_icru_44_4d60 Adipose Tissue (ICRU-44)
 - &air_2598 Air, Dry (near sea level)
+- &b_100_bone_equivalent_plastic_4687 B-100 Bone-Equivalent Plastic
 - &glass_e941 Glass, Borosilicate (Pyrex)
 - &pb_0789 Pb
 - &sodium_iodide_a6c2 Sodium Iodide
-- &water_6a66 Water, Liquid
+- &tissue_9e25 Tissue, Soft (ICRU-44)
+- &vacuum_6cd4 Vacuum
 simulation_manager:
   start_time: 0.0
   stop_time: 1000000000.0
@@ -40,21 +43,18 @@ scene:
       voxel_size: 4.2
       radiation_type: Gamma
       energy: 0.159
-      half_life: 4.752e+49
+      half_life: 4.752e+58
     type: WoodcockVoxelVolume
-    voxel_size: 4.2
+    voxel_size: 4.0
     distribution:
-      path: phantoms/nema/anema_voxel_size_4.2_mm.dat
+      path: phantoms/material_map.npy
       mapping:
-        0.04: *air_2598
-        0.15: *water_6a66
-      format: raw
-      shape:
-      - 128
-      - 128
-      - 92
-      order: F
-      encoding: text
+        0.0: *vacuum_6cd4
+        1.0: *air_2598
+        2.0: *adipose_tissue_icru_44_4d60
+        3.0: *tissue_9e25
+        4.0: *b_100_bone_equivalent_plastic_4687
+      format: numpy
   - name: Gantry
     transformations: []
     children:

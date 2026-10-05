@@ -112,7 +112,17 @@ class SourceViewModel(NodeViewModel):
             self.property_changed.emit('voxel_size', voxel_val)
             self.property_changed.emit('size', self.size)
 
-    def reload_distribution(self, path: str, shape: Optional[Tuple[int, ...]] = None, order: str = 'F') -> bool:
+    def reload_distribution(
+        self,
+        path: str,
+        shape: Optional[Tuple[int, ...]] = None,
+        order: str = 'F',
+        dtype: Any = np.float32,
+        encoding: Optional[str] = None,
+        voxel_size: Optional[float] = None,
+        total_activity: Optional[float] = None,
+        noise_threshold: Optional[float] = None,
+    ) -> bool:
         """
         Перезагрузка матрицы активности источника из файла (.npy, .dat, .raw) с использованием DistributionLoader.
         """
@@ -121,13 +131,30 @@ class SourceViewModel(NodeViewModel):
             return False
         try:
             target_shape = shape or self.dimensions
-            data = DistributionLoader.load(target_path, target_shape=target_shape, order=order)
+            data = DistributionLoader.load(
+                target_path,
+                target_shape=target_shape,
+                order=order,
+                dtype=dtype,
+                encoding=encoding,
+            )
+            data_floats = np.asarray(data, dtype=float)
+            if noise_threshold is not None and noise_threshold > 0.0:
+                data_floats[data_floats < noise_threshold] = 0.0
+
+            if voxel_size is not None:
+                self.voxel_size = float(voxel_size)
+
             if isinstance(self.core_node, Source):
-                self.core_node.distribution = data.astype(float)
+                self.core_node.distribution = data_floats
+
+            if total_activity is not None and total_activity > 0.0:
+                self.activity = float(total_activity)
+
             self.file_path = str(target_path)
             self.property_changed.emit('file_path', self.file_path)
             self.property_changed.emit('size', self.size)
-            self.property_changed.emit('distribution', data)
+            self.property_changed.emit('distribution', data_floats)
             return True
         except (OSError, ValueError, TypeError, KeyError) as err:
             _logger.warning(f"Ошибка загрузки распределения источника: {err}")

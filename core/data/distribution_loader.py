@@ -16,6 +16,53 @@ class DistributionLoader:
     SUPPORTED_EXTENSIONS: Sequence[str] = ('.npy', '.raw', '.bin', '.dat', '.txt', '.csv')
 
     @classmethod
+    def inspect_metadata(cls, file_path: Union[str, Path]) -> dict[str, Any]:
+        """
+        Легковесная инспекция метаданных файла распределения без полной загрузки всего массива в память.
+        """
+        path_object = Path(file_path)
+        if not path_object.is_file():
+            raise FileNotFoundError(f"Файл распределения не существует: {path_object}")
+
+        suffix = path_object.suffix.lower()
+        if suffix not in cls.SUPPORTED_EXTENSIONS:
+            raise ValueError(
+                f"Неподдерживаемое расширение файла распределения '{suffix}'. "
+                f"Поддерживаемые форматы: {', '.join(cls.SUPPORTED_EXTENSIONS)}"
+            )
+
+        file_size_bytes = path_object.stat().st_size
+        metadata_result: dict[str, Any] = {
+            'suffix': suffix,
+            'file_size': file_size_bytes,
+            'is_npy': (suffix == '.npy'),
+            'shape': None,
+            'order': None,
+            'dtype': None,
+        }
+
+        if suffix == '.npy':
+            try:
+                with open(path_object, 'rb') as file_descriptor:
+                    version = np.lib.format.read_magic(file_descriptor)
+                    if version == (1, 0):
+                        shape, is_fortran_order, data_type = np.lib.format.read_array_header_1_0(file_descriptor)
+                    elif version == (2, 0):
+                        shape, is_fortran_order, data_type = np.lib.format.read_array_header_2_0(file_descriptor)
+                    else:
+                        shape, is_fortran_order, data_type = np.lib.format._read_array_header(file_descriptor, version)
+                    metadata_result['shape'] = tuple(shape)
+                    metadata_result['order'] = 'F' if is_fortran_order else 'C'
+                    metadata_result['dtype'] = np.dtype(data_type)
+            except Exception:
+                memory_mapped_array = np.load(path_object, mmap_mode='r')
+                metadata_result['shape'] = tuple(memory_mapped_array.shape)
+                metadata_result['order'] = 'F' if np.isfortran(memory_mapped_array) else 'C'
+                metadata_result['dtype'] = memory_mapped_array.dtype
+
+        return metadata_result
+
+    @classmethod
     def load(
         cls,
         file_path: Union[str, Path],

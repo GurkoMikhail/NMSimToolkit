@@ -100,6 +100,7 @@ class TestStage4Views(unittest.TestCase):
             loaded_cfg = load_simulation_config(str(save_path))
             self.assertIsNotNone(loaded_cfg.simulation_manager)
             self.assertEqual(loaded_cfg.simulation_manager.particles_number, main_win.sim_settings.particles_number)
+        main_win.close()
 
     def test_main_window_load_yaml_logic(self):
         """Проверка логики загрузки конфигурации симуляции из YAML в MainWindow."""
@@ -108,10 +109,12 @@ class TestStage4Views(unittest.TestCase):
         config_path = "simulation_config.yaml"
 
         with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=(config_path, "YAML files (*.yaml *.yml)")):
-            main_win._on_open_yaml()
+            with patch("PySide6.QtWidgets.QMessageBox.critical"):
+                main_win._on_open_yaml()
 
         self.assertIsNotNone(main_win.scene_vm.root_vm)
         self.assertEqual(main_win.scene_vm.root_vm.name, "Simulation_volume")
+        main_win.close()
 
 
 if __name__ == '__main__':

@@ -493,10 +493,23 @@ class MainWindow(QMainWindow):
         self.viewport_controller.on_node_selected(node_view_model)
         self._update_gizmo_toolbar_state(node_view_model)
         if node_view_model is not None:
-            self.lbl_status.setText(
-                f"Выбран объект '{node_view_model.name}'. Манипулятор Gizmo: W/Ц — перемещение, "
-                f"E/У — вращение, R/К — масштаб, Q/Й — система координат, Shift — отключение привязки"
-            )
+            constraint = node_view_model.kinematic_constraint
+            is_fixed = False
+            if constraint is not None:
+                has_trans = bool(constraint.get_allowed_axes(GizmoMode.TRANSLATE))
+                has_rot = bool(constraint.get_allowed_axes(GizmoMode.ROTATE))
+                has_scale = bool(constraint.get_allowed_axes(GizmoMode.SCALE)) and constraint.is_scale_allowed()
+                is_fixed = not has_trans and not has_rot and not has_scale
+
+            if is_fixed:
+                self.lbl_status.setText(
+                    f"Выбран объект '{node_view_model.name}'. Трансформация манипулятором Gizmo заблокирована."
+                )
+            else:
+                self.lbl_status.setText(
+                    f"Выбран объект '{node_view_model.name}'. Манипулятор Gizmo: W/Ц — перемещение, "
+                    f"E/У — вращение, R/К — масштаб, Q/Й — система координат, Shift — отключение привязки"
+                )
         else:
             self.lbl_status.setText("Статус: Готов (IDLE)")
 
@@ -837,6 +850,7 @@ class MainWindow(QMainWindow):
                     root_node,
                     distribution_registry=builder.distribution_registry,
                     slots_registry=builder.slots_registry,
+                    base_dir=filepath.parent,
                 )
                 self.scene_vm.apply_simulation_config(cfg)
                 self.current_config = cfg

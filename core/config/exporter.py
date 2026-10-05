@@ -1,3 +1,4 @@
+import os
 import math
 import logging
 import warnings
@@ -181,8 +182,22 @@ class SceneExporter:
             dist_cfg = None
             if distribution_registry is not None:
                 dist_cfg = distribution_registry.get(node)
+
+            actual_mapping: Optional[Dict[float, Union[float, str]]] = None
+            if node.material_distribution is not None and len(node.material_distribution.element_list) > 0:
+                actual_mapping = {
+                    float(element_idx): material_item.name
+                    for element_idx, material_item in enumerate(node.material_distribution.element_list)
+                }
+
             if dist_cfg is None:
-                dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'phantom'}.npy")
+                dist_cfg = NumpyDistributionConfig(
+                    path=f"{node_name or 'phantom'}.npy",
+                    mapping=actual_mapping if actual_mapping is not None else {0.0: 'Vacuum'},
+                )
+            elif actual_mapping is not None:
+                dist_cfg = dist_cfg.model_copy(update={'mapping': actual_mapping})
+
             children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
             return WoodcockVoxelVolumeConfig(
                 name=node_name,
@@ -327,13 +342,37 @@ class SceneExporter:
     ) -> None:
         """
         Экспортирует граф сцены напрямую в YAML-файл конфигурации.
+        Пути к файлам распределений приводятся к относительным относительно каталога сохранения YAML.
         """
+        target_path = Path(filepath).resolve()
+        base_dir = target_path.parent
+
+        adjusted_distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None
+        if distribution_registry is not None:
+            adjusted_distribution_registry = {}
+            for reg_node, orig_dist_cfg in distribution_registry.items():
+                if orig_dist_cfg is not None and isinstance(orig_dist_cfg, (NumpyDistributionConfig, RawDistributionConfig)):
+                    orig_path_str = str(orig_dist_cfg.path)
+                    try:
+                        resolved_file_path = Path(orig_path_str)
+                        if not resolved_file_path.is_absolute():
+                            resolved_file_path = (base_dir / resolved_file_path).resolve()
+                        relative_path_str = os.path.relpath(resolved_file_path, base_dir)
+                        normalized_path = relative_path_str.replace('\\', '/')
+                    except (ValueError, OSError):
+                        normalized_path = orig_path_str.replace('\\', '/')
+                    adjusted_distribution_registry[reg_node] = orig_dist_cfg.model_copy(
+                        update={'path': normalized_path}
+                    )
+                else:
+                    adjusted_distribution_registry[reg_node] = orig_dist_cfg
+
         config = cls.export_to_config(
             root_node=root_node,
             simulation_manager_cfg=simulation_manager_cfg,
             data_manager_cfg=data_manager_cfg,
             pool_size=pool_size,
-            distribution_registry=distribution_registry,
+            distribution_registry=adjusted_distribution_registry,
             slots_registry=slots_registry,
         )
-        dump_simulation_config(config, filepath)
+        dump_simulation_config(config, target_path)

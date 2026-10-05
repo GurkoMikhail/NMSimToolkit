@@ -41,6 +41,7 @@ from gui.viewmodels.procedure_viewmodel import BaseProcedureViewModel, SpectProc
 from gui.viewport_3d.kinematic_constraints import (
     GantryKinematicConstraint,
     IKinematicConstraint,
+    RootVolumeKinematicConstraint,
     SpectOrbitKinematicConstraint,
 )
 
@@ -523,7 +524,18 @@ class SceneViewportController(QObject):
                 axial_length=float(node_vm.axial_length),
                 num_sectors=int(node_vm.num_sectors),
             )
-            self.viewport.render()
+        elif prop_name == 'material_distribution' and isinstance(node_vm, VoxelVolumeViewModel):
+            if self.voxel_renderer is not None:
+                dist = node_vm.core_node.material_distribution
+                if dist is not None:
+                    voxel_characteristic_length = float(np.mean(node_vm.voxel_size))
+                    self.voxel_renderer.apply_material_transfer_functions(
+                        element_list=dist.element_list,
+                        pseudo_xray_mode=self._xray_mode,
+                        energy=self._xray_energy,
+                        characteristic_length=voxel_characteristic_length,
+                    )
+                    self.viewport.render()
         elif prop_name == 'colormap_name' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
                 if str(value) == 'Physical Materials' or self._xray_mode:
@@ -747,6 +759,18 @@ class SceneViewportController(QObject):
         for child_node_vm in target_node_vm.children:
             self._apply_voxel_selection_recursive(child_node_vm, is_selected)
 
+    def _is_root_volume(self, node_view_model: Optional[NodeViewModel]) -> bool:
+        """Проверяет, является ли узел рутовым Volume сцены."""
+        if node_view_model is None:
+            return False
+        if not isinstance(node_view_model, VolumeViewModel):
+            return False
+        if node_view_model.parent_vm is None:
+            return True
+        if self.scene_vm is not None and node_view_model is self.scene_vm.root_vm:
+            return True
+        return False
+
     def on_node_selected(self, selected_node_vm: Optional[NodeViewModel]) -> None:
         """Синхронизация подсветки ребер, ОФЭКТ/ПЭТ-манипулятора и Transform Gizmo при выборе узла в сцене."""
         if self._selected_node_vm is not None:
@@ -771,6 +795,9 @@ class SceneViewportController(QObject):
         if constraint is None and self.procedure_vm is not None:
             # Fallback для обратной совместимости с внешними процедурами
             constraint = self.procedure_vm.get_kinematic_constraint_for_node(selected_node_vm)
+        if constraint is None and self._is_root_volume(selected_node_vm):
+            constraint = RootVolumeKinematicConstraint()
+            selected_node_vm.set_self_kinematic_constraint(constraint)
 
         if isinstance(constraint, SpectOrbitKinematicConstraint):
             constraint.spect_manipulator = self.spect_manipulator

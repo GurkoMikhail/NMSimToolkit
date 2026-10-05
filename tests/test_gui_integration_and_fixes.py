@@ -18,6 +18,8 @@ from gui.viewmodels.nodes.factory import create_node_viewmodel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.views.property_inspector import PropertyInspector
 from gui.views.main_window import MainWindow
+from gui.viewport_3d.kinematic_constraints import RootVolumeKinematicConstraint
+from gui.viewport_3d.transform_gizmo import TransformGizmo, GizmoMode, GizmoAxis
 
 try:
     from PySide6.QtWidgets import QApplication
@@ -358,6 +360,115 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         self.assertTrue(main_window.act_gizmo_scale.isVisible())
         self.assertTrue(main_window.act_gizmo_space.isVisible())
         self.assertTrue(main_window.act_gizmo_space.isEnabled())
+
+    def test_root_volume_kinematic_constraint_contracts(self) -> None:
+        """Верификация контракта кинематического ограничения RootVolumeKinematicConstraint."""
+        constraint = RootVolumeKinematicConstraint()
+
+        self.assertFalse(constraint.is_translation_allowed())
+        self.assertFalse(constraint.is_rotation_allowed())
+        self.assertFalse(constraint.is_scale_allowed())
+        self.assertIsNone(constraint.get_forced_space())
+
+        self.assertEqual(len(constraint.get_allowed_axes(GizmoMode.TRANSLATE)), 0)
+        self.assertEqual(len(constraint.get_allowed_axes(GizmoMode.ROTATE)), 0)
+        self.assertEqual(len(constraint.get_allowed_axes(GizmoMode.SCALE)), 0)
+
+        mock_target = NodeViewModel(SpatialNode(name="TestNode"))
+        proposed_delta = np.array([15.0, -25.0, 35.0], dtype=np.float64)
+        initial_matrix = np.eye(4, dtype=np.float64)
+
+        filtered_delta, changed_data_translation = constraint.filter_translation(
+            mock_target,
+            proposed_delta,
+            initial_matrix,
+            active_axis=GizmoAxis.X
+        )
+        np.testing.assert_allclose(filtered_delta, np.zeros(3, dtype=np.float64))
+        self.assertIn('status_message', changed_data_translation)
+
+        rotation_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        filtered_axis, filtered_angle, changed_data_rotation = constraint.filter_rotation(
+            mock_target,
+            rotation_axis,
+            45.0,
+            initial_matrix
+        )
+        self.assertEqual(filtered_angle, 0.0)
+        np.testing.assert_allclose(filtered_axis, rotation_axis)
+        self.assertIn('status_message', changed_data_rotation)
+
+    def test_root_volume_auto_receives_constraint_in_scene(self) -> None:
+        """Проверка автоматического назначения RootVolumeKinematicConstraint рутовому объему при создании сцены."""
+        root_volume_core = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        scene_viewmodel = SceneViewModel(root_core_node=root_volume_core)
+
+        root_viewmodel = scene_viewmodel.root_vm
+        self.assertIsNotNone(root_viewmodel)
+        self.assertIsInstance(root_viewmodel, VolumeViewModel)
+
+        effective_constraint = root_viewmodel.get_effective_kinematic_constraint()
+        self.assertIsNotNone(effective_constraint)
+        self.assertIsInstance(effective_constraint, RootVolumeKinematicConstraint)
+
+    def test_root_volume_gizmo_and_viewport_blocking(self) -> None:
+        """Проверка блокировки отображения и перемещения TransformGizmo для рутового Volume."""
+        root_volume_core = Volume(name="World", geometry=Box(800.0, 800.0, 800.0), material=Material(name="Air"))
+        scene_viewmodel = SceneViewModel(root_core_node=root_volume_core)
+        root_viewmodel = scene_viewmodel.root_vm
+
+        main_window = MainWindow()
+        main_window.scene_vm = scene_viewmodel
+        main_window.viewport_controller.set_scene_viewmodel(scene_viewmodel)
+
+        # Выбираем рутовой Volume через обработчик выбора узла
+        main_window._on_node_selected(root_viewmodel)
+
+        # 1. TransformGizmo во вьюпорте должен быть отсоединен
+        transform_gizmo = main_window.viewport_controller.transform_gizmo
+        self.assertIsNotNone(transform_gizmo)
+        self.assertIsNone(transform_gizmo.target_node)
+
+        # 2. Кнопки манипулятора на панели инструментов должны быть скрыты
+        self.assertFalse(main_window.act_gizmo_translate.isVisible())
+        self.assertFalse(main_window.act_gizmo_rotate.isVisible())
+        self.assertFalse(main_window.act_gizmo_scale.isVisible())
+        self.assertFalse(main_window.act_gizmo_space.isVisible())
+
+        # 3. Принудительная попытка установить рутовой Volume в качестве target_node в Gizmo
+        transform_gizmo.set_target_node(root_viewmodel)
+        self.assertEqual(len(transform_gizmo._mesh_actors), 0)
+
+        # 4. Попытка перетаскивания через внутренний метод _apply_drag_translation не должна изменять матрицу
+        initial_position = root_viewmodel.local_matrix[0:3, 3].copy()
+        transform_gizmo._initial_drag_matrix = root_viewmodel.local_matrix.copy()
+        transform_gizmo._apply_drag_translation(np.array([50.0, 50.0, 50.0], dtype=np.float64), shift_modifier=False)
+
+        np.testing.assert_allclose(root_viewmodel.local_matrix[0:3, 3], initial_position)
+
+    def test_root_volume_property_inspector_fields_state(self) -> None:
+        """Проверка блокировки координат и доступности размеров рутового Volume в PropertyInspector."""
+        root_volume_core = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        scene_viewmodel = SceneViewModel(root_core_node=root_volume_core)
+        root_viewmodel = scene_viewmodel.root_vm
+
+        property_inspector = PropertyInspector()
+        property_inspector.set_target_viewmodel(root_viewmodel)
+
+        # Координаты положения рутового Volume заблокированы
+        self.assertFalse(property_inspector.spin_x.isEnabled())
+        self.assertFalse(property_inspector.spin_y.isEnabled())
+        self.assertFalse(property_inspector.spin_z.isEnabled())
+
+        # Углы ориентации рутового Volume заблокированы
+        self.assertFalse(property_inspector.spin_rot_x.isEnabled())
+        self.assertFalse(property_inspector.spin_rot_y.isEnabled())
+        self.assertFalse(property_inspector.spin_rot_z.isEnabled())
+
+        # Размеры геометрии (size) рутового Volume доступны для изменения
+        self.assertTrue(property_inspector.spin_size_x.isEnabled())
+        self.assertTrue(property_inspector.spin_size_y.isEnabled())
+        self.assertTrue(property_inspector.spin_size_z.isEnabled())
 
 
 if __name__ == '__main__':
