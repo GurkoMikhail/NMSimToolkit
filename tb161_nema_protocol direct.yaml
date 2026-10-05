@@ -1,0 +1,223 @@
+pool_size: 24
+protocol:
+  type: CustomSweep
+  grid_variables:
+    # 60 положений гантри для сбора 120 ракурсов при 2 противоположных детекторах (под 180°)
+    # Шаг поворота гантри 3.0° (для 60 суммарных ракурсов шаг 6.0°)
+    gantry_angle: [
+      0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 21.0, 24.0, 27.0,
+      30.0, 33.0, 36.0, 39.0, 42.0, 45.0, 48.0, 51.0, 54.0, 57.0,
+      60.0, 63.0, 66.0, 69.0, 72.0, 75.0, 78.0, 81.0, 84.0, 87.0,
+      90.0, 93.0, 96.0, 99.0, 102.0, 105.0, 108.0, 111.0, 114.0, 117.0,
+      120.0, 123.0, 126.0, 129.0, 132.0, 135.0, 138.0, 141.0, 144.0, 147.0,
+      150.0, 153.0, 156.0, 159.0, 162.0, 165.0, 168.0, 171.0, 174.0, 177.0
+    ]
+
+scene:
+  type: Volume
+  name: Simulation_volume
+  geometry:
+    type: Box
+    x: 120.0 cm
+    y: 120.0 cm
+    z: 80.0 cm
+  material: 'Air, Dry (near sea level)'
+  children:
+    - type: WoodcockVoxelVolume
+      name: Phantom
+      voxel_size: 4.2 mm
+      distribution:
+        format: raw
+        path: phantoms/nema/anema_voxel_size_4.2_mm.dat
+        shape: [128, 128, 92]
+        order: 'F'
+        mapping:
+          0.04: 'Air, Dry (near sea level)'
+          0.15: 'Water, Liquid'
+      children:
+        - type: Source
+          name: Source
+          radiation_type: Gamma
+          activity: 100 MBq
+          voxel_size: 4.2 mm
+          half_life: 6.89 day
+          # Полный эмиссионный спектр 161Tb (ICRP 107 / Marin et al., 2020)
+          # Список пар: [энергия квантов с размерностью, относительный выход %]
+          energy:
+            - [74.57 keV, 10.3]     # Основной гамма-пик для ОФЭКТ
+            - [48.9 keV, 17.0]      # Совокупные рентгеновские K-бета / гамма-линии
+            - [46.0 keV, 11.2]      # Характеристическое рентгеновское K-альфа излучение Dy
+            - [25.65 keV, 23.2]     # Низкоэнергетическая гамма-линия
+            - [52.0 keV, 1.4]       # Сопутствующие рентгеновские линии Dy
+            - [57.4 keV, 0.4]       # Высокие характеристические переходы
+            - [106.1 keV, 0.05]     # Слабые гамма-линии (учет септального проникновения)
+            - [131.8 keV, 0.03]
+            - [160.0 keV, 0.004]
+            - [292.0 keV, 0.002]
+          distribution:
+            format: raw
+            path: phantoms/nema/nema_voxel_size_4.2_mm.dat
+            shape: [128, 128, 92]
+            order: 'F'
+
+    - type: Gantry
+      name: Gantry
+      transformations:
+        - type: rotate
+          alpha: ${gantry_angle} deg
+      children:
+        # ---------------- ДЕТЕКТОРНАЯ ГОЛОВКА 1 (0°) ----------------
+        - type: GammaCamera
+          name: GammaCamera_1
+          transformations:
+            - type: rotate
+              gamma: 90 deg
+            - type: translate
+              y: 329.05 mm
+          slots:
+            casing: Casing_1
+            detector_box: Detector_box_1
+            collimator: Collimator_1
+            crystal: Detector_1
+            glass_backend: Glass_backend_1
+          children:
+            - type: Volume
+              name: Casing_1
+              geometry:
+                type: Box
+                x: 58.0 cm
+                y: 44.0 cm
+                z: 14.06 cm
+              material: 'Pb'
+              children:
+                - type: Volume
+                  name: Detector_box_1
+                  geometry:
+                    type: Box
+                    x: 54.0 cm
+                    y: 40.0 cm
+                    z: 12.06 cm
+                  material: 'Air, Dry (near sea level)'
+                  transformations:
+                    - type: translate
+                      z: 1.0 cm
+                  children:
+                    - type: DirectParallelCollimator
+                      name: Collimator_1
+                      size: [54.0 cm, 40.0 cm, 3.5 cm]
+                      hole_diameter: 1.5 mm
+                      septa: 0.2 mm
+                      hole_shape: hexagonal
+                      material: 'Pb'
+                      transformations:
+                        - type: translate
+                          z: 4.28 cm
+                    - type: Volume
+                      name: Detector_1
+                      geometry:
+                        type: Box
+                        x: 54.0 cm
+                        y: 40.0 cm
+                        z: 9.5 mm
+                      material: 'Sodium Iodide'
+                      transformations:
+                        - type: translate
+                          z: 2.045 cm
+                    - type: Volume
+                      name: Glass_backend_1
+                      geometry:
+                        type: Box
+                        x: 54.0 cm
+                        y: 40.0 cm
+                        z: 7.6 cm
+                      material: 'Glass, Borosilicate (Pyrex)'
+                      transformations:
+                        - type: translate
+                          z: -2.23 cm
+
+        # ---------------- ДЕТЕКТОРНАЯ ГОЛОВКА 2 (180°) ----------------
+        - type: GammaCamera
+          name: GammaCamera_2
+          transformations:
+            - type: rotate
+              gamma: 90 deg
+            - type: translate
+              y: 329.05 mm
+            - type: rotate
+              alpha: 180.0 deg
+          slots:
+            casing: Casing_2
+            detector_box: Detector_box_2
+            collimator: Collimator_2
+            crystal: Detector_2
+            glass_backend: Glass_backend_2
+          children:
+            - type: Volume
+              name: Casing_2
+              geometry:
+                type: Box
+                x: 58.0 cm
+                y: 44.0 cm
+                z: 14.06 cm
+              material: 'Pb'
+              children:
+                - type: Volume
+                  name: Detector_box_2
+                  geometry:
+                    type: Box
+                    x: 54.0 cm
+                    y: 40.0 cm
+                    z: 12.06 cm
+                  material: 'Air, Dry (near sea level)'
+                  transformations:
+                    - type: translate
+                      z: 1.0 cm
+                  children:
+                    - type: DirectParallelCollimator
+                      name: Collimator_2
+                      size: [54.0 cm, 40.0 cm, 3.5 cm]
+                      hole_diameter: 1.5 mm
+                      septa: 0.2 mm
+                      hole_shape: hexagonal
+                      material: 'Pb'
+                      transformations:
+                        - type: translate
+                          z: 4.28 cm
+                    - type: Volume
+                      name: Detector_2
+                      geometry:
+                        type: Box
+                        x: 54.0 cm
+                        y: 40.0 cm
+                        z: 9.5 mm
+                      material: 'Sodium Iodide'
+                      transformations:
+                        - type: translate
+                          z: 2.045 cm
+                    - type: Volume
+                      name: Glass_backend_2
+                      geometry:
+                        type: Box
+                        x: 54.0 cm
+                        y: 40.0 cm
+                        z: 7.6 cm
+                      material: 'Glass, Borosilicate (Pyrex)'
+                      transformations:
+                        - type: translate
+                          z: -2.23 cm
+
+data_manager:
+  filename: "output_tb161_dual_cam/${gantry_angle}_deg.hdf"
+  buffer_capacity: 100000
+  handlers:
+    - type: HistoryAssemblerHandler
+      sensitive_volumes:
+        - Detector_1
+        - Detector_2
+      save_initial_states: true
+
+simulation_manager:
+  start_time: 0.0 s
+  stop_time: 30.0 s
+  particles_number: 33400
+  min_energy: 1.0 keV
