@@ -190,14 +190,22 @@ class TestDistributionImportDialog(unittest.TestCase):
             self.assertEqual(dialog.spin_dim_y.value(), 8)
             self.assertEqual(dialog.spin_dim_z.value(), 8)
 
+            # Проверка, что материал фона по умолчанию — Air, а не Vacuum
+            self.assertEqual(dialog.combo_default_material.currentText(), "Air, Dry (near sea level)")
+
             # Запуск сканирования уникальных меток
             dialog._on_auto_scan_materials()
             self.assertGreaterEqual(dialog.tbl_mapping.rowCount(), 2)
+
+            # Проверяем, что первая метка по умолчанию получила Air
+            first_combo = dialog.tbl_mapping.cellWidget(0, 4)
+            self.assertEqual(first_combo.currentText(), "Air, Dry (near sea level)")
 
             params = dialog.get_parameters()
             self.assertEqual(params.target_kind, ImportTargetKind.PHANTOM)
             self.assertEqual(params.shape, (8, 8, 8))
             self.assertEqual(params.voxel_size, (2.5, 2.5, 2.5))
+            self.assertEqual(params.fill_value, "Air, Dry (near sea level)")
             dialog.close()
 
     def test_distribution_import_dialog_source_mode_with_phantom_sync(self) -> None:
@@ -290,7 +298,7 @@ class TestDistributionImportDialog(unittest.TestCase):
                 dtype='float32',
                 voxel_size=(3.0, 3.0, 3.0),
                 material_mapping={0.0: "Water, Liquid"},
-                fill_value="Vacuum",
+                fill_value="Air, Dry (near sea level)",
             )
 
             with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=(str(phantom_file), "All Files")), \

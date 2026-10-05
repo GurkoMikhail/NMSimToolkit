@@ -239,9 +239,10 @@ class DistributionImportDialog(QDialog):
         top_bar = QHBoxLayout()
         top_bar.addWidget(QLabel("Материал фона / по умолчанию:"))
         self.combo_default_material = QComboBox()
-        all_materials = ["Vacuum"] + sorted(database_setting.material_database.keys())
+        all_materials = sorted(database_setting.material_database.keys())
         self.combo_default_material.addItems(all_materials)
-        self.combo_default_material.setCurrentText("Vacuum")
+        default_material_name = "Air, Dry (near sea level)" if "Air, Dry (near sea level)" in all_materials else "Air"
+        self.combo_default_material.setCurrentText(default_material_name)
         top_bar.addWidget(self.combo_default_material)
         top_bar.addStretch()
 
@@ -459,8 +460,11 @@ class DistributionImportDialog(QDialog):
             counts = counts[sorted_indices]
 
         # Заполняем таблицу
-        all_materials = ["Vacuum"] + sorted(database_setting.material_database.keys())
-        default_names = ["Vacuum", "Water, Liquid", "Tissue, Soft (ICRU-44)", "Bone, Cortical (ICRU-44)", "Lung (ICRP)", "Adipose Tissue (ICRU-44)"]
+        all_materials = sorted(database_setting.material_database.keys())
+        default_names = [
+            "Air, Dry (near sea level)", "Water, Liquid", "Tissue, Soft (ICRU-44)",
+            "Bone, Cortical (ICRU-44)", "Lung (ICRP)", "Adipose Tissue (ICRU-44)"
+        ]
 
         self.tbl_mapping.setRowCount(len(unique_vals))
         for row_idx, (val_item, count_item) in enumerate(zip(unique_vals, counts)):
@@ -508,7 +512,7 @@ class DistributionImportDialog(QDialog):
 
     def _populate_mapping_table(self, mapping_dict: Dict[float, str]) -> None:
         """Заполнение таблицы из существующего словаря mapping."""
-        all_materials = ["Vacuum"] + sorted(database_setting.material_database.keys())
+        all_materials = sorted(database_setting.material_database.keys())
         self.tbl_mapping.setRowCount(len(mapping_dict))
         for row_idx, (val_float, mat_name) in enumerate(sorted(mapping_dict.items())):
             item_id = QTableWidgetItem(f"{float(val_float):.4g}")
@@ -548,7 +552,7 @@ class DistributionImportDialog(QDialog):
             color_item.setBackground(QBrush(QColor.fromRgbF(red, green, blue)))
 
     def _on_add_mapping_row(self) -> None:
-        all_materials = ["Vacuum"] + sorted(database_setting.material_database.keys())
+        all_materials = sorted(database_setting.material_database.keys())
         current_rows = self.tbl_mapping.rowCount()
         self.tbl_mapping.insertRow(current_rows)
 
@@ -566,7 +570,8 @@ class DistributionImportDialog(QDialog):
         item_pct.setFlags(Qt.ItemIsEnabled)
         self.tbl_mapping.setItem(current_rows, 2, item_pct)
 
-        default_mat = all_materials[current_rows % len(all_materials)]
+        air_default = "Air, Dry (near sea level)" if "Air, Dry (near sea level)" in all_materials else all_materials[0]
+        default_mat = air_default if current_rows == 0 else all_materials[current_rows % len(all_materials)]
         color_item = QTableWidgetItem()
         red, green, blue = get_material_color(default_mat)
         color_item.setBackground(QBrush(QColor.fromRgbF(red, green, blue)))
@@ -639,7 +644,7 @@ class DistributionImportDialog(QDialog):
         else:
             voxel_size = self.spin_source_voxel_step.value()
             mapping_dict = None
-            fill_value = "Vacuum"
+            fill_value = "Air, Dry (near sea level)"
             total_activity = self.spin_source_total_activity.value()
             noise_threshold = self.spin_source_threshold.value()
 

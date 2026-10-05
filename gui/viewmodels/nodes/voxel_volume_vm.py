@@ -121,11 +121,12 @@ class VoxelVolumeViewModel(NodeViewModel):
         encoding: Optional[str] = None,
         voxel_size: Optional[Union[float, Sequence[float]]] = None,
         mapping: Optional[Dict[float, str]] = None,
-        fill_value: str = 'Vacuum',
+        fill_value: str = 'Air, Dry (near sea level)',
     ) -> bool:
         """
         Перезагрузка матрицы фантома из файла (.npy, .dat, .raw) с использованием DistributionLoader.
         Поддерживает произвольные вещественные (float) значения меток материалов без потери точности.
+        Материал фона по умолчанию — Air.
         """
         target_path = Path(path)
         if not target_path.is_file():
@@ -148,8 +149,10 @@ class VoxelVolumeViewModel(NodeViewModel):
                 mat_arr = MaterialArray(data.shape)
                 underlying_buffer = mat_arr.view(np.ndarray)
 
-                # Инициализация фонового материала
-                fallback_mat = mdb.get(fill_value, Material(name=fill_value, ID=0))
+                # Инициализация фонового материала (по умолчанию сухой воздух Air)
+                air_name = "Air, Dry (near sea level)"
+                effective_fill_name = air_name if fill_value in ("Air", air_name) else fill_value
+                fallback_mat = mdb.get(effective_fill_name, Material(name=effective_fill_name, ID=0))
                 element_list: List[Material] = [fallback_mat]
                 underlying_buffer[:] = 0
 
@@ -164,7 +167,7 @@ class VoxelVolumeViewModel(NodeViewModel):
                 else:
                     unique_vals = np.unique(data)
                     default_names = [
-                        "Vacuum", "Water, Liquid", "Tissue, Soft (ICRU-44)",
+                        "Air, Dry (near sea level)", "Water, Liquid", "Tissue, Soft (ICRU-44)",
                         "Bone, Cortical (ICRU-44)", "Lung (ICRP)", "Adipose Tissue (ICRU-44)"
                     ]
                     all_mats = list(mdb.values())

@@ -69,9 +69,11 @@ class SceneViewModel(QObject):
         self.distribution_registry = dict(distribution_registry) if distribution_registry is not None else {}
         self.slots_registry = dict(slots_registry) if slots_registry is not None else {}
         self.root_vm = create_node_viewmodel(root_core_node)
-        if isinstance(self.root_vm, VolumeViewModel):
-            self.root_vm.set_self_kinematic_constraint(RootVolumeKinematicConstraint())
         self._register_node_recursive(self.root_vm)
+
+        root_volume_node_vm = self.root_volume_vm
+        if root_volume_node_vm is not None:
+            root_volume_node_vm.set_self_kinematic_constraint(RootVolumeKinematicConstraint())
 
         base_dir_path = Path(base_dir) if base_dir is not None else None
         for node_vm in self.all_nodes():
@@ -444,4 +446,33 @@ class SceneViewModel(QObject):
             nodes.append(curr)
             stack.extend(reversed(curr.children))
         return nodes
+
+    @property
+    def root_volume_vm(self) -> Optional[VolumeViewModel]:
+        """
+        Возвращает корневой геометрический объем (VolumeViewModel) сцены.
+        Ищет наивысший VolumeViewModel в графе сцены.
+        """
+        if self.root_vm is None:
+            return None
+        if isinstance(self.root_vm, VolumeViewModel):
+            return self.root_vm
+        search_queue = [self.root_vm]
+        while search_queue:
+            current_node_vm = search_queue.pop(0)
+            if isinstance(current_node_vm, VolumeViewModel):
+                return current_node_vm
+            search_queue.extend(current_node_vm.children)
+        return None
+
+    def is_root_volume(self, node_view_model: Optional[NodeViewModel]) -> bool:
+        """
+        Проверяет, является ли переданный узел корневым геометрическим объемом сцены.
+        """
+        if node_view_model is None or not isinstance(node_view_model, VolumeViewModel):
+            return False
+        root_volume_node_vm = self.root_volume_vm
+        if root_volume_node_vm is not None:
+            return node_view_model is root_volume_node_vm
+        return node_view_model.is_root_volume
 

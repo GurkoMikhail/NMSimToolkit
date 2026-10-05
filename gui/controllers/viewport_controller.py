@@ -761,15 +761,11 @@ class SceneViewportController(QObject):
 
     def _is_root_volume(self, node_view_model: Optional[NodeViewModel]) -> bool:
         """Проверяет, является ли узел рутовым Volume сцены."""
-        if node_view_model is None:
+        if node_view_model is None or not isinstance(node_view_model, VolumeViewModel):
             return False
-        if not isinstance(node_view_model, VolumeViewModel):
-            return False
-        if node_view_model.parent_vm is None:
-            return True
-        if self.scene_vm is not None and node_view_model is self.scene_vm.root_vm:
-            return True
-        return False
+        if self.scene_vm is not None:
+            return self.scene_vm.is_root_volume(node_view_model)
+        return node_view_model.is_root_volume
 
     def on_node_selected(self, selected_node_vm: Optional[NodeViewModel]) -> None:
         """Синхронизация подсветки ребер, ОФЭКТ/ПЭТ-манипулятора и Transform Gizmo при выборе узла в сцене."""

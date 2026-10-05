@@ -55,6 +55,32 @@ class VolumeViewModel(NodeViewModel):
         self.core_node.size = new_size_arr
         self.property_changed.emit('size', new_size_arr)
 
+    @property
+    def top_volume_vm(self) -> 'VolumeViewModel':
+        """
+        Возвращает наивысший узел VolumeViewModel в текущей ветви иерархии сцены.
+        Аналог свойства core_node.top_volume на уровне модели представления.
+        """
+        current_node_vm: Optional[NodeViewModel] = self
+        top_volume_node_vm: VolumeViewModel = self
+        while current_node_vm is not None:
+            if isinstance(current_node_vm, VolumeViewModel):
+                top_volume_node_vm = current_node_vm
+            current_node_vm = current_node_vm.parent_vm
+        return top_volume_node_vm
+
+    @property
+    def is_root_volume(self) -> bool:
+        """
+        Проверяет, является ли данный объем наивысшим (рутовым) Volume в иерархии сцены.
+        """
+        parent_cursor: Optional[NodeViewModel] = self.parent_vm
+        while parent_cursor is not None:
+            if isinstance(parent_cursor, VolumeViewModel):
+                return False
+            parent_cursor = parent_cursor.parent_vm
+        return True
+
 
 __all__ = [
     "VolumeViewModel",

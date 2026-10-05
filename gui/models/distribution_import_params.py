@@ -29,7 +29,7 @@ class DistributionImportParameters:
     voxel_size: Union[float, Tuple[float, float, float]] = 1.0
     mapping: Optional[Dict[float, str]] = None
     material_mapping: Optional[Dict[float, str]] = None
-    fill_value: str = "Vacuum"
+    fill_value: str = "Air, Dry (near sea level)"
     total_activity: Optional[float] = None
     noise_threshold: Optional[float] = None
     is_npy: bool = False

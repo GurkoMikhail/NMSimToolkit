@@ -470,6 +470,43 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         self.assertTrue(property_inspector.spin_size_y.isEnabled())
         self.assertTrue(property_inspector.spin_size_z.isEnabled())
 
+    def test_root_volume_detection_and_hierarchy(self) -> None:
+        """Проверка методов поиска рутового Volume (top_volume_vm, root_volume_vm, is_root_volume)."""
+        composite_root = CompositeNode(name="WorldScene")
+        world_volume_core = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        phantom_volume_core = Volume(name="Phantom", geometry=Box(200.0, 200.0, 200.0), material=Material(name="Water"))
+
+        world_volume_core.add_child(phantom_volume_core)
+        composite_root.add_child(world_volume_core)
+
+        # Проверка на уровне ядра (top_volume)
+        self.assertIs(phantom_volume_core.top_volume, world_volume_core)
+        self.assertIs(world_volume_core.top_volume, world_volume_core)
+
+        # Загрузка в SceneViewModel
+        scene_viewmodel = SceneViewModel(root_core_node=composite_root)
+
+        world_volume_vm = scene_viewmodel.find_by_name("World")
+        phantom_volume_vm = scene_viewmodel.find_by_name("Phantom")
+
+        self.assertIsNotNone(world_volume_vm)
+        self.assertIsNotNone(phantom_volume_vm)
+        self.assertIsInstance(world_volume_vm, VolumeViewModel)
+        self.assertIsInstance(phantom_volume_vm, VolumeViewModel)
+
+        # Проверка свойств ViewModel
+        self.assertIs(scene_viewmodel.root_volume_vm, world_volume_vm)
+        self.assertTrue(scene_viewmodel.is_root_volume(world_volume_vm))
+        self.assertFalse(scene_viewmodel.is_root_volume(phantom_volume_vm))
+
+        self.assertTrue(world_volume_vm.is_root_volume)
+        self.assertFalse(phantom_volume_vm.is_root_volume)
+        self.assertIs(phantom_volume_vm.top_volume_vm, world_volume_vm)
+
+        # Рутовой Volume зафиксирован, дочерний объем подвижен
+        self.assertIsInstance(world_volume_vm.get_effective_kinematic_constraint(), RootVolumeKinematicConstraint)
+        self.assertIsNone(phantom_volume_vm.get_effective_kinematic_constraint())
+
 
 if __name__ == '__main__':
     unittest.main()

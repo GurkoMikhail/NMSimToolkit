@@ -767,7 +767,12 @@ class PropertyInspector(QWidget):
         is_dose_grid = isinstance(self.current_vm, DoseGridViewModel)
         is_col = isinstance(self.current_vm, CollimatorViewModel)
         is_vol = (isinstance(self.current_vm, VolumeViewModel) or is_col) and not is_spect and not is_vox
-        is_root_vol = is_vol and (self.current_vm.parent_vm is None or 'world' in str(self.current_vm.name).lower())
+        is_root_vol = False
+        if is_vol and isinstance(self.current_vm, VolumeViewModel):
+            if self.scene_vm is not None:
+                is_root_vol = self.scene_vm.is_root_volume(self.current_vm)
+            else:
+                is_root_vol = self.current_vm.is_root_volume
 
         self.volume_group.setVisible(is_vol)
         self.chk_is_detector.setVisible(not is_col)
@@ -918,7 +923,13 @@ class PropertyInspector(QWidget):
             self.spin_rot_y.setEnabled(GizmoAxis.Y in allowed_rot)
             self.spin_rot_z.setEnabled(GizmoAxis.Z in allowed_rot)
 
-            is_root_volume = isinstance(self.current_vm, VolumeViewModel) and self.current_vm.parent_vm is None
+            is_root_volume = False
+            if isinstance(self.current_vm, VolumeViewModel):
+                if self.scene_vm is not None:
+                    is_root_volume = self.scene_vm.is_root_volume(self.current_vm)
+                else:
+                    is_root_volume = self.current_vm.is_root_volume
+
             if is_root_volume:
                 self.spin_size_x.setEnabled(True)
                 self.spin_size_y.setEnabled(True)
@@ -1178,7 +1189,7 @@ class PropertyInspector(QWidget):
             self.tbl_material_mapping.setRowCount(0)
             return
         materials = self.current_vm.material_list
-        all_materials = ["Vacuum"] + sorted(database_setting.material_database.keys())
+        all_materials = sorted(database_setting.material_database.keys())
         self.tbl_material_mapping.blockSignals(True)
         try:
             self.tbl_material_mapping.setRowCount(len(materials))
