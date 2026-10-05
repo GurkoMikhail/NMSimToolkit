@@ -4,6 +4,8 @@ from typing import Dict, Any, Callable, Optional
 import re
 
 import settings.database_setting as database_setting
+import hepunits as units
+from core.config.units import unit_validator_factory
 from core.config.models import (
     AnyNodeConfig, VolumeConfig, GammaCameraConfig, GammaCameraSlotsConfig, WoodcockVoxelVolumeConfig,
     ParametricParallelCollimatorConfig,
@@ -262,7 +264,14 @@ class SceneBuilder:
 
         activity = self._to_float(config.activity, check_positive=True) if config.activity is not None else None
         voxel_size = self._to_float(config.voxel_size, check_positive=True)
-        energy = self._to_float(config.energy, check_positive=True)
+        if isinstance(config.energy, list):
+            energy_validator = unit_validator_factory('MeV', float(units.MeV))
+            energy: Any = [
+                [float(energy_validator(item[0])), float(item[1])]
+                for item in config.energy
+            ]
+        else:
+            energy = self._to_float(config.energy, check_positive=True)
         half_life = self._to_float(config.half_life, check_positive=True)
 
         node = Source(

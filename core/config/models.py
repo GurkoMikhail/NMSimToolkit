@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional, Union, Annotated, Tuple
+from typing import Any, List, Literal, Optional, Union, Annotated, Tuple
 from pydantic import BaseModel, Field, model_validator
 from core.config.units import LengthConfig, EnergyConfig, TimeConfig, ActivityConfig, AngleConfig
 import hepunits as units
@@ -123,9 +123,7 @@ class SourceConfig(CompositeNodeConfig):
     distribution: AnyDistributionConfig
     voxel_size: LengthConfig = 4.0 * units.mm
     radiation_type: str = 'Gamma'
-    # TODO: Pydantic union discrimination with deeply nested pint validators might be complex
-    # but for simple types we can redefine it. Let's see if Union[EnergyConfig, List[List[float]]] works.
-    energy: Union[EnergyConfig, List[List[float]]] = 140.5 * units.keV
+    energy: Union[EnergyConfig, List[List[Any]], List[Tuple[Any, float]]] = 140.5 * units.keV
     half_life: TimeConfig = 6.0 * units.hour
 
 class DoseGridNodeConfig(CompositeNodeConfig):
