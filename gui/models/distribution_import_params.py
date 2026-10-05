@@ -25,7 +25,7 @@ class DistributionImportParameters:
     shape: Tuple[int, int, int]
     order: str = "F"
     dtype: np.dtype = field(default_factory=lambda: np.dtype(np.float32))
-    encoding: str = "binary"
+    encoding: str = "text"
     voxel_size: Union[float, Tuple[float, float, float]] = 1.0
     mapping: Optional[Dict[float, str]] = None
     material_mapping: Optional[Dict[float, str]] = None

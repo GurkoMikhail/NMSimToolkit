@@ -121,7 +121,7 @@ class DistributionLoader:
         elif suffix in ('.txt', '.csv'):
             is_binary = False
         elif suffix == '.dat':
-            # Для .dat: если размер файла в точности совпадает с ожидаемым объемом бинарного буфера
+            # Для .dat: если режим не задан явно, проверяем совпадение байтового объема
             is_binary = (actual_bytes_count == expected_bytes_count)
 
         if is_binary:
@@ -133,10 +133,12 @@ class DistributionLoader:
             raw_buffer = np.fromfile(path_object, dtype=element_dtype)
             return raw_buffer.reshape(target_shape, order=order)
         else:
-            text_data = np.loadtxt(path_object)
-            if text_data.size != expected_elements_count:
-                raise ValueError(
-                    f"Количество элементов в текстовом файле ({text_data.size}) не совпадает "
-                    f"с требуемой формой {target_shape} ({expected_elements_count})"
-                )
-            return text_data.reshape(target_shape, order=order)
+            text_data = np.loadtxt(path_object, dtype=element_dtype)
+            if text_data.shape != tuple(target_shape):
+                if text_data.size != expected_elements_count:
+                    raise ValueError(
+                        f"Количество элементов в текстовом файле ({text_data.size}) не совпадает "
+                        f"с требуемой формой {target_shape} ({expected_elements_count})"
+                    )
+                return text_data.reshape(target_shape, order=order)
+            return text_data

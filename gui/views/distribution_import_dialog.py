@@ -71,6 +71,7 @@ class DistributionImportDialog(QDialog):
 
         self.metadata = DistributionLoader.inspect_metadata(self.file_path)
         self.is_npy_format = bool(self.metadata.get("is_npy", False))
+        self._cached_text_elements: Optional[int] = None
 
         kind_title = "воксельного фантома" if target_kind == ImportTargetKind.PHANTOM else "распределения источника"
         self.setWindowTitle(f"Импорт {kind_title} — {self.file_path.name}")
@@ -139,10 +140,12 @@ class DistributionImportDialog(QDialog):
         form_format.addRow("Тип элементов (Data Type):", self.combo_dtype)
 
         self.combo_encoding = QComboBox()
-        self.combo_encoding.addItem("Бинарный (binary)", "binary")
         self.combo_encoding.addItem("Текстовый ASCII (text)", "text")
-        if self.file_path.suffix.lower() in ('.txt', '.csv'):
+        self.combo_encoding.addItem("Бинарный (binary)", "binary")
+        if self.file_path.suffix.lower() in ('.raw', '.bin'):
             self.combo_encoding.setCurrentIndex(1)
+        else:
+            self.combo_encoding.setCurrentIndex(0)
         self.combo_encoding.currentIndexChanged.connect(self._on_format_changed)
         form_format.addRow("Режим кодирования:", self.combo_encoding)
 
@@ -367,6 +370,32 @@ class DistributionImportDialog(QDialog):
             f"(центр: {-span_x/2:.1f}, {-span_y/2:.1f}, {-span_z/2:.1f} мм)"
         )
 
+    def _get_text_element_count(self) -> Optional[int]:
+        """
+        Быстрый подсчет количества чисел в текстовом файле с кэшированием.
+        """
+        if self._cached_text_elements is not None:
+            return self._cached_text_elements
+        try:
+            fast_buffer = np.fromfile(self.file_path, dtype=np.float32, sep=' ')
+            if fast_buffer.size > 0:
+                self._cached_text_elements = int(fast_buffer.size)
+                return self._cached_text_elements
+        except (OSError, ValueError, TypeError):
+            pass
+
+        try:
+            element_count = 0
+            with open(self.file_path, "r", encoding="utf-8", errors="ignore") as text_file:
+                for line in text_file:
+                    stripped_line = line.strip()
+                    if stripped_line and not stripped_line.startswith(("#", "//", ";")):
+                        element_count += len(stripped_line.replace(",", " ").split())
+            self._cached_text_elements = element_count
+            return element_count
+        except (OSError, ValueError):
+            return None
+
     def _validate_buffer_size(self) -> None:
         """Строгая LBYL-проверка размера файла на диске относительно формы и типа данных."""
         if self.is_npy_format:
@@ -374,16 +403,34 @@ class DistributionImportDialog(QDialog):
             self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
             return
 
-        encoding = self.combo_encoding.currentData()
-        if encoding == "text":
-            self.lbl_lbyl_status.setText("<font color='#FFC107'>ℹ Текстовый режим: проверка количества элементов при чтении</font>")
-            self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
-            return
-
         dim_x = self.spin_dim_x.value()
         dim_y = self.spin_dim_y.value()
         dim_z = self.spin_dim_z.value()
         total_elements = dim_x * dim_y * dim_z
+
+        encoding = self.combo_encoding.currentData()
+        if encoding == "text":
+            actual_count = self._get_text_element_count()
+            if actual_count is not None and actual_count > 0:
+                if actual_count == total_elements:
+                    self.lbl_lbyl_status.setText(
+                        f"<font color='#4CAF50'>✔ Точное совпадение: в файле {actual_count:,} чисел "
+                        f"({dim_x}×{dim_y}×{dim_z})</font>"
+                    )
+                    self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
+                else:
+                    diff = actual_count - total_elements
+                    self.lbl_lbyl_status.setText(
+                        f"<font color='#F44336'>⚠ Несовпадение: в файле {actual_count:,} чисел, "
+                        f"ожидается {total_elements:,} (разница: {diff:+,})</font>"
+                    )
+                    self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
+            else:
+                self.lbl_lbyl_status.setText(
+                    f"<font color='#4CAF50'>✔ Текстовый режим: готов к загрузке {total_elements:,} чисел</font>"
+                )
+                self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
+            return
 
         chosen_dtype = self.combo_dtype.currentData() or np.dtype(np.float32)
         expected_bytes = total_elements * chosen_dtype.itemsize

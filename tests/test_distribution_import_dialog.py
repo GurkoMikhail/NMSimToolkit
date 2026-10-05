@@ -335,6 +335,43 @@ class TestDistributionImportDialog(unittest.TestCase):
             self.assertEqual(inspector.spin_source_activity.value(), 150.0)
             inspector.close()
 
+    def test_distribution_import_dialog_text_mode_validation(self) -> None:
+        """
+        Проверка того, что текстовый режим выбран по умолчанию для .dat/.txt файлов,
+        а валидация мгновенно подсчитывает точное количество чисел без зависаний.
+        """
+        from PySide6.QtWidgets import QDialogButtonBox
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "test_phantom.dat"
+            # 64 числа (4x4x4)
+            numbers = [f"{idx * 0.1:.1f}" for idx in range(64)]
+            file_path.write_text(" ".join(numbers), encoding="utf-8")
+
+            dialog = DistributionImportDialog(
+                file_path=str(file_path),
+                target_kind=ImportTargetKind.PHANTOM,
+                default_voxel_size=(2.0, 2.0, 2.0),
+            )
+
+            # Проверяем, что режим кодирования по умолчанию — текстовый
+            self.assertEqual(dialog.combo_encoding.currentData(), "text")
+
+            # Устанавливаем точную форму 4x4x4
+            dialog.spin_dim_x.setValue(4)
+            dialog.spin_dim_y.setValue(4)
+            dialog.spin_dim_z.setValue(4)
+
+            self.assertIn("Точное совпадение: в файле 64 чисел (4×4×4)", dialog.lbl_lbyl_status.text())
+            self.assertTrue(dialog.button_box.button(QDialogButtonBox.Ok).isEnabled())
+
+            # Меняем форму на 5x4x4 (требуется 80 чисел)
+            dialog.spin_dim_x.setValue(5)
+            self.assertIn("Несовпадение: в файле 64 чисел, ожидается 80 (разница: -16)", dialog.lbl_lbyl_status.text())
+            self.assertFalse(dialog.button_box.button(QDialogButtonBox.Ok).isEnabled())
+
+            dialog.close()
+
 
 if __name__ == '__main__':
     unittest.main()
