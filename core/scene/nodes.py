@@ -12,8 +12,9 @@ class SpatialNode:
     Управляет локальными трансформациями, вычисляет и кэширует глобальную
     и обратную глобальную матрицы преобразования.
     """
-    def __init__(self, name: Optional[str] = None):
+    def __init__(self, name: Optional[str] = None, tags: Optional[Sequence[str]] = None):
         self.name = name if name is not None else self.__class__.__name__
+        self.tags: List[str] = [str(t) for t in tags] if tags is not None else []
         self.local_matrix = np.eye(4, dtype=Float)
         self._parent: Optional['CompositeNode'] = None
         self._global_matrix_cache: Optional[NDArray[Float]] = None
@@ -111,8 +112,8 @@ class CompositeNode(SpatialNode):
     """
     Составной узел для управления древовидной гетерогенной иерархией SpatialNode.
     """
-    def __init__(self, name: Optional[str] = None):
-        super().__init__(name=name)
+    def __init__(self, name: Optional[str] = None, tags: Optional[Sequence[str]] = None):
+        super().__init__(name=name, tags=tags)
         self.childs: List['SpatialNode'] = []
 
     def invalidate_matrix_cache(self) -> None:

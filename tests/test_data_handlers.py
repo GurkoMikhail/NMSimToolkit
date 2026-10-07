@@ -10,6 +10,7 @@ from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.scene.nodes import CompositeNode
 from core.data.data_handlers import SensitiveVolumeHandler, HistoryAssemblerHandler
+from core.data.data_manager import DataManager
 from core.config.yaml_loader import load_simulation_config
 from core.config.builder import SceneBuilder
 from core.config.simulation_worker import _find_nodes_by_names
@@ -97,9 +98,26 @@ class TestDataHandlers(unittest.TestCase):
             self.assertEqual(len(crystal_group["particle_ID"]), 1)
             self.assertEqual(crystal_group["particle_ID"][0], 1)
 
-            # Проверяем истинно локальные координаты: точка (0, 300, 10) в кристалле должна быть (0, 0, 0)
-            local_pos = np.array(crystal_group["local_position"][0])
-            np.testing.assert_allclose(local_pos, [0.0, 0.0, 0.0], atol=1e-3)
+            # Проверяем отсутствие устаревших датасетов local_position и local_direction
+            self.assertNotIn("local_position", crystal_group)
+            self.assertNotIn("local_direction", crystal_group)
+
+            # Проверяем метаданные группы
+            self.assertEqual(crystal_group.attrs["role"], "detector")
+            self.assertIn("tags", crystal_group.attrs)
+            tags = [t.decode("utf-8") if isinstance(t, bytes) else str(t) for t in crystal_group.attrs["tags"]]
+            self.assertIn("detector", tags)
+            self.assertIn("crystal", tags)
+
+            self.assertAlmostEqual(crystal_group.attrs["orbit_radius_mm"], 300.0, places=3)
+            self.assertAlmostEqual(crystal_group.attrs["detector_angle_deg"], 90.0, places=3)
+
+            # Проверяем вычисление истинно локальных координат через pose_matrix
+            pose_matrix = crystal_group.attrs["pose_matrix"]
+            inv_pose = np.linalg.inv(pose_matrix)
+            global_pos = np.array(crystal_group["global_position"][0])
+            local_pos_calc = (np.append(global_pos, 1.0) @ inv_pose.T)[:3]
+            np.testing.assert_allclose(local_pos_calc, [0.0, 0.0, 0.0], atol=1e-3)
 
     def test_history_assembler_dual_detector_groups(self) -> None:
         """
@@ -175,6 +193,22 @@ class TestDataHandlers(unittest.TestCase):
             self.assertIn("Detector_2", inter_group)
             self.assertIn("Simulation_volume", inter_group)
 
+            # Проверяем отсутствие устаревших локальных датасетов
+            for vol_name in ("Detector_1", "Detector_2", "Simulation_volume"):
+                self.assertNotIn("local_position", inter_group[vol_name])
+                self.assertNotIn("local_direction", inter_group[vol_name])
+
+            # Проверяем семантические роли
+            self.assertEqual(inter_group["Detector_1"].attrs["role"], "detector")
+            self.assertEqual(inter_group["Detector_2"].attrs["role"], "detector")
+            self.assertEqual(inter_group["Simulation_volume"].attrs["role"], "scatter_history")
+
+            # Проверяем кинематические параметры детекторов
+            self.assertAlmostEqual(inter_group["Detector_1"].attrs["orbit_radius_mm"], 298.6, places=1)
+            self.assertAlmostEqual(inter_group["Detector_2"].attrs["orbit_radius_mm"], 298.6, places=1)
+            self.assertAlmostEqual(inter_group["Detector_1"].attrs["detector_angle_deg"], 90.0, places=1)
+            self.assertAlmostEqual(inter_group["Detector_2"].attrs["detector_angle_deg"], 270.0, places=1)
+
             # В Detector_1 должно быть 1 событие (частица 101, volume_id 6)
             self.assertEqual(len(inter_group["Detector_1/particle_ID"]), 1)
             self.assertEqual(inter_group["Detector_1/volume_id"][0], 6)
@@ -186,6 +220,35 @@ class TestDataHandlers(unittest.TestCase):
             # В Simulation_volume должны быть 2 события рассеяния в фантоме (volume_id 1)
             self.assertEqual(len(inter_group["Simulation_volume/particle_ID"]), 2)
             np.testing.assert_array_equal(inter_group["Simulation_volume/volume_id"], [1, 1])
+
+    def test_data_manager_metadata_and_context(self) -> None:
+        """
+        Проверка DataManager: запись метаданных задачи и процедурного контекста в HDF5.
+        """
+        context_data = {
+            "gantry_angle": 45.0,
+            "scan_time": 60.0,
+            "projection_index": 5,
+        }
+        task_metadata = {
+            "task_id": "test_step_05",
+            "protocol_type": "spect_step_and_shoot",
+            "context": context_data,
+        }
+        dm = DataManager(filename=self.h5_path, handlers=[], metadata=task_metadata)
+        dm.write_metadata()
+
+        with h5py.File(self.h5_path, "r") as h5_file:
+            self.assertIn("metadata", h5_file)
+            meta_group = h5_file["metadata"]
+            self.assertEqual(meta_group.attrs["task_id"], "test_step_05")
+            self.assertEqual(meta_group.attrs["protocol_type"], "spect_step_and_shoot")
+
+            self.assertIn("context", meta_group)
+            ctx_group = meta_group["context"]
+            self.assertAlmostEqual(ctx_group.attrs["gantry_angle"], 45.0)
+            self.assertAlmostEqual(ctx_group.attrs["scan_time"], 60.0)
+            self.assertEqual(ctx_group.attrs["projection_index"], 5)
 
 
 if __name__ == '__main__':

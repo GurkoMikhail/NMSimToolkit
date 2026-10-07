@@ -34,8 +34,8 @@ class Volume(CompositeNode):
     material: Material
     name: str
 
-    def __init__(self, geometry: Geometry, material: Material, name: Optional[str] = None) -> None:
-        super().__init__()
+    def __init__(self, geometry: Geometry, material: Material, name: Optional[str] = None, tags: Optional[Sequence[str]] = None) -> None:
+        super().__init__(name=name, tags=tags)
         self.geometry = geometry
         self.material = material
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name

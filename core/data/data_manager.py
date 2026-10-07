@@ -3,7 +3,7 @@ import threading
 import time
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import h5py
 import numpy as np
@@ -20,7 +20,15 @@ class DataManager(threading.Thread):
     в файл HDF5 с использованием делегированных обработчиков BaseDataHandler.
     """
 
-    def __init__(self, filename: str, handlers: List[BaseDataHandler], queue: Any = None, lock: Optional[Any] = None, swmr: bool = True) -> None:
+    def __init__(
+        self,
+        filename: str,
+        handlers: List[BaseDataHandler],
+        queue: Any = None,
+        lock: Optional[Any] = None,
+        swmr: bool = True,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
         super().__init__()
         fn_path = Path(filename)
         if fn_path.is_absolute():
@@ -31,6 +39,7 @@ class DataManager(threading.Thread):
 
         self.queue = queue
         self.lock = lock
+        self.metadata = metadata
         # Режим SWMR (Single Writer Multiple Reader) несовместим со сценарием
         # нескольких процессов-писателей (наличие внешнего файлового мьютекса lock)
         self.swmr = swmr and (lock is None)
@@ -68,15 +77,35 @@ class DataManager(threading.Thread):
             except Exception as e:
                 _logger.error(f"Ошибка финализации обработчика {h}: {e}", exc_info=True)
 
-        def write_metadata(f: h5py.File) -> None:
+        self.write_metadata()
+
+    def write_metadata(self) -> None:
+        """
+        Записывает глобальные метаданные моделирования, процедурный контекст и отметку времени в HDF5.
+        """
+        def do_write_metadata(f: h5py.File) -> None:
             if 'metadata' not in f:
                 meta = f.create_group('metadata')
             else:
                 meta = f['metadata']
             meta.attrs['completion_time'] = str(time.strftime('%Y-%m-%d %H:%M:%S'))
+            if self.metadata:
+                for meta_key, meta_val in self.metadata.items():
+                    if isinstance(meta_val, dict):
+                        sub_group = meta.require_group(meta_key)
+                        for sub_k, sub_v in meta_val.items():
+                            try:
+                                sub_group.attrs[sub_k] = sub_v
+                            except Exception:
+                                sub_group.attrs[sub_k] = str(sub_v)
+                    else:
+                        try:
+                            meta.attrs[meta_key] = meta_val
+                        except Exception:
+                            meta.attrs[meta_key] = str(meta_val)
 
         try:
-            self._write_with_retry(write_metadata)
+            self._write_with_retry(do_write_metadata)
         except (OSError, RuntimeError, KeyError, ValueError) as e:
             _logger.debug(f"Запись метаданных пропущена: {e}")
 

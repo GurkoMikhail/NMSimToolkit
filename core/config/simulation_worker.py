@@ -148,12 +148,19 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
         )
         pause_bridge.start()
 
+    task_metadata: Dict[str, Any] = {
+        "task_id": task_id,
+        "context": context_data,
+        "protocol_type": final_config.protocol.type if hasattr(final_config.protocol, "type") else "CustomSweep",
+    }
+
     data_manager = DataManager(
         filename=final_config.data_manager.filename,
         handlers=handlers,
         queue=manager.queue,
         lock=file_lock,
         swmr=False,
+        metadata=task_metadata,
     )
 
     # 6. Запуск вычислений с передачей статусов в телеметрию
