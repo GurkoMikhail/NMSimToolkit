@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 
 from core.geometry.volumes import Volume
+from core.scene.nodes import SpatialNode
 
 _logger = logging.getLogger(__name__)
 
@@ -116,32 +117,41 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         else:
             self.scene_root = None
 
-        self.volume_mapping: Dict[int, Volume] = {}
+        self.volume_mapping: Dict[int, SpatialNode] = {}
         self.target_volumes: List[int] = []
         self._build_volume_mapping()
 
     def _build_volume_mapping(self) -> None:
+        """
+        Формирует маппинг индексов объемов FlattenedScene на целевые узлы записи.
+        Чувствительные объемы и их дочерние подузлы связываются с соответствующим
+        чувствительным объемом для сохранения в его локальных координатах.
+        Все остальные фоновые объемы сцены связываются с корнем сцены (scene_root).
+        """
         if self.scene_root is not None:
             flat_list = FlattenedScene(self.scene_root).flat_list
-            
-            sensitive_indices = set()
-            for i, (v, _, _) in enumerate(flat_list):
-                if v in self.sensitive_volumes:
-                    sensitive_indices.add(i)
-            
-            target_ids = set(sensitive_indices)
-            for i, (v, _, parent_idx) in enumerate(flat_list):
-                top_vol = v.top_volume
-                if top_vol in self.unique_top_volumes:
-                    self.volume_mapping[i] = top_vol
-                
-                curr_idx = parent_idx
-                while curr_idx != -1:
-                    if curr_idx in sensitive_indices:
-                        target_ids.add(i)
-                        break
-                    curr_idx = flat_list[curr_idx][2]
-            
+
+            sensitive_set = set(self.sensitive_volumes)
+            target_ids = set()
+
+            for volume_idx, (vol, _, _) in enumerate(flat_list):
+                matched_sensitive: Optional[SpatialNode] = None
+                if vol in sensitive_set:
+                    matched_sensitive = vol
+                else:
+                    curr_node: Optional[SpatialNode] = vol.parent
+                    while curr_node is not None:
+                        if curr_node in sensitive_set:
+                            matched_sensitive = curr_node
+                            break
+                        curr_node = curr_node.parent
+
+                if matched_sensitive is not None:
+                    target_ids.add(volume_idx)
+                    self.volume_mapping[volume_idx] = matched_sensitive
+                elif self.scene_root is not None:
+                    self.volume_mapping[volume_idx] = self.scene_root
+
             self.target_volumes = list(target_ids)
 
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
@@ -157,7 +167,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             interactions_to_write = {k: v[mask_sensitive] for k, v in interactions.items()}
             self._format_and_write_interactions(interactions_to_write)
 
-    def _get_volumes_to_write(self) -> List[Volume]:
+    def _get_volumes_to_write(self) -> List[SpatialNode]:
         return list(self.sensitive_volumes)
 
     def _format_and_write_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
@@ -272,11 +282,13 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
             if len(dead_ids) > 0:
                 self._flush_dead_particles(dead_ids)
 
-    def _get_volumes_to_write(self) -> List[Volume]:
-        volumes_to_write = list(self.sensitive_volumes)
-        for tv in self.unique_top_volumes:
-            if tv not in volumes_to_write:
-                volumes_to_write.append(tv)
+    def _get_volumes_to_write(self) -> List[SpatialNode]:
+        volumes_to_write: List[SpatialNode] = list(self.sensitive_volumes)
+        if self.scene_root is not None and self.scene_root not in volumes_to_write:
+            volumes_to_write.append(self.scene_root)
+        for top_vol in self.unique_top_volumes:
+            if top_vol not in volumes_to_write:
+                volumes_to_write.append(top_vol)
         return volumes_to_write
 
     def _flush_dead_particles(self, dead_ids: np.ndarray) -> None:

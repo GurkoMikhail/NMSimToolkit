@@ -5,11 +5,14 @@
 Физическая точность:
 - Моделирование учитывает полный спектр линий излучения 161Tb (ICRP 107 / Marin et al., 2020).
 - Энергетические окна не ограничивают расчет Монте-Карло: в HDF5 сохраняются все реальные
-  взаимодействия и энерговыделения (с порогом отсечки min_energy = 1.0 кэВ) для последующей
-  спектрометрической постобработки и выделения окон (фотопикового EM2 и рассеянного SC2).
+  взаимодействия и энерговыделения (min_energy = 1.0 кэВ) для последующей спектрометрической
+  постобработки и выделения окон (фотопикового EM2 и рассеянного SC2).
 """
 
 import os
+import queue
+import time
+from multiprocessing import Pool
 from pathlib import Path
 from typing import List, Tuple
 import numpy as np
@@ -30,10 +33,13 @@ from core.scene.gantry_node import GantryNode
 from core.source.sources import Source
 from core.data.data_manager import DataManager
 from core.data.data_handlers import HistoryAssemblerHandler
+from core.data.distribution_loader import DistributionLoader
 from core.transport.simulation_managers import SimulationManager
 from core.transport.propagator import ParticlePropagator
-from core.physics.physics_compiler import PhysicsCompiler
-from settings.database_setting import material_database
+
+# Импорт баз данных и физических процессов
+from settings.database_setting import material_database, attenuation_database
+from settings.processes_settings import processes_list
 
 
 # ------------------------------------------------------------------------------------------------------------------------
@@ -50,7 +56,7 @@ TB161_ENERGY_SPECTRUM = [
     [25.65 * units.keV, 23.2],   # Низкоэнергетическая гамма-линия
     [52.0 * units.keV, 1.4],     # Характеристический X-ray Dy
     [57.4 * units.keV, 0.4],     # Высокие рентгеновские переходы
-    [106.1 * units.keV, 0.05],   # Слабые гамма-переходы (важны для расчета септального проникновения в LEHR)
+    [106.1 * units.keV, 0.05],   # Септальное проникновение в LEHR
     [131.8 * units.keV, 0.03],
     [160.0 * units.keV, 0.004],
     [292.0 * units.keV, 0.002],
@@ -161,13 +167,20 @@ def build_dual_head_gantry(
 # ------------------------------------------------------------------------------------------------------------------------
 # 4. Построитель фантома NEMA IEQ
 # ------------------------------------------------------------------------------------------------------------------------
+def _load_voxel_grid(file_path: str, shape: Tuple[int, int, int] = (128, 128, 92)) -> np.ndarray:
+    path = Path(file_path)
+    try:
+        return DistributionLoader.load(path, target_shape=shape, order="F", dtype=np.float32)
+    except Exception:
+        pass
+    try:
+        return np.fromfile(path, dtype=np.float32).reshape(shape, order="F")
+    except Exception:
+        return np.loadtxt(path, dtype=np.float32).reshape(shape, order="F")
+
+
 def build_nema_phantom(activity_bq: float = 100.0 * units.MBq) -> WoodcockVoxelVolume:
-    """
-    Загружает и собирает воксельный фантом NEMA IEQ с полным спектром линий 161Tb.
-    """
-    raw_attenuation = np.fromfile(
-        "phantoms/nema/anema_voxel_size_4.2_mm.dat", dtype=np.float32
-    ).reshape((128, 128, 92), order="F")
+    raw_attenuation = _load_voxel_grid("phantoms/nema/anema_voxel_size_4.2_mm.dat")
 
     material_distribution = MaterialArray((128, 128, 92))
     material_distribution[np.isclose(raw_attenuation, 0.04)] = material_database["Air, Dry (near sea level)"]
@@ -179,9 +192,7 @@ def build_nema_phantom(activity_bq: float = 100.0 * units.MBq) -> WoodcockVoxelV
         name="Phantom"
     )
 
-    raw_activity = np.fromfile(
-        "phantoms/nema/nema_voxel_size_4.2_mm.dat", dtype=np.float32
-    ).reshape((128, 128, 92), order="F")
+    raw_activity = _load_voxel_grid("phantoms/nema/nema_voxel_size_4.2_mm.dat")
 
     source = Source(
         distribution=raw_activity,
@@ -198,7 +209,7 @@ def build_nema_phantom(activity_bq: float = 100.0 * units.MBq) -> WoodcockVoxelV
 
 
 # ------------------------------------------------------------------------------------------------------------------------
-# 5. Функция симуляции одного шага гантри с двумя головками
+# 5. Функция симуляции одного шага гантри
 # ------------------------------------------------------------------------------------------------------------------------
 def simulate_dual_head_step(
     gantry_angle_deg: float,
@@ -230,46 +241,92 @@ def simulate_dual_head_step(
     )
     root_scene.add_child(gantry)
 
-    data_manager = DataManager(filename=h5_filename, buffer_capacity=100_000)
-    data_manager.handlers.append(
-        HistoryAssemblerHandler(sensitive_volumes=[crystal_1, crystal_2], save_initial_states=True)
+    # Межпоточная очередь между генератором Монте-Карло и обработчиком HDF5
+    sim_queue: queue.Queue = queue.Queue()
+
+    history_handler = HistoryAssemblerHandler(
+        sensitive_volumes=[crystal_1, crystal_2],
+        save_initial_states=True
+    )
+
+    data_manager = DataManager(
+        filename=h5_filename,
+        handlers=[history_handler],
+        queue=sim_queue
+    )
+
+    rng = np.random.default_rng(seed)
+    propagator = ParticlePropagator(
+        processes_list=processes_list,
+        attenuation_database=attenuation_database,
+        rng=rng
     )
 
     sim_manager = SimulationManager(
         scene=root_scene,
-        data_manager=data_manager,
+        propagator=propagator,
         start_time=0.0 * units.s,
         stop_time=30.0 * units.s,
         particles_number=particles_number,
-        min_energy=1.0 * units.keV
+        min_energy=1.0 * units.keV,
+        queue=sim_queue,
+        buffer_capacity=100_000,
+        seed=seed
     )
 
-    rng = np.random.default_rng(seed)
-    physics = PhysicsCompiler().compile(root_scene)
-    propagator = ParticlePropagator(scene=root_scene, physics=physics, rng=rng)
+    # Запуск фонового сборщика данных, расчет шага и корректный сброс буферов в файл
+    data_manager.start()
+    try:
+        sim_manager.run()
+    finally:
+        sim_manager.flush_all()
+        data_manager.stop()
 
-    sim_manager.run(propagator)
+
+def _worker_task(task_params: Tuple[float, int, Path, int]) -> float:
+    angle_deg, particles, out_dir, seed = task_params
+    t0 = time.perf_counter()
+    simulate_dual_head_step(
+        gantry_angle_deg=angle_deg,
+        particles_number=particles,
+        output_directory=out_dir,
+        seed=seed
+    )
+    elapsed = time.perf_counter() - t0
+    print(f"[Готово] Угол {angle_deg:.1f}° завершен за {elapsed:.1f} с (seed: {seed})")
+    return angle_deg
 
 
 # ------------------------------------------------------------------------------------------------------------------------
-# 6. Главная точка входа: расчет сеток сканирования для двух головок
+# 6. Точка входа: параллельный запуск
 # ------------------------------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Сетки поворота станины:
-    # 120 ракурсов при 2 детекторах: 60 шагов по 3.0° в диапазоне [0°, 180°)
-    # 60 ракурсов при 2 детекторах: 30 шагов по 6.0° в диапазоне [0°, 180°)
-    gantry_positions_120 = np.linspace(0.0, 180.0, 60, endpoint=False)
-    gantry_positions_60 = np.linspace(0.0, 180.0, 30, endpoint=False)
+    gantry_positions = np.linspace(0.0, 180.0, 60, endpoint=False)
+    particles_per_step = int(np.ceil(2_000_000 / len(gantry_positions)))
+    output_dir = Path("results/tb161_nema_120projections")
+
+    num_processes = max(1, (os.cpu_count() or 1) - 1)
+    base_seed = 100_000
 
     print("=== Двухкамерный протокол ОФЭКТ 161Tb (GE Discovery NM/CT 670) ===")
-    print(f"Радионуклид: 161Tb, T1/2 = {TB161_HALF_LIFE / units.day:.2f} дней")
-    print(f"Число спектральных линий: {len(TB161_ENERGY_SPECTRUM)}")
-    for en_val, yield_val in TB161_ENERGY_SPECTRUM:
-        print(f"  - E = {en_val / units.keV:.2f} кэВ, выход = {yield_val:.3f}%")
-    print("\nЭнергетические окна исключены из симуляции (сохраняется полный энергетический спектр событий в HDF5).")
-    print("Конфигурация детекторов: 2 противоположные головки под 180° (Detector_1, Detector_2)")
-    print(f"Сетка 120 ракурсов: {len(gantry_positions_120)} шагов гантри с шагом {gantry_positions_120[1] - gantry_positions_120[0]:.1f}° (0.0° - 177.0°)")
-    print(f"Сетка 60 ракурсов:  {len(gantry_positions_60)} шагов гантри с шагом {gantry_positions_60[1] - gantry_positions_60[0]:.1f}° (0.0° - 174.0°)")
-    print("\nОриентировочное число частиц (суммарно по обеим головкам):")
-    print("  - 120 ракурсов: 2 млн (~33 400 / шаг гантри) и 4 млн (~66 700 / шаг гантри)")
-    print("  - 60 ракурсов:  1 млн (~33 400 / шаг гантри) и 2 млн (~66 700 / шаг гантри)")
+    print(f"Шагов гантри: {len(gantry_positions)} (0.0° - {gantry_positions[-1]:.1f}°)")
+    print(f"Частиц на один шаг: {particles_per_step:,}")
+    print(f"Суммарно частиц: {particles_per_step * len(gantry_positions):,}")
+    print(f"Директория сохранения: {output_dir.resolve()}")
+    print(f"Выделено процессов: {num_processes}")
+    print("------------------------------------------------------------------")
+
+    tasks: List[Tuple[float, int, Path, int]] = [
+        (angle, particles_per_step, output_dir, base_seed + idx)
+        for idx, angle in enumerate(gantry_positions)
+    ]
+
+    start_wall_time = time.perf_counter()
+
+    with Pool(processes=num_processes) as pool:
+        for _ in pool.imap_unordered(_worker_task, tasks):
+            pass
+
+    total_time = time.perf_counter() - start_wall_time
+    print("------------------------------------------------------------------")
+    print(f"Моделирование полностью завершено за {total_time / 60:.2f} мин.")
