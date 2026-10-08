@@ -1,4 +1,6 @@
+from pathlib import Path
 import unittest
+import h5py
 import numpy as np
 from pydantic import ValidationError
 
@@ -182,6 +184,26 @@ class TestOrchestrator(unittest.TestCase):
         gantry_node_cfg = task_1_config.scene.children[0]
         self.assertEqual(gantry_node_cfg.type, "Gantry")
         self.assertAlmostEqual(gantry_node_cfg.transformations[0].alpha, np.pi / 2)
+
+        # Проверка изоляции метаданных задач в выходном файле HDF5
+        output_hdf_path = Path("output data/gantry_sim.h5")
+        if output_hdf_path.exists():
+            with h5py.File(output_hdf_path, "r") as h5_file:
+                self.assertIn("metadata", h5_file)
+                self.assertIn("tasks", h5_file["metadata"])
+                tasks_group = h5_file["metadata/tasks"]
+                self.assertIn("task_0", tasks_group)
+                self.assertIn("task_1", tasks_group)
+
+                # Проверка изоляции и статусов задач
+                self.assertEqual(tasks_group["task_0"].attrs["status"], "completed")
+                self.assertEqual(tasks_group["task_1"].attrs["status"], "completed")
+                self.assertIn("start_time", tasks_group["task_0"].attrs)
+                self.assertIn("completion_time", tasks_group["task_0"].attrs)
+                self.assertAlmostEqual(tasks_group["task_0/context"].attrs["gantry_angle"], 0.0)
+                self.assertAlmostEqual(tasks_group["task_1/context"].attrs["gantry_angle"], np.pi / 2)
+                self.assertIn("acquisition", tasks_group["task_0"])
+            output_hdf_path.unlink(missing_ok=True)
 
 if __name__ == '__main__':
     unittest.main()

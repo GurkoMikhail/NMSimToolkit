@@ -12,6 +12,7 @@ from core.data.metadata_collector import (
     ProtocolMetadataProvider,
     KinematicsMetadataProvider,
     DetectorMetadataProvider,
+    GeometryMetadataProvider,
     ProcedureMetadataCollector,
 )
 from core.config.models import (
@@ -132,6 +133,30 @@ class TestMetadataCollector(unittest.TestCase):
         self.assertEqual(camera_data["global_matrix"].shape, (4, 4))
         self.assertIn("tags", camera_data)
 
+    def test_geometry_metadata_provider(self) -> None:
+        """
+        Проверка извлечения параметров объемов сцены через GeometryMetadataProvider.
+        """
+        root = CompositeNode(name="World")
+        phantom = Volume(
+            name="Phantom",
+            geometry=Box(x=200.0, y=200.0, z=200.0),
+            material=self.vacuum,
+            tags=["phantom", "target"],
+        )
+        root.add_child(phantom)
+
+        provider = GeometryMetadataProvider()
+        result = provider.collect(root_scene=root)
+
+        self.assertIn("Phantom", result)
+        phantom_record = result["Phantom"]
+        self.assertEqual(phantom_record["name"], "Phantom")
+        self.assertEqual(phantom_record["material"], "Vacuum")
+        self.assertEqual(phantom_record["geometry_type"], "Box")
+        self.assertEqual(phantom_record["global_matrix"].shape, (4, 4))
+        self.assertIn("tags", phantom_record)
+
     def test_procedure_metadata_collector_facade(self) -> None:
         """
         Проверка работы фасадного класса ProcedureMetadataCollector.
@@ -163,10 +188,12 @@ class TestMetadataCollector(unittest.TestCase):
         self.assertIn("protocol", meta)
         self.assertIn("kinematics", meta)
         self.assertIn("detectors", meta)
+        self.assertIn("geometry", meta)
 
         self.assertEqual(meta["protocol"]["modality"], "SPECT")
         self.assertEqual(meta["kinematics"]["gantry_name"], "Gantry")
         self.assertIn("Head1", meta["detectors"])
+        self.assertIn("Crystal1", meta["geometry"])
 
     def test_data_handlers_clean_architecture(self) -> None:
         """

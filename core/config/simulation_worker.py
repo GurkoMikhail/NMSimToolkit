@@ -4,8 +4,12 @@
 полностью изолирован от типов медицинских устройств и специфических протоколов.
 """
 
+import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
+
+_logger = logging.getLogger(__name__)
+_logger.setLevel(logging.DEBUG)
 
 from core.config.builder import SceneBuilder
 from core.config.models import SimulationConfig
@@ -159,6 +163,14 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
 
     task_metadata: Dict[str, Any] = {
         "task_id": task_id,
+        "seed": int(random_seed),
+        "status": "in_progress",
+        "simulation": {
+            "particles_number": int(sim_config.particles_number),
+            "min_energy": float(sim_config.min_energy),
+            "start_time": float(sim_config.start_time),
+            "stop_time": float(sim_config.stop_time),
+        },
         "context": context_data,
         "acquisition": procedure_metadata,
     }
@@ -170,9 +182,13 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
         lock=file_lock,
         swmr=False,
         metadata=task_metadata,
+        task_id=task_id,
     )
 
-    # 6. Запуск вычислений с передачей статусов в телеметрию
+    # 6. Ранняя фиксация метаданных задачи в HDF5 ДО запуска моделирования
+    data_manager.initialize_metadata()
+
+    # 7. Запуск вычислений с передачей статусов в телеметрию
     if telemetry_queue is not None:
         try:
             telemetry_queue.put({"type": "task_started", "task_id": task_id, "seed": random_seed})
@@ -190,7 +206,18 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
             except (ValueError, OSError):
                 pass
         return (context_data, final_config)
-    except Exception as simulation_exception:
+    except BaseException as simulation_exception:
+        try:
+            data_manager.stop(timeout=1.0)
+        except Exception:
+            pass
+        try:
+            data_manager.finalize_metadata(status="failed", error=str(simulation_exception))
+        except Exception as metadata_write_error:
+            _logger.error(
+                f"Не удалось зафиксировать статус ошибки в HDF5 для задачи {task_id}: {metadata_write_error}",
+                exc_info=True,
+            )
         if telemetry_queue is not None:
             try:
                 telemetry_queue.put({"type": "task_error", "task_id": task_id, "error": str(simulation_exception)})

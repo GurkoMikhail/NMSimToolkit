@@ -10,6 +10,7 @@ from core.data.metadata_collector import (
     ProtocolMetadataProvider,
     KinematicsMetadataProvider,
     DetectorMetadataProvider,
+    GeometryMetadataProvider,
     ProcedureMetadataCollector,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     'ProtocolMetadataProvider',
     'KinematicsMetadataProvider',
     'DetectorMetadataProvider',
+    'GeometryMetadataProvider',
     'ProcedureMetadataCollector',
 ]

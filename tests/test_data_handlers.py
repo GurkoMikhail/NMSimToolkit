@@ -199,7 +199,8 @@ class TestDataHandlers(unittest.TestCase):
 
     def test_data_manager_metadata_and_context(self) -> None:
         """
-        Проверка DataManager: запись метаданных задачи и процедурного контекста в HDF5.
+        Проверка DataManager: запись метаданных задачи и процедурного контекста в HDF5
+        с сохранением обратной совместимости корневых атрибутов и изолированной подгруппы tasks/task_{task_id}.
         """
         context_data = {
             "gantry_angle": 45.0,
@@ -219,12 +220,157 @@ class TestDataHandlers(unittest.TestCase):
             meta_group = h5_file["metadata"]
             self.assertEqual(meta_group.attrs["task_id"], "test_step_05")
             self.assertEqual(meta_group.attrs["protocol_type"], "spect_step_and_shoot")
+            self.assertEqual(meta_group.attrs["status"], "completed")
 
             self.assertIn("context", meta_group)
             ctx_group = meta_group["context"]
             self.assertAlmostEqual(ctx_group.attrs["gantry_angle"], 45.0)
             self.assertAlmostEqual(ctx_group.attrs["scan_time"], 60.0)
             self.assertEqual(ctx_group.attrs["projection_index"], 5)
+
+            # Проверка изолированной подгруппы tasks/task_test_step_05
+            self.assertIn("tasks", meta_group)
+            self.assertIn("task_test_step_05", meta_group["tasks"])
+            task_subgroup = meta_group["tasks/task_test_step_05"]
+            self.assertEqual(task_subgroup.attrs["task_id"], "test_step_05")
+            self.assertEqual(task_subgroup.attrs["status"], "completed")
+            self.assertIn("start_time", task_subgroup.attrs)
+            self.assertIn("completion_time", task_subgroup.attrs)
+            self.assertIn("elapsed_real_time_seconds", task_subgroup.attrs)
+            self.assertIn("context", task_subgroup)
+            self.assertAlmostEqual(task_subgroup["context"].attrs["gantry_angle"], 45.0)
+
+    def test_early_metadata_initialization(self) -> None:
+        """
+        Проверка ранней инициализации метаданных: фиксация статуса 'in_progress'
+        и отметки времени старта до начала моделирования.
+        """
+        context_data = {"current_angle": 1.23}
+        task_metadata = {
+            "task_id": 42,
+            "context": context_data,
+        }
+        dm = DataManager(filename=self.h5_path, handlers=[], metadata=task_metadata, task_id=42)
+
+        # Выполняем раннюю инициализацию
+        dm.initialize_metadata()
+
+        # Проверяем состояние файла в процессе выполнения симуляции
+        with h5py.File(self.h5_path, "r") as h5_file:
+            self.assertIn("metadata", h5_file)
+            meta_group = h5_file["metadata"]
+            self.assertEqual(meta_group.attrs["status"], "in_progress")
+            self.assertIn("start_time", meta_group.attrs)
+            self.assertNotIn("completion_time", meta_group.attrs)
+
+            task_group = meta_group["tasks/task_42"]
+            self.assertEqual(task_group.attrs["status"], "in_progress")
+            self.assertEqual(task_group.attrs["task_id"], 42)
+            self.assertIn("start_time", task_group.attrs)
+            self.assertNotIn("completion_time", task_group.attrs)
+            self.assertAlmostEqual(task_group["context"].attrs["current_angle"], 1.23)
+
+        # Завершаем моделирование
+        dm.finalize_metadata(status="completed")
+
+        with h5py.File(self.h5_path, "r") as h5_file:
+            meta_group = h5_file["metadata"]
+            self.assertEqual(meta_group.attrs["status"], "completed")
+            self.assertIn("completion_time", meta_group.attrs)
+            self.assertIn("elapsed_real_time_seconds", meta_group.attrs)
+
+            task_group = meta_group["tasks/task_42"]
+            self.assertEqual(task_group.attrs["status"], "completed")
+            self.assertIn("completion_time", task_group.attrs)
+            self.assertIn("elapsed_real_time_seconds", task_group.attrs)
+
+    def test_simulation_failure_metadata_recording(self) -> None:
+        """
+        Проверка фиксации сбоя симуляции: обновление статуса на 'failed'
+        и запись диагностического сообщения об ошибке.
+        """
+        task_metadata = {"task_id": 99, "simulation_type": "monte_carlo"}
+        dm = DataManager(filename=self.h5_path, handlers=[], metadata=task_metadata, task_id=99)
+        dm.initialize_metadata()
+
+        error_message = "RuntimeError: Particle geometry boundary overflow detected"
+        dm.finalize_metadata(status="failed", error=error_message)
+
+        with h5py.File(self.h5_path, "r") as h5_file:
+            meta_group = h5_file["metadata"]
+            self.assertEqual(meta_group.attrs["status"], "failed")
+            self.assertEqual(meta_group.attrs["error"], error_message)
+
+            task_group = meta_group["tasks/task_99"]
+            self.assertEqual(task_group.attrs["status"], "failed")
+            self.assertEqual(task_group.attrs["error"], error_message)
+            self.assertIn("completion_time", task_group.attrs)
+
+    def test_multi_task_metadata_isolation(self) -> None:
+        """
+        Проверка изоляции метаданных нескольких задач, записываемых в один файл HDF5.
+        Данные каждой задачи сохраняются в /metadata/tasks/task_{task_id} и не перезаписывают друг друга.
+        """
+        import threading
+        file_lock = threading.Lock()
+
+        # Задача 0: первая ОФЭКТ проекция
+        task_0_meta = {
+            "task_id": 0,
+            "context": {"view_index": 0, "gantry_angle": 0.0},
+        }
+        dm_task_0 = DataManager(
+            filename=self.h5_path,
+            handlers=[],
+            lock=file_lock,
+            metadata=task_0_meta,
+            task_id=0,
+        )
+        dm_task_0.initialize_metadata()
+        dm_task_0.finalize_metadata(status="completed")
+
+        # Задача 1: вторая ОФЭКТ проекция
+        task_1_meta = {
+            "task_id": 1,
+            "context": {"view_index": 1, "gantry_angle": np.pi / 2.0},
+        }
+        dm_task_1 = DataManager(
+            filename=self.h5_path,
+            handlers=[],
+            lock=file_lock,
+            metadata=task_1_meta,
+            task_id=1,
+        )
+        dm_task_1.initialize_metadata()
+        dm_task_1.finalize_metadata(status="completed")
+
+        # Проверка содержимого файла HDF5
+        with h5py.File(self.h5_path, "r") as h5_file:
+            self.assertIn("metadata/tasks", h5_file)
+            tasks_group = h5_file["metadata/tasks"]
+
+            self.assertIn("task_0", tasks_group)
+            self.assertIn("task_1", tasks_group)
+
+            task_0_group = tasks_group["task_0"]
+            task_1_group = tasks_group["task_1"]
+
+            # Проверяем, что параметры задачи 0 сохранены и НЕ затерты задачей 1
+            self.assertEqual(task_0_group.attrs["task_id"], 0)
+            self.assertEqual(task_0_group.attrs["status"], "completed")
+            self.assertAlmostEqual(task_0_group["context"].attrs["gantry_angle"], 0.0)
+            self.assertEqual(task_0_group["context"].attrs["view_index"], 0)
+
+            # Проверяем параметры задачи 1
+            self.assertEqual(task_1_group.attrs["task_id"], 1)
+            self.assertEqual(task_1_group.attrs["status"], "completed")
+            self.assertAlmostEqual(task_1_group["context"].attrs["gantry_angle"], np.pi / 2.0)
+            self.assertEqual(task_1_group["context"].attrs["view_index"], 1)
+
+            # Проверяем атрибуты верхнего уровня
+            meta_group = h5_file["metadata"]
+            self.assertEqual(meta_group.attrs["last_task_id"], 1)
+            self.assertEqual(meta_group.attrs["status"], "completed")
 
 
 if __name__ == '__main__':

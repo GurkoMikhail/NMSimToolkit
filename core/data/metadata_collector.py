@@ -15,6 +15,7 @@ from core.config.models import (
     StepAndShootProtocolConfig,
     SpectProtocolConfig,
 )
+from core.geometry.volumes import Volume
 from core.scene.gantry_node import GantryNode
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.scene.nodes import CompositeNode, SpatialNode
@@ -190,6 +191,35 @@ class DetectorMetadataProvider:
         return detectors_dict
 
 
+class GeometryMetadataProvider:
+    """
+    Провайдер метаданных геометрии и материального состава сцены моделирования.
+    """
+
+    def collect(self, root_scene: SpatialNode) -> Dict[str, Any]:
+        """
+        Рекурсивно инспектирует сцену и возвращает параметры ключевых геометрических объемов (Volume).
+        """
+        volume_nodes: List[Volume] = _find_nodes_recursive(root_scene, Volume)
+        geometry_dict: Dict[str, Any] = {}
+
+        for volume_node in volume_nodes:
+            record: Dict[str, Any] = {
+                "name": volume_node.name,
+                "material": volume_node.material.name,
+                "geometry_type": volume_node.geometry.__class__.__name__,
+                "global_matrix": np.array(volume_node.global_matrix, dtype=np.float64),
+            }
+            if volume_node.tags:
+                record["tags"] = np.array(
+                    [tag_item.encode("utf-8") for tag_item in volume_node.tags],
+                    dtype="S50",
+                )
+            geometry_dict[volume_node.name] = record
+
+        return geometry_dict
+
+
 class ProcedureMetadataCollector:
     """
     Фасадный класс для централизованного сбора процедурных метаданных симуляции.
@@ -199,6 +229,7 @@ class ProcedureMetadataCollector:
         self.protocol_provider = ProtocolMetadataProvider()
         self.kinematics_provider = KinematicsMetadataProvider()
         self.detector_provider = DetectorMetadataProvider()
+        self.geometry_provider = GeometryMetadataProvider()
 
     def collect(
         self,
@@ -219,11 +250,13 @@ class ProcedureMetadataCollector:
         protocol_meta = self.protocol_provider.collect(protocol=protocol, context=context, task_id=task_id)
         kinematics_meta = self.kinematics_provider.collect(root_scene=root_scene, context=context)
         detectors_meta = self.detector_provider.collect(root_scene=root_scene)
+        geometry_meta = self.geometry_provider.collect(root_scene=root_scene)
 
         return {
             "protocol": protocol_meta,
             "kinematics": kinematics_meta,
             "detectors": detectors_meta,
+            "geometry": geometry_meta,
         }
 
 
@@ -231,5 +264,6 @@ __all__ = [
     "ProtocolMetadataProvider",
     "KinematicsMetadataProvider",
     "DetectorMetadataProvider",
+    "GeometryMetadataProvider",
     "ProcedureMetadataCollector",
 ]
