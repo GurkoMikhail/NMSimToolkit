@@ -52,6 +52,7 @@ GeometryConfig = Annotated[Union[BoxConfig], Field(discriminator='type')]
 
 class SpatialNodeConfig(BaseModel):
     name: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
     transformations: List[TransformConfig] = Field(default_factory=list)
 
 class CompositeNodeConfig(SpatialNodeConfig):

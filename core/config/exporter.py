@@ -117,6 +117,7 @@ class SceneExporter:
         Рекурсивно экспортирует узел сцены в Pydantic-модель конфигурации.
         """
         node_name = node.name
+        node_tags = list(node.tags) if node.tags else []
         transforms = cls.decompose_matrix(node.local_matrix)
 
         # 1. GammaCameraNode
@@ -138,6 +139,7 @@ class SceneExporter:
                 )
             return GammaCameraConfig(
                 name=node_name,
+                tags=node_tags,
                 transformations=transforms,
                 slots=slots_cfg,
                 children=children_cfgs,
@@ -151,6 +153,7 @@ class SceneExporter:
             hole_shape_val = node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape)
             return ParametricParallelCollimatorConfig(
                 name=node_name,
+                tags=node_tags,
                 transformations=transforms,
                 size=size_tuple,
                 hole_diameter=float(node.hole_diameter),
@@ -167,6 +170,7 @@ class SceneExporter:
             hole_shape_val = node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape)
             return DirectParallelCollimatorConfig(
                 name=node_name,
+                tags=node_tags,
                 transformations=transforms,
                 size=size_tuple,
                 hole_diameter=float(node.hole_diameter),
@@ -201,6 +205,7 @@ class SceneExporter:
             children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
             return WoodcockVoxelVolumeConfig(
                 name=node_name,
+                tags=node_tags,
                 transformations=transforms,
                 voxel_size=v_size,
                 distribution=dist_cfg,
@@ -220,6 +225,7 @@ class SceneExporter:
 
             return VolumeConfig(
                 name=node_name,
+                tags=node_tags,
                 transformations=transforms,
                 geometry=geo_cfg,
                 material=mat_name,
@@ -244,6 +250,7 @@ class SceneExporter:
                 energy_val = [[float(energy_value), float(probability_value)] for energy_value, probability_value in zip(node.energy["energy"], node.energy["probability"])]
             return SourceConfig(
                 name=node_name,
+                tags=node_tags,
                 transformations=transforms,
                 distribution=dist_cfg,
                 activity=act,
@@ -259,6 +266,7 @@ class SceneExporter:
             children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
             return DoseGridNodeConfig(
                 name=node_name,
+                tags=node_tags,
                 transformations=transforms,
                 size=(float(node.size[0]), float(node.size[1]), float(node.size[2])),
                 dose_voxel_size=float(node.dose_voxel_size),
@@ -271,6 +279,7 @@ class SceneExporter:
             children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
             return GantryConfig(
                 name=node_name,
+                tags=node_tags,
                 transformations=transforms,
                 children=children_cfgs,
             )
@@ -280,6 +289,7 @@ class SceneExporter:
             children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
             return BaseCompositeNodeConfig(
                 name=node_name,
+                tags=node_tags,
                 transformations=transforms,
                 children=children_cfgs,
             )
@@ -287,6 +297,7 @@ class SceneExporter:
         # 9. SpatialNode (базовый)
         return BaseSpatialNodeConfig(
             name=node_name,
+            tags=node_tags,
             transformations=transforms,
         )
 

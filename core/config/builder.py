@@ -87,6 +87,8 @@ class SceneBuilder:
             raise ValueError(f"Unknown node type: {node_type}")
 
         node = self.factory_map[node_type](config)
+        if config.tags:
+            node.tags = list(config.tags)
 
         # Применение трансформаций
         for transform in config.transformations:

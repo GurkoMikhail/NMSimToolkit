@@ -83,31 +83,30 @@ class DataManager(threading.Thread):
         """
         Записывает глобальные метаданные моделирования, процедурный контекст и отметку времени в HDF5.
         """
-        def do_write_metadata(f: h5py.File) -> None:
-            if 'metadata' not in f:
-                meta = f.create_group('metadata')
+        def _write_dict_recursive(target_group: h5py.Group, data_dict: Dict[str, Any]) -> None:
+            for item_key, item_value in data_dict.items():
+                if isinstance(item_value, dict):
+                    nested_group = target_group.require_group(str(item_key))
+                    _write_dict_recursive(nested_group, item_value)
+                elif item_value is not None:
+                    try:
+                        target_group.attrs[str(item_key)] = item_value
+                    except Exception:
+                        target_group.attrs[str(item_key)] = str(item_value)
+
+        def do_write_metadata(file_handle: h5py.File) -> None:
+            if 'metadata' not in file_handle:
+                metadata_group = file_handle.create_group('metadata')
             else:
-                meta = f['metadata']
-            meta.attrs['completion_time'] = str(time.strftime('%Y-%m-%d %H:%M:%S'))
+                metadata_group = file_handle['metadata']
+            metadata_group.attrs['completion_time'] = str(time.strftime('%Y-%m-%d %H:%M:%S'))
             if self.metadata:
-                for meta_key, meta_val in self.metadata.items():
-                    if isinstance(meta_val, dict):
-                        sub_group = meta.require_group(meta_key)
-                        for sub_k, sub_v in meta_val.items():
-                            try:
-                                sub_group.attrs[sub_k] = sub_v
-                            except Exception:
-                                sub_group.attrs[sub_k] = str(sub_v)
-                    else:
-                        try:
-                            meta.attrs[meta_key] = meta_val
-                        except Exception:
-                            meta.attrs[meta_key] = str(meta_val)
+                _write_dict_recursive(metadata_group, self.metadata)
 
         try:
             self._write_with_retry(do_write_metadata)
-        except (OSError, RuntimeError, KeyError, ValueError) as e:
-            _logger.debug(f"Запись метаданных пропущена: {e}")
+        except (OSError, RuntimeError, KeyError, ValueError) as write_error:
+            _logger.debug(f"Запись метаданных пропущена: {write_error}")
 
     def stop(self, timeout: Optional[float] = 1.0) -> None:
         """

@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from core.config.builder import SceneBuilder
+from core.config.metadata_collector import ProcedureMetadataCollector
 from core.config.models import SimulationConfig
 from core.data.data_handlers import (
     BaseDataHandler,
@@ -148,10 +149,18 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
         )
         pause_bridge.start()
 
+    metadata_collector = ProcedureMetadataCollector()
+    procedure_metadata = metadata_collector.collect(
+        root_scene=root_scene,
+        protocol=final_config.protocol,
+        context=context_data,
+        task_id=task_id,
+    )
+
     task_metadata: Dict[str, Any] = {
         "task_id": task_id,
         "context": context_data,
-        "protocol_type": final_config.protocol.type if hasattr(final_config.protocol, "type") else "CustomSweep",
+        "acquisition": procedure_metadata,
     }
 
     data_manager = DataManager(

@@ -11,77 +11,6 @@ from core.scene.nodes import SpatialNode
 
 _logger = logging.getLogger(__name__)
 
-def extract_volume_metadata(node: SpatialNode, role: str) -> Dict[str, Any]:
-    """
-    Извлекает семантические и пространственно-кинематические метаданные узла геометрии для HDF5.
-
-    :param node: Узел сцены (SpatialNode или Volume).
-    :param role: Семантическая роль ('detector', 'scatter_history', 'geometry').
-    :return: Словарь метаданных для атрибутов группы HDF5.
-    """
-    pose_matrix = np.array(node.global_matrix, dtype=np.float64)
-    pos = pose_matrix[:3, 3]
-    orbit_radius_mm = float(np.hypot(pos[0], pos[1]))
-
-    if orbit_radius_mm > 1e-4:
-        detector_angle_deg = float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
-    else:
-        detector_angle_deg = 0.0
-
-    rot = pose_matrix[:3, :3]
-    normal = rot @ np.array([0.0, 0.0, 1.0])
-    normal_xy = float(np.hypot(normal[0], normal[1]))
-    if normal_xy > 1e-4:
-        view_direction_angle_deg = float(np.degrees(np.arctan2(normal[1], normal[0])) % 360.0)
-    else:
-        view_direction_angle_deg = 0.0
-
-    collected_tags: List[str] = []
-    if hasattr(node, "tags") and node.tags:
-        collected_tags.extend(node.tags)
-
-    curr = node.parent
-    while curr is not None:
-        if hasattr(curr, "tags") and curr.tags:
-            collected_tags.extend(curr.tags)
-        curr = curr.parent
-
-    node_name_lower = node.name.lower()
-    if role == "detector":
-        if "crystal" in node_name_lower and "crystal" not in collected_tags:
-            collected_tags.append("crystal")
-        if "detector" not in collected_tags:
-            collected_tags.append("detector")
-    elif role == "scatter_history":
-        if "scatter_history" not in collected_tags:
-            collected_tags.append("scatter_history")
-        if "simulation_root" not in collected_tags:
-            collected_tags.append("simulation_root")
-
-    seen = set()
-    unique_tags: List[str] = []
-    for tag in collected_tags:
-        if tag not in seen:
-            seen.add(tag)
-            unique_tags.append(tag)
-
-    tags_bytes = [t.encode("utf-8") for t in unique_tags]
-    if tags_bytes:
-        tags_array = np.array(tags_bytes, dtype="S50")
-    else:
-        tags_array = np.empty((0,), dtype="S50")
-
-    metadata: Dict[str, Any] = {
-        "volume_name": node.name,
-        "role": role,
-        "tags": tags_array,
-        "pose_matrix": pose_matrix,
-        "orbit_radius_mm": orbit_radius_mm,
-        "detector_angle_deg": detector_angle_deg,
-        "view_direction_angle_deg": view_direction_angle_deg,
-    }
-    return metadata
-
 
 class BaseDataHandler(abc.ABC):
     """
@@ -140,13 +69,6 @@ class DirectStreamHandler(BaseDataHandler):
         if self.writer_callback is not None:
             self.writer_callback(write_func)
 
-    def _apply_volume_attributes(self, volume_group: h5py.Group, volume_name: str) -> None:
-        """
-        Запись атрибутов метаданных для группы объема.
-        По умолчанию не выполняет действий, переопределяется в подклассах.
-        """
-        pass
-
     def _write_interactions(self, volume_data_map: Dict[str, Dict[str, np.ndarray]]) -> None:
         def write_func(f: h5py.File):
             if 'interactions' not in f:
@@ -157,12 +79,10 @@ class DirectStreamHandler(BaseDataHandler):
             for volume_name, data in volume_data_map.items():
                 if volume_name not in group:
                     volume_group = group.create_group(volume_name)
-                    self._apply_volume_attributes(volume_group, volume_name)
                     for field, array in data.items():
                         volume_group.create_dataset(field, data=array, maxshape=(None, *array.shape[1:]))
                 else:
                     volume_group = group[volume_name]
-                    self._apply_volume_attributes(volume_group, volume_name)
                     for field, array in data.items():
                         if field in volume_group:
                             current_size = volume_group[field].shape[0]
@@ -184,7 +104,6 @@ class SensitiveVolumeHandler(DirectStreamHandler):
     def __init__(self, sensitive_volumes: List[Volume]):
         super().__init__()
         self.sensitive_volumes = sensitive_volumes
-        self.volume_metadata: Dict[str, Dict[str, Any]] = {}
 
         unique_roots = set()
         self.unique_top_volumes = set()
@@ -235,31 +154,6 @@ class SensitiveVolumeHandler(DirectStreamHandler):
                     self.volume_mapping[volume_idx] = self.scene_root
 
             self.target_volumes = list(target_ids)
-
-        self._build_volume_metadata()
-
-    def _build_volume_metadata(self) -> None:
-        """
-        Инициализирует словарь метаданных для каждого целевого объема на основе его роли.
-        """
-        self.volume_metadata = {}
-        for vol_node in self._get_volumes_to_write():
-            if vol_node in self.sensitive_volumes:
-                role = "detector"
-            elif vol_node == self.scene_root:
-                role = "scatter_history"
-            else:
-                role = "geometry"
-            self.volume_metadata[vol_node.name] = extract_volume_metadata(vol_node, role)
-
-    def _apply_volume_attributes(self, volume_group: h5py.Group, volume_name: str) -> None:
-        """
-        Запись атрибутов метаданных в группу объема в HDF5.
-        """
-        if volume_name in self.volume_metadata:
-            for key, val in self.volume_metadata[volume_name].items():
-                if key not in volume_group.attrs:
-                    volume_group.attrs[key] = val
 
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')
@@ -365,7 +259,6 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
         self.initial_states_chunks: List[Dict[str, np.ndarray]] = []
         self.interactions_chunks: List[Dict[str, np.ndarray]] = []
         self.scored_particles: Set[int] = set()
-        self._build_volume_metadata()
 
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')
