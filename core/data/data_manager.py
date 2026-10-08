@@ -117,7 +117,6 @@ class DataManager(threading.Thread):
         Выполняет раннюю фиксацию метаданных задачи моделирования ДО фактического старта симуляции.
         Создает изолированную подгруппу /metadata/tasks/task_{task_id} со статусом 'in_progress',
         отметкой времени старта и параметрами протокола/детекторов.
-        Также актуализирует глобальные атрибуты в /metadata для обратной совместимости.
         """
         if self._is_initialized:
             return
@@ -129,6 +128,9 @@ class DataManager(threading.Thread):
 
         def do_write_initial_metadata(file_handle: h5py.File) -> None:
             metadata_group = file_handle.require_group("metadata")
+            if "created_time" not in metadata_group.attrs:
+                metadata_group.attrs["created_time"] = self._start_time_str
+
             tasks_group = metadata_group.require_group("tasks")
             task_group = tasks_group.require_group(self.task_group_name)
 
@@ -139,16 +141,6 @@ class DataManager(threading.Thread):
 
             if self.metadata:
                 self._write_dict_recursive(task_group, self.metadata)
-
-            # Глобальные метаданные верхнего уровня /metadata для обратной совместимости
-            metadata_group.attrs["last_task_id"] = self.task_id
-            metadata_group.attrs["status"] = self._status
-            metadata_group.attrs["start_time"] = self._start_time_str
-            if "created_time" not in metadata_group.attrs:
-                metadata_group.attrs["created_time"] = self._start_time_str
-
-            if self.metadata:
-                self._write_dict_recursive(metadata_group, self.metadata)
 
         try:
             self._write_with_retry(do_write_initial_metadata)
@@ -185,28 +177,10 @@ class DataManager(threading.Thread):
             if self._error_message is not None:
                 task_group.attrs["error"] = self._error_message
 
-            # Обновление метаданных верхнего уровня /metadata для обратной совместимости
-            metadata_group.attrs["status"] = self._status
-            metadata_group.attrs["completion_time"] = self._completion_time_str
-            metadata_group.attrs["elapsed_real_time_seconds"] = self._elapsed_real_time_seconds
-            if self._error_message is not None:
-                metadata_group.attrs["error"] = self._error_message
-
         try:
             self._write_with_retry(do_write_final_metadata)
         except (OSError, RuntimeError, KeyError, ValueError) as write_error:
             _logger.error(f"Ошибка финализации метаданных: {write_error}", exc_info=True)
-
-    def write_metadata(self, status: Optional[str] = None, error: Optional[str] = None) -> None:
-        """
-        Унифицированный метод записи метаданных для обратной совместимости.
-        Если метаданные еще не были инициализированы, производит early initialization,
-        после чего финализирует метаданные.
-        """
-        if not self._is_initialized:
-            self.initialize_metadata()
-        effective_status = status if status is not None else "completed"
-        self.finalize_metadata(status=effective_status, error=error)
 
     def run(self) -> None:
         """

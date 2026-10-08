@@ -200,7 +200,7 @@ class TestDataHandlers(unittest.TestCase):
     def test_data_manager_metadata_and_context(self) -> None:
         """
         Проверка DataManager: запись метаданных задачи и процедурного контекста в HDF5
-        с сохранением обратной совместимости корневых атрибутов и изолированной подгруппы tasks/task_{task_id}.
+        в изолированную подгруппу tasks/task_{task_id}.
         """
         context_data = {
             "gantry_angle": 45.0,
@@ -212,33 +212,29 @@ class TestDataHandlers(unittest.TestCase):
             "protocol_type": "spect_step_and_shoot",
             "context": context_data,
         }
-        dm = DataManager(filename=self.h5_path, handlers=[], metadata=task_metadata)
-        dm.write_metadata()
+        dm = DataManager(filename=self.h5_path, handlers=[], metadata=task_metadata, task_id="test_step_05")
+        dm.initialize_metadata()
+        dm.finalize_metadata(status="completed")
 
         with h5py.File(self.h5_path, "r") as h5_file:
             self.assertIn("metadata", h5_file)
             meta_group = h5_file["metadata"]
-            self.assertEqual(meta_group.attrs["task_id"], "test_step_05")
-            self.assertEqual(meta_group.attrs["protocol_type"], "spect_step_and_shoot")
-            self.assertEqual(meta_group.attrs["status"], "completed")
-
-            self.assertIn("context", meta_group)
-            ctx_group = meta_group["context"]
-            self.assertAlmostEqual(ctx_group.attrs["gantry_angle"], 45.0)
-            self.assertAlmostEqual(ctx_group.attrs["scan_time"], 60.0)
-            self.assertEqual(ctx_group.attrs["projection_index"], 5)
+            self.assertIn("created_time", meta_group.attrs)
 
             # Проверка изолированной подгруппы tasks/task_test_step_05
             self.assertIn("tasks", meta_group)
             self.assertIn("task_test_step_05", meta_group["tasks"])
             task_subgroup = meta_group["tasks/task_test_step_05"]
             self.assertEqual(task_subgroup.attrs["task_id"], "test_step_05")
+            self.assertEqual(task_subgroup.attrs["protocol_type"], "spect_step_and_shoot")
             self.assertEqual(task_subgroup.attrs["status"], "completed")
             self.assertIn("start_time", task_subgroup.attrs)
             self.assertIn("completion_time", task_subgroup.attrs)
             self.assertIn("elapsed_real_time_seconds", task_subgroup.attrs)
             self.assertIn("context", task_subgroup)
             self.assertAlmostEqual(task_subgroup["context"].attrs["gantry_angle"], 45.0)
+            self.assertAlmostEqual(task_subgroup["context"].attrs["scan_time"], 60.0)
+            self.assertEqual(task_subgroup["context"].attrs["projection_index"], 5)
 
     def test_early_metadata_initialization(self) -> None:
         """
@@ -259,9 +255,7 @@ class TestDataHandlers(unittest.TestCase):
         with h5py.File(self.h5_path, "r") as h5_file:
             self.assertIn("metadata", h5_file)
             meta_group = h5_file["metadata"]
-            self.assertEqual(meta_group.attrs["status"], "in_progress")
-            self.assertIn("start_time", meta_group.attrs)
-            self.assertNotIn("completion_time", meta_group.attrs)
+            self.assertIn("created_time", meta_group.attrs)
 
             task_group = meta_group["tasks/task_42"]
             self.assertEqual(task_group.attrs["status"], "in_progress")
@@ -275,10 +269,6 @@ class TestDataHandlers(unittest.TestCase):
 
         with h5py.File(self.h5_path, "r") as h5_file:
             meta_group = h5_file["metadata"]
-            self.assertEqual(meta_group.attrs["status"], "completed")
-            self.assertIn("completion_time", meta_group.attrs)
-            self.assertIn("elapsed_real_time_seconds", meta_group.attrs)
-
             task_group = meta_group["tasks/task_42"]
             self.assertEqual(task_group.attrs["status"], "completed")
             self.assertIn("completion_time", task_group.attrs)
@@ -298,9 +288,6 @@ class TestDataHandlers(unittest.TestCase):
 
         with h5py.File(self.h5_path, "r") as h5_file:
             meta_group = h5_file["metadata"]
-            self.assertEqual(meta_group.attrs["status"], "failed")
-            self.assertEqual(meta_group.attrs["error"], error_message)
-
             task_group = meta_group["tasks/task_99"]
             self.assertEqual(task_group.attrs["status"], "failed")
             self.assertEqual(task_group.attrs["error"], error_message)
@@ -367,10 +354,9 @@ class TestDataHandlers(unittest.TestCase):
             self.assertAlmostEqual(task_1_group["context"].attrs["gantry_angle"], np.pi / 2.0)
             self.assertEqual(task_1_group["context"].attrs["view_index"], 1)
 
-            # Проверяем атрибуты верхнего уровня
+            # Проверяем атрибуты контейнера метаданных
             meta_group = h5_file["metadata"]
-            self.assertEqual(meta_group.attrs["last_task_id"], 1)
-            self.assertEqual(meta_group.attrs["status"], "completed")
+            self.assertIn("created_time", meta_group.attrs)
 
 
 if __name__ == '__main__':
