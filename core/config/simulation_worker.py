@@ -8,8 +8,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from core.config.builder import SceneBuilder
-from core.config.metadata_collector import ProcedureMetadataCollector
 from core.config.models import SimulationConfig
+from core.data.metadata_collector import ProcedureMetadataCollector
 from core.data.data_handlers import (
     BaseDataHandler,
     DirectStreamHandler,

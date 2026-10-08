@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any
 import yaml
 
 from core.config.models import SimulationConfig
-from core.config.orchestrator import Orchestrator
+from core.config.sweep_compiler import SweepCompiler
 
 
 def load_raw_config(filepath: str | Path) -> dict:
@@ -33,12 +33,13 @@ def load_simulation_config(
     if resolve_protocol:
         has_protocol = bool(config_dict.get('protocol'))
         if context is not None:
-            orch = Orchestrator(config_dict)
-            config_dict = orch.inject_variables(deepcopy(config_dict), context)
+            config_dict = SweepCompiler.inject_variables(deepcopy(config_dict), context)
         elif has_protocol:
-            orch = Orchestrator(config_dict)
-            tasks = orch.generate_tasks()
-            if tasks:
-                config_dict = orch.inject_variables(deepcopy(config_dict), tasks[0])
+            protocol_obj = SimulationConfig.model_validate(config_dict).protocol
+            if protocol_obj is not None:
+                sweep_proto = SweepCompiler.compile_protocol(protocol_obj)
+                tasks = SweepCompiler.generate_job_matrix(sweep_proto)
+                if tasks:
+                    config_dict = SweepCompiler.inject_variables(deepcopy(config_dict), tasks[0])
 
     return SimulationConfig.model_validate(config_dict)

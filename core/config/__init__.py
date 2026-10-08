@@ -2,19 +2,14 @@
 Подпакет конфигурации, декларативных моделей схемы симуляции, сборщика и экспортера сцены.
 """
 
-from core.config.builder import SceneBuilder
-from core.config.exporter import SceneExporter
-from core.config.orchestrator import Orchestrator
-from core.config.sweep_compiler import SweepCompiler
-from core.config.simulation_worker import simulation_worker_task
-from core.config.metadata_collector import (
-    ProtocolMetadataProvider,
-    KinematicsMetadataProvider,
-    DetectorMetadataProvider,
-    ProcedureMetadataCollector,
+from core.config.units import (
+    LengthConfig,
+    EnergyConfig,
+    TimeConfig,
+    ActivityConfig,
+    AngleConfig,
+    unit_validator_factory,
 )
-from core.config.yaml_loader import load_simulation_config
-from core.config.yaml_dumper import dump_simulation_config
 from core.config.models import (
     SimulationConfig,
     SimulationManagerConfig,
@@ -38,25 +33,16 @@ from core.config.models import (
     RotateConfig,
     MatrixTransformConfig,
 )
-from core.config.units import (
-    LengthConfig,
-    EnergyConfig,
-    TimeConfig,
-    ActivityConfig,
-    AngleConfig,
-    unit_validator_factory,
-)
+from core.config.builder import SceneBuilder
+from core.config.exporter import SceneExporter
+from core.config.sweep_compiler import SweepCompiler
+from core.config.yaml_loader import load_simulation_config
+from core.config.yaml_dumper import dump_simulation_config
 
 __all__ = [
     'SceneBuilder',
     'SceneExporter',
-    'Orchestrator',
     'SweepCompiler',
-    'simulation_worker_task',
-    'ProtocolMetadataProvider',
-    'KinematicsMetadataProvider',
-    'DetectorMetadataProvider',
-    'ProcedureMetadataCollector',
     'load_simulation_config',
     'dump_simulation_config',
     'SimulationConfig',

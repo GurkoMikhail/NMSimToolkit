@@ -8,7 +8,7 @@ import unittest
 import numpy as np
 import hepunits as units
 
-from core.config.metadata_collector import (
+from core.data.metadata_collector import (
     ProtocolMetadataProvider,
     KinematicsMetadataProvider,
     DetectorMetadataProvider,

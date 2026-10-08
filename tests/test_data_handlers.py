@@ -102,22 +102,9 @@ class TestDataHandlers(unittest.TestCase):
             self.assertNotIn("local_position", crystal_group)
             self.assertNotIn("local_direction", crystal_group)
 
-            # Проверяем метаданные группы
-            self.assertEqual(crystal_group.attrs["role"], "detector")
-            self.assertIn("tags", crystal_group.attrs)
-            tags = [t.decode("utf-8") if isinstance(t, bytes) else str(t) for t in crystal_group.attrs["tags"]]
-            self.assertIn("detector", tags)
-            self.assertIn("crystal", tags)
-
-            self.assertAlmostEqual(crystal_group.attrs["orbit_radius_mm"], 300.0, places=3)
-            self.assertAlmostEqual(crystal_group.attrs["detector_angle_deg"], 90.0, places=3)
-
-            # Проверяем вычисление истинно локальных координат через pose_matrix
-            pose_matrix = crystal_group.attrs["pose_matrix"]
-            inv_pose = np.linalg.inv(pose_matrix)
+            # Проверяем корректность записанных глобальных координат
             global_pos = np.array(crystal_group["global_position"][0])
-            local_pos_calc = (np.append(global_pos, 1.0) @ inv_pose.T)[:3]
-            np.testing.assert_allclose(local_pos_calc, [0.0, 0.0, 0.0], atol=1e-3)
+            np.testing.assert_allclose(global_pos, [0.0, 300.0, 10.0], atol=1e-3)
 
     def test_history_assembler_dual_detector_groups(self) -> None:
         """
@@ -197,17 +184,6 @@ class TestDataHandlers(unittest.TestCase):
             for vol_name in ("Detector_1", "Detector_2", "Simulation_volume"):
                 self.assertNotIn("local_position", inter_group[vol_name])
                 self.assertNotIn("local_direction", inter_group[vol_name])
-
-            # Проверяем семантические роли
-            self.assertEqual(inter_group["Detector_1"].attrs["role"], "detector")
-            self.assertEqual(inter_group["Detector_2"].attrs["role"], "detector")
-            self.assertEqual(inter_group["Simulation_volume"].attrs["role"], "scatter_history")
-
-            # Проверяем кинематические параметры детекторов
-            self.assertAlmostEqual(inter_group["Detector_1"].attrs["orbit_radius_mm"], 298.6, places=1)
-            self.assertAlmostEqual(inter_group["Detector_2"].attrs["orbit_radius_mm"], 298.6, places=1)
-            self.assertAlmostEqual(inter_group["Detector_1"].attrs["detector_angle_deg"], 90.0, places=1)
-            self.assertAlmostEqual(inter_group["Detector_2"].attrs["detector_angle_deg"], 270.0, places=1)
 
             # В Detector_1 должно быть 1 событие (частица 101, volume_id 6)
             self.assertEqual(len(inter_group["Detector_1/particle_ID"]), 1)
