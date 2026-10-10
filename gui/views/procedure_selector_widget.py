@@ -8,8 +8,7 @@ from PySide6.QtWidgets import (
 
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
-    SpectProcedureViewModel,
-    PetProcedureViewModel,
+    StepAndShootProcedureViewModel,
     CustomSweepProcedureViewModel,
 )
 
@@ -19,7 +18,7 @@ _logger = logging.getLogger(__name__)
 class ProcedureSelectorWidget(QDockWidget):
     """
     Док-виджет выбора и управления активным протоколом / процедурой исследования.
-    Позволяет переключаться между ОФЭКТ, ПЭТ и пользовательскими сканами,
+    Поддерживает пошаговое сканирование Step-and-Shoot, ПЭТ и параметрический CustomSweep,
     а также связывается с PropertyInspector для детальной настройки параметров.
     """
 
@@ -35,11 +34,10 @@ class ProcedureSelectorWidget(QDockWidget):
 
         # Предустановленные модели процедур
         self._procedures: Dict[str, BaseProcedureViewModel] = {
-            "SPECT": SpectProcedureViewModel(),
-            "PET": PetProcedureViewModel(),
+            "StepAndShoot": StepAndShootProcedureViewModel(),
             "CustomSweep": CustomSweepProcedureViewModel(),
         }
-        self._active_key: str = "SPECT"
+        self._active_key: str = "StepAndShoot"
 
         self._init_ui()
         self._connect_procedure_signals()
@@ -56,9 +54,8 @@ class ProcedureSelectorWidget(QDockWidget):
         sel_layout = QVBoxLayout(group_sel)
 
         self.combo_type = QComboBox(group_sel)
-        self.combo_type.addItem("ОФЭКТ (SPECT)", "SPECT")
-        self.combo_type.addItem("ПЭТ (PET)", "PET")
-        self.combo_type.addItem("Пользовательский скан", "CustomSweep")
+        self.combo_type.addItem("Пошаговое сканирование (Step-and-Shoot)", "StepAndShoot")
+        self.combo_type.addItem("Пользовательский скан (Custom Sweep)", "CustomSweep")
         self.combo_type.currentIndexChanged.connect(self._on_type_changed)
         sel_layout.addWidget(self.combo_type)
 
@@ -95,23 +92,18 @@ class ProcedureSelectorWidget(QDockWidget):
 
     def _update_summary(self) -> None:
         vm = self.active_procedure
-        if isinstance(vm, SpectProcedureViewModel):
+        if isinstance(vm, StepAndShootProcedureViewModel):
+            if isinstance(vm.radius_raw, list):
+                radius_str = f"{len(vm.radius_raw)} положений (Body Contour)"
+            else:
+                radius_str = f"{vm.radius:.1f} мм"
+
             text = (
-                f"<b>ОФЭКТ (SPECT):</b><br>"
+                f"<b>Пошаговое сканирование (Step-and-Shoot):</b><br>"
                 f"• Число шагов (Steps): {vm.steps}<br>"
-                f"• Всего проекций (Total Views): {vm.total_projections}<br>"
-                f"• Гамма-камер: {vm.gamma_cameras}<br>"
-                f"• Конфигурация головок: {vm.head_mode}<br>"
-                f"• Радиус орбиты: {vm.radius:.1f} мм<br>"
+                f"• Радиус орбиты: {radius_str}<br>"
                 f"• Диапазон углов: {vm.start_angle:.1f}° — {vm.end_angle:.1f}°<br>"
-                f"• Время на шаг: {vm.time_per_view:.2f} с"
-            )
-        elif isinstance(vm, PetProcedureViewModel):
-            text = (
-                f"<b>ПЭТ (PET):</b><br>"
-                f"• Радиус кольца: {vm.ring_radius:.1f} мм<br>"
-                f"• Модулей детекторов: {vm.detector_heads}<br>"
-                f"• Время кадра: {vm.time_per_frame:.1f} с"
+                f"• Время на шаг: {vm.time_per_step:.2f} с"
             )
         elif isinstance(vm, CustomSweepProcedureViewModel):
             n_grid = len(vm.grid_variables)
@@ -153,15 +145,22 @@ class ProcedureSelectorWidget(QDockWidget):
     def set_procedure(self, proc_vm: BaseProcedureViewModel) -> None:
         """Установка внешней модели процедуры (например, при загрузке из YAML)."""
         ptype = proc_vm.procedure_type
-        self._procedures[ptype] = proc_vm
+        if ptype in ("StepAndShoot", "SPECT", "StepAndShootProtocol"):
+            key = "StepAndShoot"
+        elif ptype in ("CustomSweep", "Custom"):
+            key = "CustomSweep"
+        else:
+            key = ptype
+
+        self._procedures[key] = proc_vm
         proc_vm.changed.connect(self._on_procedure_data_changed)
         for i in range(self.combo_type.count()):
-            if self.combo_type.itemData(i) == ptype:
+            if self.combo_type.itemData(i) == key:
                 self.combo_type.blockSignals(True)
                 self.combo_type.setCurrentIndex(i)
                 self.combo_type.blockSignals(False)
                 break
-        self._active_key = ptype
+        self._active_key = key
         self._update_summary()
         self.procedure_changed.emit(proc_vm)
         self.procedure_selected.emit(proc_vm)

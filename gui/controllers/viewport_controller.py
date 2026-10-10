@@ -37,7 +37,11 @@ from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
 from gui.viewmodels.nodes.gantry_vm import GantryViewModel
 from gui.viewmodels.nodes.pet_scanner_vm import PetScannerViewModel
 from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
-from gui.viewmodels.procedure_viewmodel import BaseProcedureViewModel, SpectProcedureViewModel
+from gui.viewmodels.procedure_viewmodel import (
+    BaseProcedureViewModel,
+    StepAndShootProcedureViewModel,
+    SpectProcedureViewModel,
+)
 from gui.viewport_3d.kinematic_constraints import (
     GantryKinematicConstraint,
     IKinematicConstraint,
@@ -637,7 +641,7 @@ class SceneViewportController(QObject):
             self.transform_gizmo.update_visuals()
 
             # Обновление направляющих манипуляторов ОФЭКТ/ПЭТ
-            if isinstance(current_target, GammaCameraViewModel) and isinstance(self.procedure_vm, SpectProcedureViewModel):
+            if isinstance(current_target, GammaCameraViewModel) and isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
                 matrix = current_target.local_matrix
                 pos_x = float(matrix[0, 3])
                 pos_y = float(matrix[1, 3])
@@ -827,7 +831,7 @@ class SceneViewportController(QObject):
                 self.transform_gizmo.set_target_node(selected_node_vm)
 
         # 3. Визуальные направляющие ОФЭКТ (круговая орбита):
-        if isinstance(selected_node_vm, GammaCameraViewModel) and isinstance(self.procedure_vm, SpectProcedureViewModel):
+        if isinstance(selected_node_vm, GammaCameraViewModel) and isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
             self.spect_manipulator.half_thickness = selected_node_vm.half_thickness
             pos = selected_node_vm.local_matrix[0:3, 3]
             cam_radius = max(10.0, float(np.hypot(pos[0], pos[1])) - selected_node_vm.half_thickness)
@@ -889,7 +893,7 @@ class SceneViewportController(QObject):
             return
 
         radius = 250.0
-        if isinstance(procedure_vm, SpectProcedureViewModel):
+        if isinstance(procedure_vm, StepAndShootProcedureViewModel):
             radius = float(procedure_vm.radius)
 
         for camera_index, camera_view_model in enumerate(camera_vms):
@@ -939,7 +943,7 @@ class SceneViewportController(QObject):
 
         base_angle = 0.0
         active_procedure = procedure_vm if procedure_vm is not None else self.procedure_vm
-        if isinstance(active_procedure, SpectProcedureViewModel):
+        if isinstance(active_procedure, StepAndShootProcedureViewModel):
             previous_sync_state = active_procedure._is_syncing_with_scene
             active_procedure._is_syncing_with_scene = True
             try:

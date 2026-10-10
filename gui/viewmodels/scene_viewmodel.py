@@ -49,6 +49,7 @@ class SceneViewModel(QObject):
         self._node_map: Dict[int, NodeViewModel] = {}
         self.distribution_registry: Dict[Any, Any] = {}
         self.slots_registry: Dict[Any, Any] = {}
+        self.bindings_registry: Dict[Any, Dict[str, str]] = {}
         self._sensitive_volumes: List[str] = []
 
         if root_core_node is not None:
@@ -59,6 +60,7 @@ class SceneViewModel(QObject):
         root_core_node: SpatialNode,
         distribution_registry: Optional[Dict[Any, Any]] = None,
         slots_registry: Optional[Dict[Any, Any]] = None,
+        bindings_registry: Optional[Dict[Any, Dict[str, str]]] = None,
         base_dir: Optional[Union[str, Path]] = None,
     ) -> NodeViewModel:
         """
@@ -68,8 +70,13 @@ class SceneViewModel(QObject):
         self._node_map.clear()
         self.distribution_registry = dict(distribution_registry) if distribution_registry is not None else {}
         self.slots_registry = dict(slots_registry) if slots_registry is not None else {}
+        self.bindings_registry = dict(bindings_registry) if bindings_registry is not None else {}
         self.root_vm = create_node_viewmodel(root_core_node)
         self._register_node_recursive(self.root_vm)
+
+        for node_vm in self.all_nodes():
+            if node_vm.core_node in self.bindings_registry:
+                node_vm.bindings = dict(self.bindings_registry[node_vm.core_node])
 
         root_volume_node_vm = self.root_volume_vm
         if root_volume_node_vm is not None:

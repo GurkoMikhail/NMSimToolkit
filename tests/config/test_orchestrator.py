@@ -12,11 +12,11 @@ class TestOrchestrator(unittest.TestCase):
         self.raw_config = {
             "protocol": {
                 "type": "StepAndShoot",
-                "views": 3,
-                "gamma_cameras": 1,
+                "steps": 3,
                 "start_angle": "0 deg",
                 "end_angle": "180 deg",
-                "time_per_view": "10 s"
+                "endpoint": True,
+                "time_per_step": "10 s"
             },
             "simulation_manager": {
                 "stop_time": "${current_time}",
@@ -119,12 +119,11 @@ class TestOrchestrator(unittest.TestCase):
         """Сквозной тест симуляции с узлом Gantry и автоматической интерполяцией gantry_angle."""
         gantry_config_dict = {
             "protocol": {
-                "type": "SPECT",
-                "views": 4,
-                "gamma_cameras": 2,
+                "type": "StepAndShoot",
+                "steps": 2,
                 "start_angle": "0 deg",
                 "end_angle": "180 deg",
-                "time_per_view": "2 s",
+                "time_per_step": "2 s",
                 "endpoint": False,
             },
             "simulation_manager": {
@@ -172,7 +171,7 @@ class TestOrchestrator(unittest.TestCase):
         orchestrator = Orchestrator(gantry_config_dict)
         results = orchestrator.run()
 
-        # 4 views // 2 cameras = 2 positions
+        # steps = 2 positions
         self.assertEqual(len(results), 2)
         task_0_context, task_0_config = results[0]
         task_1_context, task_1_config = results[1]

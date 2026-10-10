@@ -6,6 +6,7 @@ from gui.viewmodels.decorators import (
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
+    StepAndShootProcedureViewModel,
     SpectProcedureViewModel,
     PetProcedureViewModel,
     CustomSweepProcedureViewModel,
@@ -33,6 +34,7 @@ __all__ = [
     'IViewModelWithPropertyChanged',
     'SceneViewModel',
     'BaseProcedureViewModel',
+    'StepAndShootProcedureViewModel',
     'SpectProcedureViewModel',
     'PetProcedureViewModel',
     'CustomSweepProcedureViewModel',

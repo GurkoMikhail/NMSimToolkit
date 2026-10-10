@@ -17,6 +17,7 @@ from gui.controllers.stream_handlers import create_gui_stream_handler
 from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
+    StepAndShootProcedureViewModel,
     SpectProcedureViewModel,
     PetProcedureViewModel,
     CustomSweepProcedureViewModel,
@@ -124,7 +125,7 @@ class OrchestratorSession(QObject):
     ) -> None:
         super().__init__(parent)
         self.scene_vm = scene_vm
-        self.procedure_vm = procedure_vm or SpectProcedureViewModel()
+        self.procedure_vm = procedure_vm or StepAndShootProcedureViewModel()
         if stop_time is not None:
             self.stop_time = float(stop_time)
         self.data_manager_vm = data_manager_vm or DataManagerViewModel()
@@ -139,6 +140,7 @@ class OrchestratorSession(QObject):
         self._is_running: bool = False
         self._is_paused: bool = False
         self._is_focused_paused: bool = False
+        self._is_generating_jobs: bool = False
 
         self._worker_thread: Optional[_OrchestratorWorkerThread] = None
         self._ipc_receiver: Optional[IPCReceiver] = None
@@ -169,8 +171,8 @@ class OrchestratorSession(QObject):
     @property
     def stop_time(self) -> float:
         """Время экспозиции/моделирования, определяемое активной процедурой (SSOT)."""
-        if isinstance(self.procedure_vm, SpectProcedureViewModel):
-            return float(self.procedure_vm.time_per_view)
+        if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
+            return float(self.procedure_vm.time_per_step)
         elif isinstance(self.procedure_vm, PetProcedureViewModel):
             return float(self.procedure_vm.time_per_frame)
         return 1.0
@@ -179,20 +181,23 @@ class OrchestratorSession(QObject):
     def stop_time(self, new_stop_time: float) -> None:
         """Синхронизация времени с активной моделью процедуры."""
         validated_time = max(0.001, float(new_stop_time))
-        if isinstance(self.procedure_vm, SpectProcedureViewModel):
-            self.procedure_vm.time_per_view = validated_time
+        if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
+            self.procedure_vm.time_per_step = validated_time
         elif isinstance(self.procedure_vm, PetProcedureViewModel):
             self.procedure_vm.time_per_frame = validated_time
 
     def _get_stop_time_cfg(self) -> Any:
         """Вычисляет конфигурацию времени остановки для экспортера ядра."""
-        if isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
+        if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
+            all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
+            if "stop_time" in all_sweep_vars:
+                return "${stop_time} s"
+            return float(self.procedure_vm.time_per_step) * units.s
+        elif isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
             all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
             if "stop_time" in all_sweep_vars:
                 return "${stop_time} s"
             return 1.0 * units.s
-        elif isinstance(self.procedure_vm, SpectProcedureViewModel):
-            return float(self.procedure_vm.time_per_view) * units.s
         elif isinstance(self.procedure_vm, PetProcedureViewModel):
             return float(self.procedure_vm.time_per_frame) * units.s
         return 1.0 * units.s
@@ -242,46 +247,61 @@ class OrchestratorSession(QObject):
         """
         Генерация плоского списка задач симуляции на основе геометрии сцены и активной процедуры.
         """
+        if self._is_generating_jobs:
+            return self._jobs
+
         if self.scene_vm is None or self.scene_vm.root_vm is None:
             self._jobs = []
             self.jobs_generated.emit([])
             return []
 
-        # Синхронизация геометрии процедуры со сценой перед экспортом
-        self.procedure_vm.sync_with_scene(self.scene_vm)
+        self._is_generating_jobs = True
+        try:
+            # Синхронизация геометрии процедуры со сценой перед экспортом
+            self.procedure_vm.sync_with_scene(self.scene_vm)
 
-        # Сборка базовой конфигурации
-        root_core = self.scene_vm.root_vm.core_node
-        start_time_cfg: Any = 0.0 * units.ns
-        stop_time_cfg: Any = self._get_stop_time_cfg()
-        if isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
-            all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
-            if "start_time" in all_sweep_vars:
-                start_time_cfg = "${start_time} s"
+            # Сборка базовой конфигурации
+            root_core = self.scene_vm.root_vm.core_node
+            start_time_cfg: Any = 0.0 * units.ns
+            stop_time_cfg: Any = self._get_stop_time_cfg()
+            if isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
+                all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
+                if "start_time" in all_sweep_vars:
+                    start_time_cfg = "${start_time} s"
 
-        sim_mgr_cfg = SimulationManagerConfig(
-            particles_number=self.particles_number,
-            start_time=start_time_cfg,
-            stop_time=stop_time_cfg,
-            min_energy=self.min_energy * units.keV,
-        )
-        data_mgr_cfg = self.data_manager_vm.to_config()
+            sim_mgr_cfg = SimulationManagerConfig(
+                particles_number=self.particles_number,
+                start_time=start_time_cfg,
+                stop_time=stop_time_cfg,
+                min_energy=self.min_energy * units.keV,
+            )
+            data_mgr_cfg = self.data_manager_vm.to_config()
 
-        dist_registry = self.scene_vm.distribution_registry if self.scene_vm else None
-        sim_config = SceneExporter.export_to_config(
-            root_node=root_core,
-            simulation_manager_cfg=sim_mgr_cfg,
-            data_manager_cfg=data_mgr_cfg,
-            distribution_registry=dist_registry,
-            pool_size=self.pool_size,
-        )
-        sim_config.protocol = self.procedure_vm.to_config()
+            dist_registry = self.scene_vm.distribution_registry if self.scene_vm else None
+            slots_reg = self.scene_vm.slots_registry if self.scene_vm else None
+            bindings_reg = (
+                self.procedure_vm.bindings_registry
+                if (self.procedure_vm and self.procedure_vm.bindings_registry)
+                else (self.scene_vm.bindings_registry if self.scene_vm else None)
+            )
+            sim_config = SceneExporter.export_to_config(
+                root_node=root_core,
+                simulation_manager_cfg=sim_mgr_cfg,
+                data_manager_cfg=data_mgr_cfg,
+                distribution_registry=dist_registry,
+                slots_registry=slots_reg,
+                bindings_registry=bindings_reg,
+                pool_size=self.pool_size,
+            )
+            sim_config.protocol = self.procedure_vm.to_config()
 
-        orchestrator = Orchestrator(sim_config)
-        sweep_config = orchestrator.compile_protocol()
-        self._jobs = orchestrator._generate_job_list(sweep_config)
-        self.jobs_generated.emit(self._jobs)
-        return self._jobs
+            orchestrator = Orchestrator(sim_config)
+            sweep_config = orchestrator.compile_protocol()
+            self._jobs = orchestrator._generate_job_list(sweep_config)
+            self.jobs_generated.emit(self._jobs)
+            return self._jobs
+        finally:
+            self._is_generating_jobs = False
 
     def start(self) -> None:
         """
@@ -321,11 +341,19 @@ class OrchestratorSession(QObject):
         )
         data_mgr_cfg = self.data_manager_vm.to_config()
         dist_registry = self.scene_vm.distribution_registry if self.scene_vm else None
+        slots_reg = self.scene_vm.slots_registry if self.scene_vm else None
+        bindings_reg = (
+            self.procedure_vm.bindings_registry
+            if (self.procedure_vm and self.procedure_vm.bindings_registry)
+            else (self.scene_vm.bindings_registry if self.scene_vm else None)
+        )
         sim_config = SceneExporter.export_to_config(
             root_node=root_core,
             simulation_manager_cfg=sim_mgr_cfg,
             data_manager_cfg=data_mgr_cfg,
             distribution_registry=dist_registry,
+            slots_registry=slots_reg,
+            bindings_registry=bindings_reg,
             pool_size=self.pool_size,
         )
         sim_config.protocol = self.procedure_vm.to_config()

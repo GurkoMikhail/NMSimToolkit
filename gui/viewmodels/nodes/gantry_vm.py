@@ -33,6 +33,8 @@ class GantryViewModel(NodeViewModel):
     def __init__(self, core_node: GantryNode, parent_vm: Optional[NodeViewModel] = None) -> None:
         super().__init__(core_node, parent_vm)
         self._procedure_ref: Optional[weakref.ref] = None
+        self.bindings.setdefault('gantry_angle', 'gantry_angle')
+        self.bindings.setdefault('rotation.alpha', 'gantry_angle')
 
     @property
     def procedure_vm(self) -> Optional[Any]:

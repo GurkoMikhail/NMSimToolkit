@@ -135,11 +135,11 @@ class TestGuiModularization(unittest.TestCase):
         received_procs = []
         widget.procedure_changed.connect(lambda p: received_procs.append(p))
 
-        # Переключаем комбобокс на ПЭТ
+        # Переключаем комбобокс на Пользовательский скан (Custom Sweep)
         widget.combo_type.setCurrentIndex(1)
         self.assertEqual(len(received_procs), 1)
-        self.assertIsInstance(received_procs[0], PetProcedureViewModel)
-        self.assertIsInstance(widget.active_procedure, PetProcedureViewModel)
+        self.assertIsInstance(received_procs[0], CustomSweepProcedureViewModel)
+        self.assertIsInstance(widget.active_procedure, CustomSweepProcedureViewModel)
 
     def test_data_handler_list_widget(self) -> None:
         """

@@ -12,7 +12,6 @@ import numpy as np
 from core.config.models import (
     CustomSweepProtocolConfig,
     StepAndShootProtocolConfig,
-    SpectProtocolConfig,
 )
 
 
@@ -33,44 +32,38 @@ class SweepCompiler:
         if isinstance(protocol, CustomSweepProtocolConfig):
             return protocol
 
-        if isinstance(protocol, (StepAndShootProtocolConfig, SpectProtocolConfig)):
-            cameras_count = max(1, int(protocol.gamma_cameras))
-            total_views = max(1, int(protocol.views))
-            positions_count = max(1, total_views // cameras_count)
+        if isinstance(protocol, StepAndShootProtocolConfig):
+            steps = max(1, int(protocol.steps))
             endpoint = bool(protocol.endpoint)
             angles_list = np.linspace(
                 float(protocol.start_angle),
                 float(protocol.end_angle),
-                positions_count,
+                steps,
                 endpoint=endpoint,
             ).tolist()
-            time_per_view_val = float(protocol.time_per_view)
+            time_per_step_val = float(protocol.time_per_step)
 
             zipped_variables: Dict[str, List[float]] = {
                 "gantry_angle": angles_list,
                 "current_angle": angles_list,
-                "current_time": [time_per_view_val] * positions_count,
+                "step_time": [time_per_step_val] * steps,
+                "current_time": [time_per_step_val] * steps,
             }
 
-            if protocol.head_angles is not None:
-                for head_index, head_offset in enumerate(protocol.head_angles):
-                    zipped_variables[f"head_{head_index}_angle"] = [
-                        float(angle_value + head_offset) for angle_value in angles_list
-                    ]
-            elif cameras_count > 1:
-                step_offset = (
-                    float(protocol.end_angle - protocol.start_angle) / max(1, cameras_count - 1)
-                    if endpoint
-                    else float(protocol.end_angle - protocol.start_angle) / cameras_count
-                )
-                for head_index in range(cameras_count):
-                    zipped_variables[f"head_{head_index}_angle"] = [
-                        float(angle_value + step_offset * head_index)
-                        for angle_value in angles_list
-                    ]
+            if protocol.radius is not None:
+                if isinstance(protocol.radius, list):
+                    radius_list = [float(rad_val) for rad_val in protocol.radius]
+                else:
+                    radius_list = [float(protocol.radius)] * steps
+                zipped_variables["radius"] = radius_list
+
+            if protocol.zipped_variables:
+                for var_key, var_vals in protocol.zipped_variables.items():
+                    if var_key not in zipped_variables:
+                        zipped_variables[var_key] = [float(val) for val in var_vals]
 
             return CustomSweepProtocolConfig(
-                grid_variables={},
+                grid_variables=dict(protocol.grid_variables),
                 zipped_variables=zipped_variables,
             )
 

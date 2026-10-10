@@ -17,6 +17,9 @@ class ISpectProtocolConfig(Protocol):
     endpoint: bool
 
 
+from core.config.models import StepAndShootProtocolConfig
+
+
 def compute_spect_poses(
     views_or_protocol: Any,
     gamma_cameras: int = 1,
@@ -28,9 +31,16 @@ def compute_spect_poses(
     """
     Вычисляет список углов для всех детекторных головок на каждом шаге гантри ОФЭКТ.
     Возвращает список позиций гантри, где каждая позиция — список углов [head_0, head_1, ..., head_{N-1}].
-    Поддерживает передачу как объекта протокола ISpectProtocolConfig, так и скалярных параметров.
+    Поддерживает передачу как объекта протокола StepAndShootProtocolConfig / ISpectProtocolConfig, так и скалярных параметров.
     """
-    if isinstance(views_or_protocol, ISpectProtocolConfig):
+    if isinstance(views_or_protocol, StepAndShootProtocolConfig):
+        positions_count = max(1, int(views_or_protocol.steps))
+        cameras_count = max(1, int(gamma_cameras))
+        start_angle_deg = float(np.degrees(views_or_protocol.start_angle))
+        end_angle_deg = float(np.degrees(views_or_protocol.end_angle))
+        endpoint = bool(views_or_protocol.endpoint)
+        total_views = positions_count * cameras_count
+    elif isinstance(views_or_protocol, ISpectProtocolConfig):
         total_views = int(views_or_protocol.views)
         cameras_count = max(1, int(views_or_protocol.gamma_cameras))
         start_angle_deg = float(np.degrees(views_or_protocol.start_angle))
@@ -41,11 +51,11 @@ def compute_spect_poses(
             else None
         )
         endpoint = bool(views_or_protocol.endpoint)
+        positions_count = max(1, total_views // cameras_count)
     else:
         total_views = int(views_or_protocol)
         cameras_count = max(1, int(gamma_cameras))
-
-    positions_count = max(1, total_views // cameras_count)
+        positions_count = max(1, total_views // cameras_count)
     base_angles = np.linspace(start_angle_deg, end_angle_deg, positions_count, endpoint=endpoint)
     if head_angle_offsets is not None and len(head_angle_offsets) == cameras_count:
         offsets = head_angle_offsets

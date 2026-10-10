@@ -50,17 +50,55 @@ class Source(CompositeNode):
         self._distribution = np.empty((0, 0, 0), dtype=Float)
         self.distribution = dist_array
 
-        energy = [[energy, Float(1.0)], ] if not isinstance(energy, list) else energy
-        energy_arr = np.array(energy)
-        self.energy = np.zeros(energy_arr.shape[0], dtype=[("energy", Float), ("probability", Float)])
-        self.energy["energy"] = cast(NDArray[Float], energy_arr[:, 0])
-        self.energy["probability"] = energy_arr[:, 1]
-        en_prob_sum = np.sum(self.energy["probability"])
-        if en_prob_sum > 0:
-            self.energy["probability"] /= en_prob_sum
+        self._energy: np.ndarray = np.empty(0, dtype=[("energy", Float), ("probability", Float)])
+        self.energy = energy
 
         self.half_life = half_life
         self.rng = np.random.default_rng() if rng is None else rng
+
+    @property
+    def energy(self) -> np.ndarray:
+        """
+        Спектр энергии частиц источника в виде структурированного массива
+        с полями 'energy' (МэВ) и 'probability' (нормированная вероятность, sum(p) == 1.0).
+        """
+        return self._energy
+
+    @energy.setter
+    def energy(self, value: Any) -> None:
+        if isinstance(value, np.ndarray) and value.dtype.names is not None and "energy" in value.dtype.names and "probability" in value.dtype.names:
+            self._energy = value.copy()
+            en_prob_sum = np.sum(self._energy["probability"])
+            if en_prob_sum > 0:
+                self._energy["probability"] /= en_prob_sum
+            return
+
+        if not isinstance(value, (list, tuple, np.ndarray)):
+            energy_list = [[float(value), 1.0]]
+        else:
+            raw_list = list(value)
+            if len(raw_list) == 0:
+                energy_list = [[float(140.5 * units.keV), 1.0]]
+            elif all(isinstance(item, (int, float, np.floating, np.integer)) for item in raw_list):
+                energy_list = [[float(item), 1.0] for item in raw_list]
+            else:
+                energy_list = raw_list
+
+        energy_arr = np.array(energy_list, dtype=Float)
+        if energy_arr.ndim == 1:
+            energy_arr = energy_arr.reshape(-1, 1)
+        if energy_arr.shape[1] == 1:
+            weights = np.ones((energy_arr.shape[0], 1), dtype=Float)
+            energy_arr = np.hstack([energy_arr, weights])
+
+        self._energy = np.zeros(energy_arr.shape[0], dtype=[("energy", Float), ("probability", Float)])
+        self._energy["energy"] = cast(NDArray[Float], energy_arr[:, 0])
+        self._energy["probability"] = energy_arr[:, 1]
+        en_prob_sum = np.sum(self._energy["probability"])
+        if en_prob_sum > 0:
+            self._energy["probability"] /= en_prob_sum
+        else:
+            self._energy["probability"] = 1.0 / len(self._energy)
 
     @property
     def distribution(self) -> NDArray[Float]:

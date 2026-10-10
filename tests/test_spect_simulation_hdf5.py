@@ -12,7 +12,7 @@ from core.scene.gamma_camera_node import GammaCameraNode
 from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from core.geometry.spect_kinematics import compute_spect_poses
 from core.materials.materials import Material
-from core.config.models import SpectProtocolConfig, StepAndShootProtocolConfig
+from core.config.models import StepAndShootProtocolConfig
 from core.config.orchestrator import Orchestrator
 from PySide6.QtWidgets import QApplication
 from core.data.data_manager import DataManager
@@ -48,19 +48,13 @@ class TestSpectSimulationHDF5(unittest.TestCase):
         """
         Проверка компиляции протокола ОФЭКТ с 4 детекторными головками (сдвиг 90 градусов).
         """
-        spect_proto = SpectProtocolConfig(
-            views=16,
+        poses = compute_spect_poses(
+            views_or_protocol=16,
             gamma_cameras=4,
-            head_angles=["0 deg", "90 deg", "180 deg", "270 deg"],
-            start_angle="0 deg",
-            end_angle="360 deg",
-            orbit_radius="250 mm",
-            time_per_view="1 s"
+            head_angle_offsets=[0.0, 90.0, 180.0, 270.0],
+            start_angle_deg=0.0,
+            end_angle_deg=360.0,
         )
-        self.assertEqual(spect_proto.gamma_cameras, 4)
-        self.assertEqual(len(spect_proto.head_angles), 4)
-
-        poses = compute_spect_poses(spect_proto)
         self.assertEqual(len(poses), 4)
         self.assertEqual(len(poses[0]), 4)
 

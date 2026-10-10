@@ -32,6 +32,7 @@ class NodeViewModel(QObject):
         self.core_node = core_node
         self.parent_vm = parent_vm
         self.children: List['NodeViewModel'] = []
+        self.bindings: dict[str, str] = {}
         self._self_kinematic_constraint: Optional[IKinematicConstraint] = None
         self._default_child_kinematic_constraint: Optional[IKinematicConstraint] = None
         self._child_kinematic_constraints: dict[int, Optional[IKinematicConstraint]] = {}

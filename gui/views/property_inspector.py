@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLineEdit, QLabel, QSpinBox, QDoubleSpinBox, QComboBox,
     QSlider, QScrollArea, QPushButton, QCheckBox, QFileDialog,
-    QTableWidget, QTableWidgetItem, QHeaderView, QDialog
+    QTableWidget, QTableWidgetItem, QHeaderView, QDialog,
+    QInputDialog, QMessageBox
 )
 
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
@@ -28,10 +29,12 @@ from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
 from gui.viewport_3d.transform_gizmo import GizmoAxis, GizmoMode
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
+    StepAndShootProcedureViewModel,
     SpectProcedureViewModel,
     PetProcedureViewModel,
     CustomSweepProcedureViewModel,
 )
+from gui.views.widgets import BindableDoubleField, GridVariableChipsRow, GridVariableWidget
 from gui.viewmodels.data_handler_viewmodel import (
     BaseDataHandlerViewModel,
     DirectStreamHandlerViewModel,
@@ -63,13 +66,19 @@ class PropertyInspector(QWidget):
         super().__init__(parent)
         self.current_vm: Optional[NodeViewModel] = None
         self.scene_vm: Optional[SceneViewModel] = None
+        self.procedure_vm: Optional[BaseProcedureViewModel] = None
         self._sensitive_conn: Optional[Any] = None
         self._is_updating_ui: bool = False
         self._min_buffer_capacity: int = 1
+        self._grid_var_widgets: dict[str, GridVariableChipsRow] = {}
 
         self._init_ui()
         if scene_vm is not None:
             self.set_scene_viewmodel(scene_vm)
+
+    def set_procedure_viewmodel(self, procedure_vm: Optional[BaseProcedureViewModel]) -> None:
+        """Привязка активной модели процедуры для инспектирования параметров протокола."""
+        self.procedure_vm = procedure_vm
 
     def set_scene_viewmodel(self, scene_vm: Optional[SceneViewModel]) -> None:
         """Привязка модели сцены для доступа к узлам и единому реестру детекторов."""
@@ -123,13 +132,13 @@ class PropertyInspector(QWidget):
         self.transform_group = QGroupBox("Положение и ориентация")
         trans_form = QFormLayout(self.transform_group)
 
-        self.spin_x = self._create_coord_spinbox(self._on_transform_changed)
-        self.spin_y = self._create_coord_spinbox(self._on_transform_changed)
-        self.spin_z = self._create_coord_spinbox(self._on_transform_changed)
+        self.spin_x = self._create_coord_spinbox(self._on_transform_changed, "translation.x")
+        self.spin_y = self._create_coord_spinbox(self._on_transform_changed, "translation.y")
+        self.spin_z = self._create_coord_spinbox(self._on_transform_changed, "translation.z")
 
-        self.spin_rot_x = self._create_rot_spinbox(self._on_transform_changed)
-        self.spin_rot_y = self._create_rot_spinbox(self._on_transform_changed)
-        self.spin_rot_z = self._create_rot_spinbox(self._on_transform_changed)
+        self.spin_rot_x = self._create_rot_spinbox(self._on_transform_changed, "rotation.alpha")
+        self.spin_rot_y = self._create_rot_spinbox(self._on_transform_changed, "rotation.beta")
+        self.spin_rot_z = self._create_rot_spinbox(self._on_transform_changed, "rotation.gamma")
 
         trans_form.addRow("Позиция X (мм):", self.spin_x)
         trans_form.addRow("Позиция Y (мм):", self.spin_y)
@@ -342,18 +351,39 @@ class PropertyInspector(QWidget):
         self.combo_rad_type.currentTextChanged.connect(self._on_source_rad_type_changed)
         src_form.addRow("Тип излучения:", self.combo_rad_type)
 
-        self.spin_source_energy = QDoubleSpinBox()
-        self.spin_source_energy.setRange(1.0, 10000.0)
-        self.spin_source_energy.setSingleStep(5.0)
-        self.spin_source_energy.setValue(140.5)
-        self.spin_source_energy.valueChanged.connect(self._on_source_energy_changed)
-        src_form.addRow("Энергия (кэВ):", self.spin_source_energy)
 
-        self.spin_source_activity = QDoubleSpinBox()
-        self.spin_source_activity.setRange(0.001, 100000.0)
-        self.spin_source_activity.setSingleStep(10.0)
+        # Таблица дискретного спектра излучения [Энергия (кэВ), Вес / Доля]
+        self.tbl_source_spectrum = QTableWidget(0, 2)
+        self.tbl_source_spectrum.setHorizontalHeaderLabels(["Энергия (кэВ)", "Вес / Доля"])
+        self.tbl_source_spectrum.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tbl_source_spectrum.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tbl_source_spectrum.setMinimumHeight(120)
+        self.tbl_source_spectrum.cellChanged.connect(self._on_spectrum_cell_changed)
+
+        spectrum_btn_layout = QHBoxLayout()
+        self.btn_add_spectrum_line = QPushButton("➕ Добавить пик")
+        self.btn_add_spectrum_line.clicked.connect(self._on_add_spectrum_row)
+        self.btn_remove_spectrum_line = QPushButton("➖ Удалить")
+        self.btn_remove_spectrum_line.clicked.connect(self._on_remove_spectrum_row)
+        spectrum_btn_layout.addWidget(self.btn_add_spectrum_line)
+        spectrum_btn_layout.addWidget(self.btn_remove_spectrum_line)
+
+        src_form.addRow("Спектр излучения:", self.tbl_source_spectrum)
+        src_form.addRow("", spectrum_btn_layout)
+
+        self.spin_source_activity = BindableDoubleField(
+            min_val=0.001,
+            max_val=100000.0,
+            step=10.0,
+            decimals=3,
+        )
         self.spin_source_activity.setValue(100.0)
+        self.spin_source_activity.set_variable_provider(self._get_protocol_variables)
+        self.spin_source_activity.set_variable_created_callback(self._on_variable_created)
         self.spin_source_activity.valueChanged.connect(self._on_source_activity_changed)
+        self.spin_source_activity.bindingChanged.connect(
+            lambda var_name: self._on_field_binding_changed("activity", var_name)
+        )
         src_form.addRow("Активность (МБк):", self.spin_source_activity)
 
         self.spin_source_half_life = QDoubleSpinBox()
@@ -454,11 +484,17 @@ class PropertyInspector(QWidget):
         self.gantry_group = QGroupBox("Параметры станины томографа (Gantry)")
         gantry_form = QFormLayout(self.gantry_group)
 
-        self.spin_gantry_angle = QDoubleSpinBox()
-        self.spin_gantry_angle.setRange(0.0, 360.0)
-        self.spin_gantry_angle.setSingleStep(5.0)
-        self.spin_gantry_angle.setSuffix(" °")
+        self.spin_gantry_angle = BindableDoubleField(
+            min_val=0.0,
+            max_val=360.0,
+            step=5.0,
+            suffix=" °",
+            decimals=2,
+        )
+        self.spin_gantry_angle.set_variable_provider(self._get_protocol_variables)
+        self.spin_gantry_angle.set_variable_created_callback(self._on_variable_created)
         self.spin_gantry_angle.valueChanged.connect(self._on_gantry_angle_changed)
+        self.spin_gantry_angle.bindingChanged.connect(self._on_gantry_binding_changed)
 
         self.chk_wireframe_visible = QCheckBox("Отображать направляющие (Wireframe)")
         self.chk_wireframe_visible.toggled.connect(self._on_gantry_wireframe_toggled)
@@ -499,19 +535,31 @@ class PropertyInspector(QWidget):
             for name in ["Air", "Vacuum", "Water"]:
                 self.combo_hole_material.addItem(name, name)
 
-    def _create_coord_spinbox(self, callback: Any) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
-        spin.setRange(-5000.0, 5000.0)
-        spin.setSingleStep(1.0)
-        spin.valueChanged.connect(callback)
-        return spin
+    def _create_coord_spinbox(self, callback: Any, prop_name: str) -> BindableDoubleField:
+        field = BindableDoubleField(
+            min_val=-5000.0,
+            max_val=5000.0,
+            step=1.0,
+            decimals=2,
+        )
+        field.set_variable_provider(self._get_protocol_variables)
+        field.set_variable_created_callback(self._on_variable_created)
+        field.valueChanged.connect(callback)
+        field.bindingChanged.connect(lambda var_name, property_key=prop_name: self._on_field_binding_changed(property_key, var_name))
+        return field
 
-    def _create_rot_spinbox(self, callback: Any) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
-        spin.setRange(-180.0, 180.0)
-        spin.setSingleStep(1.0)
-        spin.valueChanged.connect(callback)
-        return spin
+    def _create_rot_spinbox(self, callback: Any, prop_name: str) -> BindableDoubleField:
+        field = BindableDoubleField(
+            min_val=-180.0,
+            max_val=180.0,
+            step=1.0,
+            decimals=2,
+        )
+        field.set_variable_provider(self._get_protocol_variables)
+        field.set_variable_created_callback(self._on_variable_created)
+        field.valueChanged.connect(callback)
+        field.bindingChanged.connect(lambda var_name, property_key=prop_name: self._on_field_binding_changed(property_key, var_name))
+        return field
 
     def _create_size_spinbox(self, callback: Any) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
@@ -527,60 +575,138 @@ class PropertyInspector(QWidget):
         self.lbl_proc_type = QLabel("ОФЭКТ (SPECT)")
         proc_form.addRow("Тип протокола:", self.lbl_proc_type)
 
+        # Контейнер полей пошагового сканирования (Step-and-Shoot)
+        self.step_and_shoot_widget = QWidget()
+        sas_form = QFormLayout(self.step_and_shoot_widget)
+        sas_form.setContentsMargins(0, 0, 0, 0)
+
         self.spin_proc_steps = QSpinBox()
         self.spin_proc_steps.setRange(1, 1024)
         self.spin_proc_steps.setValue(32)
         self.spin_proc_steps.valueChanged.connect(self._on_proc_steps_changed)
-        proc_form.addRow("Число шагов (Steps):", self.spin_proc_steps)
+        sas_form.addRow("Число шагов (Steps):", self.spin_proc_steps)
 
         self.lbl_proc_total_views = QLabel("64")
         self.lbl_proc_total_views.setStyleSheet("color: #a0c0ff; font-weight: bold;")
-        proc_form.addRow("Всего проекций (Total Views):", self.lbl_proc_total_views)
+        sas_form.addRow("Всего проекций (Total Views):", self.lbl_proc_total_views)
 
         self.spin_proc_cameras = QSpinBox()
         self.spin_proc_cameras.setRange(1, 16)
         self.spin_proc_cameras.setValue(2)
         self.spin_proc_cameras.valueChanged.connect(self._on_proc_cameras_changed)
-        proc_form.addRow("Гамма-камер:", self.spin_proc_cameras)
+        sas_form.addRow("Гамма-камер:", self.spin_proc_cameras)
 
-        self.spin_proc_radius = QDoubleSpinBox()
-        self.spin_proc_radius.setRange(10.0, 2000.0)
+        self.spin_proc_radius = BindableDoubleField(
+            min_val=10.0,
+            max_val=2000.0,
+            step=5.0,
+            decimals=2,
+        )
         self.spin_proc_radius.setValue(250.0)
-        self.spin_proc_radius.setSingleStep(5.0)
+        self.spin_proc_radius.set_variable_provider(self._get_protocol_variables)
+        self.spin_proc_radius.set_variable_created_callback(self._on_variable_created)
         self.spin_proc_radius.valueChanged.connect(self._on_proc_radius_changed)
-        proc_form.addRow("Радиус орбиты (мм):", self.spin_proc_radius)
+        self.spin_proc_radius.bindingChanged.connect(
+            lambda var_name: self._on_procedure_binding_changed("radius", var_name)
+        )
+        sas_form.addRow("Радиус орбиты (мм):", self.spin_proc_radius)
 
-        self.spin_proc_time = QDoubleSpinBox()
-        self.spin_proc_time.setRange(0.001, 3600.0)
+        self.spin_proc_time = BindableDoubleField(
+            min_val=0.001,
+            max_val=3600.0,
+            step=0.5,
+            decimals=3,
+        )
         self.spin_proc_time.setValue(1.0)
-        self.spin_proc_time.setSingleStep(0.5)
+        self.spin_proc_time.set_variable_provider(self._get_protocol_variables)
+        self.spin_proc_time.set_variable_created_callback(self._on_variable_created)
         self.spin_proc_time.valueChanged.connect(self._on_proc_time_changed)
-        proc_form.addRow("Время на ракурс (с):", self.spin_proc_time)
+        self.spin_proc_time.bindingChanged.connect(
+            lambda var_name: self._on_procedure_binding_changed("step_time", var_name)
+        )
+        sas_form.addRow("Время на ракурс (с):", self.spin_proc_time)
 
         self.spin_proc_start_angle = QDoubleSpinBox()
         self.spin_proc_start_angle.setRange(0.0, 360.0)
         self.spin_proc_start_angle.setValue(0.0)
         self.spin_proc_start_angle.valueChanged.connect(self._on_proc_start_angle_changed)
-        proc_form.addRow("Начальный угол (°):", self.spin_proc_start_angle)
+        sas_form.addRow("Начальный угол (°):", self.spin_proc_start_angle)
 
         self.spin_proc_end_angle = QDoubleSpinBox()
         self.spin_proc_end_angle.setRange(0.0, 720.0)
         self.spin_proc_end_angle.setValue(360.0)
         self.spin_proc_end_angle.valueChanged.connect(self._on_proc_end_angle_changed)
-        proc_form.addRow("Конечный угол (°):", self.spin_proc_end_angle)
+        sas_form.addRow("Конечный угол (°):", self.spin_proc_end_angle)
 
         self.combo_proc_head_mode = QComboBox()
         self.combo_proc_head_mode.addItems(["Симметричный (360°/N)", "L-режим (90°)", "Пользовательский"])
         self.combo_proc_head_mode.currentTextChanged.connect(self._on_proc_head_mode_changed)
-        proc_form.addRow("Конфигурация головок:", self.combo_proc_head_mode)
+        sas_form.addRow("Конфигурация головок:", self.combo_proc_head_mode)
 
         self.txt_proc_head_angles = QLineEdit()
         self.txt_proc_head_angles.editingFinished.connect(self._on_proc_head_angles_edited)
-        proc_form.addRow("Углы головок (°):", self.txt_proc_head_angles)
+        sas_form.addRow("Углы головок (°):", self.txt_proc_head_angles)
 
         self.chk_proc_endpoint = QCheckBox("Включать конечный угол (endpoint)")
         self.chk_proc_endpoint.toggled.connect(self._on_proc_endpoint_toggled)
-        proc_form.addRow(self.chk_proc_endpoint)
+        sas_form.addRow(self.chk_proc_endpoint)
+
+        proc_form.addRow(self.step_and_shoot_widget)
+
+        # Контейнер таблиц варьируемых переменных протокола (Zipped и Grid)
+        self.custom_sweep_widget = QWidget()
+        cs_layout = QVBoxLayout(self.custom_sweep_widget)
+        cs_layout.setContentsMargins(0, 0, 0, 0)
+        cs_layout.setSpacing(8)
+
+        # 1. Группа связанных переменных (Zipped Sweep, K×M)
+        self.grp_zipped = QGroupBox("Связанные переменные ракурсов (Zipped Variables, K×M)")
+        grp_zipped_layout = QVBoxLayout(self.grp_zipped)
+        grp_zipped_layout.setContentsMargins(4, 6, 4, 6)
+        grp_zipped_layout.setSpacing(4)
+
+        self.tbl_zipped_variables = QTableWidget(0, 0)
+        self.tbl_zipped_variables.setMinimumHeight(130)
+        self.tbl_zipped_variables.cellChanged.connect(self._on_zipped_cell_changed)
+        grp_zipped_layout.addWidget(self.tbl_zipped_variables)
+
+        zipped_btn_layout = QHBoxLayout()
+        self.btn_add_zipped_col = QPushButton("➕ Переменная (столбец)")
+        self.btn_add_zipped_col.clicked.connect(self._on_add_zipped_col_clicked)
+        self.btn_remove_zipped_col = QPushButton("🗑 Удалить столбец")
+        self.btn_remove_zipped_col.clicked.connect(self._on_remove_zipped_col_clicked)
+        self.btn_add_zipped_row = QPushButton("➕ Шаг (строка)")
+        self.btn_add_zipped_row.clicked.connect(self._on_add_zipped_row_clicked)
+        self.btn_remove_zipped_row = QPushButton("➖ Удалить шаг")
+        self.btn_remove_zipped_row.clicked.connect(self._on_remove_zipped_row_clicked)
+
+        zipped_btn_layout.addWidget(self.btn_add_zipped_col)
+        zipped_btn_layout.addWidget(self.btn_remove_zipped_col)
+        zipped_btn_layout.addWidget(self.btn_add_zipped_row)
+        zipped_btn_layout.addWidget(self.btn_remove_zipped_row)
+        grp_zipped_layout.addLayout(zipped_btn_layout)
+
+        cs_layout.addWidget(self.grp_zipped)
+
+        # 2. Группа сеток декартова произведения (Grid Sweep, N×1)
+        self.grp_grid = QGroupBox("Сетки декартова произведения (Grid Variables, N×1)")
+        grp_grid_layout = QVBoxLayout(self.grp_grid)
+        grp_grid_layout.setContentsMargins(4, 6, 4, 6)
+        grp_grid_layout.setSpacing(4)
+
+        self.btn_add_grid_var = QPushButton("➕ Создать Grid-переменную")
+        self.btn_add_grid_var.clicked.connect(self._on_add_grid_var_clicked)
+        grp_grid_layout.addWidget(self.btn_add_grid_var)
+
+        self.grid_vars_container = QWidget()
+        self.grid_vars_layout = QVBoxLayout(self.grid_vars_container)
+        self.grid_vars_layout.setContentsMargins(0, 0, 0, 0)
+        self.grid_vars_layout.setSpacing(6)
+        grp_grid_layout.addWidget(self.grid_vars_container)
+
+        cs_layout.addWidget(self.grp_grid)
+
+        proc_form.addRow(self.custom_sweep_widget)
 
         self.content_layout.addWidget(self.procedure_group)
 
@@ -684,13 +810,33 @@ class PropertyInspector(QWidget):
         self.procedure_group.setVisible(False)
         self.data_handler_group.setVisible(False)
         self.data_manager_group.setVisible(False)
+
+        self.spin_x.unbind()
+        self.spin_y.unbind()
+        self.spin_z.unbind()
+        self.spin_rot_x.unbind()
+        self.spin_rot_y.unbind()
+        self.spin_rot_z.unbind()
+        self.spin_source_activity.unbind()
+        self.spin_gantry_angle.unbind()
+        self.spin_proc_radius.unbind()
+        self.spin_proc_time.unbind()
+
+        self.tbl_source_spectrum.setRowCount(0)
+        self.tbl_zipped_variables.setRowCount(0)
+        self.tbl_zipped_variables.setColumnCount(0)
+        for var_widget in list(self._grid_var_widgets.values()):
+            self.grid_vars_layout.removeWidget(var_widget)
+            var_widget.deleteLater()
+        self._grid_var_widgets.clear()
+
         self._is_updating_ui = False
 
     def update_all_fields(self) -> None:
         """
         Синхронизация всех полей UI со значениями ViewModel.
         """
-        if self.current_vm is None:
+        if self.current_vm is None or self._is_updating_ui:
             return
 
         self._is_updating_ui = True
@@ -852,6 +998,14 @@ class PropertyInspector(QWidget):
             self._update_housing_size_label()
 
         elif is_gantry:
+            bindings = self.current_vm.bindings
+            if not bindings and self.scene_vm is not None and self.current_vm.core_node in self.scene_vm.bindings_registry:
+                bindings = self.scene_vm.bindings_registry[self.current_vm.core_node]
+            bound_var = bindings.get('rotation.alpha') or bindings.get('gantry_angle')
+            if bound_var:
+                self.spin_gantry_angle.bind_variable(bound_var)
+            else:
+                self.spin_gantry_angle.unbind()
             self.spin_gantry_angle.setValue(float(self.current_vm.gantry_angle_deg))
             self.chk_wireframe_visible.setChecked(bool(self.current_vm.wireframe_visible))
 
@@ -859,7 +1013,18 @@ class PropertyInspector(QWidget):
             source_type_index = self.combo_rad_type.findText(self.current_vm.radiation_type)
             if source_type_index >= 0:
                 self.combo_rad_type.setCurrentIndex(source_type_index)
-            self.spin_source_energy.setValue(float(self.current_vm.energy))
+
+            bindings = self.current_vm.bindings
+            if not bindings and self.scene_vm is not None and self.current_vm.core_node in self.scene_vm.bindings_registry:
+                bindings = self.scene_vm.bindings_registry[self.current_vm.core_node]
+
+            self._update_source_spectrum_table()
+
+            b_act = bindings.get('activity')
+            if b_act:
+                self.spin_source_activity.bind_variable(b_act)
+            else:
+                self.spin_source_activity.unbind()
             self.spin_source_activity.setValue(float(self.current_vm.activity))
             self.spin_source_half_life.setValue(float(self.current_vm.half_life))
             self.spin_source_voxel_size.setValue(float(self.current_vm.voxel_size))
@@ -972,6 +1137,59 @@ class PropertyInspector(QWidget):
                             self.spin_rot_z.setValue(float(euler[2]))
             except (ValueError, np.linalg.LinAlgError):
                 pass
+
+            # Синхронизация биндингов пространственных трансформаций
+            bindings = self.current_vm.bindings
+            if not bindings and self.scene_vm is not None and self.current_vm.core_node in self.scene_vm.bindings_registry:
+                bindings = self.scene_vm.bindings_registry[self.current_vm.core_node]
+
+            bx = bindings.get("translation.x") or bindings.get("x")
+            if bx:
+                self.spin_x.bind_variable(bx)
+            else:
+                self.spin_x.unbind()
+
+            by = bindings.get("translation.y") or bindings.get("y") or bindings.get("radius")
+            if not by and isinstance(self.current_vm, GammaCameraViewModel) and self.procedure_vm is not None:
+                if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
+                    by = "radius"
+                elif isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
+                    if "radius" in self.procedure_vm.grid_variables or "radius" in self.procedure_vm.zipped_variables:
+                        by = "radius"
+            if by:
+                self.spin_y.bind_variable(by)
+            else:
+                self.spin_y.unbind()
+
+            bz = bindings.get("translation.z") or bindings.get("z")
+            if bz:
+                self.spin_z.bind_variable(bz)
+            else:
+                self.spin_z.unbind()
+
+            b_alpha = bindings.get("rotation.alpha") or bindings.get("alpha") or bindings.get("gantry_angle")
+            if not b_alpha and isinstance(self.current_vm, GantryViewModel) and self.procedure_vm is not None:
+                if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
+                    b_alpha = "gantry_angle"
+                elif isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
+                    if "gantry_angle" in self.procedure_vm.grid_variables or "gantry_angle" in self.procedure_vm.zipped_variables:
+                        b_alpha = "gantry_angle"
+            if b_alpha:
+                self.spin_rot_x.bind_variable(b_alpha)
+            else:
+                self.spin_rot_x.unbind()
+
+            b_beta = bindings.get("rotation.beta") or bindings.get("beta")
+            if b_beta:
+                self.spin_rot_y.bind_variable(b_beta)
+            else:
+                self.spin_rot_y.unbind()
+
+            b_gamma = bindings.get("rotation.gamma") or bindings.get("gamma")
+            if b_gamma:
+                self.spin_rot_z.bind_variable(b_gamma)
+            else:
+                self.spin_rot_z.unbind()
         finally:
             self._is_updating_ui = old_state
 
@@ -1205,15 +1423,15 @@ class PropertyInspector(QWidget):
                 color_item.setFlags(Qt.ItemIsEnabled)
                 self.tbl_material_mapping.setItem(material_id, 1, color_item)
 
-                combo = QComboBox()
-                combo.addItems(all_materials)
-                combo_idx = combo.findText(material.name)
-                if combo_idx >= 0:
-                    combo.setCurrentIndex(combo_idx)
-                combo.currentTextChanged.connect(
-                    lambda text, m_id=material_id: self._on_mapping_material_changed(m_id, text)
+                material_combo = QComboBox()
+                material_combo.addItems(all_materials)
+                found_index = material_combo.findText(material.name)
+                if found_index >= 0:
+                    material_combo.setCurrentIndex(found_index)
+                material_combo.currentTextChanged.connect(
+                    lambda text, target_material_id=material_id: self._on_mapping_material_changed(target_material_id, text)
                 )
-                self.tbl_material_mapping.setCellWidget(material_id, 2, combo)
+                self.tbl_material_mapping.setCellWidget(material_id, 2, material_combo)
         finally:
             self.tbl_material_mapping.blockSignals(False)
 
@@ -1222,10 +1440,65 @@ class PropertyInspector(QWidget):
             return
         self.current_vm.radiation_type = text
 
-    def _on_source_energy_changed(self, value: float) -> None:
+    def _update_source_spectrum_table(self) -> None:
+        if not isinstance(self.current_vm, SourceViewModel):
+            return
+        self.tbl_source_spectrum.blockSignals(True)
+        try:
+            spectrum = self.current_vm.spectrum
+            self.tbl_source_spectrum.setRowCount(len(spectrum))
+            for row_index, energy_weight_pair in enumerate(spectrum):
+                item_energy = QTableWidgetItem(f"{float(energy_weight_pair[0]):.4f}")
+                item_weight = QTableWidgetItem(f"{float(energy_weight_pair[1]):.4f}")
+                item_energy.setTextAlignment(Qt.AlignCenter)
+                item_weight.setTextAlignment(Qt.AlignCenter)
+                self.tbl_source_spectrum.setItem(row_index, 0, item_energy)
+                self.tbl_source_spectrum.setItem(row_index, 1, item_weight)
+        finally:
+            self.tbl_source_spectrum.blockSignals(False)
+
+    def _on_spectrum_cell_changed(self, row_index: int, column_index: int) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, SourceViewModel):
             return
-        self.current_vm.energy = float(value)
+        new_spectrum: List[List[float]] = []
+        for current_row_index in range(self.tbl_source_spectrum.rowCount()):
+            item_energy = self.tbl_source_spectrum.item(current_row_index, 0)
+            item_weight = self.tbl_source_spectrum.item(current_row_index, 1)
+            try:
+                energy_val = float(item_energy.text().strip()) if item_energy and item_energy.text().strip() else 140.5
+            except ValueError:
+                energy_val = 140.5
+            try:
+                weight_val = float(item_weight.text().strip()) if item_weight and item_weight.text().strip() else 1.0
+            except ValueError:
+                weight_val = 1.0
+            new_spectrum.append([energy_val, weight_val])
+
+        if new_spectrum:
+            self.current_vm.spectrum = new_spectrum
+
+    def _on_add_spectrum_row(self) -> None:
+        if not isinstance(self.current_vm, SourceViewModel):
+            return
+        current_spectrum = list(self.current_vm.spectrum)
+        current_spectrum.append([140.5, 1.0])
+        self.current_vm.spectrum = current_spectrum
+        self._update_source_spectrum_table()
+
+    def _on_remove_spectrum_row(self) -> None:
+        if not isinstance(self.current_vm, SourceViewModel):
+            return
+        current_spectrum = list(self.current_vm.spectrum)
+        selected_rows = sorted({model_index.row() for model_index in self.tbl_source_spectrum.selectedIndexes()}, reverse=True)
+        if not selected_rows and current_spectrum:
+            selected_rows = [len(current_spectrum) - 1]
+        for target_row_index in selected_rows:
+            if 0 <= target_row_index < len(current_spectrum):
+                current_spectrum.pop(target_row_index)
+        if not current_spectrum:
+            current_spectrum = [[140.5, 1.0]]
+        self.current_vm.spectrum = current_spectrum
+        self._update_source_spectrum_table()
 
     def _on_source_activity_changed(self, value: float) -> None:
         if self._is_updating_ui or not isinstance(self.current_vm, SourceViewModel):
@@ -1329,6 +1602,364 @@ class PropertyInspector(QWidget):
         if self._is_updating_ui or not isinstance(self.current_vm, GantryViewModel):
             return
         self.current_vm.wireframe_visible = bool(checked)
+
+    def _on_gantry_binding_changed(self, var_name: str) -> None:
+        self._on_field_binding_changed("rotation.alpha", var_name)
+
+    def _on_field_binding_changed(self, prop_name: str, var_name: str) -> None:
+        """
+        Обработчик изменения привязки произвольного свойства узла сцены.
+        Синхронизирует словарь привязок модели представления, единый реестр активной процедуры и реестр сцены.
+        """
+        if self._is_updating_ui or not isinstance(self.current_vm, NodeViewModel):
+            return
+
+        if var_name:
+            self.current_vm.bindings[prop_name] = str(var_name)
+            if self.procedure_vm is not None:
+                self.procedure_vm.bind_node_property(self.current_vm.core_node, prop_name, str(var_name))
+            if self.scene_vm is not None:
+                if self.current_vm.core_node not in self.scene_vm.bindings_registry:
+                    self.scene_vm.bindings_registry[self.current_vm.core_node] = {}
+                self.scene_vm.bindings_registry[self.current_vm.core_node][prop_name] = str(var_name)
+        else:
+            self.current_vm.bindings.pop(prop_name, None)
+            if self.procedure_vm is not None:
+                self.procedure_vm.unbind_node_property(self.current_vm.core_node, prop_name)
+            if self.scene_vm is not None and self.current_vm.core_node in self.scene_vm.bindings_registry:
+                self.scene_vm.bindings_registry[self.current_vm.core_node].pop(prop_name, None)
+
+        # Синхронизация между spin_gantry_angle и spin_rot_x для станины GantryViewModel
+        if isinstance(self.current_vm, GantryViewModel) and prop_name in ("rotation.alpha", "alpha", "gantry_angle"):
+            old_updating = self._is_updating_ui
+            self._is_updating_ui = True
+            try:
+                if var_name:
+                    self.current_vm.bindings["gantry_angle"] = str(var_name)
+                    self.current_vm.bindings["rotation.alpha"] = str(var_name)
+                    if self.procedure_vm is not None:
+                        self.procedure_vm.bind_node_property(self.current_vm.core_node, "gantry_angle", str(var_name))
+                        self.procedure_vm.bind_node_property(self.current_vm.core_node, "rotation.alpha", str(var_name))
+                    if self.scene_vm is not None:
+                        self.scene_vm.bindings_registry[self.current_vm.core_node]["gantry_angle"] = str(var_name)
+                        self.scene_vm.bindings_registry[self.current_vm.core_node]["rotation.alpha"] = str(var_name)
+                    self.spin_gantry_angle.bind_variable(var_name)
+                    self.spin_rot_x.bind_variable(var_name)
+                else:
+                    self.current_vm.bindings.pop("gantry_angle", None)
+                    self.current_vm.bindings.pop("rotation.alpha", None)
+                    self.current_vm.bindings.pop("alpha", None)
+                    if self.procedure_vm is not None:
+                        self.procedure_vm.unbind_node_property(self.current_vm.core_node, "gantry_angle")
+                        self.procedure_vm.unbind_node_property(self.current_vm.core_node, "rotation.alpha")
+                        self.procedure_vm.unbind_node_property(self.current_vm.core_node, "alpha")
+                    if self.scene_vm is not None and self.current_vm.core_node in self.scene_vm.bindings_registry:
+                        self.scene_vm.bindings_registry[self.current_vm.core_node].pop("gantry_angle", None)
+                        self.scene_vm.bindings_registry[self.current_vm.core_node].pop("rotation.alpha", None)
+                        self.scene_vm.bindings_registry[self.current_vm.core_node].pop("alpha", None)
+                    self.spin_gantry_angle.unbind()
+                    self.spin_rot_x.unbind()
+            finally:
+                self._is_updating_ui = old_updating
+
+    def _on_procedure_binding_changed(self, prop_name: str, var_name: str) -> None:
+        """
+        Обработчик изменения привязки свойства протокола/процедуры.
+        """
+        if self._is_updating_ui or not isinstance(self.procedure_vm, BaseProcedureViewModel):
+            return
+        if var_name:
+            self.procedure_vm.bindings[prop_name] = str(var_name)
+        else:
+            self.procedure_vm.bindings.pop(prop_name, None)
+
+    def _on_variable_created(self, var_name: str) -> None:
+        """
+        Обработчик создания новой переменной сканирования пользователем через UI BindableDoubleField.
+        """
+        if isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
+            clean = str(var_name).strip().replace(" ", "_")
+            if clean not in self.procedure_vm.all_variables:
+                self.procedure_vm.set_variable(clean, [0.0], sweep_type="grid")
+                if self.current_vm is self.procedure_vm:
+                    self._populate_grid_tables(self.procedure_vm)
+
+    def _get_protocol_variables(self) -> list[str]:
+        if self.procedure_vm is not None:
+            variables_dict = self.procedure_vm.get_variables()
+            if variables_dict:
+                return [var_key for var_key in variables_dict.keys() if var_key not in ("current_angle", "current_time")]
+        return ["gantry_angle", "radius", "step_time"]
+
+    def _populate_zipped_table(self, procedure_vm: CustomSweepProcedureViewModel) -> None:
+        """Заполнение расширяемой матрицы KxM связанных переменных."""
+        self.tbl_zipped_variables.blockSignals(True)
+        try:
+            zipped_dict = procedure_vm.zipped_variables
+            if not zipped_dict:
+                self.tbl_zipped_variables.setRowCount(0)
+                self.tbl_zipped_variables.setColumnCount(0)
+                return
+
+            if isinstance(procedure_vm, StepAndShootProcedureViewModel):
+                standard_order = ["gantry_angle", "radius", "step_time"]
+                other_columns = [
+                    column_key
+                    for column_key in zipped_dict.keys()
+                    if column_key not in standard_order
+                    and column_key not in ("current_angle", "current_time")
+                ]
+                column_names = [
+                    column_name
+                    for column_name in standard_order
+                    if column_name in zipped_dict
+                ] + other_columns
+            else:
+                column_names = [
+                    column_key
+                    for column_key in zipped_dict.keys()
+                    if column_key not in ("current_angle", "current_time")
+                ]
+
+            row_count = len(next(iter(zipped_dict.values()))) if zipped_dict else 0
+            self.tbl_zipped_variables.setColumnCount(len(column_names))
+            self.tbl_zipped_variables.setRowCount(row_count)
+            self.tbl_zipped_variables.setVerticalHeaderLabels([f"Шаг {step_index + 1}" for step_index in range(row_count)])
+
+            for column_index, column_name in enumerate(column_names):
+                is_read_only = (
+                    isinstance(procedure_vm, StepAndShootProcedureViewModel)
+                    and column_name in ("gantry_angle", "step_time")
+                )
+                header_title = f"🔒 {column_name}" if is_read_only else column_name
+                header_item = QTableWidgetItem(header_title)
+                header_item.setData(Qt.UserRole, column_name)
+                if is_read_only:
+                    header_item.setToolTip(
+                        "Стандартная переменная протокола: вычисляется из кинематических параметров формы сканирования"
+                    )
+                self.tbl_zipped_variables.setHorizontalHeaderItem(column_index, header_item)
+
+                value_list = zipped_dict.get(column_name, [])
+                for row_index in range(row_count):
+                    cell_value = value_list[row_index] if row_index < len(value_list) else 0.0
+                    table_item = QTableWidgetItem(f"{float(cell_value):.4f}")
+                    table_item.setTextAlignment(Qt.AlignCenter)
+                    if is_read_only:
+                        table_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                        table_item.setForeground(QColor("#888888"))
+                        table_item.setBackground(QColor("#252830"))
+                        table_item.setToolTip(
+                            "Стандартная переменная протокола: вычисляется из кинематических параметров формы сканирования"
+                        )
+                    else:
+                        table_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+                    self.tbl_zipped_variables.setItem(row_index, column_index, table_item)
+        finally:
+            self.tbl_zipped_variables.blockSignals(False)
+
+    def _populate_grid_tables(self, procedure_vm: CustomSweepProcedureViewModel) -> None:
+        """Создание и синхронизация чипс-виджетов для каждой Grid-переменной."""
+        grid_dict = procedure_vm.grid_variables
+        current_names = set(grid_dict.keys())
+        existing_names = set(self._grid_var_widgets.keys())
+
+        # 1. Удаляем виджеты переменных, которых больше нет
+        for removed_name in (existing_names - current_names):
+            variable_widget = self._grid_var_widgets.pop(removed_name)
+            self.grid_vars_layout.removeWidget(variable_widget)
+            variable_widget.deleteLater()
+
+        # Очищаем информационный лейбл "нет переменных", если он присутствовал
+        for layout_index in reversed(range(self.grid_vars_layout.count())):
+            layout_item = self.grid_vars_layout.itemAt(layout_index)
+            child_widget = layout_item.widget() if layout_item else None
+            if isinstance(child_widget, QLabel) and not isinstance(child_widget, (GridVariableChipsRow, GridVariableWidget)):
+                self.grid_vars_layout.takeAt(layout_index)
+                child_widget.deleteLater()
+
+        if not grid_dict:
+            lbl_empty = QLabel("Нет созданных Grid-переменных.")
+            lbl_empty.setStyleSheet("color: #888888; font-style: italic;")
+            self.grid_vars_layout.addWidget(lbl_empty)
+            return
+
+        # 2. Обновляем существующие или создаем новые чипс-виджеты
+        for variable_name, values_list in grid_dict.items():
+            if variable_name in self._grid_var_widgets:
+                self._grid_var_widgets[variable_name].set_values(values_list)
+            else:
+                grid_chips_widget = GridVariableChipsRow(variable_name, values_list, parent=self.grid_vars_container)
+                grid_chips_widget.values_changed.connect(self._on_grid_var_values_changed)
+                grid_chips_widget.variable_deleted.connect(self._on_grid_var_deleted)
+                self.grid_vars_layout.addWidget(grid_chips_widget)
+                self._grid_var_widgets[variable_name] = grid_chips_widget
+
+    def _populate_custom_variables_table(self, procedure_vm: CustomSweepProcedureViewModel) -> None:
+        """Сводный метод обновления таблиц Zipped и Grid переменных."""
+        self._populate_zipped_table(procedure_vm)
+        self._populate_grid_tables(procedure_vm)
+
+    def _on_zipped_cell_changed(self, row_index: int, column_index: int) -> None:
+        if self._is_updating_ui or not isinstance(self.current_vm, CustomSweepProcedureViewModel):
+            return
+        header_item = self.tbl_zipped_variables.horizontalHeaderItem(column_index)
+        cell_item = self.tbl_zipped_variables.item(row_index, column_index)
+        if not header_item or not cell_item:
+            return
+        stored_name = header_item.data(Qt.UserRole)
+        variable_name = str(stored_name) if stored_name else header_item.text().replace("🔒", "").strip()
+
+        # Защита: стандартные read-only переменные защищены от редактирования в таблице
+        if isinstance(self.current_vm, StepAndShootProcedureViewModel) and self.current_vm.is_read_only_variable(variable_name):
+            return
+
+        try:
+            parsed_value = float(cell_item.text().strip())
+        except ValueError:
+            self._populate_zipped_table(self.current_vm)
+            return
+
+        if variable_name in self.current_vm.zipped_variables:
+            variable_values = list(self.current_vm.zipped_variables[variable_name])
+            if 0 <= row_index < len(variable_values):
+                variable_values[row_index] = parsed_value
+                self._is_updating_ui = True
+                try:
+                    self.current_vm.set_variable(variable_name, variable_values, sweep_type="zipped")
+                    if isinstance(self.current_vm, StepAndShootProcedureViewModel):
+                        if variable_name == "radius" and len(variable_values) > 0:
+                            self.spin_proc_radius.setValue(variable_values[0])
+                        elif variable_name == "step_time" and len(variable_values) > 0:
+                            self.spin_proc_time.setValue(variable_values[0])
+                finally:
+                    self._is_updating_ui = False
+
+    def _on_add_zipped_col_clicked(self) -> None:
+        procedure_vm = self.current_vm
+        if not isinstance(procedure_vm, CustomSweepProcedureViewModel):
+            return
+        col_name, ok_pressed = QInputDialog.getText(
+            self,
+            "Добавить Zipped-переменную",
+            "Имя новой связанной переменной (например, couch_x):"
+        )
+        if not ok_pressed or not col_name.strip():
+            return
+        clean_name = col_name.strip().replace(" ", "_")
+        if clean_name in procedure_vm.all_variables:
+            QMessageBox.warning(self, "Ошибка", f"Переменная '{clean_name}' уже существует.")
+            return
+
+        row_count = 1
+        if procedure_vm.zipped_variables:
+            row_count = len(next(iter(procedure_vm.zipped_variables.values())))
+        elif isinstance(procedure_vm, StepAndShootProcedureViewModel):
+            row_count = procedure_vm.steps
+
+        procedure_vm.set_variable(clean_name, [0.0] * row_count, sweep_type="zipped")
+        self._populate_zipped_table(procedure_vm)
+
+    def _on_remove_zipped_col_clicked(self) -> None:
+        procedure_vm = self.current_vm
+        if not isinstance(procedure_vm, CustomSweepProcedureViewModel):
+            return
+        selected_column = self.tbl_zipped_variables.currentColumn()
+        if selected_column < 0:
+            selected_column = self.tbl_zipped_variables.columnCount() - 1
+        if selected_column < 0:
+            return
+        header_item = self.tbl_zipped_variables.horizontalHeaderItem(selected_column)
+        if not header_item:
+            return
+        stored_name = header_item.data(Qt.UserRole)
+        variable_name = str(stored_name) if stored_name else header_item.text().replace("🔒", "").strip()
+        if isinstance(procedure_vm, StepAndShootProcedureViewModel) and procedure_vm.is_standard_variable(variable_name):
+            QMessageBox.warning(
+                self,
+                "Запрещено",
+                f"Стандартная переменная протокола '{variable_name}' не может быть удалена из Step-and-Shoot."
+            )
+            return
+        procedure_vm.remove_variable(variable_name)
+        self._populate_zipped_table(procedure_vm)
+
+    def _on_add_zipped_row_clicked(self) -> None:
+        procedure_vm = self.current_vm
+        if not isinstance(procedure_vm, CustomSweepProcedureViewModel):
+            return
+        if not procedure_vm.zipped_variables:
+            QMessageBox.information(self, "Добавление шага", "Сначала создайте хотя бы одну переменную (столбец).")
+            return
+        procedure_vm.add_zipped_step()
+        if isinstance(procedure_vm, StepAndShootProcedureViewModel):
+            self._is_updating_ui = True
+            try:
+                self.spin_proc_steps.setValue(procedure_vm.steps)
+                self.lbl_proc_total_views.setText(str(procedure_vm.total_projections))
+            finally:
+                self._is_updating_ui = False
+        self._populate_zipped_table(procedure_vm)
+
+    def _on_remove_zipped_row_clicked(self) -> None:
+        procedure_vm = self.current_vm
+        if not isinstance(procedure_vm, CustomSweepProcedureViewModel):
+            return
+        if not procedure_vm.zipped_variables:
+            return
+        row_count = len(next(iter(procedure_vm.zipped_variables.values())))
+        if row_count <= 1:
+            QMessageBox.information(self, "Удаление шага", "Должен оставаться как минимум 1 шаг симуляции.")
+            return
+        target_row = self.tbl_zipped_variables.currentRow()
+        if target_row < 0 or target_row >= row_count:
+            target_row = row_count - 1
+        procedure_vm.remove_zipped_step(target_row)
+        if isinstance(procedure_vm, StepAndShootProcedureViewModel):
+            self._is_updating_ui = True
+            try:
+                self.spin_proc_steps.setValue(procedure_vm.steps)
+                self.lbl_proc_total_views.setText(str(procedure_vm.total_projections))
+            finally:
+                self._is_updating_ui = False
+        self._populate_zipped_table(procedure_vm)
+
+    def _on_add_grid_var_clicked(self) -> None:
+        procedure_vm = self.current_vm
+        if not isinstance(procedure_vm, CustomSweepProcedureViewModel):
+            return
+        var_name_input, ok_pressed = QInputDialog.getText(
+            self,
+            "Создать Grid-переменную",
+            "Имя переменной сетки (например, collimator_tilt):"
+        )
+        if not ok_pressed or not var_name_input.strip():
+            return
+        clean_name = var_name_input.strip().replace(" ", "_")
+        if clean_name in procedure_vm.all_variables:
+            QMessageBox.warning(self, "Ошибка", f"Переменная '{clean_name}' уже существует.")
+            return
+        procedure_vm.set_variable(clean_name, [0.0], sweep_type="grid")
+        self._populate_grid_tables(procedure_vm)
+
+    def _on_grid_var_values_changed(self, var_name: str, values: list[float]) -> None:
+        if not isinstance(self.current_vm, CustomSweepProcedureViewModel):
+            return
+        self._is_updating_ui = True
+        try:
+            self.current_vm.set_variable(var_name, values, sweep_type="grid")
+        finally:
+            self._is_updating_ui = False
+
+    def _on_grid_var_deleted(self, var_name: str) -> None:
+        if not isinstance(self.current_vm, CustomSweepProcedureViewModel):
+            return
+        self._is_updating_ui = True
+        try:
+            self.current_vm.remove_variable(var_name)
+        finally:
+            self._is_updating_ui = False
+        self._populate_grid_tables(self.current_vm)
 
     def _update_housing_size_label(self) -> None:
         if isinstance(self.current_vm, GammaCameraViewModel):
@@ -1563,10 +2194,10 @@ class PropertyInspector(QWidget):
                 self.spin_source_activity.setValue(float(new_val))
             finally:
                 self._is_updating_ui = False
-        elif prop_name == 'energy' and isinstance(self.current_vm, SourceViewModel):
+        elif prop_name in ('energy', 'spectrum') and isinstance(self.current_vm, SourceViewModel):
             self._is_updating_ui = True
             try:
-                self.spin_source_energy.setValue(float(new_val))
+                self._update_source_spectrum_table()
             finally:
                 self._is_updating_ui = False
         elif prop_name == 'half_life' and isinstance(self.current_vm, SourceViewModel):
@@ -1645,26 +2276,92 @@ class PropertyInspector(QWidget):
                     self.chk_dose_grid_active.setChecked(bool(new_val))
                 finally:
                     self._is_updating_ui = False
+        elif prop_name == 'bindings':
+            self._update_transform_fields()
+            if isinstance(self.current_vm, SourceViewModel):
+                b_act = self.current_vm.bindings.get('activity')
+                if b_act:
+                    self.spin_source_activity.bind_variable(b_act)
+                else:
+                    self.spin_source_activity.unbind()
+            elif isinstance(self.current_vm, GantryViewModel):
+                bound_var = self.current_vm.bindings.get('rotation.alpha') or self.current_vm.bindings.get('gantry_angle')
+                if bound_var:
+                    self.spin_gantry_angle.bind_variable(bound_var)
+                else:
+                    self.spin_gantry_angle.unbind()
         else:
             self.update_all_fields()
 
     def _update_procedure_fields(self) -> None:
         vm = self.current_vm
-        if isinstance(vm, SpectProcedureViewModel):
-            self.lbl_proc_type.setText("ОФЭКТ (SPECT)")
+        if isinstance(vm, BaseProcedureViewModel):
+            b_radius = vm.bindings.get("radius")
+            if b_radius:
+                self.spin_proc_radius.bind_variable(b_radius)
+            else:
+                self.spin_proc_radius.unbind()
+
+            b_time = vm.bindings.get("step_time") or vm.bindings.get("time")
+            if b_time:
+                self.spin_proc_time.bind_variable(b_time)
+            else:
+                self.spin_proc_time.unbind()
+
+        is_step = isinstance(vm, StepAndShootProcedureViewModel)
+        is_custom = isinstance(vm, CustomSweepProcedureViewModel)
+        is_pet = isinstance(vm, PetProcedureViewModel)
+
+        if is_step:
+            self.step_and_shoot_widget.setVisible(True)
+            self.custom_sweep_widget.setVisible(True)
+
+            self.spin_proc_steps.setVisible(True)
+            self.spin_proc_cameras.setVisible(True)
+            self.lbl_proc_total_views.setVisible(True)
+            self.spin_proc_radius.setVisible(True)
+            self.spin_proc_time.setVisible(True)
+            self.spin_proc_start_angle.setVisible(True)
+            self.spin_proc_end_angle.setVisible(True)
+            self.combo_proc_head_mode.setVisible(True)
+            self.txt_proc_head_angles.setVisible(True)
+            self.chk_proc_endpoint.setVisible(True)
+
+            self.lbl_proc_type.setText("Пошаговое сканирование (Step-and-Shoot)")
             self.spin_proc_steps.setValue(int(vm.steps))
             self.spin_proc_cameras.setValue(int(vm.gamma_cameras))
             self.lbl_proc_total_views.setText(str(vm.total_projections))
             self.spin_proc_radius.setValue(float(vm.radius))
-            self.spin_proc_time.setValue(float(vm.time_per_view))
+            self.spin_proc_time.setValue(float(vm.time_per_step))
             self.spin_proc_start_angle.setValue(float(vm.start_angle))
             self.spin_proc_end_angle.setValue(float(vm.end_angle))
             idx = self.combo_proc_head_mode.findText(vm.head_mode)
             if idx >= 0:
                 self.combo_proc_head_mode.setCurrentIndex(idx)
-            self.txt_proc_head_angles.setText(", ".join(f"{a:.1f}" for a in vm.head_angles))
+            self.txt_proc_head_angles.setText(", ".join(f"{head_angle:.1f}" for head_angle in vm.head_angles))
             self.chk_proc_endpoint.setChecked(bool(vm.endpoint))
-        elif isinstance(vm, PetProcedureViewModel):
+
+            self._populate_custom_variables_table(vm)
+        elif is_custom:
+            self.step_and_shoot_widget.setVisible(False)
+            self.custom_sweep_widget.setVisible(True)
+            self.lbl_proc_type.setText("Пользовательский скан (Custom Sweep)")
+            self._populate_custom_variables_table(vm)
+        elif is_pet:
+            self.step_and_shoot_widget.setVisible(True)
+            self.custom_sweep_widget.setVisible(False)
+
+            self.spin_proc_steps.setVisible(True)
+            self.spin_proc_cameras.setVisible(True)
+            self.lbl_proc_total_views.setVisible(True)
+            self.spin_proc_radius.setVisible(True)
+            self.spin_proc_time.setVisible(True)
+            self.spin_proc_start_angle.setVisible(False)
+            self.spin_proc_end_angle.setVisible(False)
+            self.combo_proc_head_mode.setVisible(False)
+            self.txt_proc_head_angles.setVisible(False)
+            self.chk_proc_endpoint.setVisible(False)
+
             self.lbl_proc_type.setText("ПЭТ (PET)")
             self.spin_proc_steps.setValue(1)
             self.spin_proc_cameras.setValue(int(vm.detector_heads))
@@ -1672,6 +2369,8 @@ class PropertyInspector(QWidget):
             self.spin_proc_radius.setValue(float(vm.ring_radius))
             self.spin_proc_time.setValue(float(vm.time_per_frame))
         elif isinstance(vm, BaseProcedureViewModel):
+            self.step_and_shoot_widget.setVisible(False)
+            self.custom_sweep_widget.setVisible(False)
             self.lbl_proc_type.setText(vm.name)
 
     def _update_data_handler_fields(self) -> None:
@@ -1702,7 +2401,7 @@ class PropertyInspector(QWidget):
             if is_dose:
                 # Автоматический подхват доступных сеток дозы со сцены, если в обработчике список пуст
                 if not vm.grid_names and self.scene_vm is not None:
-                    grid_names = [n.name for n in self.scene_vm.all_nodes() if isinstance(n, DoseGridViewModel)]
+                    grid_names = [node_vm.name for node_vm in self.scene_vm.all_nodes() if isinstance(node_vm, DoseGridViewModel)]
                     if grid_names:
                         vm.grid_names = grid_names
                 self.txt_dh_grid_names.setText(", ".join(vm.grid_names))
@@ -1720,59 +2419,69 @@ class PropertyInspector(QWidget):
 
     # Специфичные слоты для процедур
     def _on_proc_steps_changed(self, steps_value: int) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
+        if not self._is_updating_ui and isinstance(self.current_vm, StepAndShootProcedureViewModel):
             self.current_vm.steps = steps_value
             self._is_updating_ui = True
             self.lbl_proc_total_views.setText(str(self.current_vm.total_projections))
             self._is_updating_ui = False
+            self._populate_zipped_table(self.current_vm)
 
     def _on_proc_cameras_changed(self, camera_count: int) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
+        if not self._is_updating_ui and isinstance(self.current_vm, StepAndShootProcedureViewModel):
             self.current_vm.gamma_cameras = camera_count
             self._is_updating_ui = True
             self.lbl_proc_total_views.setText(str(self.current_vm.total_projections))
             self.txt_proc_head_angles.setText(", ".join(f"{angle_val:.1f}" for angle_val in self.current_vm.head_angles))
             self._is_updating_ui = False
 
-    def _on_proc_radius_changed(self, val: float) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
-            self.current_vm.radius = val
+    def _on_proc_radius_changed(self, new_radius: float) -> None:
+        if not self._is_updating_ui and isinstance(self.current_vm, StepAndShootProcedureViewModel):
+            self.current_vm.radius = new_radius
+            self._populate_zipped_table(self.current_vm)
+        elif not self._is_updating_ui and isinstance(self.current_vm, PetProcedureViewModel):
+            self.current_vm.ring_radius = new_radius
 
-    def _on_proc_time_changed(self, val: float) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
-            self.current_vm.time_per_view = val
+    def _on_proc_time_changed(self, new_time: float) -> None:
+        if not self._is_updating_ui and isinstance(self.current_vm, StepAndShootProcedureViewModel):
+            self.current_vm.time_per_step = new_time
+            self._populate_zipped_table(self.current_vm)
+        elif not self._is_updating_ui and isinstance(self.current_vm, PetProcedureViewModel):
+            self.current_vm.time_per_frame = new_time
 
-    def _on_proc_start_angle_changed(self, val: float) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
-            self.current_vm.start_angle = val
+    def _on_proc_start_angle_changed(self, new_angle: float) -> None:
+        if not self._is_updating_ui and isinstance(self.current_vm, StepAndShootProcedureViewModel):
+            self.current_vm.start_angle = new_angle
+            self._populate_zipped_table(self.current_vm)
 
-    def _on_proc_end_angle_changed(self, val: float) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
-            self.current_vm.end_angle = val
+    def _on_proc_end_angle_changed(self, new_angle: float) -> None:
+        if not self._is_updating_ui and isinstance(self.current_vm, StepAndShootProcedureViewModel):
+            self.current_vm.end_angle = new_angle
+            self._populate_zipped_table(self.current_vm)
 
     def _on_proc_head_mode_changed(self, text: str) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
+        if not self._is_updating_ui and isinstance(self.current_vm, StepAndShootProcedureViewModel):
             self.current_vm.head_mode = text
             self._is_updating_ui = True
             self.spin_proc_cameras.setValue(self.current_vm.gamma_cameras)
-            self.txt_proc_head_angles.setText(", ".join(f"{a:.1f}" for a in self.current_vm.head_angles))
+            self.txt_proc_head_angles.setText(", ".join(f"{head_angle:.1f}" for head_angle in self.current_vm.head_angles))
             self._is_updating_ui = False
 
     def _on_proc_head_angles_edited(self) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
+        if not self._is_updating_ui and isinstance(self.current_vm, StepAndShootProcedureViewModel):
             raw = self.txt_proc_head_angles.text().strip()
             angles = []
-            for p in raw.split(','):
+            for angle_part in raw.split(','):
                 try:
-                    angles.append(float(p.strip()))
+                    angles.append(float(angle_part.strip()))
                 except ValueError:
                     pass
             if angles:
                 self.current_vm.head_angles = angles
 
     def _on_proc_endpoint_toggled(self, checked: bool) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, SpectProcedureViewModel):
+        if not self._is_updating_ui and isinstance(self.current_vm, StepAndShootProcedureViewModel):
             self.current_vm.endpoint = checked
+            self._populate_zipped_table(self.current_vm)
 
     # Специфичные слоты для обработчиков данных
     def _on_dh_show_escaped_toggled(self, checked: bool) -> None:
@@ -1781,8 +2490,8 @@ class PropertyInspector(QWidget):
 
     def _on_dh_vols_edited(self) -> None:
         if not self._is_updating_ui and isinstance(self.current_vm, (SensitiveVolumeHandlerViewModel, HistoryAssemblerHandlerViewModel)):
-            vols = [v.strip() for v in self.txt_dh_vols.text().split(',') if v.strip()]
-            self.current_vm.sensitive_volumes = vols
+            volumes_list = [volume_name.strip() for volume_name in self.txt_dh_vols.text().split(',') if volume_name.strip()]
+            self.current_vm.sensitive_volumes = volumes_list
 
     def _on_dh_initial_states_toggled(self, checked: bool) -> None:
         if not self._is_updating_ui and isinstance(self.current_vm, HistoryAssemblerHandlerViewModel):
@@ -1790,7 +2499,7 @@ class PropertyInspector(QWidget):
 
     def _on_dh_grid_names_edited(self) -> None:
         if not self._is_updating_ui and isinstance(self.current_vm, DoseMapHandlerViewModel):
-            grids = [g.strip() for g in self.txt_dh_grid_names.text().split(',') if g.strip()]
+            grids = [grid_name.strip() for grid_name in self.txt_dh_grid_names.text().split(',') if grid_name.strip()]
             self.current_vm.grid_names = grids
 
     def _on_dh_shm_name_edited(self) -> None:
@@ -1815,7 +2524,7 @@ class PropertyInspector(QWidget):
             if isinstance(self.current_vm, DataManagerViewModel):
                 self.current_vm.filename = path
 
-    def _on_dm_buffer_changed(self, val: int) -> None:
+    def _on_dm_buffer_changed(self, new_buffer_size: int) -> None:
         if not self._is_updating_ui and isinstance(self.current_vm, DataManagerViewModel):
-            effective_val = max(val, self._min_buffer_capacity)
+            effective_val = max(new_buffer_size, self._min_buffer_capacity)
             self.current_vm.buffer_capacity = effective_val

@@ -11,7 +11,6 @@ import hepunits as units
 from core.config.models import (
     CustomSweepProtocolConfig,
     StepAndShootProtocolConfig,
-    SpectProtocolConfig,
 )
 from core.config.sweep_compiler import SweepCompiler
 
@@ -38,11 +37,10 @@ class TestSweepCompiler(unittest.TestCase):
     def test_compile_step_and_shoot_protocol(self) -> None:
         """Проверка компиляции протокола StepAndShoot."""
         protocol = StepAndShootProtocolConfig(
-            views=4,
-            gamma_cameras=1,
+            steps=4,
             start_angle=0.0 * units.rad,
             end_angle=np.pi * units.rad,
-            time_per_view=5.0 * units.s,
+            time_per_step=5.0 * units.s,
             endpoint=True,
         )
         sweep = SweepCompiler.compile_protocol(protocol)
@@ -57,22 +55,22 @@ class TestSweepCompiler(unittest.TestCase):
         np.testing.assert_allclose(angles, [0.0, np.pi / 3, 2 * np.pi / 3, np.pi])
         np.testing.assert_allclose(times, [5.0 * units.s] * 4)
 
-    def test_compile_spect_protocol_multi_head(self) -> None:
-        """Проверка компиляции протокола ОФЭКТ с несколькими детекторными головками."""
-        protocol = SpectProtocolConfig(
-            views=8,
-            gamma_cameras=2,
+    def test_compile_step_and_shoot_with_radius(self) -> None:
+        """Проверка компиляции протокола StepAndShoot с массивом радиусов (Body Contour)."""
+        radii = [150.0 * units.mm, 160.0 * units.mm, 170.0 * units.mm, 180.0 * units.mm]
+        protocol = StepAndShootProtocolConfig(
+            steps=4,
             start_angle=0.0 * units.rad,
             end_angle=np.pi * units.rad,
-            time_per_view=2.0 * units.s,
-            head_angles=[0.0 * units.rad, np.pi * units.rad],
+            time_per_step=2.0 * units.s,
+            radius=radii,
             endpoint=False,
         )
         sweep = SweepCompiler.compile_protocol(protocol)
-        # При 8 ракурсах и 2 головках число позиций гантри = 8 // 2 = 4
         self.assertEqual(len(sweep.zipped_variables["gantry_angle"]), 4)
-        self.assertIn("head_0_angle", sweep.zipped_variables)
-        self.assertIn("head_1_angle", sweep.zipped_variables)
+        self.assertIn("radius", sweep.zipped_variables)
+        self.assertEqual(len(sweep.zipped_variables["radius"]), 4)
+        np.testing.assert_allclose(sweep.zipped_variables["radius"], [150.0, 160.0, 170.0, 180.0])
 
     def test_generate_job_matrix_cartesian_and_zipped(self) -> None:
         """Проверка генерации декартова произведения сетки и синхронной сшивки."""

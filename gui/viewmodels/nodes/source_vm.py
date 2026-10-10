@@ -1,6 +1,7 @@
 import logging
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 import numpy as np
 import hepunits as units
 
@@ -14,24 +15,22 @@ _logger = logging.getLogger(__name__)
 
 
 def _on_source_activity_change(instance: Any, value: float) -> None:
+    if isinstance(instance, SourceViewModel) and instance._mutation_blocked:
+        return
     if isinstance(instance.core_node, Source):
         instance.core_node.initial_activity = Float(float(value) * 1e6 * units.Bq)
 
 
-def _on_source_energy_change(instance: Any, value: float) -> None:
-    if isinstance(instance.core_node, Source):
-        energy_val = float(value) * units.keV
-        instance.core_node.energy = np.zeros(1, dtype=[("energy", Float), ("probability", Float)])
-        instance.core_node.energy["energy"] = Float(energy_val)
-        instance.core_node.energy["probability"] = Float(1.0)
-
-
 def _on_source_radiation_type_change(instance: Any, value: str) -> None:
+    if isinstance(instance, SourceViewModel) and instance._mutation_blocked:
+        return
     if isinstance(instance.core_node, Source):
         instance.core_node.radiation_type = str(value)
 
 
 def _on_source_half_life_change(instance: Any, value: float) -> None:
+    if isinstance(instance, SourceViewModel) and instance._mutation_blocked:
+        return
     if isinstance(instance.core_node, Source):
         hours_value = float(value)
         instance.core_node.half_life = Float(hours_value * 3600.0 * units.second) if hours_value > 0 else Float(np.inf)
@@ -42,44 +41,100 @@ class SourceViewModel(NodeViewModel):
     ViewModel для источника излучения (Source, PointSource).
     """
     activity = gui_field(default=100.0, on_change=_on_source_activity_change)      # МБк
-    energy = gui_field(default=140.5, on_change=_on_source_energy_change)          # кэВ
     radiation_type = gui_field(default='Gamma', on_change=_on_source_radiation_type_change)
     half_life = gui_field(default=6.0, on_change=_on_source_half_life_change)     # часы
     file_path = gui_field(default='')
 
     def __init__(self, core_node: Any, parent_vm: Optional[NodeViewModel] = None, file_path: str = "") -> None:
+        self._mutation_blocked: bool = False
         super().__init__(core_node, parent_vm)
         if file_path:
             self.file_path = str(file_path)
         self._sync_from_core()
 
+    @contextmanager
+    def _block_mutation(self):
+        """Контекстный менеджер для предотвращения обратной feedback-мутации ядра при синхронизации."""
+        old_val = self._mutation_blocked
+        self._mutation_blocked = True
+        try:
+            yield
+        finally:
+            self._mutation_blocked = old_val
+
+    @property
+    def spectrum(self) -> List[List[float]]:
+        """
+        Спектр излучения источника в виде списка пар [энергия (кэВ), вес / относительный выход].
+        """
+        if isinstance(self.core_node, Source) and self.core_node.energy is not None:
+            return [
+                [float(e) / float(units.keV), float(p)]
+                for e, p in zip(self.core_node.energy["energy"], self.core_node.energy["probability"])
+            ]
+        return [[140.5, 1.0]]
+
+    @spectrum.setter
+    def spectrum(self, pairs: List[List[float]]) -> None:
+        """
+        Установка спектра излучения с автоматической передачей в расчетное ядро Source.
+        """
+        if self._mutation_blocked:
+            return
+        if not pairs:
+            pairs = [[140.5, 1.0]]
+        if isinstance(self.core_node, Source):
+            core_pairs = [[float(e) * float(units.keV), float(w)] for e, w in pairs]
+            self.core_node.energy = core_pairs
+        self.property_changed.emit('spectrum', pairs)
+        if len(pairs) > 0:
+            self.property_changed.emit('energy', pairs[0][0])
+
+    @property
+    def energy(self) -> float:
+        """
+        Энергия основного пика излучения в кэВ.
+        """
+        spec = self.spectrum
+        return float(spec[0][0]) if spec else 140.5
+
+    @energy.setter
+    def energy(self, value: float) -> None:
+        """
+        Установка моноэнергетического значения (или первой линии спектра) в кэВ.
+        """
+        if self._mutation_blocked:
+            return
+        val = float(value)
+        spec = self.spectrum
+        if len(spec) <= 1:
+            self.spectrum = [[val, 1.0]]
+        else:
+            new_spec = [list(line) for line in spec]
+            new_spec[0][0] = val
+            self.spectrum = new_spec
+
     def _sync_from_core(self) -> None:
         """
-        Синхронизация параметров ViewModel с атрибутами расчетного ядра Source без скрытого подавления исключений.
+        Синхронизация параметров ViewModel с атрибутами расчетного ядра Source без обратной мутации.
         """
-        if isinstance(self.core_node, Source):
-            if self.core_node.initial_activity is not None:
-                total_activity = float(np.sum(self.core_node.initial_activity))
-                activity_bq = total_activity if total_activity >= 1e3 else (total_activity / units.Bq)
-                self.activity = float(activity_bq / 1e6)
+        with self._block_mutation():
+            if isinstance(self.core_node, Source):
+                if self.core_node.initial_activity is not None:
+                    total_activity = float(np.sum(self.core_node.initial_activity))
+                    activity_bq = total_activity if total_activity >= 1e3 else (total_activity / units.Bq)
+                    self.activity = float(activity_bq / 1e6)
 
-            energy_field = self.core_node.energy
-            if energy_field is not None:
-                if isinstance(energy_field, np.ndarray) and energy_field.dtype.names is not None and 'energy' in energy_field.dtype.names:
-                    raw_energy = float(energy_field['energy'][0])
-                elif isinstance(energy_field, (int, float, np.floating, np.integer)):
-                    raw_energy = float(energy_field)
-                else:
-                    raw_energy = 140.5 * units.keV
-                self.energy = float(raw_energy / units.keV)
+                if self.core_node.radiation_type is not None:
+                    self.radiation_type = str(self.core_node.radiation_type)
 
-            if self.core_node.radiation_type is not None:
-                self.radiation_type = str(self.core_node.radiation_type)
+                half_life_field = self.core_node.half_life
+                if half_life_field is not None:
+                    half_life_float = float(half_life_field)
+                    self.half_life = (half_life_float / 3600.0) if (half_life_float > 0 and not np.isinf(half_life_float)) else 0.0
 
-            half_life_field = self.core_node.half_life
-            if half_life_field is not None:
-                half_life_float = float(half_life_field)
-                self.half_life = (half_life_float / 3600.0) if (half_life_float > 0 and not np.isinf(half_life_float)) else 0.0
+        self.property_changed.emit('spectrum', self.spectrum)
+        self.property_changed.emit('energy', self.energy)
 
     @property
     def is_point_source(self) -> bool:

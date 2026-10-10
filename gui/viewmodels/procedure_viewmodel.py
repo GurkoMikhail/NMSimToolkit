@@ -6,7 +6,7 @@ from PySide6.QtCore import QObject, Signal
 
 from core.config.models import (
     AnyProtocolConfig,
-    SpectProtocolConfig,
+    StepAndShootProtocolConfig,
     CustomSweepProtocolConfig,
 )
 from core.scene.gamma_camera_node import GammaCameraNode
@@ -38,11 +38,71 @@ class BaseProcedureViewModel(QObject):
 
     changed = Signal()
     parameter_changed = Signal(str, object)
+    bindings_changed = Signal()
 
     def __init__(self, name: str = "Procedure", procedure_type: str = "Base", parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._name: str = name
         self._procedure_type: str = procedure_type
+        # Единый реестр привязок свойств узлов сцены к переменным процедуры
+        # Ключ: SpatialNode ядра (или NodeViewModel), значение: словарь {имя_свойства: имя_переменной}
+        self.bindings_registry: Dict[Any, Dict[str, str]] = {}
+        # Скалярные привязки параметров самой процедуры (например, radius -> cam_radius)
+        self.bindings: Dict[str, str] = {}
+        self._is_syncing_with_scene: bool = False
+
+    def get_variables(self) -> Dict[str, List[float]]:
+        """
+        Возвращает словарь всех доступных переменных протокола и списков их значений: {имя: [значения]}.
+        """
+        return {}
+
+    def get_variable_names(self) -> List[str]:
+        """Возвращает список имен всех доступных переменных процедуры."""
+        return list(self.get_variables().keys())
+
+    def bind_node_property(self, node: Any, prop_name: str, var_name: str) -> None:
+        """Связывает свойство узла с переменной процедуры в едином реестре."""
+        if not var_name:
+            self.unbind_node_property(node, prop_name)
+            return
+        if node not in self.bindings_registry:
+            self.bindings_registry[node] = {}
+        if self.bindings_registry[node].get(prop_name) == str(var_name):
+            return
+        self.bindings_registry[node][prop_name] = str(var_name)
+        self.bindings_changed.emit()
+        if not self._is_syncing_with_scene:
+            self.changed.emit()
+
+    def unbind_node_property(self, node: Any, prop_name: str) -> None:
+        """Удаляет привязку свойства узла из единого реестра."""
+        if node in self.bindings_registry:
+            if prop_name not in self.bindings_registry[node]:
+                return
+            self.bindings_registry[node].pop(prop_name, None)
+            if not self.bindings_registry[node]:
+                self.bindings_registry.pop(node, None)
+            self.bindings_changed.emit()
+            if not self._is_syncing_with_scene:
+                self.changed.emit()
+
+    def get_node_bindings(self, node: Any) -> Dict[str, str]:
+        """Возвращает словарь привязок для указанного узла сцены."""
+        return dict(self.bindings_registry.get(node, {}))
+
+    @property
+    def protocol_standard_variables(self) -> List[str]:
+        """Список стандартных переменных протокола."""
+        return []
+
+    def is_standard_variable(self, variable_name: str) -> bool:
+        """Проверяет, является ли переменная стандартной переменной протокола."""
+        return False
+
+    def is_read_only_variable(self, variable_name: str) -> bool:
+        """Проверяет, защищена ли переменная от ручного редактирования в таблице."""
+        return False
 
     @property
     def name(self) -> str:
@@ -80,32 +140,209 @@ class BaseProcedureViewModel(QObject):
         return None
 
 
-class SpectProcedureViewModel(BaseProcedureViewModel):
+class CustomSweepProcedureViewModel(BaseProcedureViewModel):
     """
-    Модель представления протокола ОФЭКТ (SPECT).
-    Управляет числом ракурсов, количеством детекторных головок, радиусом вращения,
-    временем экспозиции и геометрической расстановкой гамма-камер в графе сцены.
+    Модель представления пользовательского протокола сканирования (параметрический скан).
     """
+
+    def __init__(
+        self,
+        grid_variables: Optional[Dict[str, List[float]]] = None,
+        zipped_variables: Optional[Dict[str, List[float]]] = None,
+        name: str = "Пользовательский скан (Custom Sweep)",
+        procedure_type: str = "CustomSweep",
+        parent: Optional[QObject] = None,
+    ) -> None:
+        super().__init__(name=name, procedure_type=procedure_type, parent=parent)
+        self._grid_variables: Dict[str, List[float]] = dict(grid_variables) if grid_variables else {}
+        self._zipped_variables: Dict[str, List[float]] = dict(zipped_variables) if zipped_variables else {}
+
+    @property
+    def grid_variables(self) -> Dict[str, List[float]]:
+        return dict(self._grid_variables)
+
+    @grid_variables.setter
+    def grid_variables(self, new_grid_vars: Dict[str, List[float]]) -> None:
+        self._grid_variables = dict(new_grid_vars)
+        self.changed.emit()
+        self.parameter_changed.emit("grid_variables", self._grid_variables)
+
+    @property
+    def zipped_variables(self) -> Dict[str, List[float]]:
+        return dict(self._zipped_variables)
+
+    @zipped_variables.setter
+    def zipped_variables(self, new_zipped_vars: Dict[str, List[float]]) -> None:
+        self._zipped_variables = dict(new_zipped_vars)
+        self.changed.emit()
+        self.parameter_changed.emit("zipped_variables", self._zipped_variables)
+
+    @property
+    def all_variables(self) -> Dict[str, List[float]]:
+        """Объединенный словарь всех варьируемых переменных процедуры: {имя: [значения]}."""
+        return {**self._grid_variables, **self._zipped_variables}
+
+    def get_variables(self) -> Dict[str, List[float]]:
+        """Возвращает все варьируемые переменные и их значения."""
+        return self.all_variables
+
+    def get_variable_values(self, var_name: str) -> List[float]:
+        """Возвращает список конкретных значений для указанной переменной."""
+        clean = str(var_name).strip()
+        if clean in self._grid_variables:
+            return list(self._grid_variables[clean])
+        elif clean in self._zipped_variables:
+            return list(self._zipped_variables[clean])
+        return []
+
+    def set_variable(
+        self,
+        var_name: str,
+        values: List[float],
+        sweep_type: str = "grid",
+    ) -> None:
+        """Добавляет или обновляет переменную и список ее значений."""
+        clean_name = str(var_name).strip().replace(" ", "_")
+        float_values = [float(val) for val in values]
+        if sweep_type == "zipped":
+            self._grid_variables.pop(clean_name, None)
+            self._zipped_variables[clean_name] = float_values
+        else:
+            self._zipped_variables.pop(clean_name, None)
+            self._grid_variables[clean_name] = float_values
+        self.changed.emit()
+        self.parameter_changed.emit(clean_name, float_values)
+
+    def remove_variable(self, var_name: str) -> None:
+        """Удаляет переменную и очищает связанные с ней привязки из единого реестра."""
+        clean_name = str(var_name).strip()
+        removed = self._grid_variables.pop(clean_name, None) is not None
+        removed = (self._zipped_variables.pop(clean_name, None) is not None) or removed
+        if removed:
+            nodes_to_clean: List[Any] = []
+            for node_key, bindings_map in list(self.bindings_registry.items()):
+                properties_to_remove = [
+                    prop_name for prop_name, bound_var_name in bindings_map.items()
+                    if bound_var_name == clean_name
+                ]
+                for prop_name in properties_to_remove:
+                    bindings_map.pop(prop_name, None)
+                if not bindings_map:
+                    nodes_to_clean.append(node_key)
+            for node_key in nodes_to_clean:
+                self.bindings_registry.pop(node_key, None)
+            self.bindings_changed.emit()
+            self.changed.emit()
+            self.parameter_changed.emit("variable_removed", clean_name)
+
+    def add_zipped_step(self, step_values: Optional[Dict[str, float]] = None) -> None:
+        """Добавляет один новый шаг (строку) во все связанные переменные zipped_variables."""
+        if not self._zipped_variables:
+            return
+        step_payload = step_values or {}
+        for var_name, value_list in self._zipped_variables.items():
+            if var_name in step_payload:
+                new_value = float(step_payload[var_name])
+            else:
+                new_value = float(value_list[-1]) if value_list else 0.0
+            value_list.append(new_value)
+        self.changed.emit()
+        self.parameter_changed.emit("zipped_variables", self._zipped_variables)
+
+    def remove_zipped_step(self, step_index: int = -1) -> None:
+        """Удаляет шаг (строку) по индексу из всех связанных переменных zipped_variables."""
+        if not self._zipped_variables:
+            return
+        total_steps = len(next(iter(self._zipped_variables.values())))
+        if total_steps <= 1:
+            return
+        target_index = step_index if step_index >= 0 else total_steps - 1
+        if 0 <= target_index < total_steps:
+            for value_list in self._zipped_variables.values():
+                value_list.pop(target_index)
+            self.changed.emit()
+            self.parameter_changed.emit("zipped_variables", self._zipped_variables)
+
+    def to_config(self) -> CustomSweepProtocolConfig:
+        return CustomSweepProtocolConfig(
+            type="CustomSweep",
+            grid_variables=self._grid_variables,
+            zipped_variables=self._zipped_variables
+        )
+
+
+class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
+    """
+    Модель представления протокола пошагового сканирования (Step-and-Shoot).
+    Управляет числом шагов гантри, радиусом орбиты,
+    временем экспозиции на шаг и сектором сканирования.
+    Наследует CustomSweepProcedureViewModel, автоматически наполняя
+    стандартные переменные протокола (gantry_angle, radius, step_time) и поддерживая
+    дополнительные пользовательские переменные.
+    """
+
+    PROTOCOL_STANDARD_VARIABLES: tuple[str, ...] = (
+        "gantry_angle",
+        "step_time",
+        "radius",
+        "current_angle",
+        "current_time",
+    )
+    READ_ONLY_STANDARD_VARIABLES: tuple[str, ...] = (
+        "gantry_angle",
+        "step_time",
+        "current_angle",
+        "current_time",
+    )
+
+    @property
+    def protocol_standard_variables(self) -> List[str]:
+        """Список стандартных переменных протокола."""
+        return list(self.PROTOCOL_STANDARD_VARIABLES)
+
+    def is_standard_variable(self, variable_name: str) -> bool:
+        """Проверяет, является ли переменная стандартной переменной протокола."""
+        return str(variable_name) in self.PROTOCOL_STANDARD_VARIABLES
+
+    def is_read_only_variable(self, variable_name: str) -> bool:
+        """Проверяет, защищена ли стандартная переменная от ручного редактирования в таблице."""
+        return str(variable_name) in self.READ_ONLY_STANDARD_VARIABLES
 
     def __init__(
         self,
         steps: int = 32,
         gamma_cameras: int = 2,
-        radius: float = 250.0,
-        time_per_view: float = 1.0,
+        radius: Any = 250.0,
+        time_per_step: float = 1.0,
         start_angle: float = 0.0,
         end_angle: float = 360.0,
         head_mode: str = "Симметричный (360°/N)",
         head_angles: Optional[List[float]] = None,
         endpoint: bool = False,
+        grid_variables: Optional[Dict[str, List[float]]] = None,
+        zipped_variables: Optional[Dict[str, List[float]]] = None,
         parent: Optional[QObject] = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(name="Протокол ОФЭКТ (SPECT)", procedure_type="SPECT", parent=parent)
+        proc_type = str(kwargs.get("procedure_type", "StepAndShoot"))
+        proc_name = str(kwargs.get("name", "Протокол пошагового сканирования (Step-and-Shoot)"))
+        super().__init__(
+            grid_variables=grid_variables,
+            zipped_variables=zipped_variables,
+            name=proc_name,
+            procedure_type=proc_type,
+            parent=parent,
+        )
         self._steps: int = max(1, int(steps))
         self._gamma_cameras: int = max(1, int(gamma_cameras))
-        self._radius: float = max(10.0, float(radius))
-        self._time_per_view: float = max(0.001, float(time_per_view))
+        if isinstance(radius, (list, tuple)):
+            self._radius: Any = [float(radius_element) for radius_element in radius]
+        elif radius is not None:
+            self._radius = max(10.0, float(radius))
+        else:
+            self._radius = 250.0
+
+        self._time_per_step: float = max(0.001, float(time_per_step))
         self._start_angle: float = float(start_angle)
         self._end_angle: float = float(end_angle)
         self._head_mode: str = head_mode
@@ -118,6 +355,54 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
 
         if not self._head_angles:
             self._recalculate_head_angles()
+
+        self._update_standard_variables()
+
+    def _update_standard_variables(self, regenerate_angles: bool = True) -> None:
+        """
+        Автоматическое наполнение и синхронизация стандартных переменных протокола:
+        gantry_angle, current_angle, radius, step_time, current_time.
+        """
+        steps = max(1, int(self._steps))
+        endpoint = bool(self._endpoint)
+        existing_angles = self._zipped_variables.get("gantry_angle")
+        if regenerate_angles or existing_angles is None or len(existing_angles) != steps:
+            angles_list = np.linspace(
+                float(self._start_angle),
+                float(self._end_angle),
+                steps,
+                endpoint=endpoint,
+            ).tolist()
+        else:
+            angles_list = list(existing_angles)
+
+        time_list = [float(self._time_per_step)] * steps
+        if isinstance(self._radius, list):
+            fallback_radius = float(self._radius[0]) if self._radius else 250.0
+            radius_list = [float(radius_element) for radius_element in self._radius[:steps]]
+            radius_list.extend([fallback_radius] * max(0, steps - len(radius_list)))
+            self._radius = radius_list
+        else:
+            radius_value = float(self._radius) if self._radius is not None else 250.0
+            radius_list = [radius_value] * steps
+
+        standard_updates = {
+            "gantry_angle": list(angles_list),
+            "current_angle": list(angles_list),
+            "step_time": time_list,
+            "current_time": time_list,
+            "radius": list(radius_list),
+        }
+        self._zipped_variables.update(standard_updates)
+
+        for variable_name, value_list in list(self._zipped_variables.items()):
+            if variable_name in standard_updates:
+                continue
+            if len(value_list) != steps:
+                padding_value = value_list[-1] if value_list else 0.0
+                trimmed_list = value_list[:steps]
+                trimmed_list.extend([padding_value] * max(0, steps - len(trimmed_list)))
+                self._zipped_variables[variable_name] = trimmed_list
 
     def _disconnect_scene_observers(self) -> None:
         """Отсоединение слушателей от предыдущей сцены и станины."""
@@ -233,6 +518,7 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         validated_steps = max(1, int(new_steps))
         if self._steps != validated_steps:
             self._steps = validated_steps
+            self._update_standard_variables()
             self.changed.emit()
             self.parameter_changed.emit("steps", validated_steps)
 
@@ -257,43 +543,56 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
 
     @property
     def radius(self) -> float:
-        """Радиус орбиты вращения детекторов вокруг изоцентра (мм)."""
-        return self._radius
+        """Радиус орбиты вращения детекторов вокруг изоцентра (мм). Для массива возвращает первый элемент."""
+        if isinstance(self._radius, list):
+            return float(self._radius[0]) if self._radius else 250.0
+        return float(self._radius)
 
     @radius.setter
-    def radius(self, new_radius: float) -> None:
-        validated_radius = max(10.0, float(new_radius))
-        if self._radius != validated_radius:
-            self._radius = validated_radius
-            if self._observed_cameras and not self._is_syncing_with_scene:
-                self._is_syncing_with_scene = True
-                try:
-                    for camera_view_model in self._observed_cameras:
-                        pos = camera_view_model.local_matrix[0:3, 3]
-                        angle = float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
-                        camera_view_model.local_matrix = compute_orbit_matrix(
-                            radius=validated_radius,
-                            angle_deg=angle,
-                            z=float(pos[2]),
-                            half_thickness=camera_view_model.half_thickness,
-                        )
-                finally:
-                    self._is_syncing_with_scene = False
-            self.changed.emit()
-            self.parameter_changed.emit("radius", validated_radius)
+    def radius(self, new_radius: Any) -> None:
+        if isinstance(new_radius, (list, tuple)):
+            self._radius = [float(rad_val) for rad_val in new_radius]
+            eff_radius = float(self._radius[0]) if self._radius else 250.0
+        else:
+            self._radius = max(10.0, float(new_radius))
+            eff_radius = self._radius
+
+        if self._observed_cameras and not self._is_syncing_with_scene:
+            self._is_syncing_with_scene = True
+            try:
+                for camera_view_model in self._observed_cameras:
+                    camera_position = camera_view_model.local_matrix[0:3, 3]
+                    camera_angle = float(np.degrees(np.arctan2(camera_position[1], camera_position[0])) % 360.0)
+                    camera_view_model.local_matrix = compute_orbit_matrix(
+                        radius=eff_radius,
+                        angle_deg=camera_angle,
+                        z=float(camera_position[2]),
+                        half_thickness=camera_view_model.half_thickness,
+                    )
+            finally:
+                self._is_syncing_with_scene = False
+        self._update_standard_variables(regenerate_angles=False)
+        self.changed.emit()
+        self.parameter_changed.emit("radius", self._radius)
 
     @property
-    def time_per_view(self) -> float:
-        """Время экспозиции одного ракурса (секунды)."""
-        return self._time_per_view
+    def radius_raw(self) -> Any:
+        """Исходное значение радиуса (число или массив чисел)."""
+        return self._radius
 
-    @time_per_view.setter
-    def time_per_view(self, new_time: float) -> None:
+    @property
+    def time_per_step(self) -> float:
+        """Время экспозиции одного шага (секунды)."""
+        return self._time_per_step
+
+    @time_per_step.setter
+    def time_per_step(self, new_time: float) -> None:
         validated_time = max(0.001, float(new_time))
-        if self._time_per_view != validated_time:
-            self._time_per_view = validated_time
+        if self._time_per_step != validated_time:
+            self._time_per_step = validated_time
+            self._update_standard_variables(regenerate_angles=False)
             self.changed.emit()
-            self.parameter_changed.emit("time_per_view", validated_time)
+            self.parameter_changed.emit("time_per_step", validated_time)
 
     @property
     def start_angle(self) -> float:
@@ -305,6 +604,7 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         angle_value = float(new_angle)
         if self._start_angle != angle_value:
             self._start_angle = angle_value
+            self._update_standard_variables()
             if self._observed_gantry is not None and not self._is_syncing_with_scene:
                 self._is_syncing_with_scene = True
                 try:
@@ -331,6 +631,7 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         angle_value = float(new_angle)
         if self._end_angle != angle_value:
             self._end_angle = angle_value
+            self._update_standard_variables()
             self.changed.emit()
             self.parameter_changed.emit("end_angle", angle_value)
 
@@ -368,7 +669,7 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
                 self.sync_cameras(self._observed_cameras)
             finally:
                 self._is_syncing_with_scene = False
-        self.changed.emit()
+            self.changed.emit()
         self.parameter_changed.emit("head_angles", self._head_angles)
 
     @property
@@ -381,6 +682,7 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         endpoint_flag = bool(new_endpoint)
         if self._endpoint != endpoint_flag:
             self._endpoint = endpoint_flag
+            self._update_standard_variables()
             self.changed.emit()
             self.parameter_changed.emit("endpoint", endpoint_flag)
 
@@ -420,37 +722,121 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
                 roll_deg=roll_angle_deg,
             )
 
+    def remove_variable(self, var_name: str) -> None:
+        """Удаляет переменную, запрещая удаление стандартных переменных протокола Step-and-Shoot."""
+        clean_name = str(var_name).strip()
+        if self.is_standard_variable(clean_name):
+            return
+        super().remove_variable(clean_name)
 
-    def to_config(self) -> SpectProtocolConfig:
-        """Конвертация в модель конфигурации протокола ОФЭКТ ядра."""
-        head_angles_rad = [float(np.radians(angle_item)) * units.rad for angle_item in self._head_angles] if self._head_angles else None
-        return SpectProtocolConfig(
-            type="SPECT",
-            views=self.total_projections,
-            gamma_cameras=self._gamma_cameras,
+    def set_variable(
+        self,
+        var_name: str,
+        values: List[float],
+        sweep_type: str = "grid",
+    ) -> None:
+        """
+        Добавляет или обновляет переменную. Стандартные переменные протокола Step-and-Shoot
+        (gantry_angle, radius, step_time) всегда остаются zipped и синхронизируют свойства.
+        """
+        clean_name = str(var_name).strip().replace(" ", "_")
+        float_values = [float(val) for val in values]
+        if self.is_standard_variable(clean_name):
+            sweep_type = "zipped"
+
+        super().set_variable(clean_name, float_values, sweep_type=sweep_type)
+
+        if clean_name == "gantry_angle":
+            self._zipped_variables["current_angle"] = list(float_values)
+            self._steps = len(float_values)
+            self.parameter_changed.emit("steps", self._steps)
+        elif clean_name == "current_angle":
+            self._zipped_variables["gantry_angle"] = list(float_values)
+            self._steps = len(float_values)
+            self.parameter_changed.emit("steps", self._steps)
+        elif clean_name == "step_time":
+            self._zipped_variables["current_time"] = list(float_values)
+            if float_values:
+                self._time_per_step = float_values[0]
+        elif clean_name == "current_time":
+            self._zipped_variables["step_time"] = list(float_values)
+            if float_values:
+                self._time_per_step = float_values[0]
+        elif clean_name == "radius":
+            self._radius = list(float_values)
+
+    def add_zipped_step(self, step_values: Optional[Dict[str, float]] = None) -> None:
+        values_dict = dict(step_values) if step_values is not None else {}
+        if "gantry_angle" in values_dict and "current_angle" not in values_dict:
+            values_dict["current_angle"] = values_dict["gantry_angle"]
+        elif "current_angle" in values_dict and "gantry_angle" not in values_dict:
+            values_dict["gantry_angle"] = values_dict["current_angle"]
+
+        if "step_time" in values_dict and "current_time" not in values_dict:
+            values_dict["current_time"] = values_dict["step_time"]
+        elif "current_time" in values_dict and "step_time" not in values_dict:
+            values_dict["step_time"] = values_dict["current_time"]
+
+        super().add_zipped_step(values_dict)
+        if self._zipped_variables:
+            self._steps = len(next(iter(self._zipped_variables.values())))
+            if isinstance(self._radius, list):
+                self._radius = list(self._zipped_variables.get("radius", self._radius))
+            self.parameter_changed.emit("steps", self._steps)
+
+    def remove_zipped_step(self, step_index: int = -1) -> None:
+        super().remove_zipped_step(step_index)
+        if self._zipped_variables:
+            self._steps = len(next(iter(self._zipped_variables.values())))
+            if isinstance(self._radius, list):
+                self._radius = list(self._zipped_variables.get("radius", self._radius))
+            self.parameter_changed.emit("steps", self._steps)
+
+    def to_config(self) -> StepAndShootProtocolConfig:
+        """Конвертация в модель конфигурации протокола пошагового сканирования StepAndShoot ядра."""
+        radius_cfg = None
+        if self._radius is not None:
+            if isinstance(self._radius, list):
+                radius_cfg = [float(rad_val) * units.mm for rad_val in self._radius]
+            else:
+                radius_cfg = float(self._radius) * units.mm
+
+        extra_zipped = {
+            var_name: var_vals for var_name, var_vals in self._zipped_variables.items()
+            if var_name not in ("gantry_angle", "current_angle", "step_time", "current_time", "radius")
+        }
+
+        return StepAndShootProtocolConfig(
+            type="StepAndShoot",
+            steps=self._steps,
             start_angle=float(np.radians(self._start_angle)) * units.rad,
             end_angle=float(np.radians(self._end_angle)) * units.rad,
-            time_per_view=float(self._time_per_view) * units.s,
-            radius=float(self._radius) * units.mm,
-            head_angles=head_angles_rad,
             endpoint=self._endpoint,
+            time_per_step=float(self._time_per_step) * units.s,
+            radius=radius_cfg,
+            grid_variables=dict(self._grid_variables),
+            zipped_variables=extra_zipped,
         )
 
     @classmethod
-    def from_config(cls, config: SpectProtocolConfig, parent: Optional[QObject] = None) -> 'SpectProcedureViewModel':
-        """Восстановление модели представления из конфигурации SpectProtocolConfig."""
-        head_angles = [float(np.degrees(angle_item)) for angle_item in config.head_angles] if config.head_angles else None
-        radius = float(config.radius) if config.radius is not None else 250.0
-        steps = max(1, config.views // config.gamma_cameras) if config.gamma_cameras > 0 else config.views
+    def from_config(cls, config: StepAndShootProtocolConfig, parent: Optional[QObject] = None) -> 'StepAndShootProcedureViewModel':
+        """Восстановление модели представления из конфигурации StepAndShootProtocolConfig."""
+        radius_val: Any = None
+        if config.radius is not None:
+            if isinstance(config.radius, list):
+                radius_val = [float(rad_val) / float(units.mm) for rad_val in config.radius]
+            else:
+                radius_val = float(config.radius) / float(units.mm)
+
         return cls(
-            steps=steps,
-            gamma_cameras=config.gamma_cameras,
-            radius=radius,
-            time_per_view=float(config.time_per_view) / float(units.s),
+            steps=config.steps,
+            radius=radius_val if radius_val is not None else 250.0,
+            time_per_step=float(config.time_per_step) / float(units.s),
             start_angle=float(np.degrees(config.start_angle)),
             end_angle=float(np.degrees(config.end_angle)),
-            head_angles=head_angles,
             endpoint=config.endpoint,
+            grid_variables=dict(getattr(config, "grid_variables", {}) or {}),
+            zipped_variables=dict(getattr(config, "zipped_variables", {}) or {}),
             parent=parent,
         )
 
@@ -532,11 +918,34 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
                 self.sync_cameras(camera_view_models)
             elif camera_view_models:
                 # Камеры уже присутствуют в сцене: считываем радиус из сцены без мутации матриц
-                first_cam = camera_view_models[0]
-                pos = first_cam.local_matrix[0:3, 3]
-                dist = float(np.hypot(pos[0], pos[1]))
-                if dist > 1.0:
-                    self._radius = max(10.0, dist - first_cam.half_thickness)
+                first_camera_vm = camera_view_models[0]
+                camera_position = first_camera_vm.local_matrix[0:3, 3]
+                distance_to_isocenter = float(np.hypot(camera_position[0], camera_position[1]))
+                if distance_to_isocenter > 1.0:
+                    self._radius = max(10.0, distance_to_isocenter - first_camera_vm.half_thickness)
+
+            # 3. Zero-Config авто-привязка станины и детекторов в единый реестр привязок процедуры
+            if gantry_view_model is not None and gantry_view_model.core_node is not None:
+                self.bind_node_property(gantry_view_model.core_node, "rotation.alpha", "gantry_angle")
+                self.bind_node_property(gantry_view_model.core_node, "gantry_angle", "gantry_angle")
+                gantry_view_model.bindings.setdefault("gantry_angle", "gantry_angle")
+                gantry_view_model.bindings.setdefault("rotation.alpha", "gantry_angle")
+                if scene_view_model is not None:
+                    gantry_bindings = scene_view_model.bindings_registry.setdefault(gantry_view_model.core_node, {})
+                    gantry_bindings.setdefault("rotation.alpha", "gantry_angle")
+                    gantry_bindings.setdefault("gantry_angle", "gantry_angle")
+
+            for camera_view_model in camera_view_models:
+                cam_core = camera_view_model.core_node
+                if cam_core is not None:
+                    self.bind_node_property(cam_core, "radius", "radius")
+                    self.bind_node_property(cam_core, "translation.y", "radius")
+                camera_view_model.bindings.setdefault('radius', 'radius')
+                camera_view_model.bindings.setdefault('translation.y', 'radius')
+                if scene_view_model is not None and cam_core is not None:
+                    camera_bindings = scene_view_model.bindings_registry.setdefault(cam_core, {})
+                    camera_bindings.setdefault('radius', 'radius')
+                    camera_bindings.setdefault('translation.y', 'radius')
         finally:
             self._is_syncing_with_scene = False
 
@@ -561,6 +970,19 @@ class SpectProcedureViewModel(BaseProcedureViewModel):
         if isinstance(node_view_model, GammaCameraViewModel):
             return CameraMountKinematicConstraint(procedure_vm=self, camera_vm=node_view_model)
         return None
+
+
+# Алиас для обратной совместимости существующих контроллеров и вьюпортов
+class SpectProcedureViewModel(StepAndShootProcedureViewModel):
+    """
+    Модель представления протокола ОФЭКТ (SPECT).
+    Является специализацией StepAndShootProcedureViewModel для протоколов ОФЭКТ.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("procedure_type", "SPECT")
+        kwargs.setdefault("name", "Протокол ОФЭКТ (SPECT)")
+        super().__init__(*args, **kwargs)
 
 
 class PetProcedureViewModel(BaseProcedureViewModel):
@@ -625,56 +1047,18 @@ class PetProcedureViewModel(BaseProcedureViewModel):
         )
 
 
-class CustomSweepProcedureViewModel(BaseProcedureViewModel):
-    """
-    Модель представления пользовательского протокола сканирования (параметрический скан).
-    """
-
-    def __init__(
-        self,
-        grid_variables: Optional[Dict[str, List[float]]] = None,
-        zipped_variables: Optional[Dict[str, List[float]]] = None,
-        parent: Optional[QObject] = None
-    ) -> None:
-        super().__init__(name="Пользовательский скан (Custom Sweep)", procedure_type="CustomSweep", parent=parent)
-        self._grid_variables: Dict[str, List[float]] = dict(grid_variables) if grid_variables else {}
-        self._zipped_variables: Dict[str, List[float]] = dict(zipped_variables) if zipped_variables else {}
-
-    @property
-    def grid_variables(self) -> Dict[str, List[float]]:
-        return dict(self._grid_variables)
-
-    @grid_variables.setter
-    def grid_variables(self, new_grid_vars: Dict[str, List[float]]) -> None:
-        self._grid_variables = dict(new_grid_vars)
-        self.changed.emit()
-        self.parameter_changed.emit("grid_variables", self._grid_variables)
-
-    @property
-    def zipped_variables(self) -> Dict[str, List[float]]:
-        return dict(self._zipped_variables)
-
-    @zipped_variables.setter
-    def zipped_variables(self, new_zipped_vars: Dict[str, List[float]]) -> None:
-        self._zipped_variables = dict(new_zipped_vars)
-        self.changed.emit()
-        self.parameter_changed.emit("zipped_variables", self._zipped_variables)
-
-    def to_config(self) -> CustomSweepProtocolConfig:
-        return CustomSweepProtocolConfig(
-            type="CustomSweep",
-            grid_variables=self._grid_variables,
-            zipped_variables=self._zipped_variables
-        )
 
 
-def create_procedure_viewmodel(procedure_type: str = "SPECT") -> BaseProcedureViewModel:
+
+def create_procedure_viewmodel(procedure_type: str = "StepAndShoot") -> BaseProcedureViewModel:
     """
     Фабрика создания моделей представления процедур по их идентификатору типа.
     """
     procedure_type_normalized = procedure_type.upper().replace(" ", "").replace("_", "").strip()
     if procedure_type_normalized in ("SPECT", "ОФЭКТ"):
         return SpectProcedureViewModel()
+    elif procedure_type_normalized in ("STEPANDSHOOT", "STEP", "STEPANDSHOOTPROTOCOL"):
+        return StepAndShootProcedureViewModel()
     elif procedure_type_normalized in ("PET", "ПЭТ"):
         return PetProcedureViewModel()
     elif procedure_type_normalized in ("CUSTOMSWEEP", "CUSTOM", "ПОЛЬЗОВАТЕЛЬСКИЙ", "ПОЛЬЗОВАТЕЛЬСКАЯ"):
@@ -687,7 +1071,7 @@ def procedure_from_config(config: AnyProtocolConfig, parent: Optional[QObject] =
     """
     Восстановление ViewModel процедуры из конфигурационного объекта ядра.
     """
-    if isinstance(config, SpectProtocolConfig):
+    if isinstance(config, StepAndShootProtocolConfig):
         return SpectProcedureViewModel.from_config(config, parent=parent)
     elif isinstance(config, CustomSweepProtocolConfig):
         return CustomSweepProcedureViewModel(

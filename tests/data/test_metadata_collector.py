@@ -16,7 +16,6 @@ from core.data.metadata_collector import (
     ProcedureMetadataCollector,
 )
 from core.config.models import (
-    SpectProtocolConfig,
     StepAndShootProtocolConfig,
     CustomSweepProtocolConfig,
 )
@@ -37,20 +36,19 @@ class TestMetadataCollector(unittest.TestCase):
     def setUp(self) -> None:
         self.vacuum = Material(name="Vacuum", density=0.0001)
 
-    def test_protocol_metadata_provider_spect(self) -> None:
+    def test_protocol_metadata_provider_step_and_shoot_contour(self) -> None:
         """
-        Проверка извлечения метаданных из SpectProtocolConfig.
+        Проверка извлечения метаданных из StepAndShootProtocolConfig с массивом радиусов.
         """
-        protocol = SpectProtocolConfig(
-            views=64,
-            gamma_cameras=2,
-            time_per_view=2.0 * units.s,
-            radius=200.0 * units.mm,
+        protocol = StepAndShootProtocolConfig(
+            steps=64,
+            time_per_step=2.0 * units.s,
+            radius=[200.0 * units.mm] * 64,
         )
         provider = ProtocolMetadataProvider()
         result = provider.collect(protocol=protocol, context={"view_index": 5}, task_id=5)
 
-        self.assertEqual(result["modality"], "SPECT")
+        self.assertEqual(result["modality"], "StepAndShoot")
         self.assertEqual(result["view_index"], 5)
         self.assertEqual(result["views_total"], 64)
         self.assertAlmostEqual(result["exposure_time"], 2.0 * 1e9)  # 2.0 s в нс
@@ -58,13 +56,13 @@ class TestMetadataCollector(unittest.TestCase):
 
     def test_protocol_metadata_provider_step_and_shoot(self) -> None:
         """
-        Проверка извлечения метаданных из StepAndShootProtocolConfig.
+        Проверка извлечения метаданных из StepAndShootProtocolConfig со скалярным радиусом.
         """
         protocol = StepAndShootProtocolConfig(
-            views=16,
+            steps=16,
             start_angle=0.0 * units.deg,
             end_angle=180.0 * units.deg,
-            time_per_view=0.5 * units.s,
+            time_per_step=0.5 * units.s,
             radius=150.0 * units.mm,
         )
         provider = ProtocolMetadataProvider()
@@ -175,7 +173,7 @@ class TestMetadataCollector(unittest.TestCase):
         camera.add_child(crystal)
         gantry.add_child(camera)
 
-        protocol = SpectProtocolConfig(views=32)
+        protocol = StepAndShootProtocolConfig(steps=32)
 
         collector = ProcedureMetadataCollector()
         meta = collector.collect(
@@ -190,7 +188,7 @@ class TestMetadataCollector(unittest.TestCase):
         self.assertIn("detectors", meta)
         self.assertIn("geometry", meta)
 
-        self.assertEqual(meta["protocol"]["modality"], "SPECT")
+        self.assertEqual(meta["protocol"]["modality"], "StepAndShoot")
         self.assertEqual(meta["kinematics"]["gantry_name"], "Gantry")
         self.assertIn("Head1", meta["detectors"])
         self.assertIn("Crystal1", meta["geometry"])

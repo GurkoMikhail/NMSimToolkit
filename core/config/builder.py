@@ -1,6 +1,6 @@
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, Callable, Optional
+from typing import Dict, Any, Callable, Optional, List, Tuple
 import re
 
 import settings.database_setting as database_setting
@@ -32,6 +32,7 @@ class SceneBuilder:
         self.base_dir = Path(base_dir) if base_dir else None
         self.distribution_registry: Dict[SpatialNode, AnyDistributionConfig] = {}
         self.slots_registry: Dict[SpatialNode, GammaCameraSlotsConfig] = {}
+        self.bindings_registry: Dict[SpatialNode, Dict[str, str]] = {}
         self.factory_map: Dict[str, Callable[[AnyNodeConfig], SpatialNode]] = {
             'SpatialNode': self._build_spatial_node,
             'CompositeNode': self._build_composite_node,
@@ -60,7 +61,7 @@ class SceneBuilder:
         return root_node
 
     @staticmethod
-    def _to_float(val: Any, check_positive: bool = False) -> float:
+    def _to_float(val: Any, check_positive: bool = False, default_macro_val: float = 0.0) -> float:
         """
         Строгая валидация и приведение значения к float.
         Значения из моделей конфигурации уже валидированы слоем Pydantic и приведены к HepUnits.
@@ -69,11 +70,12 @@ class SceneBuilder:
             res = float(val)
         elif isinstance(val, str):
             if re.search(r'\$\{[^}]+\}', val):
-                raise ValueError(f"Неразрешенный макрос интерполяции в значении: '{val}'")
-            cleaned = val.strip()
-            if not cleaned:
-                raise ValueError("Пустое строковое значение недопустимо")
-            res = float(cleaned)
+                res = float(default_macro_val)
+            else:
+                cleaned = val.strip()
+                if not cleaned:
+                    raise ValueError("Пустое строковое значение недопустимо")
+                res = float(cleaned)
         else:
             raise TypeError(f"Недопустимый тип значения для _to_float: {type(val)}. Ожидалось число.")
 
@@ -91,13 +93,30 @@ class SceneBuilder:
             node.tags = list(config.tags)
 
         # Применение трансформаций
+        node_bindings: Dict[str, str] = {}
         for transform in config.transformations:
             if isinstance(transform, TranslateConfig):
+                for coord_name, coord_val in (('x', transform.x), ('y', transform.y), ('z', transform.z)):
+                    if isinstance(coord_val, str):
+                        match = re.search(r'\$\{([^}]+)\}', coord_val)
+                        if match:
+                            node_bindings[coord_name] = match.group(1)
+                            node_bindings[f"translation.{coord_name}"] = match.group(1)
+                            if coord_name == 'y':
+                                node_bindings['radius'] = match.group(1)
                 x = self._to_float(transform.x)
                 y = self._to_float(transform.y)
                 z = self._to_float(transform.z)
                 node.translate(x, y, z, transform.in_local)
             elif isinstance(transform, RotateConfig):
+                for rot_name, rot_val in (('alpha', transform.alpha), ('beta', transform.beta), ('gamma', transform.gamma)):
+                    if isinstance(rot_val, str):
+                        match = re.search(r'\$\{([^}]+)\}', rot_val)
+                        if match:
+                            node_bindings[rot_name] = match.group(1)
+                            node_bindings[f"rotation.{rot_name}"] = match.group(1)
+                            if rot_name == 'alpha':
+                                node_bindings['gantry_angle'] = match.group(1)
                 alpha = self._to_float(transform.alpha)
                 beta = self._to_float(transform.beta)
                 gamma = self._to_float(transform.gamma)
@@ -110,6 +129,29 @@ class SceneBuilder:
                 else:
                     node.local_matrix = mat @ node.local_matrix
                 node.invalidate_matrix_cache()
+
+        if isinstance(node, GantryNode):
+            if 'gantry_angle' not in node_bindings:
+                node_bindings['gantry_angle'] = 'gantry_angle'
+
+        if isinstance(config, SourceConfig):
+            if isinstance(config.activity, str):
+                match = re.search(r'\$\{([^}]+)\}', config.activity)
+                if match:
+                    node_bindings['activity'] = match.group(1)
+            if isinstance(config.energy, str):
+                match = re.search(r'\$\{([^}]+)\}', config.energy)
+                if match:
+                    node_bindings['energy'] = match.group(1)
+            elif isinstance(config.energy, list) and len(config.energy) > 0:
+                first_item = config.energy[0]
+                if isinstance(first_item, (list, tuple)) and len(first_item) >= 1 and isinstance(first_item[0], str):
+                    match = re.search(r'\$\{([^}]+)\}', first_item[0])
+                    if match:
+                        node_bindings['energy'] = match.group(1)
+
+        if node_bindings:
+            self.bindings_registry[node] = node_bindings
 
 
         # Build children
@@ -264,16 +306,31 @@ class SceneBuilder:
                 mask = np.isclose(raw_distribution, map_val)
                 distribution[mask] = float(act_val)
 
-        activity = self._to_float(config.activity, check_positive=True) if config.activity is not None else None
+        if config.activity is not None:
+            if isinstance(config.activity, str) and re.search(r'\$\{[^}]+\}', config.activity):
+                activity = 100.0 * float(units.MBq)
+            else:
+                activity = self._to_float(config.activity, check_positive=True)
+        else:
+            activity = None
+
         voxel_size = self._to_float(config.voxel_size, check_positive=True)
         if isinstance(config.energy, list):
             energy_validator = unit_validator_factory('MeV', float(units.MeV))
-            energy: Any = [
-                [float(energy_validator(item[0])), float(item[1])]
-                for item in config.energy
-            ]
+            energy_list: List[List[float]] = []
+            for item in config.energy:
+                val_e = item[0]
+                if isinstance(val_e, str) and re.search(r'\$\{[^}]+\}', val_e):
+                    e_num = 140.5 * float(units.keV)
+                else:
+                    e_num = float(energy_validator(val_e))
+                energy_list.append([e_num, float(item[1])])
+            energy: Any = energy_list
         else:
-            energy = self._to_float(config.energy, check_positive=True)
+            if isinstance(config.energy, str) and re.search(r'\$\{[^}]+\}', config.energy):
+                energy = 140.5 * float(units.keV)
+            else:
+                energy = self._to_float(config.energy, check_positive=True)
         half_life = self._to_float(config.half_life, check_positive=True)
 
         node = Source(

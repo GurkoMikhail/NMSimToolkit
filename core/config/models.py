@@ -1,5 +1,5 @@
 from typing import Any, List, Literal, Optional, Union, Annotated, Tuple
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_serializer
 from core.config.units import LengthConfig, EnergyConfig, TimeConfig, ActivityConfig, AngleConfig
 import hepunits as units
 
@@ -127,6 +127,35 @@ class SourceConfig(CompositeNodeConfig):
     energy: Union[EnergyConfig, List[List[Any]], List[Tuple[Any, float]]] = 140.5 * units.keV
     half_life: TimeConfig = 6.0 * units.hour
 
+    @field_serializer('activity', when_used='unless-none')
+    def serialize_activity(self, value: Any) -> Any:
+        if isinstance(value, (int, float)):
+            act_mbq = float(value) / float(units.MBq)
+            return f"{act_mbq:.6g} MBq"
+        return value
+
+    @field_serializer('energy', when_used='unless-none')
+    def serialize_energy(self, value: Any) -> Any:
+        if isinstance(value, (int, float)):
+            energy_kev = float(value) / float(units.keV)
+            return [[f"{energy_kev:.6g} keV", 1.0]]
+        if isinstance(value, str):
+            return [[str(value), 1.0]]
+        if isinstance(value, list):
+            res = []
+            for item in value:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    e_val, p_val = item[0], item[1]
+                    if isinstance(e_val, (int, float)):
+                        e_str = f"{float(e_val) / float(units.keV):.6g} keV"
+                    else:
+                        e_str = str(e_val)
+                    res.append([e_str, float(p_val)])
+                else:
+                    res.append(item)
+            return res
+        return value
+
 class DoseGridNodeConfig(CompositeNodeConfig):
     type: Literal['DoseGridNode'] = 'DoseGridNode'
     size: Tuple[LengthConfig, LengthConfig, LengthConfig] = (100.0 * units.mm, 100.0 * units.mm, 100.0 * units.mm)
@@ -225,31 +254,35 @@ class CustomSweepProtocolConfig(BaseProtocolConfig):
 
 class StepAndShootProtocolConfig(BaseProtocolConfig):
     type: Literal['StepAndShoot'] = 'StepAndShoot'
-    views: int
-    gamma_cameras: int = 1
-    start_angle: AngleConfig
-    end_angle: AngleConfig
-    time_per_view: TimeConfig
-    head_angles: Optional[List[AngleConfig]] = None
-    radius: Optional[LengthConfig] = None
-    endpoint: bool = True
-
-class SpectProtocolConfig(BaseProtocolConfig):
-    type: Literal['SPECT', 'SpectProtocol'] = 'SPECT'
-    views: int = 32
-    gamma_cameras: int = 2
+    steps: int = Field(ge=1, description="Количество физических угловых положений (шагов) гантри")
     start_angle: AngleConfig = 0.0 * units.deg
     end_angle: AngleConfig = 360.0 * units.deg
-    time_per_view: TimeConfig = 1.0 * units.s
-    radius: LengthConfig = 250.0 * units.mm
-    head_angles: Optional[List[AngleConfig]] = None
     endpoint: bool = False
+    time_per_step: TimeConfig = 1.0 * units.s
+    radius: Optional[Union[LengthConfig, List[LengthConfig]]] = None
+    grid_variables: dict[str, List[float]] = Field(default_factory=dict)
+    zipped_variables: dict[str, List[float]] = Field(default_factory=dict)
+
+    @model_validator(mode='after')
+    def validate_variables_consistency(self) -> 'StepAndShootProtocolConfig':
+        if isinstance(self.radius, list) and len(self.radius) != self.steps:
+            raise ValueError(
+                f"Длина массива радиусов ({len(self.radius)}) обязана строго совпадать "
+                f"с числом шагов steps ({self.steps})"
+            )
+        if self.zipped_variables:
+            for var_name, var_vals in self.zipped_variables.items():
+                if len(var_vals) != self.steps:
+                    raise ValueError(
+                        f"Длина массива переменной '{var_name}' ({len(var_vals)}) "
+                        f"обязана строго совпадать с числом шагов steps ({self.steps})"
+                    )
+        return self
 
 AnyProtocolConfig = Annotated[
     Union[
-        CustomSweepProtocolConfig,
         StepAndShootProtocolConfig,
-        SpectProtocolConfig
+        CustomSweepProtocolConfig,
     ],
     Field(discriminator='type')
 ]

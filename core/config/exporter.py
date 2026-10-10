@@ -12,6 +12,7 @@ import hepunits as units
 from core.config.models import (
     AnyDistributionConfig,
     AnyNodeConfig,
+    AnyProtocolConfig,
     BaseCompositeNodeConfig,
     BaseSpatialNodeConfig,
     BoxConfig,
@@ -107,23 +108,105 @@ class SceneExporter:
         return transforms
 
     @classmethod
+    def _export_node_transformations(
+        cls,
+        node: SpatialNode,
+        bindings: Optional[Dict[str, str]] = None,
+    ) -> List[TransformConfig]:
+        """
+        Экспортирует пространственные трансформации узла сцены.
+        Если для узла зарегистрированы биндинги трансляции или ротации,
+        выгружает явные TranslateConfig и RotateConfig с подстановкой макросов ${var}.
+        В противном случае использует стабильную декомпозицию в MatrixTransformConfig.
+        """
+        if not bindings:
+            return cls.decompose_matrix(node.local_matrix)
+
+        has_trans_binding = any(
+            k in bindings for k in ("translation.x", "translation.y", "translation.z", "x", "y", "z", "radius")
+        )
+        has_rot_binding = any(
+            k in bindings for k in ("rotation.alpha", "rotation.beta", "rotation.gamma", "alpha", "beta", "gamma", "gantry_angle")
+        )
+
+        if not (has_trans_binding or has_rot_binding):
+            return cls.decompose_matrix(node.local_matrix)
+
+        transforms: List[TransformConfig] = []
+
+        # 1. Извлечение трансляции
+        tx = float(node.local_matrix[0, 3])
+        ty = float(node.local_matrix[1, 3])
+        tz = float(node.local_matrix[2, 3])
+
+        bx = bindings.get("translation.x") or bindings.get("x")
+        by = bindings.get("translation.y") or bindings.get("y") or bindings.get("radius")
+        bz = bindings.get("translation.z") or bindings.get("z")
+
+        has_trans = (
+            bool(bx or by or bz)
+            or not (
+                math.isclose(tx, 0.0, abs_tol=1e-6)
+                and math.isclose(ty, 0.0, abs_tol=1e-6)
+                and math.isclose(tz, 0.0, abs_tol=1e-6)
+            )
+        )
+        if has_trans:
+            val_x: Any = f"${{{bx}}} mm" if bx else tx
+            val_y: Any = f"${{{by}}} mm" if by else ty
+            val_z: Any = f"${{{bz}}} mm" if bz else tz
+            transforms.append(TranslateConfig(x=val_x, y=val_y, z=val_z))
+
+        # 2. Извлечение вращения
+        rot_mat = node.local_matrix[:3, :3]
+        b_alpha = bindings.get("rotation.alpha") or bindings.get("alpha") or bindings.get("gantry_angle")
+        b_beta = bindings.get("rotation.beta") or bindings.get("beta")
+        b_gamma = bindings.get("rotation.gamma") or bindings.get("gamma")
+
+        alpha_deg = 0.0
+        beta_deg = 0.0
+        gamma_deg = 0.0
+        if not np.allclose(rot_mat, np.eye(3), atol=1e-5):
+            try:
+                rotation_obj = Rotation.from_matrix(rot_mat)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', message='.*Gimbal lock detected.*')
+                    euler = rotation_obj.as_euler('xyz', degrees=True)
+                    alpha_deg = float(euler[0])
+                    beta_deg = float(euler[1])
+                    gamma_deg = float(euler[2])
+            except ValueError as error:
+                logger.warning(f"Ошибка при декомпозиции матрицы вращения: {error}")
+
+        has_rot = bool(b_alpha or b_beta or b_gamma or not np.allclose(rot_mat, np.eye(3), atol=1e-5))
+        if has_rot:
+            val_alpha: Any = f"${{{b_alpha}}} deg" if b_alpha else f"{alpha_deg:.6g} deg"
+            val_beta: Any = f"${{{b_beta}}} deg" if b_beta else f"{beta_deg:.6g} deg"
+            val_gamma: Any = f"${{{b_gamma}}} deg" if b_gamma else f"{gamma_deg:.6g} deg"
+            transforms.append(RotateConfig(alpha=val_alpha, beta=val_beta, gamma=val_gamma))
+
+        return transforms
+
+    @classmethod
     def export_node(
         cls,
         node: SpatialNode,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        bindings_registry: Optional[Dict[SpatialNode, Dict[str, str]]] = None,
     ) -> AnyNodeConfig:
         """
         Рекурсивно экспортирует узел сцены в Pydantic-модель конфигурации.
         """
         node_name = node.name
         node_tags = list(node.tags) if node.tags else []
-        transforms = cls.decompose_matrix(node.local_matrix)
+        node_bindings = bindings_registry.get(node) if bindings_registry is not None else None
+        transforms = cls._export_node_transformations(node, node_bindings)
 
         # 1. GammaCameraNode
         if isinstance(node, GammaCameraNode):
             children_cfgs = [
-                cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry)
+                cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry, bindings_registry=bindings_registry)
                 for child_node in node.childs
             ]
             slots_cfg = None
@@ -187,22 +270,28 @@ class SceneExporter:
             if distribution_registry is not None:
                 dist_cfg = distribution_registry.get(node)
 
-            actual_mapping: Optional[Dict[float, Union[float, str]]] = None
-            if node.material_distribution is not None and len(node.material_distribution.element_list) > 0:
-                actual_mapping = {
-                    float(element_idx): material_item.name
-                    for element_idx, material_item in enumerate(node.material_distribution.element_list)
-                }
-
             if dist_cfg is None:
+                actual_mapping: Optional[Dict[float, Union[float, str]]] = None
+                if node.material_distribution is not None and len(node.material_distribution.element_list) > 0:
+                    actual_mapping = {
+                        float(element_idx): material_item.name
+                        for element_idx, material_item in enumerate(node.material_distribution.element_list)
+                    }
                 dist_cfg = NumpyDistributionConfig(
                     path=f"{node_name or 'phantom'}.npy",
                     mapping=actual_mapping if actual_mapping is not None else {0.0: 'Vacuum'},
                 )
-            elif actual_mapping is not None:
-                dist_cfg = dist_cfg.model_copy(update={'mapping': actual_mapping})
+            elif isinstance(dist_cfg, (NumpyDistributionConfig, RawDistributionConfig)) and dist_cfg.mapping is None:
+                actual_mapping = None
+                if node.material_distribution is not None and len(node.material_distribution.element_list) > 0:
+                    actual_mapping = {
+                        float(element_idx): material_item.name
+                        for element_idx, material_item in enumerate(node.material_distribution.element_list)
+                    }
+                if actual_mapping is not None:
+                    dist_cfg = dist_cfg.model_copy(update={'mapping': actual_mapping})
 
-            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
+            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry, bindings_registry=bindings_registry) for child_node in node.childs]
             return WoodcockVoxelVolumeConfig(
                 name=node_name,
                 tags=node_tags,
@@ -221,7 +310,7 @@ class SceneExporter:
                 geo_cfg = BoxConfig(x=float(node.size[0]), y=float(node.size[1]), z=float(node.size[2]))
 
             mat_name = node.material.name
-            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
+            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry, bindings_registry=bindings_registry) for child_node in node.childs]
 
             return VolumeConfig(
                 name=node_name,
@@ -234,26 +323,44 @@ class SceneExporter:
 
         # 6. Source
         if isinstance(node, Source):
-            act = float(np.sum(node.initial_activity)) if node.initial_activity is not None else None
+            act_binding = node_bindings.get('activity') if node_bindings else None
+            energy_binding = node_bindings.get('energy') if node_bindings else None
+
+            if act_binding:
+                act_val: Optional[str] = f"${{{act_binding}}} MBq"
+            else:
+                act = float(np.sum(node.initial_activity)) if node.initial_activity is not None else None
+                act_val = None
+                if act is not None:
+                    act_mbq = float(act) / float(units.MBq)
+                    act_val = f"{act_mbq:.6g} MBq"
+
             v_sz = float(np.mean(node.voxel_size)) if isinstance(node.voxel_size, (list, tuple, np.ndarray, Sequence)) else float(node.voxel_size)
             dist_cfg = None
             if distribution_registry is not None:
                 dist_cfg = distribution_registry.get(node)
             if dist_cfg is None:
                 dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'source_dist'}.npy")
-            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
+            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry, bindings_registry=bindings_registry) for child_node in node.childs]
             half_life = float(node.half_life)
             rad_type = node.radiation_type
-            if len(node.energy) == 1:
-                energy_val: Union[float, List[List[float]]] = float(node.energy["energy"][0])
+
+            if energy_binding:
+                energy_val: Any = [
+                    [f"${{{energy_binding}}} keV", float(probability_value)]
+                    for _, probability_value in zip(node.energy["energy"], node.energy["probability"])
+                ]
             else:
-                energy_val = [[float(energy_value), float(probability_value)] for energy_value, probability_value in zip(node.energy["energy"], node.energy["probability"])]
+                energy_val = [
+                    [f"{float(energy_value) / float(units.keV):.6g} keV", float(probability_value)]
+                    for energy_value, probability_value in zip(node.energy["energy"], node.energy["probability"])
+                ]
             return SourceConfig(
                 name=node_name,
                 tags=node_tags,
                 transformations=transforms,
                 distribution=dist_cfg,
-                activity=act,
+                activity=act_val,
                 voxel_size=v_sz,
                 radiation_type=str(rad_type),
                 energy=energy_val,
@@ -263,7 +370,7 @@ class SceneExporter:
 
         # 7. DoseGridNode
         if isinstance(node, DoseGridNode):
-            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
+            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry, bindings_registry=bindings_registry) for child_item in node.childs]
             return DoseGridNodeConfig(
                 name=node_name,
                 tags=node_tags,
@@ -276,17 +383,30 @@ class SceneExporter:
 
         # 7.1. GantryNode
         if isinstance(node, GantryNode):
-            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
+            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry, bindings_registry=bindings_registry) for child_item in node.childs]
+            bound_var = None
+            if bindings_registry is not None and node in bindings_registry:
+                bound_var = (
+                    bindings_registry[node].get('gantry_angle')
+                    or bindings_registry[node].get('rotation.alpha')
+                    or bindings_registry[node].get('alpha')
+                )
+
+            if bound_var is not None:
+                gantry_transforms = [RotateConfig(alpha=f"${{{bound_var}}} deg")]
+            else:
+                gantry_transforms = [RotateConfig(alpha=f"{node.gantry_angle / float(units.deg):.4g} deg")]
+
             return GantryConfig(
                 name=node_name,
                 tags=node_tags,
-                transformations=transforms,
+                transformations=gantry_transforms,
                 children=children_cfgs,
             )
 
         # 8. CompositeNode
         if isinstance(node, CompositeNode):
-            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
+            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry, bindings_registry=bindings_registry) for child_item in node.childs]
             return BaseCompositeNodeConfig(
                 name=node_name,
                 tags=node_tags,
@@ -307,11 +427,17 @@ class SceneExporter:
         root_node: SpatialNode,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        bindings_registry: Optional[Dict[SpatialNode, Dict[str, str]]] = None,
     ) -> AnyNodeConfig:
         """
         Экспортирует корневой узел графа сцены.
         """
-        return cls.export_node(root_node, distribution_registry=distribution_registry, slots_registry=slots_registry)
+        return cls.export_node(
+            root_node,
+            distribution_registry=distribution_registry,
+            slots_registry=slots_registry,
+            bindings_registry=bindings_registry,
+        )
 
     @classmethod
     def export_to_config(
@@ -320,13 +446,20 @@ class SceneExporter:
         simulation_manager_cfg: Optional[SimulationManagerConfig] = None,
         data_manager_cfg: Optional[DataManagerConfig] = None,
         pool_size: int = 1,
+        protocol: Optional[AnyProtocolConfig] = None,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        bindings_registry: Optional[Dict[SpatialNode, Dict[str, str]]] = None,
     ) -> SimulationConfig:
         """
         Формирует полный SimulationConfig из корневого узла сцены и опциональных параметров.
         """
-        scene_cfg = cls.export_scene(root_node, distribution_registry=distribution_registry, slots_registry=slots_registry)
+        scene_cfg = cls.export_scene(
+            root_node,
+            distribution_registry=distribution_registry,
+            slots_registry=slots_registry,
+            bindings_registry=bindings_registry,
+        )
         sim_mgr = simulation_manager_cfg or SimulationManagerConfig()
         data_mgr = data_manager_cfg or DataManagerConfig(
             filename="output.h5",
@@ -335,6 +468,7 @@ class SceneExporter:
 
         return SimulationConfig(
             pool_size=pool_size,
+            protocol=protocol,
             simulation_manager=sim_mgr,
             data_manager=data_mgr,
             scene=scene_cfg,
@@ -348,8 +482,10 @@ class SceneExporter:
         simulation_manager_cfg: Optional[SimulationManagerConfig] = None,
         data_manager_cfg: Optional[DataManagerConfig] = None,
         pool_size: int = 1,
+        protocol: Optional[AnyProtocolConfig] = None,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        bindings_registry: Optional[Dict[SpatialNode, Dict[str, str]]] = None,
     ) -> None:
         """
         Экспортирует граф сцены напрямую в YAML-файл конфигурации.
@@ -383,7 +519,9 @@ class SceneExporter:
             simulation_manager_cfg=simulation_manager_cfg,
             data_manager_cfg=data_manager_cfg,
             pool_size=pool_size,
+            protocol=protocol,
             distribution_registry=adjusted_distribution_registry,
             slots_registry=slots_registry,
+            bindings_registry=bindings_registry,
         )
         dump_simulation_config(config, target_path)

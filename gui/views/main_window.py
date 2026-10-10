@@ -30,7 +30,12 @@ from gui.views.procedure_selector_widget import ProcedureSelectorWidget
 from gui.views.data_handler_list_widget import DataHandlerListWidget
 from gui.views.simulation_jobs_widget import SimulationJobsWidget
 from gui.views.simulation_settings_dialog import SimulationSettingsDialog
-from gui.viewmodels.procedure_viewmodel import BaseProcedureViewModel, SpectProcedureViewModel, procedure_from_config
+from gui.viewmodels.procedure_viewmodel import (
+    BaseProcedureViewModel,
+    StepAndShootProcedureViewModel,
+    SpectProcedureViewModel,
+    procedure_from_config,
+)
 from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel, DirectStreamHandlerViewModel
 from gui.viewport_3d.vtk_viewport import VTKViewport
 from gui.controllers.orchestrator_session import OrchestratorSession
@@ -141,6 +146,7 @@ class MainWindow(QMainWindow):
 
         # Модели процедур и диспетчера данных
         self.procedure_vm = SpectProcedureViewModel()
+        self.property_inspector.set_procedure_viewmodel(self.procedure_vm)
         self.viewport_controller.procedure_vm = self.procedure_vm
         self.data_manager_vm = DataManagerViewModel()
         self.data_manager_vm.min_buffer_capacity = self.sim_settings.particles_number
@@ -364,7 +370,7 @@ class MainWindow(QMainWindow):
         self.lbl_preview_view = QLabel("Шаг:")
         toolbar.addWidget(self.lbl_preview_view)
         self.spin_preview_view = QSpinBox()
-        total_steps = self.procedure_vm.steps if isinstance(self.procedure_vm, SpectProcedureViewModel) else 1
+        total_steps = self.procedure_vm.steps if isinstance(self.procedure_vm, StepAndShootProcedureViewModel) else 1
         self.spin_preview_view.setRange(1, max(1, total_steps))
         self.spin_preview_view.setValue(1)
         self.spin_preview_view.setToolTip("Предварительный просмотр ориентации детекторных головок ОФЭКТ для выбранного шага")
@@ -605,7 +611,7 @@ class MainWindow(QMainWindow):
     def _on_preview_view_changed(self, view_number_1based: int) -> None:
         """Предварительный кинематический поворот детекторов на выбранный шаг ОФЭКТ."""
         base_angle = self.viewport_controller.preview_view(view_number_1based, self.procedure_vm)
-        steps_total = self.procedure_vm.steps if isinstance(self.procedure_vm, SpectProcedureViewModel) else 1
+        steps_total = self.procedure_vm.steps if isinstance(self.procedure_vm, StepAndShootProcedureViewModel) else 1
         self.lbl_status.setText(f"Предпросмотр ОФЭКТ: Шаг {view_number_1based}/{steps_total} (угол {base_angle:.1f}°)")
 
 
@@ -628,7 +634,8 @@ class MainWindow(QMainWindow):
         self.viewport_controller.on_procedure_changed(proc_vm)
         self.orchestrator_session.procedure_vm = proc_vm
         self.property_inspector.set_target_viewmodel(proc_vm)
-        if isinstance(proc_vm, SpectProcedureViewModel):
+        self.property_inspector.set_procedure_viewmodel(proc_vm)
+        if isinstance(proc_vm, StepAndShootProcedureViewModel):
             self.spin_preview_view.setRange(1, max(1, proc_vm.steps))
             def _on_proc_param_changed(param_name: str, param_val: Any) -> None:
                 if param_name in ("steps", "gamma_cameras"):
@@ -673,7 +680,9 @@ class MainWindow(QMainWindow):
         """
         Изменение размера пула рабочих процессов.
         """
-        self.orchestrator_session.pool_size = max(1, int(pool_size))
+        val = max(1, int(pool_size))
+        self.orchestrator_session.pool_size = val
+        self.sim_settings.pool_size = val
         self._update_action_states(
             running=self.orchestrator_session.is_running,
             paused=self.orchestrator_session.is_paused,
@@ -850,6 +859,7 @@ class MainWindow(QMainWindow):
                     root_node,
                     distribution_registry=builder.distribution_registry,
                     slots_registry=builder.slots_registry,
+                    bindings_registry=builder.bindings_registry,
                     base_dir=filepath.parent,
                 )
                 self.scene_vm.apply_simulation_config(cfg)
@@ -859,6 +869,9 @@ class MainWindow(QMainWindow):
                 # Восстановление протокола/процедуры
                 if cfg.protocol is not None:
                     proc_vm = procedure_from_config(cfg.protocol)
+                    if builder.bindings_registry:
+                        for b_node, b_dict in builder.bindings_registry.items():
+                            proc_vm.bindings_registry[b_node] = dict(b_dict)
                     self.procedure_selector.set_procedure(proc_vm)
                     self._on_procedure_changed(proc_vm)
 
@@ -914,14 +927,21 @@ class MainWindow(QMainWindow):
                     min_energy=float(self.sim_settings.min_energy) * units.keV,
                     stop_time=float(self.orchestrator_session.stop_time) * units.s,
                 )
+                protocol_cfg = self.procedure_vm.to_config() if self.procedure_vm is not None else None
                 SceneExporter.export_to_yaml(
                     self.scene_vm.root_vm.core_node,
                     filename,
                     simulation_manager_cfg=sim_mgr,
                     data_manager_cfg=data_mgr,
+                    protocol=protocol_cfg,
                     pool_size=int(self.sim_settings.pool_size),
                     distribution_registry=self.scene_vm.distribution_registry,
                     slots_registry=self.scene_vm.slots_registry,
+                    bindings_registry=(
+                        self.procedure_vm.bindings_registry
+                        if (self.procedure_vm and self.procedure_vm.bindings_registry)
+                        else self.scene_vm.bindings_registry
+                    ),
                 )
                 QMessageBox.information(self, "Успех", f"Конфигурация сохранена в:\n{filename}")
             except Exception as exc:

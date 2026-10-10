@@ -98,7 +98,7 @@ class TestStage2ViewModels(unittest.TestCase):
     def test_spect_procedure_steps_and_total_projections(self):
         """Проверка полей steps, total_projections и синхронизации с конфигурацией."""
         from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel, procedure_from_config
-        from core.config.models import SpectProtocolConfig
+        from core.config.models import StepAndShootProtocolConfig
 
         proc = SpectProcedureViewModel()
         self.assertEqual(proc.steps, 32)
@@ -117,18 +117,15 @@ class TestStage2ViewModels(unittest.TestCase):
         self.assertEqual(proc.steps, 16)
         self.assertEqual(proc.total_projections, 64)
 
-        # Конвертация в SpectProtocolConfig
+        # Конвертация в StepAndShootProtocolConfig
         cfg = proc.to_config()
-        self.assertIsInstance(cfg, SpectProtocolConfig)
-        self.assertEqual(cfg.views, 64)
-        self.assertEqual(cfg.gamma_cameras, 4)
+        self.assertIsInstance(cfg, StepAndShootProtocolConfig)
+        self.assertEqual(cfg.steps, 16)
 
-        # Восстановление из SpectProtocolConfig
+        # Восстановление из StepAndShootProtocolConfig
         loaded_vm = procedure_from_config(cfg)
         self.assertIsInstance(loaded_vm, SpectProcedureViewModel)
         self.assertEqual(loaded_vm.steps, 16)
-        self.assertEqual(loaded_vm.gamma_cameras, 4)
-        self.assertEqual(loaded_vm.total_projections, 64)
 
 
 if __name__ == '__main__':

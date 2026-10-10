@@ -13,7 +13,6 @@ from core.config.models import (
     BaseProtocolConfig,
     CustomSweepProtocolConfig,
     StepAndShootProtocolConfig,
-    SpectProtocolConfig,
 )
 from core.geometry.volumes import Volume
 from core.scene.gantry_node import GantryNode
@@ -65,23 +64,16 @@ class ProtocolMetadataProvider:
         """
         view_index: int = int(context.get("view_index", task_id))
 
-        if isinstance(protocol, SpectProtocolConfig):
-            orbit_radius_value = float(protocol.radius) if protocol.radius is not None else 0.0
-            return {
-                "modality": "SPECT",
-                "view_index": view_index,
-                "views_total": int(protocol.views),
-                "exposure_time": float(protocol.time_per_view),
-                "orbit_radius": orbit_radius_value,
-            }
-
         if isinstance(protocol, StepAndShootProtocolConfig):
-            orbit_radius_value = float(protocol.radius) if protocol.radius is not None else 0.0
+            if isinstance(protocol.radius, list):
+                orbit_radius_value = float(protocol.radius[view_index % len(protocol.radius)]) if protocol.radius else 0.0
+            else:
+                orbit_radius_value = float(protocol.radius) if protocol.radius is not None else 0.0
             return {
                 "modality": "StepAndShoot",
                 "view_index": view_index,
-                "views_total": int(protocol.views),
-                "exposure_time": float(protocol.time_per_view),
+                "views_total": int(protocol.steps),
+                "exposure_time": float(protocol.time_per_step),
                 "orbit_radius": orbit_radius_value,
             }
 
