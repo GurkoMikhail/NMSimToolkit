@@ -46,37 +46,28 @@ class DirectParallelCollimator(CompositeNode):
 
     def __init__(
         self,
-        size: Union[Sequence[Length], Vector3D],
+        size: Sequence[Length] | Vector3D,
         hole_diameter: Float,
         septa: Float,
         material: Optional[Material] = None,
         hole_material: Optional[Material] = None,
-        hole_shape: Union[CollimatorHoleShape, str] = CollimatorHoleShape.HEXAGONAL,
+        hole_shape: CollimatorHoleShape = CollimatorHoleShape.HEXAGONAL,
         name: Optional[str] = None
     ) -> None:
         collimator_name = name if name is not None else "DirectParallelCollimator"
         super().__init__(name=collimator_name)
 
+        if not isinstance(hole_shape, CollimatorHoleShape):
+            raise TypeError(f"hole_shape должен быть строго CollimatorHoleShape, получено {type(hole_shape).__name__}")
+
         self._channels_initialized = False
         self._explicit_hole_material = hole_material
         self._hole_diameter = Float(hole_diameter)
         self._septa = Float(septa)
-        self._size = np.array(size, dtype=Float)
-
-        if isinstance(hole_shape, str):
-            try:
-                self._hole_shape = CollimatorHoleShape(hole_shape.lower())
-            except ValueError:
-                valid_shapes = [item.value for item in CollimatorHoleShape]
-                raise ValueError(
-                    f"Неизвестная форма канала '{hole_shape}'. Допустимые формы: {valid_shapes}"
-                )
-        elif isinstance(hole_shape, CollimatorHoleShape):
-            self._hole_shape = hole_shape
-        else:
-            raise TypeError(
-                f"hole_shape должен быть CollimatorHoleShape или str, получено: {type(hole_shape)}"
-            )
+        self._size = np.asarray(size, dtype=Float)
+        if self._size.shape != (3,):
+            raise ValueError(f"Габаритные размеры коллиматора должны иметь форму (3,), получено {self._size.shape}")
+        self._hole_shape = hole_shape
 
         if self._hole_shape != CollimatorHoleShape.HEXAGONAL:
             raise NotImplementedError(
@@ -260,29 +251,19 @@ class DirectParallelCollimator(CompositeNode):
         return self._hole_shape
 
     @hole_shape.setter
-    def hole_shape(self, value: Union[CollimatorHoleShape, str]) -> None:
-        if isinstance(value, str):
-            try:
-                parsed_shape = CollimatorHoleShape(value.lower())
-            except ValueError:
-                valid_shapes = [item.value for item in CollimatorHoleShape]
-                raise ValueError(
-                    f"Неизвестная форма канала '{value}'. Допустимые формы: {valid_shapes}"
-                )
-        elif isinstance(value, CollimatorHoleShape):
-            parsed_shape = value
-        else:
+    def hole_shape(self, value: CollimatorHoleShape) -> None:
+        if not isinstance(value, CollimatorHoleShape):
             raise TypeError(
-                f"hole_shape должен быть CollimatorHoleShape или str, получено: {type(value)}"
+                f"hole_shape должен быть строго CollimatorHoleShape, получено: {type(value).__name__}"
             )
 
-        if parsed_shape != CollimatorHoleShape.HEXAGONAL:
+        if value != CollimatorHoleShape.HEXAGONAL:
             raise NotImplementedError(
-                f"Форма каналов '{parsed_shape.value}' еще не реализована в расчетном ядре."
+                f"Форма каналов '{value.value}' еще не реализована в расчетном ядре."
             )
 
-        if self._hole_shape != parsed_shape:
-            self._hole_shape = parsed_shape
+        if self._hole_shape != value:
+            self._hole_shape = value
             self.channels.geometry = self._create_channel_geometry(
                 shape=self._hole_shape,
                 size=self._size,

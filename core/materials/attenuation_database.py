@@ -39,18 +39,16 @@ class AttenuationDataBase(Dict[Material, np.ndarray]):
                 MAC['Coefficient'][process] = value
             self._elements_MAC.update({element: MAC})
     
-    def add_material(self, material: Union[Material, Iterable[Material]]) -> None:
-        if isinstance(material, Material):
-            self._add_material(material)
-            return
-        if isinstance(material, Iterable):
-            for mat in material:
-                self._add_material(mat)
-            return
-        raise ValueError('Неверный тип')
-    
+    def add_material(self, material: Material) -> None:
+        """Добавляет единичный материал в базу данных коэффициентов ослабления."""
+        self._add_material(material)
+
+    def add_materials(self, materials: Iterable[Material]) -> None:
+        """Пакетно добавляет коллекцию материалов в базу данных."""
+        for mat in materials:
+            self._add_material(mat)
+
     def _add_material(self, material: Material) -> None:
-        assert isinstance(material, Material), ValueError('Неверный тип')
         list_of_energy = []
         list_of_shells = []
         list_of_MAC = []

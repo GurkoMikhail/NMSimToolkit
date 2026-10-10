@@ -20,7 +20,7 @@ from core.geometry.volumes import Volume
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.geometry.parametric_collimators import ParametricParallelCollimator
-from core.geometry.direct_collimators import DirectParallelCollimator
+from core.geometry.direct_collimators import DirectParallelCollimator, CollimatorHoleShape
 from core.materials.materials import MaterialArray
 from core.source.sources import Source
 from core.scene.nodes import SpatialNode, CompositeNode
@@ -267,12 +267,13 @@ class SceneBuilder:
         size = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
         hole_diameter = self._to_float(config.hole_diameter, check_positive=True)
         septa = self._to_float(config.septa, check_positive=True)
+        hole_shape = CollimatorHoleShape(config.hole_shape.lower())
         return ParametricParallelCollimator(
             size=size,
             hole_diameter=hole_diameter,
             septa=septa,
             material=material,
-            hole_shape=config.hole_shape,
+            hole_shape=hole_shape,
             name=config.name
         )
 
@@ -282,13 +283,14 @@ class SceneBuilder:
         size = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
         hole_diameter = self._to_float(config.hole_diameter, check_positive=True)
         septa = self._to_float(config.septa, check_positive=True)
+        hole_shape = CollimatorHoleShape(config.hole_shape.lower())
         return DirectParallelCollimator(
             size=size,
             hole_diameter=hole_diameter,
             septa=septa,
             material=material,
             hole_material=hole_material,
-            hole_shape=config.hole_shape,
+            hole_shape=hole_shape,
             name=config.name,
         )
 

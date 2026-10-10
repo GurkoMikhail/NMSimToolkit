@@ -69,8 +69,9 @@ class TestSceneSensitiveVolumes(unittest.TestCase):
         # Проверка по ViewModel
         self.assertTrue(self.scene_viewmodel.is_sensitive_volume(crystal_vm))
 
-        # Проверка по Volume ядра
-        self.assertTrue(self.scene_viewmodel.is_sensitive_volume(crystal_volume))
+        # Передача сырого Volume ядра запрещена контрактом MVVM и вызывает TypeError
+        with self.assertRaises(TypeError):
+            self.scene_viewmodel.is_sensitive_volume(crystal_volume)  # type: ignore
 
     def test_add_and_remove_sensitive_volume(self) -> None:
         """Проверка динамического добавления и удаления детекторов через методы сцены."""

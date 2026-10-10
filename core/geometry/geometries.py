@@ -20,8 +20,8 @@ ShapeDataDType = np.dtype([
 class Geometry(ABC):
     size: Vector3D
     
-    def __init__(self, size: Union[Sequence[Length], Vector3D]) -> None:
-        self.size = np.array(size)
+    def __init__(self, size: Sequence[Length] | Vector3D) -> None:
+        self.size = np.asarray(size, dtype=Float)
 
     @property
     def half_size(self) -> Vector3D:
@@ -46,11 +46,12 @@ class Box(Geometry):
         z: Length,
         distance_method: str = 'ray_casting',
         distance_epsilon: Float = Float(1. * units.micron),
-        **kwds: Any
     ) -> None:
-        super().__init__([x, y, z])
-        self.distance_method = str(kwds.get('distance_method', distance_method))
-        self.distance_epsilon = Float(kwds.get('distance_epsilon', distance_epsilon))
+        if Float(x) <= 0.0 or Float(y) <= 0.0 or Float(z) <= 0.0:
+            raise ValueError(f"Габаритные размеры Box должны быть строго положительными (> 0), получено x={x}, y={y}, z={z}")
+        super().__init__([Float(x), Float(y), Float(z)])
+        self.distance_method = distance_method
+        self.distance_epsilon = Float(distance_epsilon)
 
     @property
     def x(self) -> Length:

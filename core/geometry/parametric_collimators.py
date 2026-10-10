@@ -34,36 +34,34 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
 
     def __init__(
         self,
-        size: Union[np.ndarray, list, tuple],
+        size: Vector3D | Tuple[Float, Float, Float] | list[Float],
         hole_diameter: Float,
         septa: Float,
         material: Optional[Material] = None,
-        hole_shape: Union[CollimatorHoleShape, str] = CollimatorHoleShape.HEXAGONAL,
+        hole_shape: CollimatorHoleShape = CollimatorHoleShape.HEXAGONAL,
         name: Optional[str] = None,
     ) -> None:
         material_lead = settings.material_database["Pb"] if material is None else material
+        size_arr = np.asarray(size, dtype=Float)
+        if size_arr.shape != (3,):
+            raise ValueError(f"Размер коллиматора должен содержать 3 координаты, получено shape={size_arr.shape}")
+        if any(dim <= 0.0 for dim in size_arr):
+            raise ValueError(f"Габаритные размеры коллиматора должны быть строго положительными (> 0), получено {size}")
+        if Float(hole_diameter) <= 0.0:
+            raise ValueError(f"Диаметр отверстия должен быть строго положительным (> 0), получено {hole_diameter}")
+        if Float(septa) <= 0.0:
+            raise ValueError(f"Толщина септы должна быть строго положительной (> 0), получено {septa}")
+        if not isinstance(hole_shape, CollimatorHoleShape):
+            raise TypeError(f"hole_shape должен быть строго CollimatorHoleShape, получено {type(hole_shape).__name__}")
+
         super().__init__(
-            geometry=Box(*size),
+            geometry=Box(size_arr[0], size_arr[1], size_arr[2]),
             material=material_lead,
             name=name,
         )
         self._hole_diameter = Float(hole_diameter)
         self._septa = Float(septa)
-
-        if isinstance(hole_shape, str):
-            try:
-                self._hole_shape = CollimatorHoleShape(hole_shape.lower())
-            except ValueError:
-                valid_shapes = [shape_item.value for shape_item in CollimatorHoleShape]
-                raise ValueError(
-                    f"Неизвестная форма канала '{hole_shape}'. Допустимые формы: {valid_shapes}"
-                )
-        elif isinstance(hole_shape, CollimatorHoleShape):
-            self._hole_shape = hole_shape
-        else:
-            raise TypeError(
-                f"hole_shape должен быть CollimatorHoleShape или str, получено: {type(hole_shape)}"
-            )
+        self._hole_shape = hole_shape
 
         if self._hole_shape == CollimatorHoleShape.ROUND:
             raise NotImplementedError(
@@ -115,28 +113,18 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
         return self._hole_shape
 
     @hole_shape.setter
-    def hole_shape(self, value: Union[CollimatorHoleShape, str]) -> None:
-        if isinstance(value, str):
-            try:
-                parsed_shape = CollimatorHoleShape(value.lower())
-            except ValueError:
-                valid_shapes = [shape_item.value for shape_item in CollimatorHoleShape]
-                raise ValueError(
-                    f"Неизвестная форма канала '{value}'. Допустимые формы: {valid_shapes}"
-                )
-        elif isinstance(value, CollimatorHoleShape):
-            parsed_shape = value
-        else:
+    def hole_shape(self, value: CollimatorHoleShape) -> None:
+        if not isinstance(value, CollimatorHoleShape):
             raise TypeError(
-                f"hole_shape должен быть CollimatorHoleShape или str, получено: {type(value)}"
+                f"hole_shape должен быть строго CollimatorHoleShape, получено: {type(value).__name__}"
             )
 
-        if parsed_shape == CollimatorHoleShape.ROUND:
+        if value == CollimatorHoleShape.ROUND:
             raise NotImplementedError(
                 "Форма каналов 'round' еще не реализована в параметрическом коллиматоре."
             )
 
-        self._hole_shape = parsed_shape
+        self._hole_shape = value
         self._compute_constants()
         self.invalidate_geometry()
 

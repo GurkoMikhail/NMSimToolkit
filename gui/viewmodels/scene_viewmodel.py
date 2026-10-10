@@ -194,32 +194,25 @@ class SceneViewModel(QObject):
             self._sensitive_volumes = cleaned_names
             self.sensitive_volumes_changed.emit()
 
-    def is_sensitive_volume(self, node_or_name: Union[NodeViewModel, Volume, str]) -> bool:
+    def _extract_volume_name(self, node: NodeViewModel | str) -> str:
+        if isinstance(node, str):
+            return node.strip()
+        if isinstance(node, NodeViewModel):
+            return node.name.strip()
+        raise TypeError(f"Ожидался NodeViewModel или str, получено: {type(node).__name__}")
+
+    def is_sensitive_volume(self, node: NodeViewModel | str) -> bool:
         """
         Проверяет, зарегистрирован ли узел или имя объема в едином списке чувствительных объемов.
         """
-        if isinstance(node_or_name, str):
-            volume_name = node_or_name
-        elif isinstance(node_or_name, NodeViewModel):
-            volume_name = node_or_name.name
-        elif isinstance(node_or_name, Volume):
-            volume_name = node_or_name.name
-        else:
-            return False
+        volume_name = self._extract_volume_name(node)
         return volume_name in self._sensitive_volumes
 
-    def set_volume_sensitive(self, node_or_name: Union[NodeViewModel, Volume, str], is_sensitive: bool) -> None:
+    def set_volume_sensitive(self, node: NodeViewModel | str, is_sensitive: bool) -> None:
         """
         Добавляет или исключает объем из единого списка чувствительных детекторов сцены.
         """
-        if isinstance(node_or_name, str):
-            volume_name = node_or_name
-        elif isinstance(node_or_name, (NodeViewModel, Volume)):
-            volume_name = node_or_name.name
-        else:
-            return
-
-        volume_name = volume_name.strip()
+        volume_name = self._extract_volume_name(node)
         if not volume_name:
             return
 
@@ -231,13 +224,13 @@ class SceneViewModel(QObject):
             self._sensitive_volumes.remove(volume_name)
             self.sensitive_volumes_changed.emit()
 
-    def add_sensitive_volume(self, node_or_name: Union[NodeViewModel, Volume, str]) -> None:
+    def add_sensitive_volume(self, node: NodeViewModel | str) -> None:
         """Добавляет объем в единый список чувствительных детекторов сцены."""
-        self.set_volume_sensitive(node_or_name, True)
+        self.set_volume_sensitive(node, True)
 
-    def remove_sensitive_volume(self, node_or_name: Union[NodeViewModel, Volume, str]) -> None:
+    def remove_sensitive_volume(self, node: NodeViewModel | str) -> None:
         """Исключает объем из единого списка чувствительных детекторов сцены."""
-        self.set_volume_sensitive(node_or_name, False)
+        self.set_volume_sensitive(node, False)
 
     def clear_sensitive_volumes(self) -> None:
         """Полная очистка единого списка чувствительных детекторов сцены."""

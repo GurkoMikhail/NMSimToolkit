@@ -74,13 +74,13 @@ class TestParametricCollimator(unittest.TestCase):
                 hole_shape=CollimatorHoleShape.ROUND,
             )
 
-        # Невалидная форма
-        with self.assertRaises(ValueError):
+        # Невалидный тип/форма (передача строки или некорректного типа вызывает TypeError)
+        with self.assertRaises(TypeError):
             ParametricParallelCollimator(
                 size=[400.0, 400.0, 30.0],
                 hole_diameter=1.5,
                 septa=0.2,
-                hole_shape="invalid_shape",
+                hole_shape="invalid_shape",  # type: ignore
             )
 
     def test_parametric_collimator_property_setters_and_sync(self) -> None:

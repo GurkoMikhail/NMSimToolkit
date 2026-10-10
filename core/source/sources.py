@@ -5,7 +5,7 @@ import hepunits as units
 from numpy.typing import NDArray
 
 import core.other.utils as utils
-from core.other.typing_definitions import Float, Length, Time, Species, Index
+from core.other.typing_definitions import Float, Length, Time, Species, Index, Energy, Activity, Vector3D
 from core.other.vectors import Vector3DSoA
 from core.particles.particles import ParticleBank
 from core.scene.nodes import CompositeNode
@@ -27,7 +27,7 @@ class Source(CompositeNode):
     """
 
     _distribution: NDArray[Float]
-    initial_activity: NDArray[Float]
+    initial_activity: Float
     voxel_size: Length
     size: Vector3D
     radiation_type: str
@@ -38,11 +38,26 @@ class Source(CompositeNode):
     rng: np.random.Generator
     emission_table: List[NDArray[Any]]
 
-    def __init__(self, distribution: Any, activity: Optional[Any] = None, voxel_size: Length = Float(4 * units.mm), radiation_type: str = 'Gamma', energy: Union[Float, List[List[Float]]] = Float(140.5 * units.keV), half_life: Time = Float(6 * units.hour), rng: Optional[np.random.Generator] = None) -> None:
+    def __init__(
+        self,
+        distribution: Sequence[Any] | NDArray[Float],
+        activity: Optional[Activity] = None,
+        voxel_size: Length = Float(4 * units.mm),
+        radiation_type: str = 'Gamma',
+        energy: Energy | Sequence[Any] | NDArray[Float] = Float(140.5 * units.keV),
+        half_life: Time = Float(6 * units.hour),
+        rng: Optional[np.random.Generator] = None,
+    ) -> None:
         super().__init__()
         dist_array = np.asarray(distribution, dtype=Float)
+        if dist_array.ndim != 3 and dist_array.size > 0:
+            raise ValueError(f"Распределение активности должно быть 3D массивом, получено shape={dist_array.shape}")
+
         total_activity = Float(np.sum(dist_array))
-        self.initial_activity = total_activity if activity is None else np.asarray(activity, dtype=Float)
+        init_act = total_activity if activity is None else Float(activity)
+        if init_act <= 0.0 and dist_array.size > 0:
+            raise ValueError(f"Начальная активность источника должна быть строго положительной (> 0), получено {init_act}")
+        self.initial_activity = init_act
         self._voxel_size = Float(voxel_size)
         self.radiation_type = radiation_type
         self.size = np.zeros(3, dtype=Float)
@@ -53,7 +68,7 @@ class Source(CompositeNode):
         self._energy: np.ndarray = np.empty(0, dtype=[("energy", Float), ("probability", Float)])
         self.energy = energy
 
-        self.half_life = half_life
+        self.half_life = Float(half_life)
         self.rng = np.random.default_rng() if rng is None else rng
 
     @property
@@ -65,40 +80,49 @@ class Source(CompositeNode):
         return self._energy
 
     @energy.setter
-    def energy(self, value: Any) -> None:
+    def energy(self, value: Energy | Sequence[Any] | NDArray[Float]) -> None:
         if isinstance(value, np.ndarray) and value.dtype.names is not None and "energy" in value.dtype.names and "probability" in value.dtype.names:
-            self._energy = value.copy()
-            en_prob_sum = np.sum(self._energy["probability"])
-            if en_prob_sum > 0:
-                self._energy["probability"] /= en_prob_sum
+            energy_arr = value.copy()
+            prob_sum = np.sum(energy_arr["probability"])
+            if prob_sum > 0.0:
+                energy_arr["probability"] /= prob_sum
+            self._energy = energy_arr
             return
 
-        if not isinstance(value, (list, tuple, np.ndarray)):
-            energy_list = [[float(value), 1.0]]
-        else:
-            raw_list = list(value)
-            if len(raw_list) == 0:
-                energy_list = [[float(140.5 * units.keV), 1.0]]
-            elif all(isinstance(item, (int, float, np.floating, np.integer)) for item in raw_list):
-                energy_list = [[float(item), 1.0] for item in raw_list]
-            else:
-                energy_list = raw_list
+        raw_array = np.asarray(value, dtype=Float)
+        if raw_array.ndim == 0:
+            structured = np.zeros(1, dtype=[("energy", Float), ("probability", Float)])
+            structured["energy"] = Float(raw_array)
+            structured["probability"] = 1.0
+            self._energy = structured
+            return
 
-        energy_arr = np.array(energy_list, dtype=Float)
-        if energy_arr.ndim == 1:
-            energy_arr = energy_arr.reshape(-1, 1)
-        if energy_arr.shape[1] == 1:
-            weights = np.ones((energy_arr.shape[0], 1), dtype=Float)
-            energy_arr = np.hstack([energy_arr, weights])
+        if raw_array.ndim == 1:
+            raw_array = raw_array.reshape(-1, 1)
 
-        self._energy = np.zeros(energy_arr.shape[0], dtype=[("energy", Float), ("probability", Float)])
-        self._energy["energy"] = cast(NDArray[Float], energy_arr[:, 0])
-        self._energy["probability"] = energy_arr[:, 1]
-        en_prob_sum = np.sum(self._energy["probability"])
-        if en_prob_sum > 0:
-            self._energy["probability"] /= en_prob_sum
+        if raw_array.shape[1] == 1:
+            energies = raw_array[:, 0]
+            if np.any(energies <= 0.0):
+                raise ValueError("Энергия излучения должна быть строго положительной (> 0)")
+            probabilities = np.ones(raw_array.shape[0], dtype=Float) / raw_array.shape[0]
+        elif raw_array.shape[1] == 2:
+            energies = raw_array[:, 0]
+            if np.any(energies <= 0.0):
+                raise ValueError("Энергия излучения должна быть строго положительной (> 0)")
+            prob_col = raw_array[:, 1]
+            if np.any(prob_col < 0.0):
+                raise ValueError("Вероятности излучения в спектре не могут быть отрицательными (< 0)")
+            prob_sum = Float(np.sum(prob_col))
+            if prob_sum <= 0.0:
+                raise ValueError(f"Сумма вероятностей спектра должна быть строго положительной (> 0), получено {prob_sum}")
+            probabilities = prob_col / prob_sum
         else:
-            self._energy["probability"] = 1.0 / len(self._energy)
+            raise ValueError(f"Массив энергий должен иметь форму (N,) или (N, 2), получено {raw_array.shape}")
+
+        structured = np.zeros(raw_array.shape[0], dtype=[("energy", Float), ("probability", Float)])
+        structured["energy"] = energies
+        structured["probability"] = probabilities
+        self._energy = structured
 
     @property
     def distribution(self) -> NDArray[Float]:
@@ -271,15 +295,22 @@ class PointSource(Source):
     [energy] = units.eV
     """
 
-    def __init__(self, activity, energy, size=1.*units.mm, half_life=6.*units.hour, rng=None):
-        distribution = [[[1.]]]
+    def __init__(
+        self,
+        activity: Activity,
+        energy: Energy,
+        size: Length = Float(1.0 * units.mm),
+        half_life: Time = Float(6.0 * units.hour),
+        rng: Optional[np.random.Generator] = None,
+    ) -> None:
+        distribution = np.ones((1, 1, 1), dtype=Float)
         super().__init__(
             distribution=distribution,
             activity=activity,
             voxel_size=size,
             energy=energy,
             half_life=half_life,
-            rng=rng
+            rng=rng,
         )
 
 
@@ -296,10 +327,15 @@ class Tc99m_MIBI(Source):
     [voxel_size] = units.cm
     """
 
-    def __init__(self, distribution, activity=None, voxel_size=4*units.mm):
+    def __init__(
+        self,
+        distribution: Sequence[Any] | NDArray[Float],
+        activity: Optional[Activity] = None,
+        voxel_size: Length = Float(4.0 * units.mm),
+    ) -> None:
         radiation_type = 'Gamma'
         energy = Float(140.5 * units.keV)
-        half_life = 6.*units.hour
+        half_life = Float(6.0 * units.hour)
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
 
@@ -316,17 +352,22 @@ class I123(Source):
     [voxel_size] = units.cm
     """
 
-    def __init__(self, distribution, activity=None, voxel_size=4*units.mm):
+    def __init__(
+        self,
+        distribution: Sequence[Any] | NDArray[Float],
+        activity: Optional[Activity] = None,
+        voxel_size: Length = Float(4.0 * units.mm),
+    ) -> None:
         radiation_type = 'Gamma'
-        energy = [
-            [158.97*units.keV, 83.0],
-            [528.96*units.keV, 1.39],
-            [440.02*units.keV, 0.428],
-            [538.54*units.keV, 0.382],
-            [505.33*units.keV, 0.316],
-            [346.35*units.keV, 0.126],
-        ]
-        half_life = 13.27*units.hour
+        energy = np.array([
+            [158.97 * units.keV, 83.0],
+            [528.96 * units.keV, 1.39],
+            [440.02 * units.keV, 0.428],
+            [538.54 * units.keV, 0.382],
+            [505.33 * units.keV, 0.316],
+            [346.35 * units.keV, 0.126],
+        ], dtype=Float)
+        half_life = Float(13.27 * units.hour)
         super().__init__(distribution, activity, voxel_size, radiation_type, energy, half_life)
 
 
