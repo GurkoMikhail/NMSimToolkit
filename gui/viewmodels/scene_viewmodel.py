@@ -77,6 +77,9 @@ class SceneViewModel(QObject):
         for node_vm in self.all_nodes():
             if node_vm.core_node in self.bindings_registry:
                 node_vm.bindings = dict(self.bindings_registry[node_vm.core_node])
+            elif node_vm.name in self.bindings_registry:
+                node_vm.bindings = dict(self.bindings_registry[node_vm.name])
+                self.bindings_registry[node_vm.core_node] = node_vm.bindings
 
         root_volume_node_vm = self.root_volume_vm
         if root_volume_node_vm is not None:

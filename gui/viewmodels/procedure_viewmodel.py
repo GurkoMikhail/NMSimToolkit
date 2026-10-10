@@ -91,6 +91,18 @@ class BaseProcedureViewModel(QObject):
         """Возвращает словарь привязок для указанного узла сцены."""
         return dict(self.bindings_registry.get(node, {}))
 
+    def bind_property(self, target: Any, prop_name: str, var_name: str) -> None:
+        """Универсальное связывание свойства узла сцены или раздела настроек с переменной."""
+        self.bind_node_property(target, prop_name, var_name)
+
+    def unbind_property(self, target: Any, prop_name: str) -> None:
+        """Универсальное удаление связывания свойства."""
+        self.unbind_node_property(target, prop_name)
+
+    def get_property_bindings(self, target: Any) -> Dict[str, str]:
+        """Возвращает привязки для указанного целевого узла или раздела."""
+        return self.get_node_bindings(target)
+
     @property
     def protocol_standard_variables(self) -> List[str]:
         """Список стандартных переменных протокола."""

@@ -96,7 +96,7 @@ class SPECTManipulator(QObject):
         thickness_val = self.half_thickness if half_thickness is None else float(half_thickness)
         return compute_orbit_matrix(
             radius=self.radius,
-            angle_deg=self.angle_deg,
+            angle=self.angle_deg,
             z=self.z_pos,
             half_thickness=thickness_val,
         )

@@ -6,6 +6,7 @@ import hepunits as units
 from PySide6.QtCore import QObject, QThread, Signal
 
 from core.config.exporter import SceneExporter
+from core.config.template_binder import ConfigTemplateBinder
 from core.config.models import (
     SimulationConfig,
     SimulationManagerConfig,
@@ -290,10 +291,11 @@ class OrchestratorSession(QObject):
                 data_manager_cfg=data_mgr_cfg,
                 distribution_registry=dist_registry,
                 slots_registry=slots_reg,
-                bindings_registry=bindings_reg,
                 pool_size=self.pool_size,
             )
             sim_config.protocol = self.procedure_vm.to_config()
+            if bindings_reg:
+                sim_config = ConfigTemplateBinder.apply_bindings(sim_config, bindings_reg)
 
             orchestrator = Orchestrator(sim_config)
             sweep_config = orchestrator.compile_protocol()
@@ -353,10 +355,11 @@ class OrchestratorSession(QObject):
             data_manager_cfg=data_mgr_cfg,
             distribution_registry=dist_registry,
             slots_registry=slots_reg,
-            bindings_registry=bindings_reg,
             pool_size=self.pool_size,
         )
         sim_config.protocol = self.procedure_vm.to_config()
+        if bindings_reg:
+            sim_config = ConfigTemplateBinder.apply_bindings(sim_config, bindings_reg)
 
         # 2. Инициализация IPC и SharedMemory для сфокусированного воркера
         self._cleanup_ipc()

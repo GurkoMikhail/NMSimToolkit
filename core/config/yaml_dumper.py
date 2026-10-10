@@ -4,6 +4,7 @@
 исключая избыточное дублирование определений материалов.
 """
 
+from copy import deepcopy
 import hashlib
 from pathlib import Path
 from typing import Any, Dict, Set, Union
@@ -44,12 +45,17 @@ def represent_anchor_str(yaml_dumper: yaml.SafeDumper, str_data: AnchorStr) -> y
 MaterialAnchorDumper.add_representer(AnchorStr, represent_anchor_str)
 
 
-def dump_simulation_config(config: SimulationConfig, filepath: Union[str, Path]) -> None:
+def dump_simulation_config(config: Union[SimulationConfig, Dict[str, Any]], filepath: Union[str, Path]) -> None:
     """
-    Сохраняет конфигурацию SimulationConfig в файл YAML с автоматическим якорным
-    связыванием повторяющихся названий материалов сцены.
+    Сохраняет конфигурацию SimulationConfig или структурированный словарь в файл YAML
+    с автоматическим якорным связыванием повторяющихся названий материалов сцены.
     """
-    raw_dict = config.model_dump(exclude_none=True)
+    if isinstance(config, SimulationConfig):
+        raw_dict = config.model_dump(exclude_none=True)
+    elif isinstance(config, dict):
+        raw_dict = deepcopy(config)
+    else:
+        raise TypeError(f"Ожидался SimulationConfig или dict, получено {type(config)}")
     unique_materials: Set[str] = set()
 
     def extract_materials(node_dict: Dict[str, Any]) -> None:

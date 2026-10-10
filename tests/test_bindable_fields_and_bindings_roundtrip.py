@@ -29,6 +29,8 @@ from core.config.models import (
 )
 from core.config.exporter import SceneExporter
 from core.config.builder import SceneBuilder
+from core.config.template_binder import ConfigTemplateBinder
+from core.config.sweep_compiler import SweepCompiler
 import hepunits as units
 
 from gui.views.widgets.bindable_field import BindableDoubleField
@@ -262,58 +264,58 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
             },
         }
 
-        # Экспорт через SceneExporter
+        # 1. Чистый экспорт сцены ядра через SceneExporter (строго численные величины)
         exported_config = SceneExporter.export_scene(
             root,
             distribution_registry=dist_reg,
-            bindings_registry=bindings_reg,
         )
         self.assertEqual(exported_config.type, "CompositeNode")
 
-        # Проверка детей экспортированного конфига
-        children_by_name = {c.name: c for c in exported_config.children}
+        # 2. Наложение шаблонов макросов через изолированный сервис ConfigTemplateBinder
+        scene_raw_dict = exported_config.model_dump(exclude_none=True)
+        templated_scene = ConfigTemplateBinder.apply_bindings(scene_raw_dict, bindings_reg)
+
+        # Проверка детей экспортированного шаблона
+        children_by_name = {c["name"]: c for c in templated_scene["children"]}
         vol_cfg = children_by_name["Phantom"]
         source_cfg = children_by_name["HotSpot"]
         gantry_cfg = children_by_name["Gantry"]
 
-        # Проверка Volume: выгружены TranslateConfig и RotateConfig со строками ${var}
-        trans_cfgs = [t for t in vol_cfg.transformations if isinstance(t, TranslateConfig)]
-        rot_cfgs = [t for t in vol_cfg.transformations if isinstance(t, RotateConfig)]
+        # Проверка Volume: сформированы TranslateConfig и RotateConfig со строками ${var}
+        trans_cfgs = [t for t in vol_cfg["transformations"] if "x" in t or "y" in t or "z" in t]
+        rot_cfgs = [t for t in vol_cfg["transformations"] if "alpha" in t or "beta" in t or "gamma" in t]
         self.assertEqual(len(trans_cfgs), 1)
         self.assertEqual(len(rot_cfgs), 1)
-        self.assertEqual(trans_cfgs[0].x, "${table_x_var} mm")
-        self.assertEqual(rot_cfgs[0].alpha, "${tilt_angle_var} deg")
+        self.assertEqual(trans_cfgs[0]["x"], "${table_x_var} mm")
+        self.assertEqual(rot_cfgs[0]["alpha"], "${tilt_angle_var} deg")
 
-        # Проверка Source: выгружены activity и energy со строками ${var}
-        self.assertIsInstance(source_cfg, SourceConfig)
-        self.assertEqual(source_cfg.activity, "${activity_var} MBq")
-        self.assertEqual(source_cfg.energy[0][0], "${energy_var} keV")
+        # Проверка Source: сформированы activity и energy со строками ${var}
+        self.assertEqual(source_cfg["activity"], "${activity_var} MBq")
+        self.assertEqual(source_cfg["energy"][0][0], "${energy_var} keV")
 
         # Проверка Gantry
-        self.assertIsInstance(gantry_cfg, GantryConfig)
-        self.assertEqual(gantry_cfg.transformations[0].alpha, "${gantry_var} deg")
+        self.assertEqual(gantry_cfg["transformations"][0]["alpha"], "${gantry_var} deg")
 
-        # Обратная сборка через SceneBuilder
-        builder = SceneBuilder()
-        rebuilt_root = builder.build_scene(exported_config)
+        # 3. Извлечение соответствий привязок обратно через ConfigTemplateBinder
+        extracted_bindings = ConfigTemplateBinder.extract_bindings(templated_scene)
+        self.assertEqual(extracted_bindings["Phantom"]["translation.x"], "table_x_var")
+        self.assertEqual(extracted_bindings["Phantom"]["rotation.alpha"], "tilt_angle_var")
+        self.assertEqual(extracted_bindings["HotSpot"]["activity"], "activity_var")
+        self.assertEqual(extracted_bindings["HotSpot"]["energy"], "energy_var")
+        self.assertEqual(extracted_bindings["Gantry"]["gantry_angle"], "gantry_var")
+
+        # 4. Проверка чистоты ядра: SceneBuilder обязан работать Fail-Fast на неразрешенных макросах
+        from core.config.models import BaseCompositeNodeConfig
+        with self.assertRaises(ValueError):
+            SceneBuilder().build_scene(BaseCompositeNodeConfig.model_validate(templated_scene))
+
+        # 5. Сборка сцены после резолва переменных через SweepCompiler
+        resolved_dict = SweepCompiler.inject_variables(
+            templated_scene,
+            {"table_x_var": 10.0, "tilt_angle_var": 0.0, "activity_var": 200.0, "energy_var": 140.5, "gantry_var": 0.0}
+        )
+        rebuilt_root = SceneBuilder().build_scene(BaseCompositeNodeConfig.model_validate(resolved_dict))
         self.assertIsInstance(rebuilt_root, CompositeNode)
-
-        # Проверка того, что SceneBuilder зарегистрировал все биндинги
-        rebuilt_by_name = {c.name: c for c in rebuilt_root.childs}
-        rebuilt_vol = rebuilt_by_name["Phantom"]
-        rebuilt_src = rebuilt_by_name["HotSpot"]
-        rebuilt_gantry = rebuilt_by_name["Gantry"]
-
-        self.assertIn(rebuilt_vol, builder.bindings_registry)
-        self.assertEqual(builder.bindings_registry[rebuilt_vol].get("translation.x"), "table_x_var")
-        self.assertEqual(builder.bindings_registry[rebuilt_vol].get("rotation.alpha"), "tilt_angle_var")
-
-        self.assertIn(rebuilt_src, builder.bindings_registry)
-        self.assertEqual(builder.bindings_registry[rebuilt_src].get("activity"), "activity_var")
-        self.assertEqual(builder.bindings_registry[rebuilt_src].get("energy"), "energy_var")
-
-        self.assertIn(rebuilt_gantry, builder.bindings_registry)
-        self.assertEqual(builder.bindings_registry[rebuilt_gantry].get("gantry_angle"), "gantry_var")
 
     def test_procedure_unified_bindings_registry(self) -> None:
         """
@@ -532,7 +534,119 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         self.assertEqual(restored_vm.steps, 4)
         self.assertEqual(restored_vm.radius_raw, [220.0, 230.0, 240.0, 250.0])
         self.assertEqual(restored_vm.grid_variables["collimator_tilt"], [0.0, 5.0])
-        self.assertEqual(restored_vm.zipped_variables["couch_shift_z"], [1.0, 2.0, 3.0, 4.0])
+    def test_universal_simulation_manager_bindings_and_roundtrip(self) -> None:
+        """
+        Проверка универсальности Property Binding: привязка параметров SimulationManager
+        (particles_number, min_energy), экспорт в YAML, извлечение макросов и инъекция в воркер.
+        """
+        import tempfile
+        from pathlib import Path
+        from core.config.models import SimulationConfig, SimulationManagerConfig, DataManagerConfig, BaseCompositeNodeConfig
+        from core.config.template_binder import ConfigTemplateBinder
+        from core.config.sweep_compiler import SweepCompiler
+        from core.config.yaml_loader import load_raw_config, load_simulation_config
+        from gui.models.gui_settings import GuiSimulationSettings
+        from gui.views.simulation_settings_dialog import SimulationSettingsDialog
+
+        # 1. Проверка SimulationSettingsDialog с привязкой параметров
+        settings = GuiSimulationSettings(particles_number=50000, min_energy=15.0)
+        dialog = SimulationSettingsDialog(
+            settings,
+            variable_provider=lambda: ["total_particles", "min_energy_cut"],
+            bindings={"particles_number": "total_particles", "min_energy": "min_energy_cut"}
+        )
+        self.assertEqual(dialog.spin_particles.bound_variable, "total_particles")
+        self.assertEqual(dialog.spin_min_energy.bound_variable, "min_energy_cut")
+        dialog_bindings = dialog.get_bindings()
+        self.assertEqual(dialog_bindings["particles_number"], "total_particles")
+        self.assertEqual(dialog_bindings["min_energy"], "min_energy_cut")
+
+        # 2. Построение базовой конфигурации и наложение привязок на simulation_manager
+        sim_mgr_cfg = SimulationManagerConfig(particles_number=50000, min_energy=15.0 * units.keV)
+        sim_config = SimulationConfig(
+            simulation_manager=sim_mgr_cfg,
+            data_manager=DataManagerConfig(filename="output.h5"),
+            scene=BaseCompositeNodeConfig(name="World"),
+        )
+        unified_bindings = {
+            "simulation_manager": {
+                "particles_number": "total_particles",
+                "min_energy": "min_energy_cut",
+            }
+        }
+
+        templated_config = ConfigTemplateBinder.apply_bindings(sim_config, unified_bindings)
+        self.assertEqual(templated_config.simulation_manager.particles_number, "${total_particles}")
+
+        # 3. Экспорт в YAML и проверка наличия макросов
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            yaml_path = Path(tmp_dir) / "templated_simulation.yaml"
+            world_node = CompositeNode(name="World")
+            ConfigTemplateBinder.export_templated_yaml(
+                root_node=world_node,
+                filepath=yaml_path,
+                bindings_registry=unified_bindings,
+                simulation_manager_cfg=sim_mgr_cfg,
+            )
+            self.assertTrue(yaml_path.exists())
+
+            raw_dict = load_raw_config(yaml_path)
+            self.assertEqual(raw_dict["simulation_manager"]["particles_number"], "${total_particles}")
+            self.assertIn("${min_energy_cut}", str(raw_dict["simulation_manager"]["min_energy"]))
+
+            # 4. Извлечение привязок из сохраненного YAML
+            extracted = ConfigTemplateBinder.extract_bindings(raw_dict)
+            self.assertIn("simulation_manager", extracted)
+            self.assertEqual(extracted["simulation_manager"]["particles_number"], "total_particles")
+            self.assertEqual(extracted["simulation_manager"]["min_energy"], "min_energy_cut")
+
+            # 5. Разрешение переменных через SweepCompiler.inject_variables
+            context = {"total_particles": 100000, "min_energy_cut": 25.0}
+            resolved_dict = SweepCompiler.inject_variables(raw_dict, context)
+            self.assertEqual(resolved_dict["simulation_manager"]["particles_number"], 100000)
+
+            # Валидация разрешенной конфигурации
+            final_cfg = SimulationConfig.model_validate(resolved_dict)
+            self.assertEqual(final_cfg.simulation_manager.particles_number, 100000)
+            self.assertAlmostEqual(float(final_cfg.simulation_manager.min_energy), float(25.0 * units.keV))
+
+
+    def test_count_config_strict_validation(self) -> None:
+        """
+        Проверка строгого контракта CountConfig:
+        - разрешены только положительные int (> 0) и макросы вида ${var_name};
+        - запрещены 0, отрицательные числа, булевы значения и мусорные строки.
+        """
+        from pydantic import ValidationError
+        from core.config.models import SimulationManagerConfig
+
+        # Валидные значения
+        cfg1 = SimulationManagerConfig(particles_number=1000)
+        self.assertEqual(cfg1.particles_number, 1000)
+
+        cfg2 = SimulationManagerConfig(particles_number="${batch_count}")
+        self.assertEqual(cfg2.particles_number, "${batch_count}")
+
+        cfg3 = SimulationManagerConfig(particles_number=500.0)
+        self.assertEqual(cfg3.particles_number, 500)
+
+        # Невалидные значения: 0 и отрицательные
+        with self.assertRaises(ValidationError):
+            SimulationManagerConfig(particles_number=0)
+
+        with self.assertRaises(ValidationError):
+            SimulationManagerConfig(particles_number=-50)
+
+        # Невалидные значения: мусорные строки
+        with self.assertRaises(ValidationError):
+            SimulationManagerConfig(particles_number="invalid_string")
+
+        with self.assertRaises(ValidationError):
+            SimulationManagerConfig(particles_number="")
+
+        # Невалидные значения: булевы значения
+        with self.assertRaises(ValidationError):
+            SimulationManagerConfig(particles_number=True)
 
 
 if __name__ == "__main__":

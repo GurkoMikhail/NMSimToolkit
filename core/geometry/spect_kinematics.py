@@ -17,34 +17,48 @@ class ISpectProtocolConfig(Protocol):
     endpoint: bool
 
 
-from core.config.models import StepAndShootProtocolConfig
+@runtime_checkable
+class IStepKinematicsConfig(Protocol):
+    """Протокол параметров пошаговой кинематики сканирования."""
+    steps: int
+    start_angle: float
+    end_angle: float
+    endpoint: bool
 
 
 def compute_spect_poses(
     views_or_protocol: Any,
     gamma_cameras: int = 1,
-    start_angle_deg: float = 0.0,
-    end_angle_deg: float = 360.0,
+    start_angle: float = 0.0,
+    end_angle: float = 360.0,
     head_angle_offsets: Optional[List[float]] = None,
     endpoint: bool = False,
+    *,
+    start_angle_deg: Optional[float] = None,
+    end_angle_deg: Optional[float] = None,
 ) -> List[List[float]]:
     """
     Вычисляет список углов для всех детекторных головок на каждом шаге гантри ОФЭКТ.
     Возвращает список позиций гантри, где каждая позиция — список углов [head_0, head_1, ..., head_{N-1}].
-    Поддерживает передачу как объекта протокола StepAndShootProtocolConfig / ISpectProtocolConfig, так и скалярных параметров.
+    Поддерживает передачу как объекта протокола IStepKinematicsConfig / ISpectProtocolConfig, так и скалярных параметров.
     """
-    if isinstance(views_or_protocol, StepAndShootProtocolConfig):
+    if start_angle_deg is not None:
+        start_angle = start_angle_deg
+    if end_angle_deg is not None:
+        end_angle = end_angle_deg
+
+    if isinstance(views_or_protocol, IStepKinematicsConfig):
         positions_count = max(1, int(views_or_protocol.steps))
         cameras_count = max(1, int(gamma_cameras))
-        start_angle_deg = float(np.degrees(views_or_protocol.start_angle))
-        end_angle_deg = float(np.degrees(views_or_protocol.end_angle))
+        start_angle = float(np.degrees(views_or_protocol.start_angle))
+        end_angle = float(np.degrees(views_or_protocol.end_angle))
         endpoint = bool(views_or_protocol.endpoint)
         total_views = positions_count * cameras_count
     elif isinstance(views_or_protocol, ISpectProtocolConfig):
         total_views = int(views_or_protocol.views)
         cameras_count = max(1, int(views_or_protocol.gamma_cameras))
-        start_angle_deg = float(np.degrees(views_or_protocol.start_angle))
-        end_angle_deg = float(np.degrees(views_or_protocol.end_angle))
+        start_angle = float(np.degrees(views_or_protocol.start_angle))
+        end_angle = float(np.degrees(views_or_protocol.end_angle))
         head_angle_offsets = (
             [float(np.degrees(angle_val)) for angle_val in views_or_protocol.head_angles]
             if views_or_protocol.head_angles
@@ -56,7 +70,7 @@ def compute_spect_poses(
         total_views = int(views_or_protocol)
         cameras_count = max(1, int(gamma_cameras))
         positions_count = max(1, total_views // cameras_count)
-    base_angles = np.linspace(start_angle_deg, end_angle_deg, positions_count, endpoint=endpoint)
+    base_angles = np.linspace(start_angle, end_angle, positions_count, endpoint=endpoint)
     if head_angle_offsets is not None and len(head_angle_offsets) == cameras_count:
         offsets = head_angle_offsets
     else:
@@ -72,11 +86,14 @@ def compute_spect_poses(
 
 def compute_orbit_matrix(
     radius: float,
-    angle_deg: float,
+    angle: Optional[float] = None,
     z: float = 0.0,
     half_thickness: float = 0.0,
-    roll_deg: float = 0.0,
+    roll: float = 0.0,
     axial_z: Optional[float] = None,
+    *,
+    angle_deg: Optional[float] = None,
+    roll_deg: Optional[float] = None,
 ) -> np.ndarray:
     """
     Вычисляет кинематическую матрицу трансформации 4x4 для круговой орбиты ОФЭКТ,
@@ -87,12 +104,16 @@ def compute_orbit_matrix(
     Лицевая нормаль детектора (+Z) направлена к центру орбиты.
     Ось стола (+Y детектора) направлена вдоль глобальной оси Z.
     Поперечная ось (+X детектора) направлена тангенциально к орбите.
-    Параметр roll_deg задает вращение детектора в его собственной плоскости вокруг нормали Z.
+    Параметр roll задает вращение детектора в его собственной плоскости вокруг нормали Z (в градусах).
     """
+    if angle is None:
+        angle = 0.0 if angle_deg is None else float(angle_deg)
+    if roll == 0.0 and roll_deg is not None:
+        roll = float(roll_deg)
     if axial_z is not None:
         z = float(axial_z)
 
-    rad = np.radians(angle_deg)
+    rad = np.radians(angle)
     center_radius = float(radius) + float(half_thickness)
     pos_x = center_radius * np.cos(rad)
     pos_y = center_radius * np.sin(rad)
@@ -112,8 +133,8 @@ def compute_orbit_matrix(
     # Трансверсионная ось детектора (локальная ось +X, столбец 0) образует правую тройку: X = Y x Z
     axis_x = np.array([np.sin(rad), -np.cos(rad), 0.0], dtype=np.float64)
 
-    if roll_deg != 0.0:
-        roll_rad = np.radians(roll_deg)
+    if roll != 0.0:
+        roll_rad = np.radians(roll)
         cos_roll = np.cos(roll_rad)
         sin_roll = np.sin(roll_rad)
         # Вращение вокруг нормали Z

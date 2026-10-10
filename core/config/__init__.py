@@ -8,6 +8,7 @@ from core.config.units import (
     TimeConfig,
     ActivityConfig,
     AngleConfig,
+    CountConfig,
     unit_validator_factory,
 )
 from core.config.models import (
@@ -35,6 +36,7 @@ from core.config.models import (
 )
 from core.config.builder import SceneBuilder
 from core.config.exporter import SceneExporter
+from core.config.template_binder import ConfigTemplateBinder
 from core.config.sweep_compiler import SweepCompiler
 from core.config.yaml_loader import load_simulation_config
 from core.config.yaml_dumper import dump_simulation_config
@@ -42,6 +44,7 @@ from core.config.yaml_dumper import dump_simulation_config
 __all__ = [
     'SceneBuilder',
     'SceneExporter',
+    'ConfigTemplateBinder',
     'SweepCompiler',
     'load_simulation_config',
     'dump_simulation_config',
@@ -71,6 +74,7 @@ __all__ = [
     'TimeConfig',
     'ActivityConfig',
     'AngleConfig',
+    'CountConfig',
     'unit_validator_factory',
 ]
 

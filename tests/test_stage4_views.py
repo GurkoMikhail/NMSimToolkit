@@ -93,8 +93,9 @@ class TestStage4Views(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             save_path = Path(tmp_dir) / "test_saved_config.yaml"
             with patch("PySide6.QtWidgets.QFileDialog.getSaveFileName", return_value=(str(save_path), "YAML files (*.yaml *.yml)")):
-                with patch("PySide6.QtWidgets.QMessageBox.information"):
+                with patch("PySide6.QtWidgets.QMessageBox.information"), patch("PySide6.QtWidgets.QMessageBox.critical") as mock_crit:
                     main_win._on_save_yaml()
+                    self.assertFalse(mock_crit.called, f"QMessageBox.critical был вызван: {mock_crit.call_args}")
 
             self.assertTrue(save_path.exists())
             loaded_cfg = load_simulation_config(str(save_path))

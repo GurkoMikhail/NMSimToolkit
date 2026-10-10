@@ -11,9 +11,10 @@ from pathlib import Path
 import yaml
 import hepunits as units
 
-from core.config.yaml_loader import load_simulation_config
+from core.config.yaml_loader import load_simulation_config, load_raw_config
 from core.config.builder import SceneBuilder
 from core.config.exporter import SceneExporter
+from core.config.template_binder import ConfigTemplateBinder
 from core.config.models import SimulationConfig, CustomSweepProtocolConfig
 from core.source.sources import Source
 
@@ -26,8 +27,14 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
         self.assertTrue(self.yaml_path.exists(), f"Файл {self.yaml_path} должен существовать")
 
     def test_tb161_full_roundtrip_integrity(self) -> None:
-        # 1. Загрузка исходной конфигурации через load_simulation_config
-        sim_cfg = load_simulation_config(self.yaml_path, resolve_protocol=False)
+        # 1. Извлечение биндингов из шаблона конфигурации через сервис ConfigTemplateBinder
+        raw_dict = load_raw_config(self.yaml_path)
+        bindings = ConfigTemplateBinder.extract_bindings(raw_dict.get("scene", {}))
+        self.assertIn("Gantry", bindings)
+        self.assertEqual(bindings["Gantry"]["rotation.alpha"], "gantry_angle")
+
+        # 2. Загрузка валидированной конфигурации с подстановкой начальных значений протокола
+        sim_cfg = load_simulation_config(self.yaml_path, resolve_protocol=True)
         self.assertEqual(sim_cfg.pool_size, 24, "pool_size обязан быть 24")
         self.assertIsInstance(
             sim_cfg.protocol,
@@ -37,11 +44,11 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
         self.assertIn("gantry_angle", sim_cfg.protocol.grid_variables)
         self.assertEqual(len(sim_cfg.protocol.grid_variables["gantry_angle"]), 60)
 
-        # Построение дерева сцены
+        # Построение дерева сцены через чистый детерминированный SceneBuilder
         builder = SceneBuilder()
         root_node = builder.build_scene(sim_cfg.scene)
 
-        # 2. Проверка узлов сцены
+        # 3. Проверка узлов сцены
         phantom_node = None
         source_node = None
         gantry_node = None
@@ -63,23 +70,19 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
         self.assertIsNotNone(source_node.energy)
         self.assertEqual(len(source_node.energy["energy"]), 10, "Спектр 161Tb обязан содержать 10 линий")
 
-        # Проверка биндинга гантри в bindings_registry
-        self.assertIn(gantry_node, builder.bindings_registry)
-        self.assertEqual(builder.bindings_registry[gantry_node]["rotation.alpha"], "gantry_angle")
-
-        # 3. Экспорт сцены обратно во временный YAML-файл
+        # 4. Экспорт сцены обратно во временный YAML-файл с наложением шаблонов макросов
         with tempfile.TemporaryDirectory() as tmp_dir:
             out_yaml_path = os.path.join(tmp_dir, "roundtrip_exported.yaml")
-            SceneExporter.export_to_yaml(
+            ConfigTemplateBinder.export_templated_yaml(
                 root_node=root_node,
                 filepath=out_yaml_path,
+                bindings_registry=bindings,
                 simulation_manager_cfg=sim_cfg.simulation_manager,
                 data_manager_cfg=sim_cfg.data_manager,
                 protocol=sim_cfg.protocol,
                 pool_size=sim_cfg.pool_size,
                 distribution_registry=builder.distribution_registry,
                 slots_registry=builder.slots_registry,
-                bindings_registry=builder.bindings_registry,
             )
 
             self.assertTrue(os.path.exists(out_yaml_path))
@@ -127,7 +130,12 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
             self.assertEqual(gantry_rot["alpha"], "${gantry_angle} deg")
 
             # 5. Повторный импорт через SceneBuilder (Round-trip)
-            sim_cfg2 = load_simulation_config(out_yaml_path, resolve_protocol=False)
+            raw_dict2 = load_raw_config(out_yaml_path)
+            bindings2 = ConfigTemplateBinder.extract_bindings(raw_dict2.get("scene", {}))
+            self.assertIn("Gantry", bindings2)
+            self.assertEqual(bindings2["Gantry"]["rotation.alpha"], "gantry_angle")
+
+            sim_cfg2 = load_simulation_config(out_yaml_path, resolve_protocol=True)
             builder2 = SceneBuilder()
             root_node2 = builder2.build_scene(sim_cfg2.scene)
             self.assertIsNotNone(root_node2)

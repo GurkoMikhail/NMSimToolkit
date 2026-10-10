@@ -90,6 +90,9 @@ class Source(CompositeNode):
             return
 
         raw_array = np.asarray(value, dtype=Float)
+        if raw_array.size == 0:
+            raise ValueError("Спектр энергий источника не может быть пустым.")
+
         if raw_array.ndim == 0:
             structured = np.zeros(1, dtype=[("energy", Float), ("probability", Float)])
             structured["energy"] = Float(raw_array)

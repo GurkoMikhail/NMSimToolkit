@@ -129,13 +129,29 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
 
     # 5. Инициализация менеджера симуляции
     sim_config = final_config.simulation_manager
+    if isinstance(sim_config.particles_number, str):
+        raise ValueError(
+            f"Неразрешенный шаблон интерполяции в particles_number: '{sim_config.particles_number}'. "
+            f"Все макросы обязаны быть разрешены протоколом перед запуском воркера."
+        )
+    if isinstance(sim_config.min_energy, str):
+        raise ValueError(
+            f"Неразрешенный шаблон интерполяции в min_energy: '{sim_config.min_energy}'. "
+            f"Все макросы обязаны быть разрешены протоколом перед запуском воркера."
+        )
+    if isinstance(sim_config.stop_time, str):
+        raise ValueError(
+            f"Неразрешенный шаблон интерполяции в stop_time: '{sim_config.stop_time}'. "
+            f"Все макросы обязаны быть разрешены протоколом перед запуском воркера."
+        )
+
     manager = SimulationManager(
         scene=root_scene,
         propagator=propagator,
-        stop_time=sim_config.stop_time,
-        start_time=sim_config.start_time,
-        particles_number=sim_config.particles_number,
-        min_energy=sim_config.min_energy,
+        stop_time=float(sim_config.stop_time),
+        start_time=float(sim_config.start_time),
+        particles_number=int(sim_config.particles_number),
+        min_energy=float(sim_config.min_energy),
         buffer_capacity=final_config.data_manager.buffer_capacity,
         name=f"Task_seed_{random_seed}",
         seed=random_seed,

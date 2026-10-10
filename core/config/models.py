@@ -1,6 +1,8 @@
 from typing import Any, List, Literal, Optional, Union, Annotated, Tuple
 from pydantic import BaseModel, Field, model_validator, field_serializer
-from core.config.units import LengthConfig, EnergyConfig, TimeConfig, ActivityConfig, AngleConfig
+from core.config.units import (
+    LengthConfig, EnergyConfig, TimeConfig, ActivityConfig, AngleConfig, CountConfig
+)
 import hepunits as units
 
 class TranslateConfig(BaseModel):
@@ -233,7 +235,7 @@ class DataManagerConfig(BaseModel):
 class SimulationManagerConfig(BaseModel):
     start_time: TimeConfig = 0.0 * units.ns
     stop_time: TimeConfig = 1.0 * units.s
-    particles_number: int = 10_000
+    particles_number: CountConfig = 10_000
     min_energy: EnergyConfig = 1.0 * units.keV
 
 class BaseProtocolConfig(BaseModel):

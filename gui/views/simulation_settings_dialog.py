@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 import hepunits as units
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -8,15 +8,23 @@ from PySide6.QtWidgets import (
 )
 
 from gui.models.gui_settings import GuiSimulationSettings
+from gui.views.widgets import BindableDoubleField
 
 
 class SimulationSettingsDialog(QDialog):
     """
     Диалоговое окно настройки общих параметров симуляции, пула воркеров,
     параметров отрисовки 3D-треков частиц и дискретной привязки 3D-манипулятора.
+    Поддерживает Property Binding параметров расчета к переменным протокола.
     """
 
-    def __init__(self, current_settings: GuiSimulationSettings, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        current_settings: GuiSimulationSettings,
+        parent: Optional[QWidget] = None,
+        variable_provider: Optional[Callable[[], List[str]]] = None,
+        bindings: Optional[Dict[str, str]] = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Параметры расчета и визуализации")
         self.resize(460, 440)
@@ -25,6 +33,8 @@ class SimulationSettingsDialog(QDialog):
         if not isinstance(current_settings, GuiSimulationSettings):
             raise TypeError("current_settings должен быть экземпляром GuiSimulationSettings")
         self._settings: GuiSimulationSettings = current_settings
+        self._variable_provider = variable_provider
+        self._initial_bindings = bindings or {}
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -45,10 +55,18 @@ class SimulationSettingsDialog(QDialog):
         grp_calc = QGroupBox("Вычислительные ресурсы (SimulationManager)", self)
         form_calc = QFormLayout(grp_calc)
 
-        self.spin_particles = QSpinBox(grp_calc)
-        self.spin_particles.setRange(1, 1_000_000_000)
-        self.spin_particles.setSingleStep(1000)
-        self.spin_particles.setValue(int(self._settings.particles_number))
+        self.spin_particles = BindableDoubleField(
+            min_val=1.0,
+            max_val=1_000_000_000.0,
+            step=1000.0,
+            decimals=0,
+            parent=grp_calc,
+        )
+        self.spin_particles.setValue(float(self._settings.particles_number))
+        if self._variable_provider is not None:
+            self.spin_particles.set_variable_provider(self._variable_provider)
+        if "particles_number" in self._initial_bindings:
+            self.spin_particles.bind_variable(self._initial_bindings["particles_number"])
         form_calc.addRow("Число частиц на задачу:", self.spin_particles)
 
         self.spin_pool = QSpinBox(grp_calc)
@@ -57,11 +75,19 @@ class SimulationSettingsDialog(QDialog):
         self.spin_pool.setValue(int(self._settings.pool_size))
         form_calc.addRow("Размер пула воркеров:", self.spin_pool)
 
-        self.spin_min_energy = QDoubleSpinBox(grp_calc)
-        self.spin_min_energy.setRange(0.01, 100_000.0)
-        self.spin_min_energy.setSingleStep(1.0)
-        self.spin_min_energy.setSuffix(" кэВ")
+        self.spin_min_energy = BindableDoubleField(
+            min_val=0.01,
+            max_val=100_000.0,
+            step=1.0,
+            decimals=2,
+            suffix=" кэВ",
+            parent=grp_calc,
+        )
         self.spin_min_energy.setValue(float(self._settings.min_energy))
+        if self._variable_provider is not None:
+            self.spin_min_energy.set_variable_provider(self._variable_provider)
+        if "min_energy" in self._initial_bindings:
+            self.spin_min_energy.bind_variable(self._initial_bindings["min_energy"])
         form_calc.addRow("Минимальная энергия:", self.spin_min_energy)
 
         main_layout.addWidget(grp_calc)
@@ -126,15 +152,26 @@ class SimulationSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
 
+    def get_bindings(self) -> Dict[str, str]:
+        """
+        Возвращает словарь активных привязок параметров расчета к переменным протокола.
+        """
+        bindings_map: Dict[str, str] = {}
+        if self.spin_particles.bound_variable:
+            bindings_map["particles_number"] = self.spin_particles.bound_variable
+        if self.spin_min_energy.bound_variable:
+            bindings_map["min_energy"] = self.spin_min_energy.bound_variable
+        return bindings_map
+
     def get_settings(self) -> GuiSimulationSettings:
         """
         Возвращает обновленную типизированную модель конфигурации GuiSimulationSettings.
         """
         updated_dict = self._settings.to_dict()
         updated_dict.update({
-            "particles_number": self.spin_particles.value(),
+            "particles_number": int(self.spin_particles.value()),
             "pool_size": self.spin_pool.value(),
-            "min_energy": self.spin_min_energy.value(),
+            "min_energy": float(self.spin_min_energy.value()),
             "max_tracks_per_batch": self.spin_max_batch.value(),
             "max_tracks_points": self.spin_max_points.value(),
             "render_as_lines": self.chk_render_lines.isChecked(),

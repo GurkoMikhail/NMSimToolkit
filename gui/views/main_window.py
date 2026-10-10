@@ -46,7 +46,8 @@ from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
 from core.materials.materials import Material
 from core.config.exporter import SceneExporter
-from core.config.yaml_loader import load_simulation_config
+from core.config.template_binder import ConfigTemplateBinder
+from core.config.yaml_loader import load_simulation_config, load_raw_config
 from core.config.builder import SceneBuilder
 from core.config.orchestrator import Orchestrator
 from core.config.models import (
@@ -716,6 +717,11 @@ class MainWindow(QMainWindow):
                 self.orchestrator_session.min_energy = val_en / float(units.keV)
             except (TypeError, ValueError):
                 pass
+        else:
+            self.orchestrator_session.particles_number = int(self.sim_settings.particles_number)
+            self.orchestrator_session.min_energy = float(self.sim_settings.min_energy)
+
+        self.orchestrator_session.pool_size = int(self.sim_settings.pool_size)
 
         if not self.orchestrator_session.jobs:
             self._on_generate_jobs()
@@ -849,6 +855,9 @@ class MainWindow(QMainWindow):
         if filename:
             try:
                 filepath = Path(filename)
+                raw_dict = load_raw_config(filepath)
+                all_extracted_bindings = ConfigTemplateBinder.extract_bindings(raw_dict)
+                scene_bindings = {k: v for k, v in all_extracted_bindings.items() if k not in ("simulation_manager", "data_manager")}
                 cfg = load_simulation_config(filepath, resolve_protocol=True)
                 builder = SceneBuilder(base_dir=filepath.parent)
                 root_node = builder.build_scene(cfg.scene)
@@ -859,7 +868,7 @@ class MainWindow(QMainWindow):
                     root_node,
                     distribution_registry=builder.distribution_registry,
                     slots_registry=builder.slots_registry,
-                    bindings_registry=builder.bindings_registry,
+                    bindings_registry=scene_bindings,
                     base_dir=filepath.parent,
                 )
                 self.scene_vm.apply_simulation_config(cfg)
@@ -869,9 +878,15 @@ class MainWindow(QMainWindow):
                 # Восстановление протокола/процедуры
                 if cfg.protocol is not None:
                     proc_vm = procedure_from_config(cfg.protocol)
-                    if builder.bindings_registry:
-                        for b_node, b_dict in builder.bindings_registry.items():
-                            proc_vm.bindings_registry[b_node] = dict(b_dict)
+                    for node_vm in self.scene_vm.all_nodes():
+                        if node_vm.bindings:
+                            proc_vm.bindings_registry[node_vm.core_node] = dict(node_vm.bindings)
+                    if "simulation_manager" in all_extracted_bindings:
+                        for prop_name, var_name in all_extracted_bindings["simulation_manager"].items():
+                            proc_vm.bind_property("simulation_manager", prop_name, var_name)
+                    if "data_manager" in all_extracted_bindings:
+                        for prop_name, var_name in all_extracted_bindings["data_manager"].items():
+                            proc_vm.bind_property("data_manager", prop_name, var_name)
                     self.procedure_selector.set_procedure(proc_vm)
                     self._on_procedure_changed(proc_vm)
 
@@ -882,23 +897,47 @@ class MainWindow(QMainWindow):
 
                 # Восстановление параметров менеджера симуляции и пула
                 if cfg.simulation_manager is not None:
-                    self.sim_settings.particles_number = int(cfg.simulation_manager.particles_number)
-                    self.orchestrator_session.particles_number = int(cfg.simulation_manager.particles_number)
-                    self.property_inspector.set_min_buffer_capacity(self.sim_settings.particles_number)
-                    self.data_manager_vm.min_buffer_capacity = self.sim_settings.particles_number
-                    if self.data_manager_vm.buffer_capacity < self.sim_settings.particles_number:
-                        self.data_manager_vm.buffer_capacity = self.sim_settings.particles_number
+                    raw_particles = cfg.simulation_manager.particles_number
+                    if isinstance(raw_particles, (int, float)) and not isinstance(raw_particles, bool):
+                        parsed_particles = int(raw_particles)
+                        self.sim_settings.particles_number = parsed_particles
+                        self.orchestrator_session.particles_number = parsed_particles
+                        self.property_inspector.set_min_buffer_capacity(parsed_particles)
+                        self.data_manager_vm.min_buffer_capacity = parsed_particles
+                        if self.data_manager_vm.buffer_capacity < parsed_particles:
+                            self.data_manager_vm.buffer_capacity = parsed_particles
+                    elif isinstance(raw_particles, str):
+                        try:
+                            num = float(raw_particles)
+                            if num.is_integer() and num > 0:
+                                parsed_particles = int(num)
+                                self.sim_settings.particles_number = parsed_particles
+                                self.orchestrator_session.particles_number = parsed_particles
+                                self.property_inspector.set_min_buffer_capacity(parsed_particles)
+                                self.data_manager_vm.min_buffer_capacity = parsed_particles
+                                if self.data_manager_vm.buffer_capacity < parsed_particles:
+                                    self.data_manager_vm.buffer_capacity = parsed_particles
+                        except (ValueError, TypeError):
+                            pass
+
                     try:
                         stop_time_seconds = float(cfg.simulation_manager.stop_time) / float(units.s)
                         self.orchestrator_session.stop_time = stop_time_seconds
                     except (TypeError, ValueError):
                         pass
-                    try:
-                        scaled_min_energy = float(cfg.simulation_manager.min_energy) / float(units.keV)
+
+                    raw_min_energy = cfg.simulation_manager.min_energy
+                    if isinstance(raw_min_energy, (int, float)) and not isinstance(raw_min_energy, bool):
+                        scaled_min_energy = float(raw_min_energy) / float(units.keV)
                         self.sim_settings.min_energy = scaled_min_energy
                         self.orchestrator_session.min_energy = scaled_min_energy
-                    except (TypeError, ValueError):
-                        pass
+                    elif isinstance(raw_min_energy, str):
+                        try:
+                            scaled_min_energy = float(raw_min_energy) / float(units.keV)
+                            self.sim_settings.min_energy = scaled_min_energy
+                            self.orchestrator_session.min_energy = scaled_min_energy
+                        except (TypeError, ValueError):
+                            pass
 
                 if cfg.pool_size is not None:
                     self.sim_settings.pool_size = int(cfg.pool_size)
@@ -928,21 +967,34 @@ class MainWindow(QMainWindow):
                     stop_time=float(self.orchestrator_session.stop_time) * units.s,
                 )
                 protocol_cfg = self.procedure_vm.to_config() if self.procedure_vm is not None else None
-                SceneExporter.export_to_yaml(
-                    self.scene_vm.root_vm.core_node,
-                    filename,
-                    simulation_manager_cfg=sim_mgr,
-                    data_manager_cfg=data_mgr,
-                    protocol=protocol_cfg,
-                    pool_size=int(self.sim_settings.pool_size),
-                    distribution_registry=self.scene_vm.distribution_registry,
-                    slots_registry=self.scene_vm.slots_registry,
-                    bindings_registry=(
-                        self.procedure_vm.bindings_registry
-                        if (self.procedure_vm and self.procedure_vm.bindings_registry)
-                        else self.scene_vm.bindings_registry
-                    ),
+                active_bindings = (
+                    self.procedure_vm.bindings_registry
+                    if (self.procedure_vm and self.procedure_vm.bindings_registry)
+                    else self.scene_vm.bindings_registry
                 )
+                if active_bindings:
+                    ConfigTemplateBinder.export_templated_yaml(
+                        self.scene_vm.root_vm.core_node,
+                        filename,
+                        bindings_registry=active_bindings,
+                        simulation_manager_cfg=sim_mgr,
+                        data_manager_cfg=data_mgr,
+                        protocol=protocol_cfg,
+                        pool_size=int(self.sim_settings.pool_size),
+                        distribution_registry=self.scene_vm.distribution_registry,
+                        slots_registry=self.scene_vm.slots_registry,
+                    )
+                else:
+                    SceneExporter.export_to_yaml(
+                        self.scene_vm.root_vm.core_node,
+                        filename,
+                        simulation_manager_cfg=sim_mgr,
+                        data_manager_cfg=data_mgr,
+                        protocol=protocol_cfg,
+                        pool_size=int(self.sim_settings.pool_size),
+                        distribution_registry=self.scene_vm.distribution_registry,
+                        slots_registry=self.scene_vm.slots_registry,
+                    )
                 QMessageBox.information(self, "Успех", f"Конфигурация сохранена в:\n{filename}")
             except Exception as exc:
                 QMessageBox.critical(self, "Ошибка сохранения", f"Не удалось сохранить YAML:\n{exc}")
@@ -951,7 +1003,14 @@ class MainWindow(QMainWindow):
         """
         Открывает диалоговое окно общих параметров расчета симуляции.
         """
-        dialog = SimulationSettingsDialog(self.sim_settings, parent=self)
+        var_provider = self.procedure_vm.get_variable_names if self.procedure_vm is not None else None
+        current_bindings = self.procedure_vm.get_property_bindings("simulation_manager") if self.procedure_vm is not None else {}
+        dialog = SimulationSettingsDialog(
+            self.sim_settings,
+            parent=self,
+            variable_provider=var_provider,
+            bindings=current_bindings,
+        )
         if dialog.exec():
             new_settings = dialog.get_settings()
             self.sim_settings.update(new_settings)
@@ -960,6 +1019,22 @@ class MainWindow(QMainWindow):
             self.orchestrator_session.min_energy = new_settings.min_energy
             self.orchestrator_session.pool_size = new_settings.pool_size
             self.jobs_widget.spin_pool_size.setValue(new_settings.pool_size)
+
+            # Актуализация current_config при его наличии
+            if self.current_config is not None and self.current_config.simulation_manager is not None:
+                self.current_config.simulation_manager.particles_number = new_settings.particles_number
+                self.current_config.simulation_manager.min_energy = new_settings.min_energy * units.keV
+            if self.current_config is not None:
+                self.current_config.pool_size = new_settings.pool_size
+
+            # Сохранение привязок параметров симуляции в процедуре
+            new_bindings = dialog.get_bindings()
+            if self.procedure_vm is not None:
+                for prop_name in ("particles_number", "min_energy"):
+                    if prop_name in new_bindings:
+                        self.procedure_vm.bind_property("simulation_manager", prop_name, new_bindings[prop_name])
+                    else:
+                        self.procedure_vm.unbind_property("simulation_manager", prop_name)
 
             # Обеспечение инварианта buffer_capacity >= particles_number
             self.property_inspector.set_min_buffer_capacity(new_settings.particles_number)
