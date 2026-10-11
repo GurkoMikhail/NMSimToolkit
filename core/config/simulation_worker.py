@@ -93,19 +93,36 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
     set_rng_for_sources(root_scene)
 
     # 4. Построение конвейера обработчиков данных
+    dm_cfg = final_config.data_manager
     handlers: List[BaseDataHandler] = []
-    for handler_config in final_config.data_manager.handlers:
+    for handler_config in dm_cfg.handlers:
         if handler_config.type == "DirectStreamHandler":
-            handlers.append(DirectStreamHandler())
+            handlers.append(
+                DirectStreamHandler(
+                    floating_point_precision=dm_cfg.floating_point_precision,
+                    compression=dm_cfg.compression,
+                    compression_opts=dm_cfg.compression_opts,
+                )
+            )
         elif handler_config.type == "SensitiveVolumeHandler":
             volumes = _find_nodes_by_names(root_scene, handler_config.sensitive_volumes)
-            handlers.append(SensitiveVolumeHandler(sensitive_volumes=volumes))
+            handlers.append(
+                SensitiveVolumeHandler(
+                    sensitive_volumes=volumes,
+                    floating_point_precision=dm_cfg.floating_point_precision,
+                    compression=dm_cfg.compression,
+                    compression_opts=dm_cfg.compression_opts,
+                )
+            )
         elif handler_config.type == "HistoryAssemblerHandler":
             volumes = _find_nodes_by_names(root_scene, handler_config.sensitive_volumes)
             handlers.append(
                 HistoryAssemblerHandler(
                     sensitive_volumes=volumes,
                     save_initial_states=handler_config.save_initial_states,
+                    floating_point_precision=dm_cfg.floating_point_precision,
+                    compression=dm_cfg.compression,
+                    compression_opts=dm_cfg.compression_opts,
                 )
             )
         elif handler_config.type == "DoseMapHandler":
@@ -169,26 +186,33 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
         )
         pause_bridge.start()
 
+    precision_mode_val = "single" if dm_cfg.floating_point_precision == "float32" else "double"
     metadata_collector = ProcedureMetadataCollector()
-    procedure_metadata = metadata_collector.collect(
+    collected_metadata = metadata_collector.collect(
         root_scene=root_scene,
         protocol=final_config.protocol,
         context=context_data,
         task_id=task_id,
+        sim_config=sim_config,
+        scene_config=final_config.scene,
+        random_seed=random_seed,
+        precision_mode=precision_mode_val,
+        active_processes=propagator.processes,
     )
 
     task_metadata: Dict[str, Any] = {
         "task_id": task_id,
         "seed": int(random_seed),
         "status": "in_progress",
-        "simulation": {
-            "particles_number": int(sim_config.particles_number),
-            "min_energy": float(sim_config.min_energy),
-            "start_time": float(sim_config.start_time),
-            "stop_time": float(sim_config.stop_time),
-        },
+        "simulation": collected_metadata["simulation"],
+        "gantry": collected_metadata["gantry"],
+        "geometry": collected_metadata["geometry"],
+        "source": collected_metadata["source"],
         "context": context_data,
-        "acquisition": procedure_metadata,
+        "acquisition": collected_metadata["acquisition"],
+        "protocol": collected_metadata["protocol"],
+        "kinematics": collected_metadata["kinematics"],
+        "detectors": collected_metadata["detectors"],
     }
 
     data_manager = DataManager(

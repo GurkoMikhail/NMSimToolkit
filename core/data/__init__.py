@@ -11,6 +11,9 @@ from core.data.metadata_collector import (
     KinematicsMetadataProvider,
     DetectorMetadataProvider,
     GeometryMetadataProvider,
+    GantryMetadataProvider,
+    SourceMetadataProvider,
+    SimulationMetadataProvider,
     ProcedureMetadataCollector,
 )
 
@@ -23,5 +26,8 @@ __all__ = [
     'KinematicsMetadataProvider',
     'DetectorMetadataProvider',
     'GeometryMetadataProvider',
+    'GantryMetadataProvider',
+    'SourceMetadataProvider',
+    'SimulationMetadataProvider',
     'ProcedureMetadataCollector',
 ]

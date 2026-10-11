@@ -128,6 +128,8 @@ class SourceConfig(CompositeNodeConfig):
     radiation_type: str = 'Gamma'
     energy: Union[EnergyConfig, List[List[Any]], List[Tuple[Any, float]]] = 140.5 * units.keV
     half_life: TimeConfig = 6.0 * units.hour
+    radionuclide: Optional[str] = None
+    phantom_type: Optional[str] = None
 
     @field_serializer('activity', when_used='unless-none')
     def serialize_activity(self, value: Any) -> Any:
@@ -231,12 +233,16 @@ class DataManagerConfig(BaseModel):
     filename: str
     handlers: List[AnyDataHandlerConfig] = Field(default_factory=list)
     buffer_capacity: Optional[int] = None
+    floating_point_precision: Literal['float32', 'float64'] = 'float32'
+    compression: Optional[Literal['gzip', 'lzf']] = None
+    compression_opts: int = Field(default=4, ge=0, le=9)
 
 class SimulationManagerConfig(BaseModel):
     start_time: TimeConfig = 0.0 * units.ns
     stop_time: TimeConfig = 1.0 * units.s
     particles_number: CountConfig = 10_000
     min_energy: EnergyConfig = 1.0 * units.keV
+    physics_list: Optional[str] = None
 
 class BaseProtocolConfig(BaseModel):
     pass
@@ -260,6 +266,7 @@ class StepAndShootProtocolConfig(BaseProtocolConfig):
     start_angle: AngleConfig = 0.0 * units.deg
     end_angle: AngleConfig = 360.0 * units.deg
     endpoint: bool = False
+    rotation_direction: Literal['CW', 'CCW'] = 'CW'
     time_per_step: TimeConfig = 1.0 * units.s
     radius: Optional[Union[LengthConfig, List[LengthConfig]]] = None
     grid_variables: dict[str, List[float]] = Field(default_factory=dict)

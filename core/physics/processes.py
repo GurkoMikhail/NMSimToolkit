@@ -19,7 +19,7 @@ from core.other.typing_definitions import Index
 
 class Process(ABC):
     """ Класс процесса """
-    process_id: ProcessID
+    process_id: Optional[ProcessID] = None
     invalidates_navigation: bool = False
     rng: np.random.Generator
     _energy_range: NDArray[Float]
@@ -98,3 +98,43 @@ class ComptonScattering(CoherentScattering):
 
 class PairProduction(Process):
     """ Класс эффекта образования электрон-позитронных пар """
+    process_id = ProcessID(3)
+
+
+def get_process_mapping() -> dict[int, str]:
+    """
+    Возвращает словарь соответствия числового кода процесса его строковому имени,
+    динамически инспектируя иерархию зарегистрированных классов Process.
+    """
+    mapping_result: dict[int, str] = {}
+
+    def _collect_subclasses(base_class: type) -> None:
+        for subclass_item in base_class.__subclasses__():
+            if subclass_item.process_id is not None:
+                mapping_result[int(subclass_item.process_id)] = subclass_item.__name__
+            _collect_subclasses(subclass_item)
+
+    _collect_subclasses(Process)
+    return dict(sorted(mapping_result.items()))
+
+
+def get_species_mapping() -> dict[int, str]:
+    """
+    Возвращает словарь соответствия числового кода частицы ее строковому имени.
+    """
+    return {
+        0: "Photon",
+        1: "Electron",
+        2: "Positron",
+    }
+
+
+__all__ = [
+    "Process",
+    "PhotoelectricEffect",
+    "CoherentScattering",
+    "ComptonScattering",
+    "PairProduction",
+    "get_process_mapping",
+    "get_species_mapping",
+]

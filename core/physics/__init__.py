@@ -8,6 +8,8 @@ from core.physics.processes import (
     CoherentScattering,
     ComptonScattering,
     PairProduction,
+    get_process_mapping,
+    get_species_mapping,
 )
 from core.physics.physics_compiler import PhysicsCompiler
 from core.physics.physics_buffer import PhysicsBuffer
@@ -25,6 +27,8 @@ __all__ = [
     'CoherentScattering',
     'ComptonScattering',
     'PairProduction',
+    'get_process_mapping',
+    'get_species_mapping',
     'PhysicsCompiler',
     'PhysicsBuffer',
     'InteractionBuffer',

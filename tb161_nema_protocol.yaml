@@ -37,6 +37,8 @@ scene:
       children:
         - type: Source
           name: Source
+          radionuclide: '161Tb'
+          phantom_type: 'NEMA IEC Body Phantom'
           radiation_type: Gamma
           activity: 100 MBq
           voxel_size: 4.2 mm
@@ -209,6 +211,9 @@ scene:
 data_manager:
   filename: "output_tb161_dual_cam/${gantry_angle}_deg.hdf"
   buffer_capacity: 100000
+  floating_point_precision: "float32"
+  compression: "gzip"
+  compression_opts: 4
   handlers:
     - type: HistoryAssemblerHandler
       sensitive_volumes:
@@ -219,5 +224,6 @@ data_manager:
 simulation_manager:
   start_time: 0.0 s
   stop_time: 30.0 s
-  particles_number: 33400
+  particles_number: 10000
   min_energy: 1.0 keV
+  physics_list: "emstandard_opt4"

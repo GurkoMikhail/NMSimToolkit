@@ -104,19 +104,97 @@ class DataManager(threading.Thread):
             elif item_value is not None:
                 try:
                     target_group.attrs[str(item_key)] = item_value
-                except Exception:
+                except (TypeError, ValueError, RuntimeError, OSError):
                     try:
                         target_group.attrs[str(item_key)] = str(item_value)
-                    except Exception as attribute_error:
+                    except (TypeError, ValueError, RuntimeError, OSError) as attribute_error:
                         _logger.debug(
                             f"Не удалось записать атрибут {item_key} со значением {item_value}: {attribute_error}"
                         )
 
+    @staticmethod
+    def _write_canonical_section(target_group: h5py.Group, data_dict: Dict[str, Any]) -> None:
+        """
+        Записывает структурированные параметры канонической группы метаданных
+        (/metadata/gantry, geometry, source, simulation) как атрибуты и датасеты с единицами hepunits.
+        """
+        units_map: Dict[str, str] = {
+            "gantry_angle": "rad",
+            "gantry_angle_deg": "deg",
+            "angular_step": "deg",
+            "angular_step_rad": "rad",
+            "orbit_radius": "mm",
+            "frame_duration": "s",
+            "crystal_dimensions": "mm",
+            "collimator_hole_diameter": "mm",
+            "collimator_hole_length": "mm",
+            "collimator_septa_thickness": "mm",
+            "half_life": "s",
+            "simulated_activity": "Bq",
+        }
+
+        for item_key, item_value in data_dict.items():
+            if item_value is None:
+                continue
+
+            unit = units_map.get(str(item_key))
+
+            # Если значение - словарь (например, запись объема), рекурсивно создаем подгруппу
+            if isinstance(item_value, dict):
+                sub_group = target_group.require_group(str(item_key))
+                DataManager._write_canonical_section(sub_group, item_value)
+                continue
+
+            # Запись атрибута в группу
+            try:
+                target_group.attrs[str(item_key)] = item_value
+            except (TypeError, ValueError, RuntimeError, OSError):
+                try:
+                    target_group.attrs[str(item_key)] = str(item_value)
+                except (TypeError, ValueError, RuntimeError, OSError) as attr_err:
+                    _logger.debug(f"Не удалось записать атрибут {item_key}: {attr_err}")
+
+            if unit is not None:
+                try:
+                    target_group.attrs[f"{item_key}_units"] = unit
+                except (TypeError, ValueError, RuntimeError, OSError):
+                    pass
+
+            # Создание датасета для массивов или числовых параметров
+            if isinstance(item_value, np.ndarray):
+                if str(item_key) not in target_group:
+                    dset = target_group.create_dataset(str(item_key), data=item_value)
+                    if unit is not None:
+                        dset.attrs["units"] = unit
+                else:
+                    target_group[str(item_key)][...] = item_value
+            elif isinstance(item_value, (list, tuple)):
+                array_value = np.array(item_value)
+                if str(item_key) not in target_group:
+                    dset = target_group.create_dataset(str(item_key), data=array_value)
+                    if unit is not None:
+                        dset.attrs["units"] = unit
+                else:
+                    target_group[str(item_key)][...] = array_value
+            elif isinstance(item_value, (int, float, np.integer, np.floating)):
+                if str(item_key) not in target_group:
+                    dset = target_group.create_dataset(str(item_key), data=item_value)
+                    if unit is not None:
+                        dset.attrs["units"] = unit
+                else:
+                    target_group[str(item_key)][()] = item_value
+            elif isinstance(item_value, str):
+                if str(item_key) not in target_group:
+                    target_group.create_dataset(str(item_key), data=np.bytes_(item_value.encode("utf-8")))
+                else:
+                    target_group[str(item_key)][()] = np.bytes_(item_value.encode("utf-8"))
+
     def initialize_metadata(self) -> None:
         """
         Выполняет раннюю фиксацию метаданных задачи моделирования ДО фактического старта симуляции.
-        Создает изолированную подгруппу /metadata/tasks/task_{task_id} со статусом 'in_progress',
-        отметкой времени старта и параметрами протокола/детекторов.
+        Создает канонические группы /metadata/{gantry, geometry, source, simulation},
+        а также изолированную подгруппу /metadata/tasks/task_{task_id} со статусом 'in_progress',
+        отметкой времени старта и параметрами протокола/детекторов для обратной совместимости.
         """
         if self._is_initialized:
             return
@@ -131,10 +209,16 @@ class DataManager(threading.Thread):
             if "created_time" not in metadata_group.attrs:
                 metadata_group.attrs["created_time"] = self._start_time_str
 
+            # 1. Запись в канонические корневые разделы /metadata/{gantry, geometry, source, simulation}
+            for section_name in ("gantry", "geometry", "source", "simulation"):
+                if section_name in self.metadata and isinstance(self.metadata[section_name], dict):
+                    section_group = metadata_group.require_group(section_name)
+                    self._write_canonical_section(section_group, self.metadata[section_name])
+
+            # 2. Изолированная запись для текущей задачи в /metadata/tasks/task_{task_id} (обратная совместимость)
             tasks_group = metadata_group.require_group("tasks")
             task_group = tasks_group.require_group(self.task_group_name)
 
-            # Изолированная запись для текущей задачи
             task_group.attrs["task_id"] = self.task_id
             task_group.attrs["status"] = self._status
             task_group.attrs["start_time"] = self._start_time_str
@@ -176,6 +260,10 @@ class DataManager(threading.Thread):
             task_group.attrs["elapsed_real_time_seconds"] = self._elapsed_real_time_seconds
             if self._error_message is not None:
                 task_group.attrs["error"] = self._error_message
+
+            # Обновление статуса в канонической группе simulation
+            if "simulation" in metadata_group:
+                metadata_group["simulation"].attrs["status"] = self._status
 
         try:
             self._write_with_retry(do_write_final_metadata)
