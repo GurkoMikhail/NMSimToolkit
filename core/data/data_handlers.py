@@ -2,14 +2,14 @@ import json
 from core.geometry.flattened_scene import FlattenedScene
 import abc
 import logging
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
 import h5py
 import numpy as np
 
 from core.geometry.volumes import Volume
 from core.physics.processes import get_process_mapping, get_species_mapping
-from core.scene.nodes import SpatialNode
+from core.scene.nodes import CompositeNode, SpatialNode
 
 _logger = logging.getLogger(__name__)
 
@@ -240,7 +240,7 @@ class DirectStreamHandler(BaseDataHandler):
 class SensitiveVolumeHandler(DirectStreamHandler):
     def __init__(
         self,
-        sensitive_volumes: List[Volume],
+        sensitive_volumes: List[SpatialNode],
         floating_point_precision: str = "float32",
         compression: Optional[str] = None,
         compression_opts: int = 4,
@@ -250,13 +250,16 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             compression=compression,
             compression_opts=compression_opts,
         )
-        self.sensitive_volumes = sensitive_volumes
+        self.sensitive_volumes = self._filter_topmost_nodes(sensitive_volumes)
 
         unique_roots = set()
         self.unique_top_volumes = set()
-        for vol in sensitive_volumes:
-            unique_roots.add(vol.root)
-            self.unique_top_volumes.add(vol.top_volume)
+        for node in self.sensitive_volumes:
+            unique_roots.add(node.root)
+            if isinstance(node, Volume):
+                self.unique_top_volumes.add(node.top_volume)
+            else:
+                self.unique_top_volumes.add(node)
 
         if len(unique_roots) > 1:
             raise ValueError("All sensitive volumes must share the same root simulation volume!")
@@ -269,14 +272,35 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         self.target_volumes: List[int] = []
         self._build_volume_mapping()
 
+    @staticmethod
+    def _filter_topmost_nodes(nodes: Sequence[SpatialNode]) -> List[SpatialNode]:
+        """
+        Отсекает дочерние узлы, если их родительские узлы (предки) уже присутствуют в списке.
+        Сохраняет порядок первого вхождения верхних узлов.
+        """
+        unique_nodes: List[SpatialNode] = list(dict.fromkeys(nodes))
+        node_set = set(unique_nodes)
+        filtered_nodes: List[SpatialNode] = []
+        for node in unique_nodes:
+            is_child_of_selected = False
+            current = node.parent
+            while current is not None:
+                if current in node_set:
+                    is_child_of_selected = True
+                    break
+                current = current.parent
+            if not is_child_of_selected:
+                filtered_nodes.append(node)
+        return filtered_nodes
+
     def _build_volume_mapping(self) -> None:
         """
         Формирует маппинг индексов объемов FlattenedScene на целевые узлы записи.
-        Чувствительные объемы и их дочерние подузлы связываются с соответствующим
-        чувствительным объемом для сохранения в его локальных координатах.
+        Чувствительные узлы (Volume / CompositeNode) и их дочерние подузлы связываются
+        с соответствующим верхним чувствительным узлом для сохранения.
         Все остальные фоновые объемы сцены связываются с корнем сцены (scene_root).
         """
-        if self.scene_root is not None:
+        if self.scene_root is not None and isinstance(self.scene_root, CompositeNode):
             flat_list = FlattenedScene(self.scene_root).flat_list
 
             sensitive_set = set(self.sensitive_volumes)
@@ -321,6 +345,9 @@ class SensitiveVolumeHandler(DirectStreamHandler):
     def _format_and_write_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
         target_float_dtype = np.float32 if self.floating_point_precision == "float32" else np.float64
 
+        volume_ids = interactions['volume_id']
+        total_events_count = len(volume_ids)
+
         if 'pos_x' in interactions and 'pos_y' in interactions and 'pos_z' in interactions:
             pos_x = interactions['pos_x']
             pos_y = interactions['pos_y']
@@ -329,7 +356,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         elif 'global_position' in interactions:
             global_position = interactions['global_position'].astype(target_float_dtype)
         else:
-            global_position = np.empty((0, 3), dtype=target_float_dtype)
+            global_position = np.zeros((total_events_count, 3), dtype=target_float_dtype)
 
         if 'dir_x' in interactions and 'dir_y' in interactions and 'dir_z' in interactions:
             dir_x = interactions['dir_x']
@@ -339,9 +366,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         elif 'global_direction' in interactions:
             global_direction = interactions['global_direction'].astype(target_float_dtype)
         else:
-            global_direction = np.empty((0, 3), dtype=target_float_dtype)
-
-        volume_ids = interactions['volume_id']
+            global_direction = np.zeros((total_events_count, 3), dtype=target_float_dtype)
 
         events_saved = 0
         volume_data_map = {}
@@ -366,16 +391,20 @@ class SensitiveVolumeHandler(DirectStreamHandler):
 
             if 'process_id' in interactions:
                 process_code = interactions['process_id'][mask].astype(np.uint8)
-            else:
+            elif 'process_code' in interactions:
                 process_code = interactions['process_code'][mask].astype(np.uint8)
+            else:
+                process_code = np.zeros(np.count_nonzero(mask), dtype=np.uint8)
 
             if 'species' in interactions:
                 species_code = interactions['species'][mask].astype(np.uint8)
-            else:
+            elif 'species_code' in interactions:
                 species_code = interactions['species_code'][mask].astype(np.uint8)
+            else:
+                species_code = np.zeros(np.count_nonzero(mask), dtype=np.uint8)
 
             particle_ID = interactions['particle_ID'][mask]
-            energy_deposit = interactions['energy_deposit'][mask].astype(target_float_dtype)
+            energy_deposit = interactions['energy_deposit'][mask].astype(target_float_dtype) if 'energy_deposit' in interactions else np.zeros(len(particle_ID), dtype=target_float_dtype)
 
             if 'scattering_theta' in interactions and 'scattering_phi' in interactions:
                 scattering_theta = interactions['scattering_theta'][mask]
@@ -386,14 +415,14 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             else:
                 scattering_angles = np.zeros((len(particle_ID), 2), dtype=target_float_dtype)
 
-            material_id = interactions['material_id'][mask].astype(np.uint32)
+            material_id = interactions['material_id'][mask].astype(np.uint32) if 'material_id' in interactions else np.zeros(len(particle_ID), dtype=np.uint32)
             volume_id = interactions['volume_id'][mask].astype(np.uint32)
-            Z = interactions['Z'][mask].astype(np.int8)
+            Z = interactions['Z'][mask].astype(np.int8) if 'Z' in interactions else np.zeros(len(particle_ID), dtype=np.int8)
 
             n_events = len(process_code)
             events_saved += n_events
 
-            distance_traveled = interactions['distance_traveled'][mask].astype(target_float_dtype)
+            distance_traveled = interactions['distance_traveled'][mask].astype(target_float_dtype) if 'distance_traveled' in interactions else np.zeros(len(particle_ID), dtype=target_float_dtype)
 
             volume_data_map[top_volume.name] = {
                 'global_position': vol_global_pos,
@@ -418,7 +447,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
 class HistoryAssemblerHandler(SensitiveVolumeHandler):
     def __init__(
         self,
-        sensitive_volumes: List[Volume],
+        sensitive_volumes: List[SpatialNode],
         save_initial_states: bool = True,
         floating_point_precision: str = "float32",
         compression: Optional[str] = None,
@@ -458,10 +487,13 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
         volumes_to_write: List[SpatialNode] = list(self.sensitive_volumes)
         if self.scene_root is not None and self.scene_root not in volumes_to_write:
             volumes_to_write.append(self.scene_root)
-        for top_vol in self.unique_top_volumes:
-            if top_vol not in volumes_to_write:
-                volumes_to_write.append(top_vol)
-        return volumes_to_write
+        unique_nodes: List[SpatialNode] = []
+        seen_names: Set[str] = set()
+        for node in volumes_to_write:
+            if node.name not in seen_names:
+                unique_nodes.append(node)
+                seen_names.add(node.name)
+        return unique_nodes
 
     def _flush_dead_particles(self, dead_ids: np.ndarray) -> None:
         scored_dead_ids = np.intersect1d(dead_ids, list(self.scored_particles))

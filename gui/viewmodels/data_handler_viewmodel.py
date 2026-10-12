@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from PySide6.QtCore import QObject, Signal
 
 from core.config.models import (
@@ -10,6 +10,7 @@ from core.config.models import (
     DoseMapHandlerConfig,
     DataManagerConfig,
 )
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 
 _logger = logging.getLogger(__name__)
 
@@ -101,7 +102,10 @@ class DirectStreamHandlerViewModel(BaseDataHandlerViewModel):
 class SensitiveVolumeHandlerViewModel(BaseDataHandlerViewModel):
     """
     Модель представления обработчика сбора взаимодействий в чувствительных объемах.
+    Является единственным владельцем списка чувствительных узлов (Volume / CompositeNode).
     """
+
+    volumes_changed = Signal()
 
     def __init__(
         self,
@@ -115,7 +119,12 @@ class SensitiveVolumeHandlerViewModel(BaseDataHandlerViewModel):
             enabled=enabled,
             parent=parent,
         )
-        self._sensitive_volumes: List[str] = list(sensitive_volumes) if sensitive_volumes else []
+        self._sensitive_volumes: List[str] = []
+        if sensitive_volumes:
+            for vol in sensitive_volumes:
+                name_str = str(vol).strip()
+                if name_str and name_str not in self._sensitive_volumes:
+                    self._sensitive_volumes.append(name_str)
 
     @property
     def sensitive_volumes(self) -> List[str]:
@@ -123,21 +132,87 @@ class SensitiveVolumeHandlerViewModel(BaseDataHandlerViewModel):
 
     @sensitive_volumes.setter
     def sensitive_volumes(self, volumes: List[str]) -> None:
-        self._sensitive_volumes = [str(v) for v in volumes]
+        cleaned: List[str] = []
+        for vol in volumes:
+            name_str = str(vol).strip()
+            if name_str and name_str not in cleaned:
+                cleaned.append(name_str)
+        if self._sensitive_volumes != cleaned:
+            self._sensitive_volumes = cleaned
+            self.volumes_changed.emit()
+            self.changed.emit()
+
+    def add_volume(self, node_or_name: Union[str, NodeViewModel]) -> bool:
+        """
+        Добавляет имя узла или NodeViewModel в список чувствительных объемов.
+        Возвращает True, если узел был добавлен, False если уже присутствовал или имя пустое.
+        """
+        if isinstance(node_or_name, str):
+            volume_name = node_or_name.strip()
+        elif isinstance(node_or_name, NodeViewModel):
+            volume_name = node_or_name.name.strip()
+        else:
+            raise TypeError(f"Ожидался NodeViewModel или str, получено: {type(node_or_name).__name__}")
+
+        if not volume_name or volume_name in self._sensitive_volumes:
+            return False
+
+        self._sensitive_volumes.append(volume_name)
+        self.volumes_changed.emit()
         self.changed.emit()
+        return True
+
+    def remove_volume(self, volume_name: str) -> bool:
+        """
+        Удаляет объем из списка по имени.
+        Возвращает True при успешном удалении, False если объем не найден.
+        """
+        name_clean = str(volume_name).strip()
+        if name_clean in self._sensitive_volumes:
+            self._sensitive_volumes.remove(name_clean)
+            self.volumes_changed.emit()
+            self.changed.emit()
+            return True
+        return False
+
+    def clear_volumes(self) -> None:
+        """Полная очистка списка чувствительных объемов."""
+        if self._sensitive_volumes:
+            self._sensitive_volumes.clear()
+            self.volumes_changed.emit()
+            self.changed.emit()
+
+    def on_node_renamed(self, old_name: str, new_name: str) -> None:
+        """
+        Атомарно обновляет имя узла в списке при переименовании в сцене без сброса настроек.
+        """
+        old_clean = str(old_name).strip()
+        new_clean = str(new_name).strip()
+        if old_clean in self._sensitive_volumes and new_clean:
+            idx = self._sensitive_volumes.index(old_clean)
+            self._sensitive_volumes[idx] = new_clean
+            self.volumes_changed.emit()
+            self.changed.emit()
+
+    def on_node_removed(self, node_name: str) -> None:
+        """
+        Автоматически удаляет узел из списка, если он был удален из дерева сцены.
+        """
+        self.remove_volume(node_name)
 
     def to_config(self) -> Optional[SensitiveVolumeHandlerConfig]:
         if not self._enabled:
             return None
         return SensitiveVolumeHandlerConfig(
             type="SensitiveVolumeHandler",
-            sensitive_volumes=self._sensitive_volumes,
+            sensitive_volumes=list(self._sensitive_volumes),
         )
 
 
-class HistoryAssemblerHandlerViewModel(BaseDataHandlerViewModel):
+class HistoryAssemblerHandlerViewModel(SensitiveVolumeHandlerViewModel):
     """
     Модель представления обработчика сохранения истории взаимодействий и начальных состояний.
+    Наследует реестр чувствительных объемов от SensitiveVolumeHandlerViewModel без дублирования кода.
     """
 
     def __init__(
@@ -148,22 +223,13 @@ class HistoryAssemblerHandlerViewModel(BaseDataHandlerViewModel):
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(
-            name="История треков детектора (HistoryAssemblerHandler)",
-            handler_type="HistoryAssemblerHandler",
+            sensitive_volumes=sensitive_volumes,
             enabled=enabled,
             parent=parent,
         )
-        self._sensitive_volumes: List[str] = list(sensitive_volumes) if sensitive_volumes else []
+        self._name = "История треков детектора (HistoryAssemblerHandler)"
+        self._handler_type = "HistoryAssemblerHandler"
         self._save_initial_states: bool = bool(save_initial_states)
-
-    @property
-    def sensitive_volumes(self) -> List[str]:
-        return list(self._sensitive_volumes)
-
-    @sensitive_volumes.setter
-    def sensitive_volumes(self, volumes: List[str]) -> None:
-        self._sensitive_volumes = [str(v) for v in volumes]
-        self.changed.emit()
 
     @property
     def save_initial_states(self) -> bool:
@@ -171,9 +237,9 @@ class HistoryAssemblerHandlerViewModel(BaseDataHandlerViewModel):
 
     @save_initial_states.setter
     def save_initial_states(self, value: bool) -> None:
-        b = bool(value)
-        if self._save_initial_states != b:
-            self._save_initial_states = b
+        bool_value = bool(value)
+        if self._save_initial_states != bool_value:
+            self._save_initial_states = bool_value
             self.changed.emit()
 
     def to_config(self) -> Optional[HistoryAssemblerHandlerConfig]:
@@ -181,7 +247,7 @@ class HistoryAssemblerHandlerViewModel(BaseDataHandlerViewModel):
             return None
         return HistoryAssemblerHandlerConfig(
             type="HistoryAssemblerHandler",
-            sensitive_volumes=self._sensitive_volumes,
+            sensitive_volumes=list(self._sensitive_volumes),
             save_initial_states=self._save_initial_states,
         )
 
@@ -338,10 +404,10 @@ class DataManagerViewModel(QObject):
     def to_core_handlers(self) -> List[AnyDataHandlerConfig]:
         """Сборка списка Pydantic-конфигураций обработчиков данных ядра."""
         configs: List[AnyDataHandlerConfig] = []
-        for h in self._handlers:
-            cfg = h.to_config()
-            if cfg is not None:
-                configs.append(cfg)
+        for handler in self._handlers:
+            handler_config = handler.to_config()
+            if handler_config is not None:
+                configs.append(handler_config)
         return configs
 
     def load_from_config(self, config: DataManagerConfig) -> None:
@@ -351,32 +417,67 @@ class DataManagerViewModel(QObject):
         self._filename = config.filename
         raw_capacity = config.buffer_capacity
         self.buffer_capacity = self._min_buffer_capacity if raw_capacity is None else max(self._min_buffer_capacity, int(raw_capacity))
-        for h in list(self._handlers):
-            self.remove_handler(h)
+        for handler in list(self._handlers):
+            self.remove_handler(handler)
 
-        for h_cfg in config.handlers:
-            if isinstance(h_cfg, DirectStreamHandlerConfig):
+        for handler_config in config.handlers:
+            if isinstance(handler_config, DirectStreamHandlerConfig):
                 self.add_handler(DirectStreamHandlerViewModel(
-                    show_escaped_tracks=h_cfg.show_escaped_tracks,
+                    show_escaped_tracks=handler_config.show_escaped_tracks,
                     enabled=True,
                 ))
-            elif isinstance(h_cfg, SensitiveVolumeHandlerConfig):
+            elif isinstance(handler_config, SensitiveVolumeHandlerConfig):
                 self.add_handler(SensitiveVolumeHandlerViewModel(
-                    sensitive_volumes=h_cfg.sensitive_volumes,
+                    sensitive_volumes=handler_config.sensitive_volumes,
                     enabled=True,
                 ))
-            elif isinstance(h_cfg, HistoryAssemblerHandlerConfig):
+            elif isinstance(handler_config, HistoryAssemblerHandlerConfig):
                 self.add_handler(HistoryAssemblerHandlerViewModel(
-                    sensitive_volumes=h_cfg.sensitive_volumes,
-                    save_initial_states=h_cfg.save_initial_states,
+                    sensitive_volumes=handler_config.sensitive_volumes,
+                    save_initial_states=handler_config.save_initial_states,
                     enabled=True,
                 ))
-            elif isinstance(h_cfg, DoseMapHandlerConfig):
+            elif isinstance(handler_config, DoseMapHandlerConfig):
                 self.add_handler(DoseMapHandlerViewModel(
-                    grid_names=h_cfg.grid_names,
-                    shm_name=h_cfg.shm_name,
+                    grid_names=handler_config.grid_names,
+                    shm_name=handler_config.shm_name,
                     enabled=True,
                 ))
         self.handlers_changed.emit()
         self.changed.emit()
+
+    def on_node_renamed(self, old_name: str, new_name: str) -> None:
+        """Транслирует переименование узла сцены во все обработчики чувствительных объемов."""
+        for handler in self._handlers:
+            if isinstance(handler, SensitiveVolumeHandlerViewModel):
+                handler.on_node_renamed(old_name, new_name)
+
+    def on_node_removed(self, node_name: str) -> None:
+        """Транслирует удаление узла сцены во все обработчики чувствительных объемов."""
+        for handler in self._handlers:
+            if isinstance(handler, SensitiveVolumeHandlerViewModel):
+                handler.on_node_removed(node_name)
+
+    def is_sensitive_volume(self, node_or_name: Union[str, NodeViewModel]) -> bool:
+        """
+        Проверяет, зарегистрировано ли имя узла (или узел/его предки)
+        как чувствительный объем в любом включенном обработчике.
+        """
+        if isinstance(node_or_name, str):
+            target_name = node_or_name.strip()
+            for handler in self._handlers:
+                if isinstance(handler, SensitiveVolumeHandlerViewModel) and handler.enabled:
+                    if target_name in handler.sensitive_volumes:
+                        return True
+            return False
+
+        if isinstance(node_or_name, NodeViewModel):
+            curr: Optional[NodeViewModel] = node_or_name
+            while curr is not None:
+                if self.is_sensitive_volume(curr.name):
+                    return True
+                curr = curr.parent_vm
+            return False
+
+        return False
 

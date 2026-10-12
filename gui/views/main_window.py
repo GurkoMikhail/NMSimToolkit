@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
         self.viewport_controller.procedure_vm = self.procedure_vm
         self.data_manager_vm = DataManagerViewModel()
         self.data_manager_vm.min_buffer_capacity = self.sim_settings.particles_number
+        self.viewport_controller.data_manager_vm = self.data_manager_vm
 
         # Диспетчер параллельной оркестрации (OrchestratorSession)
         self.orchestrator_session = OrchestratorSession(
@@ -414,6 +415,9 @@ class MainWindow(QMainWindow):
         self.procedure_selector.procedure_selected.connect(self.property_inspector.set_target_viewmodel)
         self.data_handler_list.handler_selected.connect(self.property_inspector.set_target_viewmodel)
         self.data_handler_list.data_manager_selected.connect(self.property_inspector.set_target_viewmodel)
+        self.property_inspector.sensitive_volumes_editor.volume_selected.connect(
+            self._on_sensitive_volume_selected_in_editor
+        )
 
         # Связь генерации задач и управления воркерами
         self.jobs_widget.generate_jobs_requested.connect(self._on_generate_jobs)
@@ -443,6 +447,7 @@ class MainWindow(QMainWindow):
         self.scene_vm.scene_loaded.connect(lambda vm: self.viewport_controller.sync_viewport_scene())
         self.scene_vm.node_added.connect(self._on_node_added)
         self.scene_vm.node_removed.connect(self._on_node_removed)
+        self.scene_vm.node_renamed.connect(self.data_manager_vm.on_node_renamed)
 
         # Автоматическая генерация задач при изменении сцены и параметров процедуры
         self.scene_vm.node_added.connect(lambda n: self._on_generate_jobs())
@@ -492,6 +497,17 @@ class MainWindow(QMainWindow):
     def _on_node_removed(self, node_vm: NodeViewModel) -> None:
         """Точечное удаление актора из сцены."""
         self.viewport_controller.on_node_removed(node_vm)
+        self.data_manager_vm.on_node_removed(node_vm.name)
+
+    def _on_sensitive_volume_selected_in_editor(self, volume_name: str) -> None:
+        """
+        Подсвечивает выбранный в редакторе детектора объем в 3D-вьюпорте
+        без смены фокуса и целевой модели представления PropertyInspector.
+        """
+        if self.scene_vm is not None and self.viewport_controller is not None:
+            node_vm = self.scene_vm.find_by_name(volume_name)
+            if node_vm is not None:
+                self.viewport_controller.on_node_selected(node_vm)
 
     def _on_node_selected(self, node_view_model: Optional[NodeViewModel]) -> None:
         if self.dock_inspector.isHidden():
@@ -844,6 +860,10 @@ class MainWindow(QMainWindow):
             self.viewport_controller.clear_dose_volume()
             self.viewport_controller.clear_tracks()
         self.scene_vm.load_scene(root)
+        if self.data_manager_vm is not None:
+            for handler in list(self.data_manager_vm.handlers):
+                self.data_manager_vm.remove_handler(handler)
+            self.data_handler_list.rebuild_list()
         self.viewport.clear_actors()
         self.current_config = None
         self.current_config_path = None

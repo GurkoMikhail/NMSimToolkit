@@ -39,7 +39,12 @@ from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewport_3d.track_renderer import TrackRenderer, PROCESS_COLORS
 from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.views.scene_tree_widget import SceneTreeWidget
-from gui.viewmodels.data_handler_viewmodel import DirectStreamHandlerViewModel
+from gui.viewmodels.data_handler_viewmodel import (
+    DirectStreamHandlerViewModel,
+    SensitiveVolumeHandlerViewModel,
+    DataManagerViewModel,
+)
+from gui.views.widgets.sensitive_volumes_editor import SensitiveVolumesEditorWidget, SensitiveVolumesListWidget
 from gui.views.property_inspector import PropertyInspector
 from gui.views.main_window import MainWindow
 
@@ -145,26 +150,30 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         mat_manip = manip.get_orientation_matrix(half_thickness=cam_vm.half_thickness)
         self.assertAlmostEqual(float(mat_manip[0, 3]), orbit_radius_face + cam_vm.half_thickness, places=4)
 
-    # 2. Отдельный список чувствительных объемов с Drag-and-Drop
+    # 2. Отдельный виджет SensitiveVolumesEditorWidget с Drag-and-Drop
     def test_sensitive_volumes_list_and_drag_drop(self):
         vol = Volume(geometry=Box(60.0, 60.0, 20.0), material=material_database['Plastic Scintillator, Vinyltoluene'], name="Scintillator")
         vol_vm = VolumeViewModel(vol)
         self.scene_vm.add_node(self.scene_vm.root_vm, vol_vm)
 
-        tree_widget = SceneTreeWidget(self.scene_vm)
-        self.assertEqual(tree_widget.sensitive_list.count(), 0)
+        handler_vm = SensitiveVolumeHandlerViewModel()
+        editor_widget = SensitiveVolumesEditorWidget()
+        editor_widget.set_scene_viewmodel(self.scene_vm)
+        editor_widget.set_viewmodel(handler_vm)
 
-        # Добавление в единый реестр сцены реактивно обновляет список
-        self.scene_vm.set_volume_sensitive(vol_vm, True)
-        self.assertEqual(tree_widget.sensitive_list.count(), 1)
-        self.assertIn("Scintillator", tree_widget.sensitive_list.item(0).text())
+        self.assertEqual(editor_widget.list_widget.count(), 0)
 
-        # Исключение из реестра удаляет из списка
-        self.scene_vm.set_volume_sensitive(vol_vm, False)
-        self.assertEqual(tree_widget.sensitive_list.count(), 0)
+        # Добавление в обработчик реактивно обновляет список
+        handler_vm.add_volume(vol_vm)
+        self.assertEqual(editor_widget.list_widget.count(), 1)
+        self.assertIn("Scintillator", editor_widget.list_widget.item(0).text())
 
-        # Эмуляция Drag-and-Drop из дерева в список чувствительных объемов
-        tree_widget._dragged_vm = vol_vm
+        # Исключение из обработчика удаляет из списка
+        handler_vm.remove_volume("Scintillator")
+        self.assertEqual(editor_widget.list_widget.count(), 0)
+
+        # Эмуляция Drag-and-Drop из дерева через SceneTreeWidget._current_dragged_vm
+        SceneTreeWidget._current_dragged_vm = vol_vm
         class DummyDropEvent:
             def __init__(self):
                 self.accepted = False
@@ -174,32 +183,32 @@ class TestGUIIntegrationFixes(unittest.TestCase):
                 self.accepted = False
 
         drop_ev = DummyDropEvent()
-        tree_widget.sensitive_list.dropEvent(drop_ev)
+        editor_widget.list_widget.dropEvent(drop_ev)
         self.assertTrue(drop_ev.accepted)
-        self.assertTrue(self.scene_vm.is_sensitive_volume(vol_vm))
-        self.assertEqual(tree_widget.sensitive_list.count(), 1)
+        self.assertIn("Scintillator", handler_vm.sensitive_volumes)
+        self.assertEqual(editor_widget.list_widget.count(), 1)
 
-        # Проверка удаления через кнопку "- Исключить из детекторов"
-        tree_widget.sensitive_list.setCurrentRow(0)
-        tree_widget._on_remove_detector_clicked()
-        self.assertFalse(self.scene_vm.is_sensitive_volume(vol_vm))
-        self.assertEqual(tree_widget.sensitive_list.count(), 0)
+        # Проверка удаления через метод _on_remove_clicked
+        editor_widget.list_widget.setCurrentRow(0)
+        editor_widget._on_remove_clicked()
+        self.assertNotIn("Scintillator", handler_vm.sensitive_volumes)
+        self.assertEqual(editor_widget.list_widget.count(), 0)
 
-        # Запрет перетаскивания не-Volume узлов
+        # Запрет перетаскивания не-Volume / не-Composite узлов (DoseGrid)
         dose_node = DoseGridNode(name="Dose", size=[100, 100, 100], dose_voxel_size=5.0)
         dose_vm = DoseGridViewModel(dose_node)
-        tree_widget._dragged_vm = dose_vm
+        SceneTreeWidget._current_dragged_vm = dose_vm
         drop_ev2 = DummyDropEvent()
-        tree_widget.sensitive_list.dropEvent(drop_ev2)
+        editor_widget.list_widget.dropEvent(drop_ev2)
         self.assertFalse(drop_ev2.accepted)
-        self.assertEqual(tree_widget.sensitive_list.count(), 0)
+        self.assertEqual(editor_widget.list_widget.count(), 0)
 
         # Запрет перетаскивания корневого узла root_vm сцены
-        tree_widget._dragged_vm = self.scene_vm.root_vm
+        SceneTreeWidget._current_dragged_vm = self.scene_vm.root_vm
         drop_ev_root = DummyDropEvent()
-        tree_widget.sensitive_list.dropEvent(drop_ev_root)
+        editor_widget.list_widget.dropEvent(drop_ev_root)
         self.assertFalse(drop_ev_root.accepted)
-        self.assertEqual(tree_widget.sensitive_list.count(), 0)
+        self.assertEqual(editor_widget.list_widget.count(), 0)
 
         # Проверка dragEnterEvent и dragMoveEvent
         class DummyDragEvent:
@@ -211,23 +220,62 @@ class TestGUIIntegrationFixes(unittest.TestCase):
                 self.accepted = False
 
         drag_ev = DummyDragEvent()
-        tree_widget._dragged_vm = vol_vm
-        tree_widget.sensitive_list.dragEnterEvent(drag_ev)
+        SceneTreeWidget._current_dragged_vm = vol_vm
+        editor_widget.list_widget.dragEnterEvent(drag_ev)
         self.assertTrue(drag_ev.accepted)
 
         drag_ev_root = DummyDragEvent()
-        tree_widget._dragged_vm = self.scene_vm.root_vm
-        tree_widget.sensitive_list.dragEnterEvent(drag_ev_root)
+        SceneTreeWidget._current_dragged_vm = self.scene_vm.root_vm
+        editor_widget.list_widget.dragEnterEvent(drag_ev_root)
         self.assertFalse(drag_ev_root.accepted)
 
-        # Проверка очистки _dragged_vm в SceneTree.startDrag через переопределение
-        tree_widget._dragged_vm = vol_vm
+        SceneTreeWidget._current_dragged_vm = None
+
+    def test_sensitive_volumes_editor_interactions_and_selection_retention(self):
+        """
+        Проверяет поведение SensitiveVolumesEditorWidget в PropertyInspector и MainWindow:
+        1. Одиночный клик по элементу списка испускает volume_selected и активирует подсветку вьюпорта,
+           НО НЕ сбрасывает фокус PropertyInspector и не скрывает редактор обработчика.
+        2. После клика кнопка '🗑 Удалить' успешно удаляет выбранный объем.
+        3. Двойной клик явно переключает PropertyInspector на модель представления узла сцены.
+        """
+        win = MainWindow()
         try:
-            # Имитация вызова startDrag
-            pass
+            win.show()
+            win._on_open_yaml("nema_1_cam.yaml")
+            sens_handlers = [h for h in win.data_manager_vm.handlers if isinstance(h, SensitiveVolumeHandlerViewModel)]
+            self.assertTrue(len(sens_handlers) > 0)
+            handler_vm = sens_handlers[0]
+
+            # Переводим инспектор на обработчик данных
+            win.property_inspector.set_target_viewmodel(handler_vm)
+            editor = win.property_inspector.sensitive_volumes_editor
+            self.assertEqual(editor.list_widget.count(), 1)
+            item = editor.list_widget.item(0)
+
+            # 1. Проверяем одиночный клик: фокус инспектора НЕ должен сброситься на VolumeViewModel
+            editor.list_widget.setCurrentItem(item)
+            editor.list_widget.itemClicked.emit(item)
+            self.assertIs(win.property_inspector.current_vm, handler_vm)
+            self.assertFalse(win.property_inspector.data_handler_group.isHidden())
+            self.assertFalse(editor.isHidden())
+
+            # 2. Проверяем удаление через кнопку
+            editor.btn_remove.click()
+            self.assertNotIn("Detector", handler_vm.sensitive_volumes)
+            self.assertEqual(editor.list_widget.count(), 0)
+
+            # Добавляем объем заново для проверки двойного клика
+            handler_vm.add_volume("Detector")
+            self.assertEqual(editor.list_widget.count(), 1)
+            item_new = editor.list_widget.item(0)
+
+            # 3. Двойной клик явно навигирует на узел сцены
+            editor.list_widget.itemDoubleClicked.emit(item_new)
+            self.assertIsInstance(win.property_inspector.current_vm, VolumeViewModel)
+            self.assertEqual(win.property_inspector.current_vm.name, "Detector")
         finally:
-            tree_widget._dragged_vm = None
-        self.assertIsNone(tree_widget._dragged_vm)
+            win.close()
 
     # 3. Переключение стилей актора треков и сброс состояния в clear()
     def test_track_renderer_style_switch_and_clear(self):
@@ -510,30 +558,34 @@ class TestGUIIntegrationFixes(unittest.TestCase):
     def test_nema_yaml_loading_detector_in_gui(self):
         """
         Проверяет, что при загрузке nema_1_cam.yaml через MainWindow._on_open_yaml:
-        1. Узел Detector присутствует в сцене и зарегистрирован в scene_vm.sensitive_volumes.
-        2. Detector отображается в списке SensitiveVolumesList (виджет scene_tree.sensitive_list).
-        3. В PropertyInspector флаг chk_is_detector установлен в True.
-        4. При создании новой сцены через _on_new_scene список детекторов сбрасывается.
+        1. Узел Detector присутствует в сцене.
+        2. Detector зарегистрирован в win.data_manager_vm.
+        3. win.data_manager_vm.is_sensitive_volume("Detector") возвращает True.
+        4. В PropertyInspector виджет SensitiveVolumesEditorWidget отображает Detector.
+        5. При создании новой сцены через _on_new_scene обработчики сбрасываются.
         """
         win = MainWindow()
         try:
             win._on_open_yaml("nema_1_cam.yaml")
-            self.assertEqual(win.scene_tree.sensitive_list.count(), 1)
-            item_text = win.scene_tree.sensitive_list.item(0).text()
-            self.assertIn("Detector", item_text)
-
             det_vm = win.scene_vm.find_by_name("Detector")
             self.assertIsNotNone(det_vm)
             self.assertIsInstance(det_vm, VolumeViewModel)
-            self.assertTrue(win.scene_vm.is_sensitive_volume(det_vm))
+            self.assertTrue(win.data_manager_vm.is_sensitive_volume(det_vm))
+
+            # Поиск обработчика с чувствительными объемами
+            sens_handlers = [h for h in win.data_manager_vm.handlers if isinstance(h, SensitiveVolumeHandlerViewModel)]
+            self.assertTrue(len(sens_handlers) > 0)
+            self.assertIn("Detector", sens_handlers[0].sensitive_volumes)
 
             # Проверка синхронизации с PropertyInspector
-            win.scene_vm.select_node(det_vm)
-            self.assertTrue(win.property_inspector.chk_is_detector.isChecked())
+            win.property_inspector.set_target_viewmodel(sens_handlers[0])
+            self.assertEqual(win.property_inspector.sensitive_volumes_editor.list_widget.count(), 1)
+            item_text = win.property_inspector.sensitive_volumes_editor.list_widget.item(0).text()
+            self.assertIn("Detector", item_text)
 
             # Проверка сброса при очистке сцены
             win._on_new_scene()
-            self.assertEqual(win.scene_tree.sensitive_list.count(), 0)
+            self.assertEqual(len(win.data_manager_vm.handlers), 0)
         finally:
             win.close()
 
@@ -556,8 +608,8 @@ class TestGUIIntegrationFixes(unittest.TestCase):
     # 12. Применение конфигурации SimulationConfig к SceneViewModel (apply_simulation_config)
     def test_scene_viewmodel_apply_simulation_config(self):
         """
-        Проверяет метод apply_simulation_config в SceneViewModel для синхронизации
-        чувствительных объемов, заданных в data_manager.handlers.
+        Проверяет применение SimulationConfig к SceneViewModel и DataManagerViewModel
+        для синхронизации чувствительных объемов.
         """
         cfg = load_simulation_config("nema_1_cam.yaml")
         root = SceneBuilder().build_scene(cfg.scene)
@@ -565,12 +617,14 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         scene_vm.load_scene(root)
         scene_vm.apply_simulation_config(cfg)
 
+        dm_vm = DataManagerViewModel()
+        dm_vm.load_from_config(cfg.data_manager)
+
         det_vm = scene_vm.find_by_name("Detector")
         self.assertIsNotNone(det_vm)
         self.assertIsInstance(det_vm, VolumeViewModel)
-        self.assertTrue(scene_vm.is_sensitive_volume("Detector"))
-        self.assertTrue(scene_vm.is_sensitive_volume(det_vm))
-        self.assertIn("Detector", scene_vm.sensitive_volumes)
+        self.assertTrue(dm_vm.is_sensitive_volume("Detector"))
+        self.assertTrue(dm_vm.is_sensitive_volume(det_vm))
         self.assertFalse(hasattr(VolumeViewModel, "get_sensitive_volumes"))
 
     # 13. Проверка генерации задач и валидности реконструкции геометрии для nema_1_cam.yaml

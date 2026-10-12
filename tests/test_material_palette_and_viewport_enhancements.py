@@ -27,6 +27,7 @@ from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
+from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel, SensitiveVolumeHandlerViewModel
 from gui.viewport_3d.material_palette import (
     get_material_color,
     get_material_opacity,
@@ -318,7 +319,7 @@ class TestVolumeViewModelMaterialIntegration(unittest.TestCase):
         self.assertAlmostEqual(volume_view_model.color[3], get_material_opacity("Pb", energy=140.0 * units.keV))
 
     def test_detector_flag_reactivity(self) -> None:
-        """Проверка отсутствия локального флага в ноде и управления через единый реестр сцены SceneViewModel."""
+        """Проверка отсутствия локального флага в ноде и управления через DataManagerViewModel / SensitiveVolumeHandlerViewModel."""
         geometry_box = Box(50.0, 50.0, 50.0)
         material_crystal = Material(name="Sodium Iodide")
         volume_core = Volume(geometry=geometry_box, material=material_crystal, name="Scintillator")
@@ -327,16 +328,19 @@ class TestVolumeViewModelMaterialIntegration(unittest.TestCase):
         self.assertFalse(hasattr(volume_view_model, 'is_sensitive_detector'))
         self.assertFalse(hasattr(VolumeViewModel, 'get_sensitive_volumes'))
 
-        scene_viewmodel = SceneViewModel(root_core_node=volume_core)
-        self.assertFalse(scene_viewmodel.is_sensitive_volume(volume_view_model))
+        data_manager_vm = DataManagerViewModel()
+        handler_vm = SensitiveVolumeHandlerViewModel()
+        data_manager_vm.add_handler(handler_vm)
 
-        scene_viewmodel.set_volume_sensitive(volume_view_model, True)
-        self.assertTrue(scene_viewmodel.is_sensitive_volume(volume_view_model))
-        self.assertIn("Scintillator", scene_viewmodel.sensitive_volumes)
+        self.assertFalse(data_manager_vm.is_sensitive_volume(volume_view_model))
 
-        scene_viewmodel.set_volume_sensitive(volume_view_model, False)
-        self.assertFalse(scene_viewmodel.is_sensitive_volume(volume_view_model))
-        self.assertNotIn("Scintillator", scene_viewmodel.sensitive_volumes)
+        handler_vm.add_volume(volume_view_model)
+        self.assertTrue(data_manager_vm.is_sensitive_volume(volume_view_model))
+        self.assertIn("Scintillator", handler_vm.sensitive_volumes)
+
+        handler_vm.remove_volume("Scintillator")
+        self.assertFalse(data_manager_vm.is_sensitive_volume(volume_view_model))
+        self.assertNotIn("Scintillator", handler_vm.sensitive_volumes)
 
 
 class TestViewportControllerEnhancements(unittest.TestCase):
@@ -361,8 +365,11 @@ class TestViewportControllerEnhancements(unittest.TestCase):
         crystal_actor_name = f"mesh_{id(crystal_vm)}"
         self.assertIn(crystal_actor_name, self.mock_viewport.actors_registry)
 
-        # Помечаем узел как детектор
-        crystal_vm.is_sensitive_detector = True
+        # Помечаем узел как детектор через DataManagerViewModel
+        data_manager_vm = DataManagerViewModel()
+        handler_vm = SensitiveVolumeHandlerViewModel(sensitive_volumes=["DetectorCrystal"])
+        data_manager_vm.add_handler(handler_vm)
+        self.controller.data_manager_vm = data_manager_vm
 
         # Проверяем пересоздание актора с золотисто-янтарным акцентом
         self.assertTrue(self.mock_viewport.render_call_count > 0)

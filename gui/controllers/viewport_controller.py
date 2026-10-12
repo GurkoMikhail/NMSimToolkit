@@ -42,6 +42,7 @@ from gui.viewmodels.procedure_viewmodel import (
     StepAndShootProcedureViewModel,
     SpectProcedureViewModel,
 )
+from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
 from gui.viewport_3d.kinematic_constraints import (
     GantryKinematicConstraint,
     IKinematicConstraint,
@@ -85,12 +86,14 @@ class SceneViewportController(QObject):
         viewport: VTKViewport,
         scene_vm: Optional[SceneViewModel] = None,
         procedure_vm: Optional[BaseProcedureViewModel] = None,
+        data_manager_vm: Optional[DataManagerViewModel] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
         self.viewport = viewport
         self.scene_vm = scene_vm
         self.procedure_vm = procedure_vm
+        self._data_manager_vm: Optional[DataManagerViewModel] = None
 
         # Рендереры и манипуляторы вьюпорта
         self.track_renderer = TrackRenderer(self.viewport, render_as_lines=True)
@@ -119,6 +122,8 @@ class SceneViewportController(QObject):
 
         if self.scene_vm is not None:
             self.set_scene_viewmodel(self.scene_vm)
+        if data_manager_vm is not None:
+            self.set_data_manager_viewmodel(data_manager_vm)
 
     @property
     def selected_node_vm(self) -> Optional[NodeViewModel]:
@@ -204,21 +209,36 @@ class SceneViewportController(QObject):
     def active_dose_transform_matrix(self, matrix: Optional[np.ndarray]) -> None:
         self._active_dose_transform_matrix = matrix
 
-    def set_scene_viewmodel(self, scene_vm: Optional[SceneViewModel]) -> None:
-        """Привязка новой модели представления сцены с обновлением подписок."""
-        if self._selected_node_vm is not None:
-            self._set_node_edge_highlight(self._selected_node_vm, False)
-            self._selected_node_vm = None
+    @property
+    def data_manager_vm(self) -> Optional[DataManagerViewModel]:
+        """Текущая модель представления диспетчера данных."""
+        return self._data_manager_vm
+
+    @data_manager_vm.setter
+    def data_manager_vm(self, vm: Optional[DataManagerViewModel]) -> None:
+        self.set_data_manager_viewmodel(vm)
+
+    def set_data_manager_viewmodel(self, data_manager_vm: Optional[DataManagerViewModel]) -> None:
+        """Привязка модели диспетчера данных и обновление подписок на чувствительные объемы."""
         if self._sensitive_conn is not None:
             try:
                 QObject.disconnect(self._sensitive_conn)
             except (RuntimeError, TypeError):
                 pass
             self._sensitive_conn = None
+        self._data_manager_vm = data_manager_vm
+        if self._data_manager_vm is not None:
+            self._sensitive_conn = self._data_manager_vm.changed.connect(self.sync_viewport_scene)
+            self.sync_viewport_scene()
+
+    def set_scene_viewmodel(self, scene_vm: Optional[SceneViewModel]) -> None:
+        """Привязка новой модели представления сцены с обновлением подписок."""
+        if self._selected_node_vm is not None:
+            self._set_node_edge_highlight(self._selected_node_vm, False)
+            self._selected_node_vm = None
         self.disconnect_all_nodes()
         self.scene_vm = scene_vm
         if self.scene_vm is not None:
-            self._sensitive_conn = self.scene_vm.sensitive_volumes_changed.connect(self.sync_viewport_scene)
             self.sync_viewport_scene()
             if self.scene_vm.selected_node is not None:
                 self.on_node_selected(self.scene_vm.selected_node)
@@ -346,7 +366,7 @@ class SceneViewportController(QObject):
                     node_vm.material_name,
                     energy=self._xray_energy,
                 )
-            elif self.scene_vm is not None and self.scene_vm.is_sensitive_volume(node_vm):
+            elif self.data_manager_vm is not None and self.data_manager_vm.is_sensitive_volume(node_vm):
                 rgb_color = DETECTOR_ACCENT_COLOR
                 calculated_opacity = DETECTOR_ACCENT_OPACITY
             elif is_collimator_body:

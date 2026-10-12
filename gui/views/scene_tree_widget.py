@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, Signal, QPoint, QObject
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget,
     QTreeWidgetItem, QPushButton, QLabel, QHeaderView,
-    QMenu, QMessageBox, QListWidget, QListWidgetItem, QSplitter
+    QMenu, QMessageBox
 )
 
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
@@ -52,11 +52,13 @@ class SceneTree(QTreeWidget):
         src_item = self.currentItem()
         if src_item is not None and self.owner is not None:
             self.owner._dragged_vm = self.owner._vm_by_item.get(src_item)
+            SceneTreeWidget._current_dragged_vm = self.owner._dragged_vm
         try:
             super().startDrag(supportedActions)
         finally:
             if self.owner is not None:
                 self.owner._dragged_vm = None
+            SceneTreeWidget._current_dragged_vm = None
 
     def dropEvent(self, event) -> None:
         src_item = self.currentItem()
@@ -100,57 +102,6 @@ class SceneTree(QTreeWidget):
             event.ignore()
 
 
-class SensitiveVolumesList(QListWidget):
-    """
-    Список чувствительных объемов с поддержкой Drag-and-Drop из дерева сцены.
-    """
-
-    def __init__(self, owner: 'SceneTreeWidget') -> None:
-        super().__init__(owner)
-        self.owner = owner
-        self.setAcceptDrops(True)
-        self.setDragDropMode(QListWidget.DropOnly)
-
-    def _is_valid_drop_target(self, vm: Optional[NodeViewModel]) -> bool:
-        """
-        Проверяет, допустим ли перенос узла в список чувствительных детекторов.
-        Запрещены None, узлы без физической геометрии (не VolumeViewModel) и корневой узел сцены.
-        """
-        if vm is None or not isinstance(vm, VolumeViewModel):
-            return False
-        if self.owner.scene_vm is not None and vm is self.owner.scene_vm.root_vm:
-            return False
-        return True
-
-    def dragEnterEvent(self, event) -> None:
-        if self._is_valid_drop_target(self.owner._dragged_vm):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event) -> None:
-        if self._is_valid_drop_target(self.owner._dragged_vm):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event) -> None:
-        vm = self.owner._dragged_vm
-        if self._is_valid_drop_target(vm):
-            assert isinstance(vm, VolumeViewModel)
-            if self.owner.scene_vm is not None:
-                self.owner.scene_vm.add_sensitive_volume(vm)
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key_Delete:
-            self.owner._on_remove_detector_clicked()
-        else:
-            super().keyPressEvent(event)
-
-
 class SceneTreeWidget(QWidget):
     """
     Виджет иерархического дерева сцены.
@@ -158,6 +109,8 @@ class SceneTreeWidget(QWidget):
     позволяет выбирать узлы для инспекции и управлять иерархией.
     Использует обратный индекс _vm_by_item для O(1) поиска ViewModel при смене выделения.
     """
+
+    _current_dragged_vm: Optional[NodeViewModel] = None
 
     def __init__(self, scene_vm: Optional[SceneViewModel] = None, parent: Optional[Any] = None) -> None:
         super().__init__(parent)
@@ -167,8 +120,6 @@ class SceneTreeWidget(QWidget):
         self._connected_vms: Dict[int, Tuple[NodeViewModel, Any]] = {}
         self._scene_vm_conns: List[Any] = []
         self._dragged_vm: Optional[NodeViewModel] = None
-        self._sensitive_item_map: Dict[int, QListWidgetItem] = {}
-        self._vm_by_sensitive_item: Dict[int, VolumeViewModel] = {}
 
         self._init_ui()
         if self.scene_vm is not None:
@@ -179,17 +130,9 @@ class SceneTreeWidget(QWidget):
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(4)
 
-        splitter = QSplitter(Qt.Vertical, self)
-
-        # 1. Верхняя секция: Дерево графа сцены
-        tree_container = QWidget(self)
-        tree_layout = QVBoxLayout(tree_container)
-        tree_layout.setContentsMargins(0, 0, 0, 0)
-        tree_layout.setSpacing(4)
-
         title_label = QLabel("Иерархия сцены (Scene Graph)")
         title_label.setStyleSheet("font-weight: bold; color: #ecf0f1; padding: 2px;")
-        tree_layout.addWidget(title_label)
+        main_layout.addWidget(title_label)
 
         # Дерево узлов с поддержкой Drag-and-Drop
         self.tree = SceneTree(self)
@@ -199,7 +142,7 @@ class SceneTreeWidget(QWidget):
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
-        tree_layout.addWidget(self.tree)
+        main_layout.addWidget(self.tree)
 
         # Кнопки управления узлами
         btn_layout = QHBoxLayout()
@@ -215,39 +158,7 @@ class SceneTreeWidget(QWidget):
 
         btn_layout.addWidget(self.btn_add_node)
         btn_layout.addWidget(self.btn_remove)
-        tree_layout.addLayout(btn_layout)
-
-        splitter.addWidget(tree_container)
-
-        # 2. Нижняя секция: Список чувствительных объемов (Детекторы)
-        sens_container = QWidget(self)
-        sens_layout = QVBoxLayout(sens_container)
-        sens_layout.setContentsMargins(0, 0, 0, 0)
-        sens_layout.setSpacing(4)
-
-        sens_title = QLabel("Чувствительные объёмы (Детекторы)")
-        sens_title.setStyleSheet("font-weight: bold; color: #2ecc71; padding: 2px;")
-        sens_title.setToolTip("Список объемов, в которых регистрируются взаимодействия для проекции. Перетащите Volume сюда.")
-        sens_layout.addWidget(sens_title)
-
-        self.sensitive_list = SensitiveVolumesList(self)
-        self.sensitive_list.setToolTip("Перетащите узел Volume из дерева сцены сюда для назначения детектором")
-        self.sensitive_list.itemSelectionChanged.connect(self._on_sensitive_selection_changed)
-        self.sensitive_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.sensitive_list.customContextMenuRequested.connect(self._show_sensitive_context_menu)
-        sens_layout.addWidget(self.sensitive_list)
-
-        sens_btn_layout = QHBoxLayout()
-        self.btn_remove_detector = QPushButton("- Исключить из детекторов")
-        self.btn_remove_detector.setToolTip("Снять статус чувствительного детектора с выбранного объема")
-        self.btn_remove_detector.clicked.connect(self._on_remove_detector_clicked)
-        sens_btn_layout.addWidget(self.btn_remove_detector)
-        sens_layout.addLayout(sens_btn_layout)
-
-        splitter.addWidget(sens_container)
-        splitter.setSizes([350, 150])
-
-        main_layout.addWidget(splitter)
+        main_layout.addLayout(btn_layout)
 
     def set_scene_viewmodel(self, scene_vm: SceneViewModel) -> None:
         """
@@ -266,8 +177,7 @@ class SceneTreeWidget(QWidget):
             c2 = self.scene_vm.node_selected.connect(self._on_node_selected_externally)
             c3 = self.scene_vm.node_added.connect(lambda n: self.rebuild_tree())
             c4 = self.scene_vm.node_removed.connect(lambda n: self.rebuild_tree())
-            c5 = self.scene_vm.sensitive_volumes_changed.connect(self._refresh_sensitive_volumes_list)
-            self._scene_vm_conns.extend([c1, c2, c3, c4, c5])
+            self._scene_vm_conns.extend([c1, c2, c3, c4])
 
             if self.scene_vm.root_vm is not None:
                 self.rebuild_tree()
@@ -294,9 +204,6 @@ class SceneTreeWidget(QWidget):
         root_item = self._create_tree_item(self.scene_vm.root_vm)
         self.tree.addTopLevelItem(root_item)
         self.tree.expandAll()
-
-        # Восстановление списка чувствительных объемов
-        self._refresh_sensitive_volumes_list()
 
         # Восстановление подсветки выбранного узла
         if self.scene_vm.selected_node is not None:
@@ -325,10 +232,6 @@ class SceneTreeWidget(QWidget):
             item = self._item_map.get(id(node_vm))
             if item is not None:
                 item.setText(0, str(value))
-            if isinstance(node_vm, VolumeViewModel):
-                sens_item = self._sensitive_item_map.get(id(node_vm))
-                if sens_item is not None:
-                    sens_item.setText(f"🎯 {value} ({node_vm.node_type})")
 
     def _on_tree_selection_changed(self) -> None:
         selected_items = self.tree.selectedItems()
@@ -353,103 +256,6 @@ class SceneTreeWidget(QWidget):
             self.tree.setCurrentItem(item)
             self.tree.blockSignals(False)
 
-        sens_item = self._sensitive_item_map.get(id(vm))
-        if sens_item is not None and not sens_item.isSelected():
-            self.sensitive_list.blockSignals(True)
-            self.sensitive_list.clearSelection()
-            sens_item.setSelected(True)
-            self.sensitive_list.setCurrentItem(sens_item)
-            self.sensitive_list.blockSignals(False)
-        elif sens_item is None:
-            self.sensitive_list.blockSignals(True)
-            self.sensitive_list.clearSelection()
-            self.sensitive_list.blockSignals(False)
-
-    def _refresh_sensitive_volumes_list(self) -> None:
-        """
-        Полное обновление списка чувствительных детекторов по единому реестру сцены.
-        """
-        self.sensitive_list.clear()
-        self._sensitive_item_map.clear()
-        self._vm_by_sensitive_item.clear()
-
-        if self.scene_vm is None:
-            return
-
-        for volume_name in self.scene_vm.sensitive_volumes:
-            node_vm = self.scene_vm.find_by_name(volume_name)
-            if isinstance(node_vm, VolumeViewModel):
-                self._add_sensitive_item(node_vm)
-
-    def _add_sensitive_item(self, vm: VolumeViewModel) -> None:
-        """
-        Добавляет элемент в список чувствительных объемов.
-        """
-        if id(vm) in self._sensitive_item_map:
-            return
-        item = QListWidgetItem(f"🎯 {vm.name} ({vm.node_type})")
-        item.setToolTip(f"ID: {id(vm)}\nОбъем: {vm.name}\nМатериал: {vm.material_name}")
-        self.sensitive_list.addItem(item)
-        self._sensitive_item_map[id(vm)] = item
-        self._vm_by_sensitive_item[id(item)] = vm
-
-    def _remove_sensitive_item(self, vm: VolumeViewModel) -> None:
-        """
-        Удаляет элемент из списка чувствительных объемов.
-        """
-        item = self._sensitive_item_map.pop(id(vm), None)
-        if item is not None:
-            self._vm_by_sensitive_item.pop(id(item), None)
-            row = self.sensitive_list.row(item)
-            if row >= 0:
-                self.sensitive_list.takeItem(row)
-
-    def _on_sensitive_selection_changed(self) -> None:
-        """
-        Синхронизация выбора узла при клике в списке чувствительных объемов.
-        """
-        items = self.sensitive_list.selectedItems()
-        if not items or self.scene_vm is None:
-            return
-        vm = self._vm_by_sensitive_item.get(id(items[0]))
-        if vm is not None:
-            self.scene_vm.select_node(vm)
-
-    def _on_remove_detector_clicked(self) -> None:
-        """
-        Снятие статуса детектора с выбранного в списке объема.
-        """
-        items = self.sensitive_list.selectedItems()
-        if not items or self.scene_vm is None:
-            return
-        vm = self._vm_by_sensitive_item.get(id(items[0]))
-        if vm is not None:
-            self.scene_vm.remove_sensitive_volume(vm)
-
-    def _show_sensitive_context_menu(self, pos: QPoint) -> None:
-        """
-        Контекстное меню для элементов списка чувствительных объемов.
-        """
-        item = self.sensitive_list.itemAt(pos)
-        if item is None:
-            return
-        vm = self._vm_by_sensitive_item.get(id(item))
-        if vm is None:
-            return
-
-        menu = QMenu(self)
-        act_remove = menu.addAction("Исключить из детекторов")
-        act_remove.triggered.connect(lambda: self._disable_detector(vm))
-        menu.exec(self.sensitive_list.viewport().mapToGlobal(pos))
-
-    def _disable_detector(self, vm: VolumeViewModel) -> None:
-        if self.scene_vm is not None:
-            self.scene_vm.remove_sensitive_volume(vm)
-
-    def _enable_detector(self, vm: VolumeViewModel) -> None:
-        if self.scene_vm is not None:
-            self.scene_vm.add_sensitive_volume(vm)
-
     def _show_context_menu(self, pos: QPoint) -> None:
         if self.scene_vm is None:
             return
@@ -468,15 +274,6 @@ class SceneTreeWidget(QWidget):
         menu.addSeparator()
         act_child_dose = menu.addAction(f"Создать дочернюю сетку дозы (по размеру {target_vm.name})")
         act_child_dose.triggered.connect(lambda: self._add_dose_grid_node(target_vm))
-
-        if isinstance(target_vm, VolumeViewModel) and target_vm is not self.scene_vm.root_vm:
-            menu.addSeparator()
-            if self.scene_vm.is_sensitive_volume(target_vm):
-                act_det = menu.addAction("Снять статус чувствительного детектора")
-                act_det.triggered.connect(lambda: self._disable_detector(target_vm))
-            else:
-                act_det = menu.addAction("Назначить чувствительным детектором")
-                act_det.triggered.connect(lambda: self._enable_detector(target_vm))
 
         if target_vm is not self.scene_vm.root_vm:
             menu.addSeparator()

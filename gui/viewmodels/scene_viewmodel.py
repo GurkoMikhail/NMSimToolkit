@@ -36,7 +36,7 @@ class SceneViewModel(QObject):
     node_selected = Signal(object)
     node_added = Signal(object)
     node_removed = Signal(object)
-    sensitive_volumes_changed = Signal()
+    node_renamed = Signal(str, str)
 
     def __init__(
         self,
@@ -50,7 +50,6 @@ class SceneViewModel(QObject):
         self.distribution_registry: Dict[Any, Any] = {}
         self.slots_registry: Dict[Any, Any] = {}
         self.bindings_registry: Dict[Any, Dict[str, str]] = {}
-        self._sensitive_volumes: List[str] = []
 
         if root_core_node is not None:
             self.load_scene(root_core_node, base_dir=base_dir)
@@ -66,7 +65,6 @@ class SceneViewModel(QObject):
         """
         Загружает граф сцены из ядра и строит иерархию ViewModel.
         """
-        self.clear_sensitive_volumes()
         self._node_map.clear()
         self.distribution_registry = dict(distribution_registry) if distribution_registry is not None else {}
         self.slots_registry = dict(slots_registry) if slots_registry is not None else {}
@@ -176,85 +174,22 @@ class SceneViewModel(QObject):
                 mapping=dict(mapping),
             )
 
-    @property
-    def sensitive_volumes(self) -> List[str]:
+    def rename_node(self, vm: NodeViewModel, new_name: str) -> None:
         """
-        Возвращает упорядоченный список уникальных имен чувствительных объемов сцены.
+        Переименовывает узел сцены и оповещает подписчиков сигналом node_renamed(old_name, new_name).
         """
-        return list(self._sensitive_volumes)
-
-    @sensitive_volumes.setter
-    def sensitive_volumes(self, names: Sequence[str]) -> None:
-        """
-        Устанавливает единый список имен чувствительных объемов сцены.
-        """
-        cleaned_names: List[str] = []
-        for name in names:
-            name_str = str(name).strip()
-            if name_str and name_str not in cleaned_names:
-                cleaned_names.append(name_str)
-        if self._sensitive_volumes != cleaned_names:
-            self._sensitive_volumes = cleaned_names
-            self.sensitive_volumes_changed.emit()
-
-    def _extract_volume_name(self, node: NodeViewModel | str) -> str:
-        if isinstance(node, str):
-            return node.strip()
-        if isinstance(node, NodeViewModel):
-            return node.name.strip()
-        raise TypeError(f"Ожидался NodeViewModel или str, получено: {type(node).__name__}")
-
-    def is_sensitive_volume(self, node: NodeViewModel | str) -> bool:
-        """
-        Проверяет, зарегистрирован ли узел или имя объема в едином списке чувствительных объемов.
-        """
-        volume_name = self._extract_volume_name(node)
-        return volume_name in self._sensitive_volumes
-
-    def set_volume_sensitive(self, node: NodeViewModel | str, is_sensitive: bool) -> None:
-        """
-        Добавляет или исключает объем из единого списка чувствительных детекторов сцены.
-        """
-        volume_name = self._extract_volume_name(node)
-        if not volume_name:
+        old_name = vm.name
+        new_name_clean = str(new_name).strip()
+        if not new_name_clean or old_name == new_name_clean:
             return
-
-        is_present = volume_name in self._sensitive_volumes
-        if is_sensitive and not is_present:
-            self._sensitive_volumes.append(volume_name)
-            self.sensitive_volumes_changed.emit()
-        elif not is_sensitive and is_present:
-            self._sensitive_volumes.remove(volume_name)
-            self.sensitive_volumes_changed.emit()
-
-    def add_sensitive_volume(self, node: NodeViewModel | str) -> None:
-        """Добавляет объем в единый список чувствительных детекторов сцены."""
-        self.set_volume_sensitive(node, True)
-
-    def remove_sensitive_volume(self, node: NodeViewModel | str) -> None:
-        """Исключает объем из единого списка чувствительных детекторов сцены."""
-        self.set_volume_sensitive(node, False)
-
-    def clear_sensitive_volumes(self) -> None:
-        """Полная очистка единого списка чувствительных детекторов сцены."""
-        if self._sensitive_volumes:
-            self._sensitive_volumes.clear()
-            self.sensitive_volumes_changed.emit()
+        vm.name = new_name_clean
+        self.node_renamed.emit(old_name, new_name_clean)
 
     def apply_simulation_config(self, config: SimulationConfig) -> None:
         """
-        Применяет параметры конфигурации SimulationConfig к иерархии сцены
-        (в частности, синхронизирует единый реестр чувствительных детекторов из data_manager).
+        Применяет параметры конфигурации SimulationConfig к иерархии сцены.
         """
-        if config.data_manager is not None:
-            sensitive_names: List[str] = []
-            for handler in config.data_manager.handlers:
-                if isinstance(handler, (SensitiveVolumeHandlerConfig, HistoryAssemblerHandlerConfig)):
-                    for vol_name in handler.sensitive_volumes:
-                        if vol_name not in sensitive_names:
-                            sensitive_names.append(vol_name)
-            if sensitive_names:
-                self.sensitive_volumes = sensitive_names
+        pass
 
     def _register_node_recursive(self, vm: NodeViewModel) -> None:
         self._node_map[id(vm.core_node)] = vm
@@ -312,10 +247,8 @@ class SceneViewModel(QObject):
 
         old_name = target_vm.name
         new_name = new_vm.name
-        if old_name in self._sensitive_volumes:
-            sens_idx = self._sensitive_volumes.index(old_name)
-            self._sensitive_volumes[sens_idx] = new_name
-            self.sensitive_volumes_changed.emit()
+        if old_name != new_name:
+            self.node_renamed.emit(old_name, new_name)
 
         for node_vm in self.all_nodes():
             if isinstance(node_vm, GammaCameraViewModel):
@@ -409,9 +342,6 @@ class SceneViewModel(QObject):
         core_id = id(vm.core_node)
         if core_id in self._node_map:
             del self._node_map[core_id]
-        if vm.name in self._sensitive_volumes:
-            self._sensitive_volumes.remove(vm.name)
-            self.sensitive_volumes_changed.emit()
         for child in vm.children:
             self._unregister_node_recursive(child)
 

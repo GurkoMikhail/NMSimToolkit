@@ -34,7 +34,12 @@ from gui.viewmodels.procedure_viewmodel import (
     PetProcedureViewModel,
     CustomSweepProcedureViewModel,
 )
-from gui.views.widgets import BindableDoubleField, GridVariableChipsRow, GridVariableWidget
+from gui.views.widgets import (
+    BindableDoubleField,
+    GridVariableChipsRow,
+    GridVariableWidget,
+    SensitiveVolumesEditorWidget,
+)
 from gui.viewmodels.data_handler_viewmodel import (
     BaseDataHandlerViewModel,
     DirectStreamHandlerViewModel,
@@ -67,7 +72,6 @@ class PropertyInspector(QWidget):
         self.current_vm: Optional[NodeViewModel] = None
         self.scene_vm: Optional[SceneViewModel] = None
         self.procedure_vm: Optional[BaseProcedureViewModel] = None
-        self._sensitive_conn: Optional[Any] = None
         self._is_updating_ui: bool = False
         self._min_buffer_capacity: int = 1
         self._grid_var_widgets: dict[str, GridVariableChipsRow] = {}
@@ -81,25 +85,9 @@ class PropertyInspector(QWidget):
         self.procedure_vm = procedure_vm
 
     def set_scene_viewmodel(self, scene_vm: Optional[SceneViewModel]) -> None:
-        """Привязка модели сцены для доступа к узлам и единому реестру детекторов."""
-        if self._sensitive_conn is not None:
-            try:
-                QObject.disconnect(self._sensitive_conn)
-            except (RuntimeError, TypeError):
-                pass
-            self._sensitive_conn = None
+        """Привязка модели сцены для доступа к узлам и валидации чувствительных объемов."""
         self.scene_vm = scene_vm
-        if self.scene_vm is not None:
-            self._sensitive_conn = self.scene_vm.sensitive_volumes_changed.connect(self._on_sensitive_volumes_changed)
-
-    def _on_sensitive_volumes_changed(self) -> None:
-        """Синхронизация состояния чекбокса детектора при изменении единого реестра сцены."""
-        if isinstance(self.current_vm, VolumeViewModel) and self.scene_vm is not None:
-            self._is_updating_ui = True
-            try:
-                self.chk_is_detector.setChecked(self.scene_vm.is_sensitive_volume(self.current_vm))
-            finally:
-                self._is_updating_ui = False
+        self.sensitive_volumes_editor.set_scene_viewmodel(scene_vm)
 
     def set_min_buffer_capacity(self, min_capacity: int) -> None:
         """Устанавливает нижнюю границу емкости буфера данных (не менее числа частиц)."""
@@ -163,10 +151,6 @@ class PropertyInspector(QWidget):
         self._populate_materials()
         self.combo_material.currentTextChanged.connect(self._on_material_changed)
         vol_form.addRow("Материал:", self.combo_material)
-
-        self.chk_is_detector = QCheckBox("Чувствительный объем (детектор)")
-        self.chk_is_detector.toggled.connect(self._on_is_detector_toggled)
-        vol_form.addRow(self.chk_is_detector)
         self.content_layout.addWidget(self.volume_group)
 
         # 3.1 Секция параметров отдельного узла сетки дозы (DoseGridNode)
@@ -721,9 +705,8 @@ class PropertyInspector(QWidget):
         self.chk_dh_show_escaped.toggled.connect(self._on_dh_show_escaped_toggled)
         dh_form.addRow(self.chk_dh_show_escaped)
 
-        self.txt_dh_vols = QLineEdit()
-        self.txt_dh_vols.editingFinished.connect(self._on_dh_vols_edited)
-        dh_form.addRow("Чувствительные объемы:", self.txt_dh_vols)
+        self.sensitive_volumes_editor = SensitiveVolumesEditorWidget(parent=self)
+        dh_form.addRow(self.sensitive_volumes_editor)
 
         self.chk_dh_initial_states = QCheckBox("Сохранять начальные состояния фотонов")
         self.chk_dh_initial_states.toggled.connect(self._on_dh_initial_states_toggled)
@@ -809,6 +792,7 @@ class PropertyInspector(QWidget):
         self.gantry_group.setVisible(False)
         self.procedure_group.setVisible(False)
         self.data_handler_group.setVisible(False)
+        self.sensitive_volumes_editor.set_viewmodel(None)
         self.data_manager_group.setVisible(False)
 
         self.spin_x.unbind()
@@ -921,7 +905,6 @@ class PropertyInspector(QWidget):
                 is_root_vol = self.current_vm.is_root_volume
 
         self.volume_group.setVisible(is_vol)
-        self.chk_is_detector.setVisible(not is_col)
         self.dose_grid_group.setVisible(is_dose_grid)
         self.collimator_group.setVisible(is_col)
         self.voxel_group.setVisible(is_vox)
@@ -1065,8 +1048,6 @@ class PropertyInspector(QWidget):
             material_index = self.combo_material.findText(self.current_vm.material_name)
             if material_index >= 0:
                 self.combo_material.setCurrentIndex(material_index)
-            is_detector = self.scene_vm.is_sensitive_volume(self.current_vm) if self.scene_vm is not None else False
-            self.chk_is_detector.setChecked(is_detector)
 
         self._is_updating_ui = False
 
@@ -1200,12 +1181,10 @@ class PropertyInspector(QWidget):
         new_name = self.txt_name.text().strip()
         if not new_name or old_name == new_name:
             return
-        self.current_vm.name = new_name
-        if self.scene_vm is not None and old_name in self.scene_vm.sensitive_volumes:
-            vols = self.scene_vm.sensitive_volumes
-            idx = vols.index(old_name)
-            vols[idx] = new_name
-            self.scene_vm.sensitive_volumes = vols
+        if self.scene_vm is not None:
+            self.scene_vm.rename_node(self.current_vm, new_name)
+        else:
+            self.current_vm.name = new_name
 
     def _on_transform_changed(self) -> None:
         if self._is_updating_ui or self.current_vm is None:
@@ -1509,12 +1488,6 @@ class PropertyInspector(QWidget):
         if self._is_updating_ui or not isinstance(self.current_vm, SourceViewModel):
             return
         self.current_vm.half_life = float(value)
-
-    def _on_is_detector_toggled(self, checked: bool) -> None:
-        if self._is_updating_ui or not isinstance(self.current_vm, VolumeViewModel):
-            return
-        if self.scene_vm is not None:
-            self.scene_vm.set_volume_sensitive(self.current_vm, checked)
 
     def _update_dose_grid_metrics(self) -> None:
         """
@@ -2384,11 +2357,11 @@ class PropertyInspector(QWidget):
                 self.chk_dh_show_escaped.setChecked(bool(vm.show_escaped_tracks))
 
             is_sens = isinstance(vm, (SensitiveVolumeHandlerViewModel, HistoryAssemblerHandlerViewModel))
-            self.txt_dh_vols.setVisible(is_sens)
+            self.sensitive_volumes_editor.setVisible(is_sens)
             if is_sens:
-                if not vm.sensitive_volumes and self.scene_vm is not None and self.scene_vm.sensitive_volumes:
-                    vm.sensitive_volumes = self.scene_vm.sensitive_volumes
-                self.txt_dh_vols.setText(", ".join(vm.sensitive_volumes))
+                self.sensitive_volumes_editor.set_viewmodel(vm)
+            else:
+                self.sensitive_volumes_editor.set_viewmodel(None)
 
             is_hist = isinstance(vm, HistoryAssemblerHandlerViewModel)
             self.chk_dh_initial_states.setVisible(is_hist)
@@ -2487,11 +2460,6 @@ class PropertyInspector(QWidget):
     def _on_dh_show_escaped_toggled(self, checked: bool) -> None:
         if not self._is_updating_ui and isinstance(self.current_vm, DirectStreamHandlerViewModel):
             self.current_vm.show_escaped_tracks = checked
-
-    def _on_dh_vols_edited(self) -> None:
-        if not self._is_updating_ui and isinstance(self.current_vm, (SensitiveVolumeHandlerViewModel, HistoryAssemblerHandlerViewModel)):
-            volumes_list = [volume_name.strip() for volume_name in self.txt_dh_vols.text().split(',') if volume_name.strip()]
-            self.current_vm.sensitive_volumes = volumes_list
 
     def _on_dh_initial_states_toggled(self, checked: bool) -> None:
         if not self._is_updating_ui and isinstance(self.current_vm, HistoryAssemblerHandlerViewModel):

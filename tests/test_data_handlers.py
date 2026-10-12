@@ -358,6 +358,139 @@ class TestDataHandlers(unittest.TestCase):
             meta_group = h5_file["metadata"]
             self.assertIn("created_time", meta_group.attrs)
 
+    def test_sensitive_volume_handler_composite_node_and_pruning(self) -> None:
+        """
+        Проверка SensitiveVolumeHandler при передаче CompositeNode:
+        1. Избыточные дочерние узлы отсекаются алгоритмом _filter_topmost_nodes.
+        2. Все внутренние объемы CompositeNode консолидируются в единую группу детектора.
+        """
+        world = Volume(geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"), name="World")
+        head = CompositeNode(name="DetectorHead")
+        crystal_front = Volume(geometry=Box(400.0, 400.0, 10.0), material=Material(name="NaI"), name="CrystalFront")
+        crystal_back = Volume(geometry=Box(400.0, 400.0, 10.0), material=Material(name="NaI"), name="CrystalBack")
+        head.add_child(crystal_front)
+        head.add_child(crystal_back)
+        world.add_child(head)
+
+        # Передаем и родительский CompositeNode, и дочерний Volume
+        handler = SensitiveVolumeHandler(sensitive_volumes=[head, crystal_front])
+
+        # Проверяем, что crystal_front отсечен, а остался только DetectorHead
+        self.assertEqual(len(handler.sensitive_volumes), 1)
+        self.assertEqual(handler.sensitive_volumes[0].name, "DetectorHead")
+
+        written_ops = []
+        handler.set_writer_callback(lambda op: written_ops.append(op))
+
+        # Находим внутренние volume_id для обоих кристаллов
+        from core.geometry.flattened_scene import FlattenedScene
+        flat_list = FlattenedScene(world).flat_list
+        front_id = next(i for i, (v, _, _) in enumerate(flat_list) if v is crystal_front)
+        back_id = next(i for i, (v, _, _) in enumerate(flat_list) if v is crystal_back)
+
+        # Имитируем взаимодействия в обоих кристаллах
+        handler.process_chunk({
+            'type': 'interactions',
+            'data': {
+                'particle_ID': np.array([101, 102], dtype=np.uint64),
+                'volume_id': np.array([front_id, back_id], dtype=np.uint32),
+                'pos_x': np.array([10.0, 20.0], dtype=np.float32),
+                'pos_y': np.array([0.0, 0.0], dtype=np.float32),
+                'pos_z': np.array([0.0, 5.0], dtype=np.float32),
+                'dir_x': np.array([0.0, 0.0], dtype=np.float32),
+                'dir_y': np.array([0.0, 0.0], dtype=np.float32),
+                'dir_z': np.array([1.0, 1.0], dtype=np.float32),
+                'energy_deposit': np.array([140.0, 70.0], dtype=np.float32),
+                'process_id': np.array([1, 1], dtype=np.uint16),
+                'scattering_theta': np.zeros(2, dtype=np.float32),
+                'distance_traveled': np.ones(2, dtype=np.float32),
+            }
+        })
+
+        handler.finalize()
+
+        with h5py.File(self.h5_path, 'a') as h5_file:
+            for op in written_ops:
+                op(h5_file)
+
+        with h5py.File(self.h5_path, 'r') as h5_file:
+            self.assertIn("interactions", h5_file)
+            # Должна быть создана группа "DetectorHead"
+            self.assertIn("DetectorHead", h5_file["interactions"])
+            det_group = h5_file["interactions/DetectorHead"]
+            # Оба события записаны в DetectorHead
+            self.assertEqual(len(det_group["particle_ID"]), 2)
+            self.assertListEqual(list(det_group["particle_ID"]), [101, 102])
+
+    def test_filter_topmost_nodes_contracts_and_edge_cases(self) -> None:
+        """
+        Проверка контракта DbC и краевых случаев _filter_topmost_nodes:
+        1. Передача не-SpatialNode объектов вызывает TypeError.
+        2. Трехуровневая иерархия A -> B -> C корректно сворачивается до верхнего предка.
+        3. Несвязанные ветви графа сцены не отсекают друг друга.
+        """
+        node_a = CompositeNode(name="LevelA")
+        node_b = CompositeNode(name="LevelB")
+        node_c = Volume(geometry=Box(10.0, 10.0, 10.0), material=Material(name="Air"), name="LevelC")
+        node_b.add_child(node_c)
+        node_a.add_child(node_b)
+
+        disjoint_node = Volume(geometry=Box(20.0, 20.0, 20.0), material=Material(name="Air"), name="Disjoint")
+
+        # 1. Трехуровневая иерархия в обратном порядке: [C, A] -> [A]
+        filtered_1 = SensitiveVolumeHandler._filter_topmost_nodes([node_c, node_a])
+        self.assertEqual(len(filtered_1), 1)
+        self.assertEqual(filtered_1[0].name, "LevelA")
+
+        # 3. Полный список с дубликатами [A, B, C, A, B] -> [A]
+        filtered_2 = SensitiveVolumeHandler._filter_topmost_nodes([node_a, node_b, node_c, node_a, node_b])
+        self.assertEqual(len(filtered_2), 1)
+        self.assertEqual(filtered_2[0].name, "LevelA")
+
+        # 4. Несвязанные ветви [A, Disjoint] -> [A, Disjoint]
+        filtered_3 = SensitiveVolumeHandler._filter_topmost_nodes([node_a, disjoint_node])
+        self.assertEqual(len(filtered_3), 2)
+        self.assertListEqual([n.name for n in filtered_3], ["LevelA", "Disjoint"])
+
+        # 5. Пустой список -> []
+        self.assertEqual(SensitiveVolumeHandler._filter_topmost_nodes([]), [])
+
+    def test_interactions_fallback_coordinates_shape(self) -> None:
+        """
+        Проверка корректной генерации резервных массивов координат и направлений
+        при отсутствии pos_x/dir_x в словаре взаимодействий (предотвращение IndexError).
+        """
+        world = Volume(geometry=Box(100.0, 100.0, 100.0), material=Material(name="Air"), name="World")
+        crystal = Volume(geometry=Box(50.0, 50.0, 10.0), material=Material(name="NaI"), name="Crystal")
+        world.add_child(crystal)
+
+        handler = SensitiveVolumeHandler(sensitive_volumes=[crystal])
+        crystal_id = handler.target_volumes[0]
+
+        written_ops = []
+        handler.set_writer_callback(lambda op: written_ops.append(op))
+
+        # Передаем словарь без pos_x, pos_y, pos_z, dir_x, dir_y, dir_z
+        handler.process_chunk({
+            'type': 'interactions',
+            'data': {
+                'particle_ID': np.array([77, 88], dtype=np.uint64),
+                'volume_id': np.array([crystal_id, crystal_id], dtype=np.uint32),
+                'energy_deposit': np.array([10.0, 20.0], dtype=np.float32),
+                'process_id': np.array([1, 1], dtype=np.uint16),
+            }
+        })
+        handler.finalize()
+
+        with h5py.File(self.h5_path, 'a') as h5_file:
+            for op in written_ops:
+                op(h5_file)
+
+        with h5py.File(self.h5_path, 'r') as h5_file:
+            crystal_group = h5_file["interactions/Crystal"]
+            self.assertEqual(crystal_group["global_position"].shape, (2, 3))
+            self.assertEqual(crystal_group["global_direction"].shape, (2, 3))
+
 
 if __name__ == '__main__':
     unittest.main()
