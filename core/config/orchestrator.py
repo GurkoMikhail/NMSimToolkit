@@ -5,10 +5,15 @@
 """
 
 from copy import deepcopy
+import logging
 from multiprocessing import Manager, Pool
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from numpy.random import SeedSequence
 
+from core.config.logging_setup import (
+    setup_orchestrator_logging,
+    close_logging_handlers,
+)
 from core.config.models import (
     CustomSweepProtocolConfig,
     SimulationConfig,
@@ -16,6 +21,8 @@ from core.config.models import (
 from core.config.simulation_worker import simulation_worker_task
 from core.config.sweep_compiler import SweepCompiler
 from core.data.data_handlers import BaseDataHandler
+
+_logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -74,9 +81,13 @@ class Orchestrator:
         """
         pool_size = int(self.parsed_config.pool_size)
         task_contexts = self.generate_tasks()
-
-        multiprocessing_manager = Manager()
+        orchestrator_log_handlers = setup_orchestrator_logging(self.parsed_config.logging)
+        multiprocessing_manager = None
         try:
+            multiprocessing_manager = Manager()
+            _logger.info(
+                f"Оркестратор: запуск моделирования ({len(task_contexts)} задач, pool_size={pool_size})."
+            )
             file_locks: Dict[str, Any] = {}
             seed_sequence = SeedSequence()
             seeds = seed_sequence.spawn(len(task_contexts))
@@ -107,17 +118,27 @@ class Orchestrator:
 
             if pool_size > 1:
                 with Pool(pool_size) as worker_pool:
-                    return worker_pool.map(simulation_worker_task, payloads)
+                    results_list = worker_pool.map(simulation_worker_task, payloads)
             else:
                 results_list = []
                 for single_payload in payloads:
                     results_list.append(simulation_worker_task(single_payload))
-                return results_list
+
+            _logger.info(f"Оркестратор: все {len(task_contexts)} задач успешно завершены.")
+            return results_list
+        except BaseException as orchestrator_error:
+            _logger.error(
+                f"Оркестратор: ошибка при выполнении моделирования: {orchestrator_error}",
+                exc_info=True,
+            )
+            raise
         finally:
-            try:
-                multiprocessing_manager.shutdown()
-            except (OSError, ValueError):
-                pass
+            if multiprocessing_manager is not None:
+                try:
+                    multiprocessing_manager.shutdown()
+                except (OSError, ValueError):
+                    pass
+            close_logging_handlers(orchestrator_log_handlers)
 
 
 __all__ = ["Orchestrator"]

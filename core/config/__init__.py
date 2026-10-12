@@ -33,6 +33,12 @@ from core.config.models import (
     TranslateConfig,
     RotateConfig,
     MatrixTransformConfig,
+    LoggingConfig,
+)
+from core.config.logging_setup import (
+    setup_task_logging,
+    setup_orchestrator_logging,
+    close_logging_handlers,
 )
 from core.config.builder import SceneBuilder
 from core.config.exporter import SceneExporter
@@ -49,6 +55,10 @@ __all__ = [
     'load_simulation_config',
     'dump_simulation_config',
     'SimulationConfig',
+    'LoggingConfig',
+    'setup_task_logging',
+    'setup_orchestrator_logging',
+    'close_logging_handlers',
     'SimulationManagerConfig',
     'DataManagerConfig',
     'BaseProtocolConfig',

@@ -20,6 +20,7 @@ from core.config.models import (
     DirectStreamHandlerConfig,
     GammaCameraConfig,
     GammaCameraSlotsConfig,
+    LoggingConfig,
     NumpyDistributionConfig,
     ParametricParallelCollimatorConfig,
     DirectParallelCollimatorConfig,
@@ -342,6 +343,7 @@ class SceneExporter:
         protocol: Optional[AnyProtocolConfig] = None,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        logging_cfg: Optional[LoggingConfig] = None,
     ) -> SimulationConfig:
         """
         Формирует полный SimulationConfig из корневого узла сцены и опциональных параметров.
@@ -363,6 +365,7 @@ class SceneExporter:
             simulation_manager=sim_mgr,
             data_manager=data_mgr,
             scene=scene_cfg,
+            logging=logging_cfg,
         )
 
     @classmethod
@@ -376,6 +379,7 @@ class SceneExporter:
         protocol: Optional[AnyProtocolConfig] = None,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        logging_cfg: Optional[LoggingConfig] = None,
     ) -> None:
         """
         Экспортирует граф сцены напрямую в YAML-файл конфигурации.
@@ -412,5 +416,6 @@ class SceneExporter:
             protocol=protocol,
             distribution_registry=adjusted_distribution_registry,
             slots_registry=slots_registry,
+            logging_cfg=logging_cfg,
         )
         dump_simulation_config(config, target_path)

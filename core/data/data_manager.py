@@ -18,7 +18,6 @@ import numpy as np
 from core.data.data_handlers import BaseDataHandler
 
 _logger = logging.getLogger(__name__)
-_logger.setLevel(logging.DEBUG)
 
 
 class DataManager(threading.Thread):

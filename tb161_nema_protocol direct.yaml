@@ -1,4 +1,10 @@
 pool_size: 24
+logging:
+  output_dir: "logs/tb161_direct"
+  level: "INFO"
+  console: false
+  per_task_files: true
+  filename_pattern: "task_{task_id}.log"
 protocol:
   type: CustomSweep
   grid_variables:

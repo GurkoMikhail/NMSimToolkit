@@ -23,7 +23,6 @@ from core.source.sources import Source
 from core.transport.propagator import ParticlePropagator
 
 _logger = logging.getLogger(__name__)
-_logger.setLevel(logging.DEBUG)
 
 
 class SimulationState(Enum):
@@ -400,7 +399,7 @@ class SimulationManager(Thread):
         self._run()
 
     def _run(self) -> None:
-        _logger.warning(f'{self.name} started from {timedelta(seconds=self.global_timer/units.second)} to {timedelta(seconds=self.stop_time/units.second)}')
+        _logger.info(f'{self.name} started from {timedelta(seconds=self.global_timer/units.second)} to {timedelta(seconds=self.stop_time/units.second)}')
         start_timepoint = datetime.now()
         if self._state != SimulationState.STOPPED and self._state != SimulationState.PAUSED:
             self._state = SimulationState.RUNNING
@@ -419,5 +418,5 @@ class SimulationManager(Thread):
         self._state = SimulationState.STOPPED
 
         stop_timepoint = datetime.now()
-        _logger.warning(f'{self.name} finished at {timedelta(seconds=self.global_timer/units.second)}')
+        _logger.info(f'{self.name} finished at {timedelta(seconds=self.global_timer/units.second)}')
         _logger.info(f'The simulation of {self.name} took {stop_timepoint - start_timepoint}')

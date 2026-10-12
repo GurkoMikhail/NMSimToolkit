@@ -7,6 +7,12 @@ Materials:
 - &sodium_iodide_a6c2 Sodium Iodide
 - &tissue_9e25 Tissue, Soft (ICRU-44)
 - &vacuum_6cd4 Vacuum
+logging:
+  output_dir: "logs/simulation_default"
+  level: "INFO"
+  console: false
+  per_task_files: true
+  filename_pattern: "task_{task_id}.log"
 simulation_manager:
   start_time: 0.0
   stop_time: 1000000000.0

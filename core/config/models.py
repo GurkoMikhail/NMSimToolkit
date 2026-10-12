@@ -1,5 +1,5 @@
 from typing import Any, List, Literal, Optional, Union, Annotated, Tuple
-from pydantic import BaseModel, Field, model_validator, field_serializer
+from pydantic import BaseModel, Field, model_validator, field_serializer, field_validator
 from core.config.units import (
     LengthConfig, EnergyConfig, TimeConfig, ActivityConfig, AngleConfig, CountConfig
 )
@@ -296,11 +296,67 @@ AnyProtocolConfig = Annotated[
     Field(discriminator='type')
 ]
 
+class LoggingConfig(BaseModel):
+    """
+    Конфигурация файлового и консольного логирования процесса моделирования.
+    """
+    output_dir: Optional[str] = "logs"
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    console: bool = False
+    per_task_files: bool = True
+    format: str = "[%(asctime)s: %(levelname)s] [%(name)s] %(message)s"
+    filename_pattern: str = "task_{task_id}.log"
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def normalize_level(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.upper()
+        return value
+
+    @field_validator("output_dir", mode="before")
+    @classmethod
+    def normalize_output_dir(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        string_value = str(value).strip()
+        if not string_value:
+            return None
+        return string_value
+
+    @field_validator("filename_pattern")
+    @classmethod
+    def validate_filename_pattern(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Шаблон имени файла лога не может быть пустым.")
+        try:
+            formatted_name = value.format(task_id=0)
+        except Exception as format_error:
+            raise ValueError(
+                f"Некорректный шаблон имени файла лога '{value}'. "
+                f"Шаблон обязан поддерживать подстановку ключа 'task_id': {format_error}"
+            )
+        if not formatted_name.strip():
+            raise ValueError("Сформированное имя файла лога не может быть пустым.")
+        return value.strip()
+
+
 class SimulationConfig(BaseModel):
     pool_size: int = Field(default=1, ge=1)
     protocol: Optional[AnyProtocolConfig] = None
     simulation_manager: SimulationManagerConfig
     data_manager: DataManagerConfig
     scene: AnyNodeConfig
+    logging: Optional[LoggingConfig] = None
+
+    @model_validator(mode="after")
+    def validate_logging_concurrency(self) -> "SimulationConfig":
+        if self.pool_size > 1 and self.logging is not None and not self.logging.per_task_files:
+            raise ValueError(
+                "При многопроцессном моделировании (pool_size > 1) параметр "
+                "logging.per_task_files обязан быть True во избежание конфликтов "
+                "блокировок файлов в ОС Windows."
+            )
+        return self
 
 
