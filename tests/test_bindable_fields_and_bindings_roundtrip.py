@@ -121,25 +121,25 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         inspector.set_target_viewmodel(target_vm)
 
         # Проверка типов виджетов
-        self.assertIsInstance(inspector.spin_x, BindableDoubleField)
-        self.assertIsInstance(inspector.spin_y, BindableDoubleField)
-        self.assertIsInstance(inspector.spin_z, BindableDoubleField)
-        self.assertIsInstance(inspector.spin_rot_x, BindableDoubleField)
-        self.assertIsInstance(inspector.spin_rot_y, BindableDoubleField)
-        self.assertIsInstance(inspector.spin_rot_z, BindableDoubleField)
+        self.assertIsInstance(inspector.transform_section.spin_x, BindableDoubleField)
+        self.assertIsInstance(inspector.transform_section.spin_y, BindableDoubleField)
+        self.assertIsInstance(inspector.transform_section.spin_z, BindableDoubleField)
+        self.assertIsInstance(inspector.transform_section.spin_rot_x, BindableDoubleField)
+        self.assertIsInstance(inspector.transform_section.spin_rot_y, BindableDoubleField)
+        self.assertIsInstance(inspector.transform_section.spin_rot_z, BindableDoubleField)
 
         # Привязка координаты X к переменной протокола table_x
-        inspector.spin_x.bind_variable("table_x")
+        inspector.transform_section.spin_x.bind_variable("table_x")
         self.assertEqual(target_vm.bindings.get("translation.x"), "table_x")
         self.assertEqual(scene_vm.bindings_registry[vol].get("translation.x"), "table_x")
 
         # Привязка поворота Yaw к переменной протокола tilt_yaw
-        inspector.spin_rot_z.bind_variable("tilt_yaw")
+        inspector.transform_section.spin_rot_z.bind_variable("tilt_yaw")
         self.assertEqual(target_vm.bindings.get("rotation.gamma"), "tilt_yaw")
         self.assertEqual(scene_vm.bindings_registry[vol].get("rotation.gamma"), "tilt_yaw")
 
         # Отвязка X
-        inspector.spin_x.unbind()
+        inspector.transform_section.spin_x.unbind()
         self.assertNotIn("translation.x", target_vm.bindings)
         self.assertNotIn("translation.x", scene_vm.bindings_registry[vol])
 
@@ -164,10 +164,10 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         self.assertIsNotNone(source_vm)
         inspector.set_target_viewmodel(source_vm)
 
-        self.assertIsInstance(inspector.spin_source_activity, BindableDoubleField)
+        self.assertIsInstance(inspector.source_section.spin_source_activity, BindableDoubleField)
 
         # Связывание активности
-        inspector.spin_source_activity.bind_variable("source_activity_sweep")
+        inspector.source_section.spin_source_activity.bind_variable("source_activity_sweep")
 
         self.assertEqual(source_vm.bindings.get("activity"), "source_activity_sweep")
         self.assertEqual(scene_vm.bindings_registry[source_core].get("activity"), "source_activity_sweep")
@@ -185,13 +185,13 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         inspector.set_target_viewmodel(gantry_vm)
 
         # 1. Привязка через spin_gantry_angle зеркалируется на spin_rot_x
-        inspector.spin_gantry_angle.bind_variable("theta_sweep")
-        self.assertEqual(inspector.spin_rot_x.bound_variable, "theta_sweep")
+        inspector.gantry_section.spin_gantry_angle.bind_variable("theta_sweep")
+        self.assertEqual(inspector.transform_section.spin_rot_x.bound_variable, "theta_sweep")
         self.assertEqual(gantry_vm.bindings.get("rotation.alpha"), "theta_sweep")
 
         # 2. Отвязка через spin_rot_x зеркалируется на spin_gantry_angle
-        inspector.spin_rot_x.unbind()
-        self.assertIsNone(inspector.spin_gantry_angle.bound_variable)
+        inspector.transform_section.spin_rot_x.unbind()
+        self.assertIsNone(inspector.gantry_section.spin_gantry_angle.bound_variable)
         self.assertNotIn("rotation.alpha", gantry_vm.bindings)
 
     def test_property_inspector_procedure_fields_bindable(self) -> None:
@@ -201,11 +201,11 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         inspector.set_procedure_viewmodel(proc_vm)
         inspector.set_target_viewmodel(proc_vm)
 
-        self.assertIsInstance(inspector.spin_proc_radius, BindableDoubleField)
-        self.assertIsInstance(inspector.spin_proc_time, BindableDoubleField)
+        self.assertIsInstance(inspector.procedure_section.spin_proc_radius, BindableDoubleField)
+        self.assertIsInstance(inspector.procedure_section.spin_proc_time, BindableDoubleField)
 
-        inspector.spin_proc_radius.bind_variable("cam_radius")
-        inspector.spin_proc_time.bind_variable("frame_duration")
+        inspector.procedure_section.spin_proc_radius.bind_variable("cam_radius")
+        inspector.procedure_section.spin_proc_time.bind_variable("frame_duration")
 
         self.assertEqual(proc_vm.bindings.get("radius"), "cam_radius")
         self.assertEqual(proc_vm.bindings.get("step_time"), "frame_duration")
@@ -361,33 +361,33 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         inspector.set_procedure_viewmodel(cs_vm)
         inspector.set_target_viewmodel(cs_vm)
 
-        self.assertTrue(inspector.step_and_shoot_widget.isHidden())
-        self.assertFalse(inspector.custom_sweep_widget.isHidden())
+        self.assertTrue(inspector.procedure_section.step_and_shoot_widget.isHidden())
+        self.assertFalse(inspector.procedure_section.custom_sweep_widget.isHidden())
 
         # Zipped-таблица KxM: 1 столбец ('frame_idx') и 3 строки (шаги)
-        self.assertEqual(inspector.tbl_zipped_variables.columnCount(), 1)
-        self.assertEqual(inspector.tbl_zipped_variables.rowCount(), 3)
+        self.assertEqual(inspector.procedure_section.tbl_zipped_variables.columnCount(), 1)
+        self.assertEqual(inspector.procedure_section.tbl_zipped_variables.rowCount(), 3)
         # Grid-виджеты: 2 переменные ('table_x', 'tilt_angle')
-        self.assertEqual(inspector.grid_vars_layout.count(), 2)
+        self.assertEqual(inspector.procedure_section.grid_vars_layout.count(), 2)
 
         # Удаление переменной
         cs_vm.remove_variable("tilt_angle")
         self.assertNotIn("tilt_angle", cs_vm.all_variables)
-        inspector._populate_custom_variables_table(cs_vm)
-        self.assertEqual(inspector.tbl_zipped_variables.columnCount(), 1)
-        self.assertEqual(inspector.tbl_zipped_variables.rowCount(), 3)
-        self.assertEqual(inspector.grid_vars_layout.count(), 1)
+        inspector.procedure_section._populate_custom_variables_table(cs_vm)
+        self.assertEqual(inspector.procedure_section.tbl_zipped_variables.columnCount(), 1)
+        self.assertEqual(inspector.procedure_section.tbl_zipped_variables.rowCount(), 3)
+        self.assertEqual(inspector.procedure_section.grid_vars_layout.count(), 1)
 
         # Проверка StepAndShootProcedureViewModel в инспекторе свойств
         sas_vm = StepAndShootProcedureViewModel(steps=4, radius=200.0, time_per_step=2.5)
         inspector.set_procedure_viewmodel(sas_vm)
         inspector.set_target_viewmodel(sas_vm)
 
-        self.assertFalse(inspector.step_and_shoot_widget.isHidden())
-        self.assertFalse(inspector.custom_sweep_widget.isHidden())
+        self.assertFalse(inspector.procedure_section.step_and_shoot_widget.isHidden())
+        self.assertFalse(inspector.procedure_section.custom_sweep_widget.isHidden())
         # Стандартные переменные протокола: gantry_angle, radius, step_time (3 столбца, 4 строки)
-        self.assertEqual(inspector.tbl_zipped_variables.columnCount(), 3)
-        self.assertEqual(inspector.tbl_zipped_variables.rowCount(), 4)
+        self.assertEqual(inspector.procedure_section.tbl_zipped_variables.columnCount(), 3)
+        self.assertEqual(inspector.procedure_section.tbl_zipped_variables.rowCount(), 4)
 
     def test_step_and_shoot_custom_variables_and_radius_sync(self) -> None:
         """
@@ -464,22 +464,22 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         inspector.set_procedure_viewmodel(cs_vm)
         inspector.set_target_viewmodel(cs_vm)
 
-        self.assertIn("table_x", inspector._grid_var_widgets)
-        initial_widget = inspector._grid_var_widgets["table_x"]
+        self.assertIn("table_x", inspector.procedure_section._grid_var_widgets)
+        initial_widget = inspector.procedure_section._grid_var_widgets["table_x"]
 
         # Изменяем значения через ViewModel
         cs_vm.set_variable("table_x", [5.0, 15.0, 25.0], sweep_type="grid")
         inspector.update_all_fields()
 
         # Виджет не должен был быть уничтожен или заменен
-        self.assertIs(inspector._grid_var_widgets["table_x"], initial_widget)
+        self.assertIs(inspector.procedure_section._grid_var_widgets["table_x"], initial_widget)
         self.assertEqual(initial_widget.table.rowCount(), 3)
 
         # Проверка clear_selection
         inspector.clear_selection()
-        self.assertEqual(len(inspector._grid_var_widgets), 0)
-        self.assertEqual(inspector.tbl_source_spectrum.rowCount(), 0)
-        self.assertEqual(inspector.tbl_zipped_variables.rowCount(), 0)
+        self.assertEqual(len(inspector.procedure_section._grid_var_widgets), 0)
+        self.assertEqual(inspector.source_section.tbl_source_spectrum.rowCount(), 0)
+        self.assertEqual(inspector.procedure_section.tbl_zipped_variables.rowCount(), 0)
 
     def test_zipped_step_minimum_one_row_guard(self) -> None:
         """
@@ -503,12 +503,12 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         inspector.set_procedure_viewmodel(cs_vm)
         inspector.set_target_viewmodel(cs_vm)
 
-        item = inspector.tbl_zipped_variables.item(0, 0)
+        item = inspector.procedure_section.tbl_zipped_variables.item(0, 0)
         self.assertIsNotNone(item)
         item.setText("invalid_number_abc")
 
         self.assertEqual(cs_vm.zipped_variables["table_pos"][0], 12.5)
-        rolled_back_item = inspector.tbl_zipped_variables.item(0, 0)
+        rolled_back_item = inspector.procedure_section.tbl_zipped_variables.item(0, 0)
         self.assertIsNotNone(rolled_back_item)
         self.assertAlmostEqual(float(rolled_back_item.text()), 12.5)
 

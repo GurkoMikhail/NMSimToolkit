@@ -39,6 +39,7 @@ class DataHandlerListWidget(QDockWidget):
 
         self.data_manager_vm = data_manager_vm or DataManagerViewModel()
         self._is_updating_ui: bool = False
+        self._is_data_manager_connected: bool = False
 
         self._init_ui()
         self._connect_signals()
@@ -100,7 +101,9 @@ class DataHandlerListWidget(QDockWidget):
         self.btn_add.setMenu(menu)
 
     def _connect_signals(self) -> None:
-        self.data_manager_vm.handlers_changed.connect(self.rebuild_list)
+        if not self._is_data_manager_connected and self.data_manager_vm is not None:
+            self.data_manager_vm.handlers_changed.connect(self.rebuild_list)
+            self._is_data_manager_connected = True
 
     def rebuild_list(self) -> None:
         """Перестроение элементов списка на основе модели DataManagerViewModel."""
@@ -155,12 +158,11 @@ class DataHandlerListWidget(QDockWidget):
         self.data_manager_selected.emit(self.data_manager_vm)
 
     def set_data_manager_viewmodel(self, vm: DataManagerViewModel) -> None:
-        """Смена активной модели DataManagerViewModel."""
+        """Смена активной модели DataManagerViewModel по принципу LBYL."""
         if self.data_manager_vm is not vm:
-            try:
+            if self._is_data_manager_connected and self.data_manager_vm is not None:
                 self.data_manager_vm.handlers_changed.disconnect(self.rebuild_list)
-            except (RuntimeError, TypeError):
-                pass
+                self._is_data_manager_connected = False
             self.data_manager_vm = vm
             self._connect_signals()
             self.rebuild_list()

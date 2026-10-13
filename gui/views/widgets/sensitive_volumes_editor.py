@@ -107,9 +107,6 @@ class SensitiveVolumesEditorWidget(QWidget):
         self.handler_vm: Optional[SensitiveVolumeHandlerViewModel] = None
         self.scene_vm: Optional[SceneViewModel] = None
 
-        self._handler_connections: List[Any] = []
-        self._scene_connections: List[Any] = []
-
         self._init_ui()
 
         if handler_vm is not None:
@@ -155,39 +152,39 @@ class SensitiveVolumesEditorWidget(QWidget):
         main_layout.addLayout(btn_layout)
 
     def set_viewmodel(self, handler_vm: Optional[SensitiveVolumeHandlerViewModel]) -> None:
-        """Привязывает модель представления обработчика данных с обновлением подписок."""
-        for connection in self._handler_connections:
-            try:
-                QObject.disconnect(connection)
-            except (RuntimeError, TypeError):
-                pass
-        self._handler_connections.clear()
+        """Привязывает модель представления обработчика данных с обновлением подписок по LBYL."""
+        if self.handler_vm is not None:
+            self.handler_vm.volumes_changed.disconnect(self._refresh_list)
+            self.handler_vm.changed.disconnect(self._refresh_list)
 
         self.handler_vm = handler_vm
         if self.handler_vm is not None:
-            conn_volumes = self.handler_vm.volumes_changed.connect(self._refresh_list)
-            conn_changed = self.handler_vm.changed.connect(self._refresh_list)
-            self._handler_connections.extend([conn_volumes, conn_changed])
+            self.handler_vm.volumes_changed.connect(self._refresh_list)
+            self.handler_vm.changed.connect(self._refresh_list)
 
         self._refresh_list()
 
     def set_scene_viewmodel(self, scene_vm: Optional[SceneViewModel]) -> None:
         """Привязывает модель сцены для инспекции существующих узлов и их валидации."""
-        for connection in self._scene_connections:
-            try:
-                QObject.disconnect(connection)
-            except (RuntimeError, TypeError):
-                pass
-        self._scene_connections.clear()
+        if self.scene_vm is not None:
+            self.scene_vm.scene_loaded.disconnect(self._on_scene_changed_notification)
+            self.scene_vm.node_added.disconnect(self._on_scene_changed_notification)
+            self.scene_vm.node_removed.disconnect(self._on_scene_changed_notification)
+            self.scene_vm.node_renamed.disconnect(self._on_scene_renamed_notification)
 
         self.scene_vm = scene_vm
         if self.scene_vm is not None:
-            conn_loaded = self.scene_vm.scene_loaded.connect(lambda loaded_obj: self._refresh_list())
-            conn_added = self.scene_vm.node_added.connect(lambda added_vm: self._refresh_list())
-            conn_removed = self.scene_vm.node_removed.connect(lambda removed_vm: self._refresh_list())
-            conn_renamed = self.scene_vm.node_renamed.connect(lambda old_name, new_name: self._refresh_list())
-            self._scene_connections.extend([conn_loaded, conn_added, conn_removed, conn_renamed])
+            self.scene_vm.scene_loaded.connect(self._on_scene_changed_notification)
+            self.scene_vm.node_added.connect(self._on_scene_changed_notification)
+            self.scene_vm.node_removed.connect(self._on_scene_changed_notification)
+            self.scene_vm.node_renamed.connect(self._on_scene_renamed_notification)
 
+        self._refresh_list()
+
+    def _on_scene_changed_notification(self, *args: Any) -> None:
+        self._refresh_list()
+
+    def _on_scene_renamed_notification(self, *args: Any) -> None:
         self._refresh_list()
 
     def _refresh_list(self) -> None:

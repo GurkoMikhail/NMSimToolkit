@@ -287,16 +287,16 @@ class TestGuiRefactoringVerification(unittest.TestCase):
         # Проверка связывания с PropertyInspector
         inspector = PropertyInspector()
         inspector.set_target_viewmodel(vm)
-        self.assertAlmostEqual(inspector.spin_detector_size_x.value(), 20.0)
-        self.assertAlmostEqual(inspector.spin_detector_size_y.value(), 20.0)
-        self.assertAlmostEqual(inspector.spin_detector_thickness.value(), 2.0)
-        self.assertAlmostEqual(inspector.spin_collimator_thickness.value(), 5.0)
+        self.assertAlmostEqual(inspector.spect_section.spin_detector_size_x.value(), 20.0)
+        self.assertAlmostEqual(inspector.spect_section.spin_detector_size_y.value(), 20.0)
+        self.assertAlmostEqual(inspector.spect_section.spin_detector_thickness.value(), 2.0)
+        self.assertAlmostEqual(inspector.spect_section.spin_collimator_thickness.value(), 5.0)
 
         # Изменение через UI инспектора
-        inspector.spin_detector_size_x.setValue(35.0)
-        inspector._on_spect_detector_size_changed()
+        inspector.spect_section.spin_detector_size_x.setValue(35.0)
+        inspector.spect_section._on_spect_detector_size_changed()
         np.testing.assert_allclose(vm.detector_size, [35.0, 20.0])
-        self.assertAlmostEqual(inspector.spin_detector_size_x.value(), 35.0)
+        self.assertAlmostEqual(inspector.spect_section.spin_detector_size_x.value(), 35.0)
 
     def test_data_manager_stop_method(self):
         """

@@ -253,14 +253,14 @@ class TestGuiReviewFixes(unittest.TestCase):
 
         # Проверка установки NaN в матрицу
         vm.local_matrix = np.full((4, 4), np.nan)
-        inspector._update_transform_fields()
+        inspector.transform_section.update_transform_fields()
         # Не должно бросать исключение
 
         # Проверка точечного обновления
         with patch.object(inspector, "update_all_fields") as mock_all:
             inspector._on_property_changed_externally("name", "NewName")
             mock_all.assert_not_called()
-            self.assertEqual(inspector.txt_name.text(), "NewName")
+            self.assertEqual(inspector.general_section.txt_name.text(), "NewName")
 
     # -------------------------------------------------------------------------
     # STYLE-8: Детерминированная генерация имен в SceneTreeWidget
@@ -349,16 +349,16 @@ class TestGuiReviewFixes(unittest.TestCase):
         vm = VoxelVolumeViewModel(core_node=mock_core)
 
         inspector.set_target_viewmodel(vm)
-        self.assertTrue(hasattr(inspector, "spin_opacity_thresh"))
-        self.assertAlmostEqual(inspector.spin_opacity_thresh.value(), 0.05, places=2)
+        self.assertTrue(hasattr(inspector.voxel_section, "spin_opacity_thresh"))
+        self.assertAlmostEqual(inspector.voxel_section.spin_opacity_thresh.value(), 0.05, places=2)
 
         # Проверка точечного обновления при изменении свойства
         vm.opacity_threshold = 0.35
-        self.assertAlmostEqual(inspector.spin_opacity_thresh.value(), 0.35, places=2)
+        self.assertAlmostEqual(inspector.voxel_section.spin_opacity_thresh.value(), 0.35, places=2)
 
         # Проверка обновления LOD
         vm.lod_factor = 1.4
-        self.assertEqual(inspector.slider_lod.value(), 7)
+        self.assertEqual(inspector.voxel_section.slider_lod.value(), 7)
 
     # -------------------------------------------------------------------------
     # BUG-7: MainWindow транслирует изменения вокселей в VoxelVolumeRenderer

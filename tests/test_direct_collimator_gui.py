@@ -234,15 +234,15 @@ class TestDirectCollimatorGUI(unittest.TestCase):
         inspector.set_target_viewmodel(col_vm)
 
         # В инспекторе выбран детерминированный коллиматор
-        self.assertEqual(inspector.combo_collimator_type.currentData(), "direct")
-        self.assertFalse(inspector.collimator_group.isHidden())
-        self.assertFalse(inspector.combo_collimator_shape.isHidden())
-        self.assertFalse(inspector.combo_hole_material.isHidden())
+        self.assertEqual(inspector.collimator_section.combo_collimator_type.currentData(), "direct")
+        self.assertFalse(inspector.collimator_section.isHidden())
+        self.assertFalse(inspector.collimator_section.combo_collimator_shape.isHidden())
+        self.assertFalse(inspector.collimator_section.combo_hole_material.isHidden())
 
         # Переключаем тип коллиматора на параметрический
-        param_index = inspector.combo_collimator_type.findData("parametric")
+        param_index = inspector.collimator_section.combo_collimator_type.findData("parametric")
         self.assertGreaterEqual(param_index, 0)
-        inspector.combo_collimator_type.setCurrentIndex(param_index)
+        inspector.collimator_section.combo_collimator_type.setCurrentIndex(param_index)
 
         # Проверяем, что узел в сцене заменен на параметрический
         swapped_vm = scene_vm.find_by_name("CollimatorToSwap")

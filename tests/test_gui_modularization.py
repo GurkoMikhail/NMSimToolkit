@@ -217,19 +217,19 @@ class TestGuiModularization(unittest.TestCase):
         # 1. Инспекция процедуры ОФЭКТ
         proc = SpectProcedureViewModel()
         inspector.set_target_viewmodel(proc)
-        self.assertFalse(inspector.procedure_group.isHidden())
-        self.assertTrue(inspector.data_handler_group.isHidden())
+        self.assertFalse(inspector.procedure_section.isHidden())
+        self.assertTrue(inspector.data_handler_section.isHidden())
 
         # 2. Инспекция обработчика прямого стрима
         stream_handler = DirectStreamHandlerViewModel()
         inspector.set_target_viewmodel(stream_handler)
-        self.assertTrue(inspector.procedure_group.isHidden())
-        self.assertFalse(inspector.data_handler_group.isHidden())
+        self.assertTrue(inspector.procedure_section.isHidden())
+        self.assertFalse(inspector.data_handler_section.isHidden())
 
         # 3. Инспекция диспетчера данных
         dm = DataManagerViewModel()
         inspector.set_target_viewmodel(dm)
-        self.assertFalse(inspector.data_manager_group.isHidden())
+        self.assertFalse(inspector.data_manager_section.isHidden())
 
     def test_main_window_dock_integration(self) -> None:
         """

@@ -217,13 +217,13 @@ class TestAll14GUIFixes(unittest.TestCase):
         grid_vm = DoseGridViewModel(grid_node)
         inspector.set_target_viewmodel(grid_vm)
 
-        self.assertFalse(inspector.dose_grid_group.isHidden())
-        self.assertEqual(inspector.spin_dose_grid_voxel.value(), 5.0)
+        self.assertFalse(inspector.dose_grid_section.isHidden())
+        self.assertEqual(inspector.dose_grid_section.spin_dose_grid_voxel.value(), 5.0)
 
-        inspector.spin_dose_grid_voxel.setValue(10.0)
+        inspector.dose_grid_section.spin_dose_grid_voxel.setValue(10.0)
         self.assertEqual(grid_vm.dose_voxel_size, 10.0)
         self.assertEqual(grid_node.dose_voxel_size, 10.0)
-        self.assertIn("50 × 50 × 50", inspector.lbl_dose_grid_shape.text())
+        self.assertIn("50 × 50 × 50", inspector.dose_grid_section.lbl_dose_grid_shape.text())
 
     # 10. Передача треков вылетевших частиц
     def test_10_escaped_particles_stream(self):

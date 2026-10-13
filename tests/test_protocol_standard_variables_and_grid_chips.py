@@ -80,7 +80,7 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
         inspector.set_procedure_viewmodel(step_shoot_viewmodel)
         inspector.set_target_viewmodel(step_shoot_viewmodel)
 
-        table_widget = inspector.tbl_zipped_variables
+        table_widget = inspector.procedure_section.tbl_zipped_variables
         column_count = table_widget.columnCount()
         self.assertGreaterEqual(column_count, 3)
 
@@ -128,7 +128,7 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
         table_widget.setCurrentCell(0, gantry_column_index)
         initial_columns = table_widget.columnCount()
         with patch("PySide6.QtWidgets.QMessageBox.warning") as mock_warning:
-            inspector._on_remove_zipped_col_clicked()
+            inspector.procedure_section._on_remove_zipped_col_clicked()
             self.assertEqual(mock_warning.call_count, 1)
 
         self.assertEqual(table_widget.columnCount(), initial_columns)

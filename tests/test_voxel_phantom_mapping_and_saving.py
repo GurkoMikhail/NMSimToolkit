@@ -214,11 +214,11 @@ class TestVoxelPhantomMappingAndSaving(unittest.TestCase):
         inspector.set_target_viewmodel(voxel_vm)
 
         # Проверка заполнения строк таблицы
-        row_count = inspector.tbl_material_mapping.rowCount()
+        row_count = inspector.voxel_section.tbl_material_mapping.rowCount()
         self.assertEqual(row_count, len(voxel_vm.material_list))
 
         # Вызов смены материала через инспектор
-        inspector._on_mapping_material_changed(0, "Bone, Cortical (ICRU-44)")
+        inspector.voxel_section._on_mapping_material_changed(0, "Bone, Cortical (ICRU-44)")
         self.assertEqual(voxel_vm.material_list[0].name, "Bone, Cortical (ICRU-44)")
 
         # Проверка обновления реестра в SceneViewModel
@@ -266,9 +266,9 @@ class TestVoxelPhantomMappingAndSaving(unittest.TestCase):
 
         # Изменяем размер вокселей вдвое через спинбоксы инспектора свойств
         new_voxel_step = 2.5
-        inspector_widget.spin_voxel_size_x.setValue(new_voxel_step)
-        inspector_widget.spin_voxel_size_y.setValue(new_voxel_step)
-        inspector_widget.spin_voxel_size_z.setValue(new_voxel_step)
+        inspector_widget.voxel_section.spin_voxel_size_x.setValue(new_voxel_step)
+        inspector_widget.voxel_section.spin_voxel_size_y.setValue(new_voxel_step)
+        inspector_widget.voxel_section.spin_voxel_size_z.setValue(new_voxel_step)
 
         # Проверяем обновление модели ядра и ViewModel
         np.testing.assert_allclose(voxel_vm.voxel_size, [new_voxel_step, new_voxel_step, new_voxel_step])

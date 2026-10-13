@@ -140,19 +140,19 @@ class TestDoseGridNode(unittest.TestCase):
         inspector.set_target_viewmodel(vm)
 
         # Секция сетки дозы должна быть видима, а секции объемов скрыты
-        self.assertFalse(inspector.dose_grid_group.isHidden())
-        self.assertTrue(inspector.volume_group.isHidden())
+        self.assertFalse(inspector.dose_grid_section.isHidden())
+        self.assertTrue(inspector.volume_section.isHidden())
 
         # Проверка начальных значений
-        self.assertEqual(inspector.spin_dose_grid_size_x.value(), 100.0)
-        self.assertEqual(inspector.spin_dose_grid_voxel.value(), 5.0)
-        self.assertIn("20 × 20 × 20", inspector.lbl_dose_grid_shape.text())
+        self.assertEqual(inspector.dose_grid_section.spin_dose_grid_size_x.value(), 100.0)
+        self.assertEqual(inspector.dose_grid_section.spin_dose_grid_voxel.value(), 5.0)
+        self.assertIn("20 × 20 × 20", inspector.dose_grid_section.lbl_dose_grid_shape.text())
 
         # Редактирование в инспекторе
-        inspector.spin_dose_grid_voxel.setValue(2.0)
+        inspector.dose_grid_section.spin_dose_grid_voxel.setValue(2.0)
         self.assertEqual(vm.dose_voxel_size, 2.0)
         self.assertEqual(node.dose_voxel_size, 2.0)
-        self.assertIn("50 × 50 × 50", inspector.lbl_dose_grid_shape.text())
+        self.assertIn("50 × 50 × 50", inspector.dose_grid_section.lbl_dose_grid_shape.text())
 
     def test_06_dose_map_handler_multiple_grids_accumulation(self):
         """Проверка независимого накопления дозы в несколько узлов DoseGridNode."""
@@ -256,16 +256,16 @@ class TestDoseGridNode(unittest.TestCase):
         inspector = PropertyInspector()
         inspector.set_target_viewmodel(grid_vm)
 
-        self.assertTrue(inspector.btn_fit_dose_grid_to_parent.isEnabled())
-        self.assertIn("SpectCamera", inspector.btn_fit_dose_grid_to_parent.text())
+        self.assertTrue(inspector.dose_grid_section.btn_fit_dose_grid_to_parent.isEnabled())
+        self.assertIn("SpectCamera", inspector.dose_grid_section.btn_fit_dose_grid_to_parent.text())
 
         # Нажимаем кнопку подгонки под родителя
-        inspector._on_fit_dose_grid_to_parent()
+        inspector.dose_grid_section._on_fit_dose_grid_to_parent()
 
         cam_bounds_size = cam_vm.local_bound
         np.testing.assert_allclose(grid_vm.size, cam_bounds_size, atol=1e-5)
         np.testing.assert_allclose(grid_node.size, cam_bounds_size, atol=1e-5)
-        self.assertAlmostEqual(inspector.spin_dose_grid_size_x.value(), cam_bounds_size[0], places=3)
+        self.assertAlmostEqual(inspector.dose_grid_section.spin_dose_grid_size_x.value(), cam_bounds_size[0], places=3)
 
     def test_10_volume_local_bound_property(self):
         """Проверка @property local_bound у Volume и VolumeViewModel."""

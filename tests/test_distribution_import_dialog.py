@@ -304,12 +304,12 @@ class TestDistributionImportDialog(unittest.TestCase):
             with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=(str(phantom_file), "All Files")), \
                  patch.object(DistributionImportDialog, "exec", return_value=QDialog.Accepted), \
                  patch.object(DistributionImportDialog, "get_parameters", return_value=mock_phantom_params):
-                inspector._on_browse_phantom_file()
+                inspector.voxel_section._on_browse_phantom_file()
 
-            self.assertEqual(inspector.txt_voxel_path.text(), str(phantom_file))
-            self.assertEqual(inspector.spin_voxel_size_x.value(), 3.0)
-            self.assertEqual(inspector.spin_voxel_size_y.value(), 3.0)
-            self.assertEqual(inspector.spin_voxel_size_z.value(), 3.0)
+            self.assertEqual(inspector.voxel_section.txt_voxel_path.text(), str(phantom_file))
+            self.assertEqual(inspector.voxel_section.spin_voxel_size_x.value(), 3.0)
+            self.assertEqual(inspector.voxel_section.spin_voxel_size_y.value(), 3.0)
+            self.assertEqual(inspector.voxel_section.spin_voxel_size_z.value(), 3.0)
 
             # 2. Проверка выбора файла источника
             inspector.set_target_viewmodel(source_vm)
@@ -328,11 +328,11 @@ class TestDistributionImportDialog(unittest.TestCase):
             with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=(str(source_file), "All Files")), \
                  patch.object(DistributionImportDialog, "exec", return_value=QDialog.Accepted), \
                  patch.object(DistributionImportDialog, "get_parameters", return_value=mock_source_params):
-                inspector._on_browse_source_file()
+                inspector.source_section._on_browse_source_file()
 
-            self.assertEqual(inspector.txt_source_path.text(), str(source_file))
-            self.assertEqual(inspector.spin_source_voxel_size.value(), 2.5)
-            self.assertEqual(inspector.spin_source_activity.value(), 150.0)
+            self.assertEqual(inspector.source_section.txt_source_path.text(), str(source_file))
+            self.assertEqual(inspector.source_section.spin_source_voxel_size.value(), 2.5)
+            self.assertEqual(inspector.source_section.spin_source_activity.value(), 150.0)
             inspector.close()
 
     def test_distribution_import_dialog_text_mode_validation(self) -> None:

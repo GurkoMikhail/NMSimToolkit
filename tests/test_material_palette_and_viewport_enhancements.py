@@ -699,28 +699,28 @@ class TestVoxelVolumeViewModelAndPropertyInspector(unittest.TestCase):
         inspector_widget = PropertyInspector()
 
         # Первый элемент в списке палитр обязан быть 'Physical Materials'
-        self.assertEqual(inspector_widget.combo_colormap.itemText(0), "Physical Materials")
+        self.assertEqual(inspector_widget.voxel_section.combo_colormap.itemText(0), "Physical Materials")
 
         # При назначении воксельного фантома с 'Physical Materials' ползунки прозрачности заблокированы
         inspector_widget.set_target_viewmodel(self.voxel_vm)
-        self.assertEqual(inspector_widget.combo_colormap.currentText(), "Physical Materials")
-        self.assertFalse(inspector_widget.spin_opacity_thresh.isEnabled())
-        self.assertFalse(inspector_widget.spin_max_opacity.isEnabled())
-        self.assertFalse(inspector_widget.combo_opacity_preset.isEnabled())
+        self.assertEqual(inspector_widget.voxel_section.combo_colormap.currentText(), "Physical Materials")
+        self.assertFalse(inspector_widget.voxel_section.spin_opacity_thresh.isEnabled())
+        self.assertFalse(inspector_widget.voxel_section.spin_max_opacity.isEnabled())
+        self.assertFalse(inspector_widget.voxel_section.combo_opacity_preset.isEnabled())
 
         # Переключаем палитру на 'Hot Iron' -> регуляторы прозрачности становятся активными
-        inspector_widget.combo_colormap.setCurrentText("Hot Iron")
+        inspector_widget.voxel_section.combo_colormap.setCurrentText("Hot Iron")
         self.assertEqual(self.voxel_vm.colormap_name, "Hot Iron")
-        self.assertTrue(inspector_widget.spin_opacity_thresh.isEnabled())
-        self.assertTrue(inspector_widget.spin_max_opacity.isEnabled())
-        self.assertTrue(inspector_widget.combo_opacity_preset.isEnabled())
+        self.assertTrue(inspector_widget.voxel_section.spin_opacity_thresh.isEnabled())
+        self.assertTrue(inspector_widget.voxel_section.spin_max_opacity.isEnabled())
+        self.assertTrue(inspector_widget.voxel_section.combo_opacity_preset.isEnabled())
 
         # Возвращаем 'Physical Materials' -> регуляторы вновь заблокированы
-        inspector_widget.combo_colormap.setCurrentText("Physical Materials")
+        inspector_widget.voxel_section.combo_colormap.setCurrentText("Physical Materials")
         self.assertEqual(self.voxel_vm.colormap_name, "Physical Materials")
-        self.assertFalse(inspector_widget.spin_opacity_thresh.isEnabled())
-        self.assertFalse(inspector_widget.spin_max_opacity.isEnabled())
-        self.assertFalse(inspector_widget.combo_opacity_preset.isEnabled())
+        self.assertFalse(inspector_widget.voxel_section.spin_opacity_thresh.isEnabled())
+        self.assertFalse(inspector_widget.voxel_section.spin_max_opacity.isEnabled())
+        self.assertFalse(inspector_widget.voxel_section.combo_opacity_preset.isEnabled())
 
 
 class TestVoxelVolumeViewportControllerIntegration(unittest.TestCase):

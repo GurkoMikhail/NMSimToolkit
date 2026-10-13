@@ -50,12 +50,12 @@ class TestStage4Views(unittest.TestCase):
         inspector = PropertyInspector()
         inspector.set_target_viewmodel(vm)
 
-        self.assertEqual(inspector.txt_name.text(), "WaterBox")
-        self.assertAlmostEqual(inspector.spin_size_x.value(), 50.0)
+        self.assertEqual(inspector.general_section.txt_name.text(), "WaterBox")
+        self.assertAlmostEqual(inspector.volume_section.spin_size_x.value(), 50.0)
 
         # Модификация через UI
-        inspector.txt_name.setText("RenamedBox")
-        inspector._on_name_changed()
+        inspector.general_section.txt_name.setText("RenamedBox")
+        inspector.general_section._on_name_changed()
         self.assertEqual(vm.name, "RenamedBox")
         self.assertEqual(vol.name, "RenamedBox")
 

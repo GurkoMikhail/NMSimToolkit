@@ -93,13 +93,13 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         inspector.set_target_viewmodel(vm)
 
         # Проверяем начальные углы поворота
-        self.assertAlmostEqual(inspector.spin_rot_x.value(), 0.0)
-        self.assertAlmostEqual(inspector.spin_rot_y.value(), 0.0)
-        self.assertAlmostEqual(inspector.spin_rot_z.value(), 0.0)
+        self.assertAlmostEqual(inspector.transform_section.spin_rot_x.value(), 0.0)
+        self.assertAlmostEqual(inspector.transform_section.spin_rot_y.value(), 0.0)
+        self.assertAlmostEqual(inspector.transform_section.spin_rot_z.value(), 0.0)
 
         # Задаем поворот вокруг Z на 45 градусов
-        inspector.spin_rot_z.setValue(45.0)
-        inspector._on_transform_changed()
+        inspector.transform_section.spin_rot_z.setValue(45.0)
+        inspector.transform_section._on_transform_changed()
 
         # Проверяем матрицу во ViewModel
         rot_z_angle = np.degrees(np.arctan2(vm.local_matrix[1, 0], vm.local_matrix[0, 0]))
@@ -270,14 +270,14 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
 
         # Проверка связывания через PropertyInspector
         inspector = PropertyInspector()
-        inspector.set_min_buffer_capacity(25000)
+        inspector.data_manager_section.set_min_buffer_capacity(25000)
         inspector.set_target_viewmodel(dm_vm)
 
-        self.assertEqual(inspector.spin_dm_buffer.minimum(), 25000)
+        self.assertEqual(inspector.data_manager_section.spin_dm_buffer.minimum(), 25000)
         self.assertEqual(dm_vm.buffer_capacity, 25000)
 
         # Изменение значения в spinbox ниже минимума не позволяет задать небезопасную емкость
-        inspector.spin_dm_buffer.setValue(1000)
+        inspector.data_manager_section.spin_dm_buffer.setValue(1000)
         self.assertGreaterEqual(dm_vm.buffer_capacity, 25000)
 
     def test_property_inspector_kinematic_locking(self) -> None:
@@ -295,33 +295,33 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         property_inspector.set_target_viewmodel(camera_view_model)
 
         # Для гамма-камеры на круговой орбите перемещения X, Y, Z активны (тангенс, аксиал, радиус)
-        self.assertTrue(property_inspector.spin_x.isEnabled())
-        self.assertTrue(property_inspector.spin_y.isEnabled())
-        self.assertTrue(property_inspector.spin_z.isEnabled())
+        self.assertTrue(property_inspector.transform_section.spin_x.isEnabled())
+        self.assertTrue(property_inspector.transform_section.spin_y.isEnabled())
+        self.assertTrue(property_inspector.transform_section.spin_z.isEnabled())
 
         # Для углов: Roll и Tilt заблокированы, In-plane Roll разрешен
-        self.assertFalse(property_inspector.spin_rot_x.isEnabled())
-        self.assertFalse(property_inspector.spin_rot_y.isEnabled())
-        self.assertTrue(property_inspector.spin_rot_z.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_rot_x.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_rot_y.isEnabled())
+        self.assertTrue(property_inspector.transform_section.spin_rot_z.isEnabled())
 
         # Масштабирование заблокировано
-        self.assertFalse(property_inspector.spin_size_x.isEnabled())
-        self.assertFalse(property_inspector.spin_size_y.isEnabled())
-        self.assertFalse(property_inspector.spin_size_z.isEnabled())
+        self.assertFalse(property_inspector.volume_section.spin_size_x.isEnabled())
+        self.assertFalse(property_inspector.volume_section.spin_size_y.isEnabled())
+        self.assertFalse(property_inspector.volume_section.spin_size_z.isEnabled())
 
         # Для внутреннего заблокированного компонента (FixedSubcomponentKinematicConstraint)
         detector_box_view_model = camera_view_model.detector_box_vm
         property_inspector.set_target_viewmodel(detector_box_view_model)
 
-        self.assertFalse(property_inspector.spin_x.isEnabled())
-        self.assertFalse(property_inspector.spin_y.isEnabled())
-        self.assertFalse(property_inspector.spin_z.isEnabled())
-        self.assertFalse(property_inspector.spin_rot_x.isEnabled())
-        self.assertFalse(property_inspector.spin_rot_y.isEnabled())
-        self.assertFalse(property_inspector.spin_rot_z.isEnabled())
-        self.assertFalse(property_inspector.spin_size_x.isEnabled())
-        self.assertFalse(property_inspector.spin_size_y.isEnabled())
-        self.assertFalse(property_inspector.spin_size_z.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_x.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_y.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_z.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_rot_x.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_rot_y.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_rot_z.isEnabled())
+        self.assertFalse(property_inspector.volume_section.spin_size_x.isEnabled())
+        self.assertFalse(property_inspector.volume_section.spin_size_y.isEnabled())
+        self.assertFalse(property_inspector.volume_section.spin_size_z.isEnabled())
 
     def test_main_window_gizmo_toolbar_state_with_constraints(self) -> None:
         """Верификация адаптации панели инструментов 3D-манипулятора под ограничения узлов."""
@@ -456,19 +456,19 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         property_inspector.set_target_viewmodel(root_viewmodel)
 
         # Координаты положения рутового Volume заблокированы
-        self.assertFalse(property_inspector.spin_x.isEnabled())
-        self.assertFalse(property_inspector.spin_y.isEnabled())
-        self.assertFalse(property_inspector.spin_z.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_x.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_y.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_z.isEnabled())
 
         # Углы ориентации рутового Volume заблокированы
-        self.assertFalse(property_inspector.spin_rot_x.isEnabled())
-        self.assertFalse(property_inspector.spin_rot_y.isEnabled())
-        self.assertFalse(property_inspector.spin_rot_z.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_rot_x.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_rot_y.isEnabled())
+        self.assertFalse(property_inspector.transform_section.spin_rot_z.isEnabled())
 
         # Размеры геометрии (size) рутового Volume доступны для изменения
-        self.assertTrue(property_inspector.spin_size_x.isEnabled())
-        self.assertTrue(property_inspector.spin_size_y.isEnabled())
-        self.assertTrue(property_inspector.spin_size_z.isEnabled())
+        self.assertTrue(property_inspector.volume_section.spin_size_x.isEnabled())
+        self.assertTrue(property_inspector.volume_section.spin_size_y.isEnabled())
+        self.assertTrue(property_inspector.volume_section.spin_size_z.isEnabled())
 
     def test_root_volume_detection_and_hierarchy(self) -> None:
         """Проверка методов поиска рутового Volume (top_volume_vm, root_volume_vm, is_root_volume)."""

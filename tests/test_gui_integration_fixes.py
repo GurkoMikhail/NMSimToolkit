@@ -249,7 +249,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
 
             # Переводим инспектор на обработчик данных
             win.property_inspector.set_target_viewmodel(handler_vm)
-            editor = win.property_inspector.sensitive_volumes_editor
+            editor = win.property_inspector.data_handler_section.sensitive_volumes_editor
             self.assertEqual(editor.list_widget.count(), 1)
             item = editor.list_widget.item(0)
 
@@ -257,7 +257,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
             editor.list_widget.setCurrentItem(item)
             editor.list_widget.itemClicked.emit(item)
             self.assertIs(win.property_inspector.current_vm, handler_vm)
-            self.assertFalse(win.property_inspector.data_handler_group.isHidden())
+            self.assertFalse(win.property_inspector.data_handler_section.isHidden())
             self.assertFalse(editor.isHidden())
 
             # 2. Проверяем удаление через кнопку
@@ -425,8 +425,8 @@ class TestGUIIntegrationFixes(unittest.TestCase):
             # Проверяем инспектор свойств
             inspector = PropertyInspector()
             inspector.set_target_viewmodel(vm)
-            self.assertEqual(inspector.txt_voxel_path.text(), str(p2))
-            self.assertIn("16 × 12 × 10", inspector.lbl_voxel_shape.text())
+            self.assertEqual(inspector.voxel_section.txt_voxel_path.text(), str(p2))
+            self.assertIn("16 × 12 × 10", inspector.voxel_section.lbl_voxel_shape.text())
 
             # Проверяем SourceViewModel
             src_p = Path(tmp_dir) / "source_dist.npy"
@@ -579,8 +579,8 @@ class TestGUIIntegrationFixes(unittest.TestCase):
 
             # Проверка синхронизации с PropertyInspector
             win.property_inspector.set_target_viewmodel(sens_handlers[0])
-            self.assertEqual(win.property_inspector.sensitive_volumes_editor.list_widget.count(), 1)
-            item_text = win.property_inspector.sensitive_volumes_editor.list_widget.item(0).text()
+            self.assertEqual(win.property_inspector.data_handler_section.sensitive_volumes_editor.list_widget.count(), 1)
+            item_text = win.property_inspector.data_handler_section.sensitive_volumes_editor.list_widget.item(0).text()
             self.assertIn("Detector", item_text)
 
             # Проверка сброса при очистке сцены

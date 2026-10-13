@@ -140,7 +140,7 @@ class MainWindow(QMainWindow):
         # Инспектор свойств
         self.property_inspector = PropertyInspector(self)
         self.property_inspector.set_scene_viewmodel(self.scene_vm)
-        self.property_inspector.set_min_buffer_capacity(self.sim_settings.particles_number)
+        self.property_inspector.data_manager_section.set_min_buffer_capacity(self.sim_settings.particles_number)
 
         # Панель результатов
         self.results_viewer = ResultsViewer(self)
@@ -415,7 +415,7 @@ class MainWindow(QMainWindow):
         self.procedure_selector.procedure_selected.connect(self.property_inspector.set_target_viewmodel)
         self.data_handler_list.handler_selected.connect(self.property_inspector.set_target_viewmodel)
         self.data_handler_list.data_manager_selected.connect(self.property_inspector.set_target_viewmodel)
-        self.property_inspector.sensitive_volumes_editor.volume_selected.connect(
+        self.property_inspector.data_handler_section.sensitive_volumes_editor.volume_selected.connect(
             self._on_sensitive_volume_selected_in_editor
         )
 
@@ -922,7 +922,7 @@ class MainWindow(QMainWindow):
                         parsed_particles = int(raw_particles)
                         self.sim_settings.particles_number = parsed_particles
                         self.orchestrator_session.particles_number = parsed_particles
-                        self.property_inspector.set_min_buffer_capacity(parsed_particles)
+                        self.property_inspector.data_manager_section.set_min_buffer_capacity(parsed_particles)
                         self.data_manager_vm.min_buffer_capacity = parsed_particles
                         if self.data_manager_vm.buffer_capacity < parsed_particles:
                             self.data_manager_vm.buffer_capacity = parsed_particles
@@ -933,7 +933,7 @@ class MainWindow(QMainWindow):
                                 parsed_particles = int(num)
                                 self.sim_settings.particles_number = parsed_particles
                                 self.orchestrator_session.particles_number = parsed_particles
-                                self.property_inspector.set_min_buffer_capacity(parsed_particles)
+                                self.property_inspector.data_manager_section.set_min_buffer_capacity(parsed_particles)
                                 self.data_manager_vm.min_buffer_capacity = parsed_particles
                                 if self.data_manager_vm.buffer_capacity < parsed_particles:
                                     self.data_manager_vm.buffer_capacity = parsed_particles
@@ -1057,7 +1057,7 @@ class MainWindow(QMainWindow):
                         self.procedure_vm.unbind_property("simulation_manager", prop_name)
 
             # Обеспечение инварианта buffer_capacity >= particles_number
-            self.property_inspector.set_min_buffer_capacity(new_settings.particles_number)
+            self.property_inspector.data_manager_section.set_min_buffer_capacity(new_settings.particles_number)
             self.data_manager_vm.min_buffer_capacity = new_settings.particles_number
             if self.data_manager_vm.buffer_capacity < new_settings.particles_number:
                 self.data_manager_vm.buffer_capacity = new_settings.particles_number
