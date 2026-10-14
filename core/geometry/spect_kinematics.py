@@ -1,14 +1,19 @@
 """
 Модуль кинематики ракурсов гантри и детекторов ОФЭКТ (SPECT).
 """
+from __future__ import annotations
 
 from typing import Any, List, Optional, Protocol, runtime_checkable
 import numpy as np
+from numpy.typing import NDArray
+
+from core.other.typing_definitions import Float
 
 
 @runtime_checkable
 class ISpectProtocolConfig(Protocol):
     """Протокол параметров кинематики сканирования гантри ОФЭКТ."""
+
     views: int
     gamma_cameras: int
     start_angle: float
@@ -20,6 +25,7 @@ class ISpectProtocolConfig(Protocol):
 @runtime_checkable
 class IStepKinematicsConfig(Protocol):
     """Протокол параметров пошаговой кинематики сканирования."""
+
     steps: int
     start_angle: float
     end_angle: float
@@ -70,6 +76,7 @@ def compute_spect_poses(
         total_views = int(views_or_protocol)
         cameras_count = max(1, int(gamma_cameras))
         positions_count = max(1, total_views // cameras_count)
+
     base_angles = np.linspace(start_angle, end_angle, positions_count, endpoint=endpoint)
     if head_angle_offsets is not None and len(head_angle_offsets) == cameras_count:
         offsets = head_angle_offsets
@@ -94,7 +101,7 @@ def compute_orbit_matrix(
     *,
     angle_deg: Optional[float] = None,
     roll_deg: Optional[float] = None,
-) -> np.ndarray:
+) -> NDArray[Float]:
     """
     Вычисляет кинематическую матрицу трансформации 4x4 для круговой орбиты ОФЭКТ,
     ориентирующую гамма-камеру к центру орбиты (0, 0, z).
@@ -113,40 +120,45 @@ def compute_orbit_matrix(
     if axial_z is not None:
         z = float(axial_z)
 
-    rad = np.radians(angle)
+    orbit_angle = float(np.radians(angle))
     center_radius = float(radius) + float(half_thickness)
-    pos_x = center_radius * np.cos(rad)
-    pos_y = center_radius * np.sin(rad)
-    mat = np.eye(4, dtype=np.float64)
-    mat[0, 3] = pos_x
-    mat[1, 3] = pos_y
-    mat[2, 3] = z
+    pos_x = center_radius * float(np.cos(orbit_angle))
+    pos_y = center_radius * float(np.sin(orbit_angle))
+    orbit_matrix: NDArray[Float] = np.eye(4, dtype=Float)
+    orbit_matrix[0, 3] = pos_x
+    orbit_matrix[1, 3] = pos_y
+    orbit_matrix[2, 3] = z
 
     # Лицевая нормаль детектора (локальная ось +Z, столбец 2) смотрит в центр орбиты (0, 0, z)
-    mat[0, 2] = -np.cos(rad)
-    mat[1, 2] = -np.sin(rad)
-    mat[2, 2] = 0.0
+    orbit_matrix[0, 2] = -np.cos(orbit_angle)
+    orbit_matrix[1, 2] = -np.sin(orbit_angle)
+    orbit_matrix[2, 2] = 0.0
 
     # Осевая ось детектора (локальная ось +Y, столбец 1) направлена вдоль глобальной оси +Z (ось стола)
-    axis_y = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    axis_y = np.array([0.0, 0.0, 1.0], dtype=Float)
 
     # Трансверсионная ось детектора (локальная ось +X, столбец 0) образует правую тройку: X = Y x Z
-    axis_x = np.array([np.sin(rad), -np.cos(rad), 0.0], dtype=np.float64)
+    axis_x = np.array([np.sin(orbit_angle), -np.cos(orbit_angle), 0.0], dtype=Float)
 
     if roll != 0.0:
-        roll_rad = np.radians(roll)
-        cos_roll = np.cos(roll_rad)
-        sin_roll = np.sin(roll_rad)
-        # Вращение вокруг нормали Z
+        roll_angle = float(np.radians(roll))
+        cos_roll = float(np.cos(roll_angle))
+        sin_roll = float(np.sin(roll_angle))
         rotated_x = cos_roll * axis_x + sin_roll * axis_y
         rotated_y = -sin_roll * axis_x + cos_roll * axis_y
-        mat[0:3, 0] = rotated_x
-        mat[0:3, 1] = rotated_y
+        orbit_matrix[0:3, 0] = rotated_x
+        orbit_matrix[0:3, 1] = rotated_y
     else:
-        mat[0:3, 0] = axis_x
-        mat[0:3, 1] = axis_y
+        orbit_matrix[0:3, 0] = axis_x
+        orbit_matrix[0:3, 1] = axis_y
 
-    return mat
+    return orbit_matrix
 
 
-__all__ = ["compute_spect_poses", "compute_orbit_matrix"]
+__all__ = [
+    "ISpectProtocolConfig",
+    "IStepKinematicsConfig",
+    "compute_spect_poses",
+    "compute_orbit_matrix",
+]
+

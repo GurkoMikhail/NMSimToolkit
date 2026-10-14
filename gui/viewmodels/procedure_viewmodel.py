@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import hepunits as units
 from PySide6.QtCore import QObject, Signal
@@ -275,7 +275,7 @@ class CustomSweepProcedureViewModel(BaseProcedureViewModel):
             self.changed.emit()
             self.parameter_changed.emit("zipped_variables", self._zipped_variables)
 
-    def to_config(self) -> CustomSweepProtocolConfig:
+    def to_config(self) -> Union[CustomSweepProtocolConfig, StepAndShootProtocolConfig]:
         return CustomSweepProtocolConfig(
             type="CustomSweep",
             grid_variables=self._grid_variables,
@@ -457,13 +457,13 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         if self._is_syncing_with_scene:
             return
         if property_name == "gantry_angle_deg":
-            angle_degrees = float(property_value)
-            if abs(self._start_angle - angle_degrees) > 1e-4:
+            angle_value = float(property_value)
+            if abs(self._start_angle - angle_value) > 1e-4:
                 self._is_syncing_with_scene = True
                 try:
-                    self._start_angle = angle_degrees
+                    self._start_angle = angle_value
                     self.changed.emit()
-                    self.parameter_changed.emit("start_angle", angle_degrees)
+                    self.parameter_changed.emit("start_angle", angle_value)
                 finally:
                     self._is_syncing_with_scene = False
 
@@ -673,7 +673,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
 
     @head_angles.setter
     def head_angles(self, new_head_angles: List[float]) -> None:
-        self._head_angles = [float(angle_deg) for angle_deg in new_head_angles]
+        self._head_angles = [float(angle_item) for angle_item in new_head_angles]
         self._gamma_cameras = max(1, len(self._head_angles))
         if self._observed_cameras and not self._is_syncing_with_scene and len(self._observed_cameras) == len(self._head_angles):
             self._is_syncing_with_scene = True
@@ -704,10 +704,10 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         return self._end_angle - self._start_angle
 
     @angular_range.setter
-    def angular_range(self, range_degrees: float) -> None:
-        self._end_angle = self._start_angle + float(range_degrees)
+    def angular_range(self, angular_span: float) -> None:
+        self._end_angle = self._start_angle + float(angular_span)
         self.changed.emit()
-        self.parameter_changed.emit("angular_range", range_degrees)
+        self.parameter_changed.emit("angular_range", angular_span)
 
     def sync_cameras(self, camera_vms: List[Any]) -> None:
         """
@@ -718,20 +718,20 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
             axial_position_z = float(camera_view_model.local_matrix[2, 3]) if camera_view_model.local_matrix is not None else 0.0
             orbit_angle = (angle_offset % 360.0) if isinstance(camera_view_model.parent_vm, GantryViewModel) else ((self._start_angle + angle_offset) % 360.0)
 
-            roll_angle_deg = 0.0
+            roll_angle = 0.0
             if camera_view_model.local_matrix is not None:
                 current_dir_z = camera_view_model.local_matrix[0:3, 2]
                 current_dir_y = camera_view_model.local_matrix[0:3, 1]
                 cos_roll = float(np.clip(np.dot(current_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
                 sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), current_dir_y), current_dir_z))
-                roll_angle_deg = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
+                roll_angle = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
 
             camera_view_model.local_matrix = compute_orbit_matrix(
                 radius=self._radius,
                 angle_deg=orbit_angle,
                 z=axial_position_z,
                 half_thickness=camera_view_model.half_thickness,
-                roll_deg=roll_angle_deg,
+                roll_deg=roll_angle,
             )
 
     def remove_variable(self, var_name: str) -> None:
@@ -806,7 +806,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
 
     def to_config(self) -> StepAndShootProtocolConfig:
         """Конвертация в модель конфигурации протокола пошагового сканирования StepAndShoot ядра."""
-        radius_cfg = None
+        radius_cfg: Optional[Union[float, List[float]]] = None
         if self._radius is not None:
             if isinstance(self._radius, list):
                 radius_cfg = [float(rad_val) * units.mm for rad_val in self._radius]
@@ -847,8 +847,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
             start_angle=float(np.degrees(config.start_angle)),
             end_angle=float(np.degrees(config.end_angle)),
             endpoint=config.endpoint,
-            grid_variables=dict(getattr(config, "grid_variables", {}) or {}),
-            zipped_variables=dict(getattr(config, "zipped_variables", {}) or {}),
+            grid_variables=dict(config.grid_variables or {}),
+            zipped_variables=dict(config.zipped_variables or {}),
             parent=parent,
         )
 
@@ -1092,3 +1092,14 @@ def procedure_from_config(config: AnyProtocolConfig, parent: Optional[QObject] =
             parent=parent,
         )
     raise ValueError(f"Неподдерживаемый тип конфигурации протокола: {type(config)}")
+
+
+__all__ = [
+    "BaseProcedureViewModel",
+    "CustomSweepProcedureViewModel",
+    "StepAndShootProcedureViewModel",
+    "SpectProcedureViewModel",
+    "PetProcedureViewModel",
+    "create_procedure_viewmodel",
+    "procedure_from_config",
+]

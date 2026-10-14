@@ -32,11 +32,11 @@ class GantryNode(CompositeNode):
         """
         return float(np.arctan2(self.local_matrix[1, 0], self.local_matrix[0, 0]))
 
-    def set_rotation_angle(self, angle_rad: float) -> None:
+    def set_rotation_angle(self, angle: float | Float) -> None:
         """
         Устанавливает угол поворота станины вокруг оси Z в радианах, сохраняя изоцентрическое вращение.
         """
-        angle_value = float(angle_rad)
+        angle_value = float(angle)
         cos_val = np.cos(angle_value)
         sin_val = np.sin(angle_value)
         self.local_matrix = np.array([

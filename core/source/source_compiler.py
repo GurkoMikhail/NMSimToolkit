@@ -1,16 +1,24 @@
+"""
+Модуль компилятора источников излучения для обхода графа сцены.
+"""
+
 from typing import List
 
-from core.scene.nodes import CompositeNode
+from core.scene.nodes import CompositeNode, SpatialNode
 from core.source.sources import Source
+
 
 class SourceCompiler:
     """
     Компилятор, отвечающий за извлечение плоского списка источников частиц из графа сцены.
     """
-    def __init__(self):
-        self.active_sources: List[Source] = []
 
-    def compile_scene(self, root_node: CompositeNode) -> List[Source]:
+    active_sources: List[Source]
+
+    def __init__(self) -> None:
+        self.active_sources = []
+
+    def compile_scene(self, root_node: SpatialNode) -> List[Source]:
         """
         Обходит граф сцены и извлекает все активные источники излучения.
         Извлекает только листовые источники (не имеющие других источников в качестве потомков).
@@ -19,9 +27,9 @@ class SourceCompiler:
         self._extract_sources(root_node)
         return self.active_sources
 
-    def _extract_sources(self, node: CompositeNode) -> bool:
+    def _extract_sources(self, node: SpatialNode) -> bool:
         """
-        Возвращает True, если текущий узел является источником и листом среди источников.
+        Возвращает True, если текущий узел является источником или содержит дочерние источники.
         """
         has_source_children = False
 
@@ -37,3 +45,7 @@ class SourceCompiler:
             return True
 
         return has_source_children
+
+
+__all__ = ["SourceCompiler"]
+

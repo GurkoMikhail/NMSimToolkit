@@ -227,26 +227,33 @@ sequenceDiagram
 
 ---
 
-## 6. Связность и потоки данных
+## 6. Связность, сериализация метаданных и потоки данных
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant UI as PropertyInspector / Tree / Gizmo
-    participant NVM as NodeViewModel
+    participant NVM as NodeViewModel[TCoreNode]
     participant SVC as SceneViewportController
     participant VP as VTKViewport
 
     UI->>NVM: Изменение трансформации (X, Y, Z, Rot)
     NVM->>SVC: Сигнал transform_changed
     SVC->>VP: update_actor_transform(name, matrix) (Без пересоздания меша!)
-    SVC->>VP: render() (с троттлингом min_render_interval)
+    SVC->>VP: request_render() (с троттлингом min_render_interval)
 ```
 
-1. **Реактивность без утечек:**
+1. **Строгая обобщенная типизация (`NodeViewModel[TCoreNode]`):**
+   * Базовый класс `NodeViewModel` параметризован типом узла ядра (`TCoreNode = TypeVar("TCoreNode", bound=SpatialNode)`), что обеспечивает 100% статическую проверку типов `mypy` (Python 3.12+) во всех специализированных ViewModel (`VolumeViewModel`, `VoxelVolumeViewModel`, `SourceViewModel`, `GammaCameraViewModel`, `GantryViewModel`, `DoseGridViewModel`).
+2. **Сохранение паспортных метаданных источников (`SourceMetadataConfig` / `source_metadata_registry`):**
+   * При загрузке и сохранении YAML-конфигураций в `MainWindow` паспортные атрибуты источников (`radionuclide`, `phantom_type`) синхронизируются через `source_metadata_registry` между `SceneBuilder`, `SourceViewModel`, `SceneExporter` и `ConfigTemplateBinder`, сохраняя чистоту физического класса `Source` в `core/`.
+3. **Реактивность без утечек:**
    * Редактирование в `PropertyInspector` или перетаскивание через `TransformGizmo` модифицирует `NodeViewModel.local_matrix`.
    * `SceneViewportController` перехватывает сигнал и вызывает `update_actor_transform`, меняя матрицу актора напрямую в VTK. Полигональная сетка не пересоздается.
-2. **Защита FPS графического интерфейса:**
+4. **Защита FPS графического интерфейса:**
    * Троттлинг отрисовки треков в [`TrackRenderer`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/viewport_3d/track_renderer.py) (`min_render_interval = 0.05 с`).
    * Троттлинг 3D-карты дозы в [`DoseVolumeRenderer`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/viewport_3d/dose_volume_renderer.py) (`min_render_interval = 0.15 с`).
-   * In-place мутация скалярных массивов `vtkImageData` без сброса камеры (`reset_camera=False`).
+   * In-place мутация ячеечных массивов `cell_data` в `vtkImageData` (`dimensions = (Nx + 1, Ny + 1, Nz + 1)`) без сброса камеры (`reset_camera=False`).
+5. **Доменное тестирование подсистемы GUI (`tests/`):**
+   * Все тесты графического интерфейса распределены по профильным доменным пакетам: `tests/viewmodels/`, `tests/viewport_3d/`, `tests/views/` и `tests/controllers/`.
+

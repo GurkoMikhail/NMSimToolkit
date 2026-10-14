@@ -1,12 +1,18 @@
-import json
-from core.geometry.flattened_scene import FlattenedScene
+"""
+Модуль потоковых обработчиков данных симуляции (Data Handlers).
+Реализует фильтрацию событий по чувствительным объемам, сборку полных историй частиц
+и форматирование датасетов для записи в HDF5.
+"""
+
 import abc
+import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
 import h5py
 import numpy as np
 
+from core.geometry.flattened_scene import FlattenedScene
 from core.geometry.volumes import Volume
 from core.physics.processes import get_process_mapping, get_species_mapping
 from core.scene.nodes import CompositeNode, SpatialNode
@@ -53,7 +59,19 @@ class BaseDataHandler(abc.ABC):
         """
         pass
 
+    def close(self) -> None:
+        """
+        Освобождение внешних ресурсов обработчика (например, SharedMemory) при завершении работы.
+        По умолчанию не выполняет действий, переопределяется в специализированных подклассах.
+        """
+        pass
+
+
 class DirectStreamHandler(BaseDataHandler):
+    """
+    Обработчик прямой потоковой записи всех начальных состояний и взаимодействий частиц в HDF5.
+    """
+
     def __init__(
         self,
         floating_point_precision: str = "float32",
@@ -145,6 +163,8 @@ class DirectStreamHandler(BaseDataHandler):
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')
         data = chunk.get('data')
+        if data is None:
+            return
 
         if chunk_type == 'initial_states':
             self._write_initial_states(data)
@@ -175,8 +195,8 @@ class DirectStreamHandler(BaseDataHandler):
             else:
                 prepared_states[state_key] = state_arr
 
-        def write_func(f: h5py.File) -> None:
-            group = f.require_group('initial_states')
+        def write_func(h5_file: h5py.File) -> None:
+            group = h5_file.require_group('initial_states')
             for state_key, state_arr in prepared_states.items():
                 if state_key not in group:
                     kwargs: Dict[str, Any] = {'maxshape': (None, *state_arr.shape[1:])}
@@ -202,8 +222,8 @@ class DirectStreamHandler(BaseDataHandler):
             self.writer_callback(write_func)
 
     def _write_interactions(self, volume_data_map: Dict[str, Dict[str, np.ndarray]]) -> None:
-        def write_func(f: h5py.File) -> None:
-            group = f.require_group('interactions')
+        def write_func(h5_file: h5py.File) -> None:
+            group = h5_file.require_group('interactions')
             for volume_name, volume_data in volume_data_map.items():
                 volume_group = group.require_group(volume_name)
                 for field_name, field_array in volume_data.items():
@@ -238,6 +258,10 @@ class DirectStreamHandler(BaseDataHandler):
             self.writer_callback(write_func)
 
 class SensitiveVolumeHandler(DirectStreamHandler):
+    """
+    Обработчик записи взаимодействий частиц только в заданных чувствительных объемах (и их поддеревьях).
+    """
+
     def __init__(
         self,
         sensitive_volumes: List[SpatialNode],
@@ -252,8 +276,8 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         )
         self.sensitive_volumes = self._filter_topmost_nodes(sensitive_volumes)
 
-        unique_roots = set()
-        self.unique_top_volumes = set()
+        unique_roots: Set[SpatialNode] = set()
+        self.unique_top_volumes: Set[SpatialNode] = set()
         for node in self.sensitive_volumes:
             unique_roots.add(node.root)
             if isinstance(node, Volume):
@@ -261,12 +285,11 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             else:
                 self.unique_top_volumes.add(node)
 
+        self.scene_root: Optional[SpatialNode] = None
         if len(unique_roots) > 1:
             raise ValueError("All sensitive volumes must share the same root simulation volume!")
         elif len(unique_roots) == 1:
             self.scene_root = unique_roots.pop()
-        else:
-            self.scene_root = None
 
         self.volume_mapping: Dict[int, SpatialNode] = {}
         self.target_volumes: List[int] = []
@@ -304,7 +327,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             flat_list = FlattenedScene(self.scene_root).flat_list
 
             sensitive_set = set(self.sensitive_volumes)
-            target_ids = set()
+            target_ids: Set[int] = set()
 
             for volume_idx, (vol, _, _) in enumerate(flat_list):
                 matched_sensitive: Optional[SpatialNode] = None
@@ -328,15 +351,16 @@ class SensitiveVolumeHandler(DirectStreamHandler):
 
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')
-        if chunk_type == 'interactions':
-            self._process_interactions(chunk['data'])
+        data = chunk.get('data')
+        if chunk_type == 'interactions' and data is not None:
+            self._process_interactions(data)
 
     def _process_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
         volume_ids = interactions['volume_id']
         mask_sensitive = np.isin(volume_ids, self.target_volumes)
 
         if np.any(mask_sensitive):
-            interactions_to_write = {k: v[mask_sensitive] for k, v in interactions.items()}
+            interactions_to_write = {field_key: field_val[mask_sensitive] for field_key, field_val in interactions.items()}
             self._format_and_write_interactions(interactions_to_write)
 
     def _get_volumes_to_write(self) -> List[SpatialNode]:
@@ -369,19 +393,22 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             global_direction = np.zeros((total_events_count, 3), dtype=target_float_dtype)
 
         events_saved = 0
-        volume_data_map = {}
+        volume_data_map: Dict[str, Dict[str, np.ndarray]] = {}
 
-        root_vol_names = []
+        mapped_vol_names_list: List[Optional[str]] = []
         for vid in volume_ids:
             if vid in self.volume_mapping:
-                root_vol_names.append(self.volume_mapping[vid].name)
+                mapped_vol_names_list.append(self.volume_mapping[vid].name)
             else:
-                root_vol_names.append(None)
+                mapped_vol_names_list.append(None)
 
-        root_vol_names = np.array(root_vol_names)
+        root_vol_names = np.array(mapped_vol_names_list, dtype=object)
 
         for top_volume in self._get_volumes_to_write():
-            mask = root_vol_names == top_volume.name
+            top_volume_name = top_volume.name
+            if not top_volume_name:
+                continue
+            mask = root_vol_names == top_volume_name
 
             if not np.any(mask):
                 continue
@@ -404,7 +431,11 @@ class SensitiveVolumeHandler(DirectStreamHandler):
                 species_code = np.zeros(np.count_nonzero(mask), dtype=np.uint8)
 
             particle_ID = interactions['particle_ID'][mask]
-            energy_deposit = interactions['energy_deposit'][mask].astype(target_float_dtype) if 'energy_deposit' in interactions else np.zeros(len(particle_ID), dtype=target_float_dtype)
+            energy_deposit = (
+                interactions['energy_deposit'][mask].astype(target_float_dtype)
+                if 'energy_deposit' in interactions
+                else np.zeros(len(particle_ID), dtype=target_float_dtype)
+            )
 
             if 'scattering_theta' in interactions and 'scattering_phi' in interactions:
                 scattering_theta = interactions['scattering_theta'][mask]
@@ -415,16 +446,28 @@ class SensitiveVolumeHandler(DirectStreamHandler):
             else:
                 scattering_angles = np.zeros((len(particle_ID), 2), dtype=target_float_dtype)
 
-            material_id = interactions['material_id'][mask].astype(np.uint32) if 'material_id' in interactions else np.zeros(len(particle_ID), dtype=np.uint32)
+            material_id = (
+                interactions['material_id'][mask].astype(np.uint32)
+                if 'material_id' in interactions
+                else np.zeros(len(particle_ID), dtype=np.uint32)
+            )
             volume_id = interactions['volume_id'][mask].astype(np.uint32)
-            Z = interactions['Z'][mask].astype(np.int8) if 'Z' in interactions else np.zeros(len(particle_ID), dtype=np.int8)
+            atomic_number = (
+                interactions['Z'][mask].astype(np.int8)
+                if 'Z' in interactions
+                else np.zeros(len(particle_ID), dtype=np.int8)
+            )
 
             n_events = len(process_code)
             events_saved += n_events
 
-            distance_traveled = interactions['distance_traveled'][mask].astype(target_float_dtype) if 'distance_traveled' in interactions else np.zeros(len(particle_ID), dtype=target_float_dtype)
+            distance_traveled = (
+                interactions['distance_traveled'][mask].astype(target_float_dtype)
+                if 'distance_traveled' in interactions
+                else np.zeros(len(particle_ID), dtype=target_float_dtype)
+            )
 
-            volume_data_map[top_volume.name] = {
+            volume_data_map[top_volume_name] = {
                 'global_position': vol_global_pos,
                 'global_direction': vol_global_dir,
                 'process_code': process_code,
@@ -433,9 +476,9 @@ class SensitiveVolumeHandler(DirectStreamHandler):
                 'energy_deposit': energy_deposit,
                 'volume_id': volume_id,
                 'material_id': material_id,
-                'Z': Z,
+                'Z': atomic_number,
                 'scattering_angles': scattering_angles,
-                'distance_traveled': distance_traveled
+                'distance_traveled': distance_traveled,
             }
 
         if not volume_data_map:
@@ -444,7 +487,14 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         self._write_interactions(volume_data_map)
         _logger.debug(f'Interactions write task forwarded for {events_saved} events.')
 
+
 class HistoryAssemblerHandler(SensitiveVolumeHandler):
+    """
+    Обработчик сборки полных историй частиц, попавших в чувствительные объемы детекторов.
+    Накапливает начальные состояния и взаимодействия до гибели частицы и сбрасывает в HDF5
+    полную историю только для зарегистрированных частиц.
+    """
+
     def __init__(
         self,
         sensitive_volumes: List[SpatialNode],
@@ -468,18 +518,20 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')
         data = chunk.get('data')
+        if data is None:
+            return
 
         if chunk_type == 'initial_states':
             if self.save_initial_states:
-                self.initial_states_chunks.append({k: np.array(v, copy=False) for k, v in data.items()})
+                self.initial_states_chunks.append({key: np.array(val, copy=False) for key, val in data.items()})
         elif chunk_type == 'interactions':
             vol_ids = data['volume_id']
             scored_mask = np.isin(vol_ids, self.target_volumes)
             if np.any(scored_mask):
-                self.scored_particles.update(data['particle_ID'][scored_mask])
-            self.interactions_chunks.append({k: np.array(v, copy=False) for k, v in data.items()})
+                self.scored_particles.update(data['particle_ID'][scored_mask].tolist())
+            self.interactions_chunks.append({key: np.array(val, copy=False) for key, val in data.items()})
         elif chunk_type == 'dead_particles':
-            dead_ids = data
+            dead_ids = np.asarray(data)
             if len(dead_ids) > 0:
                 self._flush_dead_particles(dead_ids)
 
@@ -488,7 +540,7 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
         if self.scene_root is not None and self.scene_root not in volumes_to_write:
             volumes_to_write.append(self.scene_root)
         unique_nodes: List[SpatialNode] = []
-        seen_names: Set[str] = set()
+        seen_names: Set[Optional[str]] = set()
         for node in volumes_to_write:
             if node.name not in seen_names:
                 unique_nodes.append(node)
@@ -500,12 +552,15 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
 
         initial_states_to_write = None
         if self.initial_states_chunks:
-            mega_init = {k: np.concatenate([c[k] for c in self.initial_states_chunks]) for k in self.initial_states_chunks[0].keys()}
+            mega_init = {
+                key: np.concatenate([chunk_item[key] for chunk_item in self.initial_states_chunks])
+                for key in self.initial_states_chunks[0].keys()
+            }
 
             if len(scored_dead_ids) > 0:
                 scored_mask = np.isin(mega_init['particle_ID'], scored_dead_ids)
                 if np.any(scored_mask):
-                    initial_states_to_write = {k: v[scored_mask] for k, v in mega_init.items()}
+                    initial_states_to_write = {key: val[scored_mask] for key, val in mega_init.items()}
 
                     if 'pos_x' in initial_states_to_write:
                         pos_x = initial_states_to_write.pop('pos_x')
@@ -521,30 +576,67 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
 
             survivor_mask = ~np.isin(mega_init['particle_ID'], dead_ids)
             if np.any(survivor_mask):
-                self.initial_states_chunks = [{k: v[survivor_mask] for k, v in mega_init.items()}]
+                self.initial_states_chunks = [{key: val[survivor_mask] for key, val in mega_init.items()}]
             else:
                 self.initial_states_chunks.clear()
 
         interactions_to_write = None
         if self.interactions_chunks:
-            mega_inter = {k: np.concatenate([c[k] for c in self.interactions_chunks]) for k in self.interactions_chunks[0].keys()}
+            mega_inter = {
+                key: np.concatenate([chunk_item[key] for chunk_item in self.interactions_chunks])
+                for key in self.interactions_chunks[0].keys()
+            }
 
             if len(scored_dead_ids) > 0:
                 scored_mask = np.isin(mega_inter['particle_ID'], scored_dead_ids)
                 if np.any(scored_mask):
-                    interactions_to_write = {k: v[scored_mask] for k, v in mega_inter.items()}
+                    interactions_to_write = {key: val[scored_mask] for key, val in mega_inter.items()}
                     sort_idx = np.argsort(interactions_to_write['particle_ID'])
-                    interactions_to_write = {k: v[sort_idx] for k, v in interactions_to_write.items()}
+                    interactions_to_write = {key: val[sort_idx] for key, val in interactions_to_write.items()}
 
             survivor_mask = ~np.isin(mega_inter['particle_ID'], dead_ids)
             if np.any(survivor_mask):
-                self.interactions_chunks = [{k: v[survivor_mask] for k, v in mega_inter.items()}]
+                self.interactions_chunks = [{key: val[survivor_mask] for key, val in mega_inter.items()}]
             else:
                 self.interactions_chunks.clear()
 
-        self.scored_particles.difference_update(dead_ids)
+        self.scored_particles.difference_update(dead_ids.tolist())
 
         if initial_states_to_write is not None:
             self._write_initial_states(initial_states_to_write)
         if interactions_to_write is not None:
             self._format_and_write_interactions(interactions_to_write)
+
+    def finalize(self) -> None:
+        """
+        Принудительный сброс оставшихся в буферах историй частиц при завершении симуляции
+        и очистка внутренних накопителей.
+        """
+        if self.scored_particles or self.initial_states_chunks or self.interactions_chunks:
+            id_arrays: List[np.ndarray] = []
+            if self.scored_particles:
+                id_arrays.append(np.fromiter(self.scored_particles, dtype=np.int64))
+            for init_chunk in self.initial_states_chunks:
+                if "particle_ID" in init_chunk and len(init_chunk["particle_ID"]) > 0:
+                    id_arrays.append(np.asarray(init_chunk["particle_ID"], dtype=np.int64))
+            for inter_chunk in self.interactions_chunks:
+                if "particle_ID" in inter_chunk and len(inter_chunk["particle_ID"]) > 0:
+                    id_arrays.append(np.asarray(inter_chunk["particle_ID"], dtype=np.int64))
+
+            if id_arrays:
+                all_remaining_ids = np.unique(np.concatenate(id_arrays))
+                if len(all_remaining_ids) > 0:
+                    self._flush_dead_particles(all_remaining_ids)
+
+        self.initial_states_chunks.clear()
+        self.interactions_chunks.clear()
+        self.scored_particles.clear()
+
+
+__all__ = [
+    "BaseDataHandler",
+    "DirectStreamHandler",
+    "SensitiveVolumeHandler",
+    "HistoryAssemblerHandler",
+]
+

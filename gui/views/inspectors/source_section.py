@@ -37,8 +37,6 @@ def _try_parse_float(text: Optional[str], default_val: float) -> float:
     """Безопасный парсинг вещественного числа по принципу LBYL без возбуждения исключений."""
     if not text:
         return default_val
-    clean_text = text.strip().replace(",", "")
-    # Учитываем как точку, так и запятую в качестве разделителя дроби
     clean_text = text.strip().replace(",", ".")
     if _FLOAT_PATTERN.match(clean_text):
         parsed = float(clean_text)
@@ -51,9 +49,11 @@ class SourceInspectorSection(BaseInspectorSection):
     """Секция настройки спектра энергий, активности, полураспада и 3D-распределения источника."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует секцию параметров источника излучения."""
         super().__init__("Параметры источника (Radiation Source)", parent)
 
     def _init_ui(self) -> None:
+        """Создает элементы управления спектром, активностью, полураспадом и распределением источника."""
         form_layout = QFormLayout(self)
 
         self.combo_rad_type = QComboBox()
@@ -63,8 +63,8 @@ class SourceInspectorSection(BaseInspectorSection):
 
         self.tbl_source_spectrum = QTableWidget(0, 2)
         self.tbl_source_spectrum.setHorizontalHeaderLabels(["Энергия (кэВ)", "Вес / Доля"])
-        self.tbl_source_spectrum.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.tbl_source_spectrum.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tbl_source_spectrum.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tbl_source_spectrum.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.tbl_source_spectrum.setMinimumHeight(120)
         self.tbl_source_spectrum.cellChanged.connect(self._on_spectrum_cell_changed)
 
@@ -122,14 +122,17 @@ class SourceInspectorSection(BaseInspectorSection):
         form_layout.addRow("Сетка источника:", self.lbl_source_shape)
 
     def can_handle(self, view_model: Any) -> bool:
+        """Проверяет, является ли модель представления источником SourceViewModel."""
         return isinstance(view_model, SourceViewModel)
 
     def unbind(self) -> None:
+        """Сбрасывает привязки и очищает таблицу спектра при отвязке источника."""
         super().unbind()
         self.spin_source_activity.unbind()
         self.tbl_source_spectrum.setRowCount(0)
 
     def update_ui_from_vm(self) -> None:
+        """Синхронизирует все поля секции с текущей моделью SourceViewModel."""
         if not isinstance(self._current_vm, SourceViewModel):
             return
 
@@ -164,6 +167,7 @@ class SourceInspectorSection(BaseInspectorSection):
             self._is_updating_ui = old_state
 
     def on_property_changed_externally(self, prop_name: str, new_val: Any) -> None:
+        """Точечно обновляет поля секции при внешнем изменении свойств источника."""
         if not isinstance(self._current_vm, SourceViewModel):
             return
 
@@ -198,6 +202,7 @@ class SourceInspectorSection(BaseInspectorSection):
                 self.spin_source_activity.unbind()
 
     def _set_spin_safe(self, spin: Any, val: float) -> None:
+        """Устанавливает значение спинбокса с защитой от рекурсивных сигналов."""
         self._is_updating_ui = True
         try:
             spin.setValue(val)
@@ -205,6 +210,7 @@ class SourceInspectorSection(BaseInspectorSection):
             self._is_updating_ui = False
 
     def _on_source_rad_type_changed(self, text: str) -> None:
+        """Применяет выбранный тип излучения к модели представления источника."""
         if self._is_updating_ui or not isinstance(self._current_vm, SourceViewModel):
             return
         self._current_vm.radiation_type = text
@@ -220,8 +226,8 @@ class SourceInspectorSection(BaseInspectorSection):
             for row_index, energy_weight_pair in enumerate(spectrum):
                 item_energy = QTableWidgetItem(f"{float(energy_weight_pair[0]):.4f}")
                 item_weight = QTableWidgetItem(f"{float(energy_weight_pair[1]):.4f}")
-                item_energy.setTextAlignment(Qt.AlignCenter)
-                item_weight.setTextAlignment(Qt.AlignCenter)
+                item_energy.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item_weight.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.tbl_source_spectrum.setItem(row_index, 0, item_energy)
                 self.tbl_source_spectrum.setItem(row_index, 1, item_weight)
         finally:
@@ -303,16 +309,19 @@ class SourceInspectorSection(BaseInspectorSection):
         self._update_source_spectrum_table()
 
     def _on_source_activity_changed(self, value: float) -> None:
+        """Применяет новое значение активности к модели представления источника."""
         if self._is_updating_ui or not isinstance(self._current_vm, SourceViewModel):
             return
         self._current_vm.activity = float(value)
 
     def _on_source_half_life_changed(self, value: float) -> None:
+        """Применяет новое значение периода полураспада к модели представления источника."""
         if self._is_updating_ui or not isinstance(self._current_vm, SourceViewModel):
             return
         self._current_vm.half_life = float(value)
 
     def _on_source_voxel_size_changed(self, value: float) -> None:
+        """Применяет новый шаг вокселя к модели представления источника."""
         if self._is_updating_ui or not isinstance(self._current_vm, SourceViewModel):
             return
         self._current_vm.voxel_size = float(value)
@@ -344,7 +353,7 @@ class SourceInspectorSection(BaseInspectorSection):
             scene_phantom_node=phantom_node,
             default_voxel_size=self._current_vm.voxel_size,
         )
-        if dialog.exec() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             params = dialog.get_parameters()
             file_path_str = str(params.file_path)
             self.txt_source_path.setText(file_path_str)
@@ -376,3 +385,6 @@ class SourceInspectorSection(BaseInspectorSection):
 
                 if self._scene_vm is not None:
                     self._scene_vm.update_distribution_path(self._current_vm.core_node, file_path_str)
+
+
+__all__ = ["SourceInspectorSection"]

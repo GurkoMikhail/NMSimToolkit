@@ -28,7 +28,7 @@ class GuiStreamDataHandler(BaseDataHandler):
         track_queue: Optional[Any] = None,
         shm_name: Optional[str] = None,
         projection_shape: Tuple[int, int] = (128, 128),
-        projection_dtype: np.dtype = np.float32,
+        projection_dtype: Any = np.float32,
         create_shm: bool = False,
         sensitive_volume_ids: Optional[Set[int]] = None,
         max_tracks_per_batch: int = 2000,
@@ -124,7 +124,7 @@ class GuiStreamDataHandler(BaseDataHandler):
         elif chunk_type == 'escaped_particles' and self.show_escaped_tracks:
             self._handle_escaped_particles(data)
 
-    def _handle_initial_states(self, data: Dict[str, np.ndarray]) -> None:
+    def _handle_initial_states(self, data: Mapping[str, Any]) -> None:
         """
         Обработка начальных состояний частиц: отправка точек рождения
         в очередь треков для построения полных траекторий от источника к взаимодействиям.
@@ -164,7 +164,7 @@ class GuiStreamDataHandler(BaseDataHandler):
         except queue.Full:
             pass
 
-    def _handle_escaped_particles(self, data: Dict[str, np.ndarray]) -> None:
+    def _handle_escaped_particles(self, data: Mapping[str, Any]) -> None:
         """
         Обработка вылетевших частиц: отправка начальной точки рождения и граничной точки выхода
         в очередь треков для построения сквозных лучей вылетевших квантов.
@@ -235,7 +235,7 @@ class GuiStreamDataHandler(BaseDataHandler):
         except queue.Full:
             pass
 
-    def _handle_interactions(self, data: Dict[str, np.ndarray]) -> None:
+    def _handle_interactions(self, data: Mapping[str, Any]) -> None:
         """
         Обработка взаимодействий: отправка треков в очередь и проецирование на детектор.
         """
@@ -281,7 +281,7 @@ class GuiStreamDataHandler(BaseDataHandler):
             }
             try:
                 self.track_queue.put_nowait(track_payload)
-            except Exception:
+            except (queue.Full, OSError, RuntimeError, ValueError, BufferError):
                 pass
 
         if self._projection_array is not None:

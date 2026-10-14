@@ -1,24 +1,27 @@
+"""
+Модуль менеджера моделирования (SimulationManager) и состояний жизненного цикла симуляции.
+"""
+
+from datetime import datetime, timedelta
 from enum import Enum, auto
 import logging
 import queue
-import threading
-from datetime import datetime, timedelta
 from signal import SIGINT, signal
-from typing import Callable, List, Optional, Union, Any
+import threading
+from typing import Any, Callable, List, Optional, Union
 
-import numpy as np
 import hepunits as units
+import numpy as np
 from numpy.typing import NDArray
 
-from core.geometry.volumes import Volume
 from core.geometry.geometry_compiler import GeometryCompiler
+from core.other.typing_definitions import Float, Index
+from core.particles.particles import ParticleBank
+from core.physics.interaction_buffers import RNGContext, SimulationDataBuffer
+from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.physics_compiler import PhysicsCompiler
 from core.scene.nodes import CompositeNode
 from core.source.source_compiler import SourceCompiler
-from core.other.typing_definitions import Float, Index
-from core.particles.particles import ParticleBank
-from core.physics.interaction_buffers import SimulationDataBuffer, RNGContext
-from core.physics.physics_buffer import PhysicsBuffer
 from core.source.sources import Source
 from core.transport.propagator import ParticlePropagator
 
@@ -29,10 +32,12 @@ class SimulationState(Enum):
     """
     Состояния жизненного цикла процесса моделирования.
     """
+
     IDLE = auto()
     RUNNING = auto()
     PAUSED = auto()
     STOPPED = auto()
+
 
 Queue = queue.Queue
 Thread = threading.Thread
@@ -43,16 +48,17 @@ class SimulationManager(Thread):
     Вычислительный менеджер симуляции, оптимизированный под Data-Oriented Design (SoA),
     с поддержкой непрерывной инжекции частиц и эффективного уплотнения буферов данных на месте.
     """
+
     active_sources: List[Source]
     scene: CompositeNode
     propagator: ParticlePropagator
     stop_time: Float
     particles_number: int
     min_energy: Float
-    queue: Queue
+    queue: Queue[Any]
     bank: ParticleBank
     data_buffer: SimulationDataBuffer
-    geometry_buffer: NDArray
+    geometry_buffer: NDArray[Any]
     physics_buffer: PhysicsBuffer
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
@@ -64,11 +70,11 @@ class SimulationManager(Thread):
         self,
         scene: CompositeNode,
         propagator: Optional[ParticlePropagator] = None,
-        stop_time: Float = 1*units.s,
-        start_time: Float = Float(0.0),
-        particles_number: Union[int, Float] = 10**3,
-        min_energy: Float = 1*units.keV,
-        queue: Optional[Queue] = None,
+        stop_time: Union[float, Float] = Float(1.0 * units.s),
+        start_time: Union[float, Float] = Float(0.0),
+        particles_number: Union[int, float, Float] = 10**3,
+        min_energy: Union[float, Float] = Float(1.0 * units.keV),
+        queue: Optional[Queue[Any]] = None,
         buffer_capacity: Optional[int] = None,
         name: Optional[str] = None,
         seed: Optional[int] = None,
@@ -82,32 +88,40 @@ class SimulationManager(Thread):
 
         self.geometry_buffer = GeometryCompiler().compile_scene(scene)
         self.physics_buffer = PhysicsCompiler().compile_scene(scene, self.propagator.processes)
-        self.stop_time = stop_time
+        self.stop_time = Float(stop_time)
         self.particles_number = int(particles_number)
-        effective_capacity = self.particles_number if buffer_capacity is None else max(int(buffer_capacity), self.particles_number)
-        self.min_energy = min_energy
+        effective_capacity = (
+            self.particles_number if buffer_capacity is None else max(int(buffer_capacity), self.particles_number)
+        )
+        self.min_energy = Float(min_energy)
         self.queue = Queue(maxsize=64) if queue is None else queue
         self.step = 1
         self.daemon = True
 
         self.bank = ParticleBank.allocate(self.particles_number)
         self.data_buffer = SimulationDataBuffer.allocate(effective_capacity, effective_capacity, effective_capacity)
-        if seed is not None:
-            self.propagator.rng = np.random.default_rng(seed)
-            for source_node in self.active_sources:
-                source_node.rng = self.propagator.rng
+
+        base_rng = np.random.default_rng(seed) if seed is not None else self.propagator.rng
+        spawned_rngs = base_rng.spawn(1 + len(self.active_sources))
+        self.propagator.rng = spawned_rngs[0]
+        for process in self.propagator.processes:
+            process.rng = self.propagator.rng
+        for source_node, source_rng in zip(self.active_sources, spawned_rngs[1:]):
+            source_node.rng = source_rng
+
         self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
         self.global_timer = Float(start_time)
 
-        self._state: SimulationState = SimulationState.IDLE
-        self._run_event: threading.Event = threading.Event()
+        self._state = SimulationState.IDLE
+        self._run_event = threading.Event()
         self._run_event.set()
 
         try:
             signal(SIGINT, self.sigint_handler)
         except (ValueError, AttributeError):
             pass
+
 
     @property
     def state(self) -> SimulationState:
@@ -158,10 +172,8 @@ class SimulationManager(Thread):
         _logger.error(f'{self.name} interrupted at {timedelta(seconds=self.global_timer/units.second)}')
         self.stop()
 
-    def send_data(self, data):
-        # We need to copy or view the interaction data up to cursor
-        # Actually in production we should extract recarray from SoA InteractionBuffer
-        # but for now we just pass a copy or slice.
+    def send_data(self, data: Any) -> None:
+        """Отправляет пакет телеметрии в выходную очередь симуляции."""
         self.queue.put(data)
 
     def flush_interactions(self) -> None:
@@ -248,26 +260,36 @@ class SimulationManager(Thread):
     MIN_TIME_STEP = Float(1e-9)
 
     def _calculate_time_step(self, num_to_inject: int) -> Float:
-        total_activity = sum(source_node.get_activity(self.global_timer) for source_node in self.active_sources)
-        if total_activity <= 0:
+        total_activity = float(sum(source_node.get_activity(self.global_timer) for source_node in self.active_sources))
+        if total_activity <= 0.0:
             return Float(self.stop_time - self.global_timer)
 
         # Начальное приближение: линейная экстраполяция
         delta_time = Float(num_to_inject / total_activity)
 
         def objective_func(current_delta_time: Float) -> float:
-            return sum(source_node.get_activity(self.global_timer) * source_node._get_effective_dt(current_delta_time) for source_node in self.active_sources) - num_to_inject
+            return (
+                float(
+                    sum(
+                        source_node.get_activity(self.global_timer) * source_node._get_effective_dt(current_delta_time)
+                        for source_node in self.active_sources
+                    )
+                )
+                - num_to_inject
+            )
 
         def derivative_func(current_delta_time: Float) -> float:
-            return sum(source_node.get_activity(self.global_timer + current_delta_time) for source_node in self.active_sources)
+            return float(
+                sum(source_node.get_activity(self.global_timer + current_delta_time) for source_node in self.active_sources)
+            )
 
         # Метод Ньютона-Рафсона
         for _ in range(self.MAX_NEWTON_ITERATIONS):
             function_value = objective_func(delta_time)
             derivative_value = derivative_func(delta_time)
-            if derivative_value == 0:
+            if derivative_value == 0.0:
                 break
-            delta_time = delta_time - Float(function_value / derivative_value)
+            delta_time = Float(delta_time - Float(function_value / derivative_value))
             if abs(function_value) < self.NEWTON_TARGET_PRECISION:
                 break
 
@@ -277,37 +299,41 @@ class SimulationManager(Thread):
         return min(delta_time, Float(self.stop_time - self.global_timer))
 
     def _distribute_quotas(self, target_time: Float, num_to_inject: int) -> None:
-        expected = np.array([source_node.get_expected_particles(self.global_timer, target_time) for source_node in self.active_sources])
+        expected = np.array(
+            [source_node.get_expected_particles(self.global_timer, target_time) for source_node in self.active_sources],
+            dtype=Float,
+        )
         target_total = min(num_to_inject, int(np.round(np.sum(expected))))
 
         quotas = np.floor(expected).astype(int)
         remainders = expected - quotas
 
-        shortfall = target_total - np.sum(quotas)
+        shortfall = int(target_total - np.sum(quotas))
         if shortfall > 0:
             indices = np.argsort(remainders)[::-1]
-            for shortfall_idx in range(int(shortfall)):
+            for shortfall_idx in range(shortfall):
                 quotas[indices[shortfall_idx % len(indices)]] += 1
 
         for source_obj, quota_count in zip(self.active_sources, quotas):
-            if quota_count > 0:
-                source_obj.inject(self.bank, quota_count, self.global_timer, target_time)
+            if int(quota_count) > 0:
+                source_obj.inject(self.bank, int(quota_count), self.global_timer, target_time)
 
     def _replenish_bank(self) -> None:
-        num_active = np.count_nonzero(self.bank.state.is_active)
-        num_to_inject = self.bank.capacity - num_active
+        num_active = int(np.count_nonzero(self.bank.state.is_active))
+        num_to_inject = int(self.bank.capacity - num_active)
 
         if num_to_inject <= 0 or not self.active_sources or self.global_timer >= self.stop_time:
             return
 
         delta_time = self._calculate_time_step(num_to_inject)
-        target_time = self.global_timer + delta_time
+        target_time = Float(self.global_timer + delta_time)
 
         self._distribute_quotas(target_time, num_to_inject)
 
         self.global_timer = target_time
 
-    def next_step(self):
+    def next_step(self) -> None:
+        """Выполняет один шаг пополнения банка частиц, переноса и сброса буферов."""
         self._replenish_bank()
 
         active_indices = self.bank.active_indices
@@ -315,23 +341,20 @@ class SimulationManager(Thread):
         if active_indices.size == 0:
             return
 
-        # Pre-flight Check: Ensure buffer has enough space for a worst-case scenario
         if len(active_indices) > self.data_buffer.initial_states.remaining_capacity:
             self.flush_initial_states()
 
         if len(active_indices) > self.data_buffer.interactions.remaining_capacity:
             self.flush_interactions()
 
-        # Step physics and kinematics
         self.propagator.step(
             self.bank,
             self.data_buffer,
             self.geometry_buffer,
             self.physics_buffer,
-            self.rng_ctx
+            self.rng_ctx,
         )
 
-        # Invalidation
         dead_indices = self._apply_invalidators(active_indices)
 
         if dead_indices.size > 0:
@@ -340,7 +363,7 @@ class SimulationManager(Thread):
 
         self.step += 1
 
-    def _collect_escaped_particles(self, dead_indices: np.ndarray) -> None:
+    def _collect_escaped_particles(self, dead_indices: NDArray[Index]) -> None:
         """
         Регистрация вылетевших частиц за границы геометрии сцены и отправка в очередь телеметрии.
         """
@@ -376,7 +399,7 @@ class SimulationManager(Thread):
         }
         self.send_data(escaped_chunk)
 
-    def _handle_dead_particles(self, dead_indices: np.ndarray) -> None:
+    def _handle_dead_particles(self, dead_indices: NDArray[Index]) -> None:
         """
         Запись идентификаторов поглощенных и выбывших частиц в кольцевой буфер завершенных историй.
         """
@@ -420,3 +443,10 @@ class SimulationManager(Thread):
         stop_timepoint = datetime.now()
         _logger.info(f'{self.name} finished at {timedelta(seconds=self.global_timer/units.second)}')
         _logger.info(f'The simulation of {self.name} took {stop_timepoint - start_timepoint}')
+
+
+__all__ = [
+    "SimulationState",
+    "SimulationManager",
+]
+

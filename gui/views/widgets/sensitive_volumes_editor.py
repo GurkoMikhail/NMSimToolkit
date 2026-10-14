@@ -1,19 +1,35 @@
+"""
+Виджет инспекции и управления чувствительными объемами (детекторами) обработчиков данных.
+"""
 import logging
 from typing import Any, List, Optional
 
-from PySide6.QtCore import Qt, QPoint, QObject, Signal
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import (
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QKeyEvent,
+)
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
-    QListWidgetItem, QPushButton, QLabel, QMenu
+    QAbstractItemView,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from core.geometry.volumes import Volume
-from core.scene.nodes import CompositeNode
 from core.scene.dose_grid_node import DoseGridNode
-from gui.viewmodels.nodes.base_node_vm import NodeViewModel
-from gui.viewmodels.nodes.volume_vm import VolumeViewModel
-from gui.viewmodels.scene_viewmodel import SceneViewModel
+from core.scene.nodes import CompositeNode
 from gui.viewmodels.data_handler_viewmodel import SensitiveVolumeHandlerViewModel
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.scene_viewmodel import SceneViewModel
+from gui.views.scene_tree_widget import SceneTreeWidget
 
 _logger = logging.getLogger(__name__)
 
@@ -23,13 +39,15 @@ class SensitiveVolumesListWidget(QListWidget):
     Список чувствительных объемов с поддержкой Drag-and-Drop из дерева сцены.
     """
 
-    def __init__(self, editor: 'SensitiveVolumesEditorWidget') -> None:
+    def __init__(self, editor: "SensitiveVolumesEditorWidget") -> None:
+        """Инициализирует список чувствительных объемов с поддержкой приема перетаскивания."""
         super().__init__(editor)
         self.editor = editor
         self.setAcceptDrops(True)
-        self.setDragDropMode(QListWidget.DropOnly)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DropOnly)
 
     def _is_valid_drop_candidate(self, node_view_model: Optional[NodeViewModel]) -> bool:
+        """Проверяет, может ли узел сцены быть добавлен как чувствительный объем."""
         if node_view_model is None or self.editor.handler_vm is None:
             return False
         scene_view_model = self.editor.scene_vm
@@ -43,8 +61,8 @@ class SensitiveVolumesListWidget(QListWidget):
             return False
         return True
 
-    def dragEnterEvent(self, event) -> None:
-        from gui.views.scene_tree_widget import SceneTreeWidget
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        """Проверяет допустимость перетаскиваемого узла при входе курсора в область списка."""
         candidate_vm = SceneTreeWidget._current_dragged_vm
         if candidate_vm is None and event.mimeData().hasText():
             text_name = event.mimeData().text().strip()
@@ -55,8 +73,8 @@ class SensitiveVolumesListWidget(QListWidget):
         else:
             event.ignore()
 
-    def dragMoveEvent(self, event) -> None:
-        from gui.views.scene_tree_widget import SceneTreeWidget
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        """Поддерживает индикацию допустимого сброса при перемещении курсора над списком."""
         candidate_vm = SceneTreeWidget._current_dragged_vm
         if candidate_vm is None and event.mimeData().hasText():
             text_name = event.mimeData().text().strip()
@@ -67,8 +85,8 @@ class SensitiveVolumesListWidget(QListWidget):
         else:
             event.ignore()
 
-    def dropEvent(self, event) -> None:
-        from gui.views.scene_tree_widget import SceneTreeWidget
+    def dropEvent(self, event: QDropEvent) -> None:
+        """Обрабатывает сброс узла из дерева сцены и добавляет его в список детекторов."""
         candidate_vm = SceneTreeWidget._current_dragged_vm
         if candidate_vm is None and event.mimeData().hasText():
             text_name = event.mimeData().text().strip()
@@ -82,8 +100,9 @@ class SensitiveVolumesListWidget(QListWidget):
         else:
             event.ignore()
 
-    def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Удаляет выбранные элементы списка по нажатию клавиш Delete или Backspace."""
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self.editor._on_remove_clicked()
         else:
             super().keyPressEvent(event)
@@ -103,6 +122,7 @@ class SensitiveVolumesEditorWidget(QWidget):
         scene_vm: Optional[SceneViewModel] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
+        """Инициализирует редактор списка чувствительных объемов."""
         super().__init__(parent)
         self.handler_vm: Optional[SensitiveVolumeHandlerViewModel] = None
         self.scene_vm: Optional[SceneViewModel] = None
@@ -115,6 +135,7 @@ class SensitiveVolumesEditorWidget(QWidget):
             self.set_scene_viewmodel(scene_vm)
 
     def _init_ui(self) -> None:
+        """Создает список, кнопки управления и выпадающее меню выбора объемов."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(4)
@@ -182,9 +203,11 @@ class SensitiveVolumesEditorWidget(QWidget):
         self._refresh_list()
 
     def _on_scene_changed_notification(self, *args: Any) -> None:
+        """Обновляет список при изменениях состава узлов сцены."""
         self._refresh_list()
 
     def _on_scene_renamed_notification(self, *args: Any) -> None:
+        """Обновляет список при переименовании узла в сцене."""
         self._refresh_list()
 
     def _refresh_list(self) -> None:
@@ -200,12 +223,12 @@ class SensitiveVolumesEditorWidget(QWidget):
             if node_vm is not None:
                 item = QListWidgetItem(f"🎯 {volume_name} ({node_vm.node_type})")
                 item.setToolTip(f"Имя: {volume_name}\nТип: {node_vm.node_type}\nСтатус: Присутствует в сцене")
-                item.setData(Qt.UserRole, volume_name)
+                item.setData(Qt.ItemDataRole.UserRole, volume_name)
             else:
                 item = QListWidgetItem(f"⚠️ {volume_name} (отсутствует в сцене)")
                 item.setToolTip(f"Имя: {volume_name}\nСтатус: Внимание! Узел не найден в текущей сцене.")
-                item.setForeground(Qt.yellow)
-                item.setData(Qt.UserRole, volume_name)
+                item.setForeground(Qt.GlobalColor.yellow)
+                item.setData(Qt.ItemDataRole.UserRole, volume_name)
             self.list_widget.addItem(item)
 
     def _populate_add_menu(self) -> None:
@@ -241,17 +264,19 @@ class SensitiveVolumesEditorWidget(QWidget):
             action.triggered.connect(lambda checked=False, target_name=node_vm.name: self._on_add_volume(target_name))
 
     def _on_add_volume(self, volume_name: str) -> None:
+        """Добавляет указанный по имени узел в список чувствительных объемов."""
         if self.handler_vm is not None:
             self.handler_vm.add_volume(volume_name)
 
     def _on_remove_clicked(self) -> None:
+        """Удаляет выделенные элементы из списка чувствительных объемов."""
         if self.handler_vm is None:
             return
         selected_items = self.list_widget.selectedItems()
         if not selected_items and self.list_widget.currentItem() is not None:
             selected_items = [self.list_widget.currentItem()]
         for item in selected_items:
-            volume_name = item.data(Qt.UserRole)
+            volume_name = item.data(Qt.ItemDataRole.UserRole)
             if volume_name:
                 self.handler_vm.remove_volume(str(volume_name))
 
@@ -260,7 +285,7 @@ class SensitiveVolumesEditorWidget(QWidget):
         При одиночном клике испускает сигнал выделения объема для 3D-оконтуривания
         без смены активной модели представления PropertyInspector.
         """
-        volume_name = item.data(Qt.UserRole)
+        volume_name = item.data(Qt.ItemDataRole.UserRole)
         if not volume_name:
             return
         self.volume_selected.emit(str(volume_name))
@@ -269,10 +294,17 @@ class SensitiveVolumesEditorWidget(QWidget):
         """
         При двойном клике пользователь явно запрашивает инспекцию узла сцены.
         """
-        volume_name = item.data(Qt.UserRole)
+        volume_name = item.data(Qt.ItemDataRole.UserRole)
         if not volume_name:
             return
         if self.scene_vm is not None:
             node_vm = self.scene_vm.find_by_name(str(volume_name))
             if node_vm is not None:
                 self.scene_vm.select_node(node_vm)
+
+
+__all__ = [
+    "SensitiveVolumesListWidget",
+    "SensitiveVolumesEditorWidget",
+]
+

@@ -12,7 +12,7 @@ from core.physics.processes import (
     get_species_mapping,
 )
 from core.physics.physics_compiler import PhysicsCompiler
-from core.physics.physics_buffer import PhysicsBuffer
+from core.physics.physics_buffer import ElementCSR, PhysicsBuffer
 from core.physics.interaction_buffers import (
     InteractionBuffer,
     InitialStateBuffer,
@@ -30,6 +30,7 @@ __all__ = [
     'get_process_mapping',
     'get_species_mapping',
     'PhysicsCompiler',
+    'ElementCSR',
     'PhysicsBuffer',
     'InteractionBuffer',
     'InitialStateBuffer',
@@ -37,3 +38,4 @@ __all__ = [
     'SimulationDataBuffer',
     'RNGContext',
 ]
+

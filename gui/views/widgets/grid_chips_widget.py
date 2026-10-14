@@ -115,23 +115,29 @@ class FlowLayout(QLayout):
             return self._item_list.pop(index)
         return None
 
-    def expandingDirections(self) -> Qt.Orientations:
-        return Qt.Orientations(Qt.Orientation(0))
+    def expandingDirections(self) -> Qt.Orientation:
+        """Возвращает направления расширения макета."""
+        return Qt.Orientation(0)
 
     def hasHeightForWidth(self) -> bool:
+        """Указывает, что высота макета зависит от его ширины."""
         return True
 
     def heightForWidth(self, width: int) -> int:
+        """Вычисляет необходимую высоту макета для заданной ширины."""
         return self._do_layout(QRect(0, 0, width, 0), test_only=True)
 
     def setGeometry(self, rect: QRect) -> None:
+        """Устанавливает геометрию дочерних элементов макета."""
         super().setGeometry(rect)
         self._do_layout(rect, test_only=False)
 
     def sizeHint(self) -> QSize:
+        """Возвращает рекомендуемый размер макета."""
         return self.minimumSize()
 
     def minimumSize(self) -> QSize:
+        """Вычисляет минимальный допустимый размер макета."""
         calculated_size = QSize()
         for layout_item in self._item_list:
             calculated_size = calculated_size.expandedTo(layout_item.minimumSize())
@@ -140,6 +146,7 @@ class FlowLayout(QLayout):
         return calculated_size
 
     def _do_layout(self, rect: QRect, test_only: bool) -> int:
+        """Распределяет элементы макета по строкам с переносом по ширине."""
         margins = self.contentsMargins()
         effective_rect = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
         current_x = effective_rect.x()
@@ -174,9 +181,10 @@ class _ChipLineEdit(QLineEdit):
     editing_cancelled = Signal(bool)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует внутреннее поле ввода чипса."""
         super().__init__(parent)
         self.setObjectName("GridChipEdit")
-        self.setAlignment(Qt.AlignCenter)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet(
             "QLineEdit#GridChipEdit {"
             "  background-color: #1a1d21;"
@@ -191,21 +199,24 @@ class _ChipLineEdit(QLineEdit):
         )
 
     def keyPressEvent(self, key_event: QKeyEvent) -> None:
-        if key_event.key() in (Qt.Key_Return, Qt.Key_Enter):
+        """Обрабатывает нажатия клавиш Enter и Escape при инлайн-редактировании."""
+        if key_event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._commit_edit(refocus=True)
             key_event.accept()
             return
-        if key_event.key() == Qt.Key_Escape:
+        if key_event.key() == Qt.Key.Key_Escape:
             self.editing_cancelled.emit(True)
             key_event.accept()
             return
         super().keyPressEvent(key_event)
 
     def focusOutEvent(self, focus_event: QFocusEvent) -> None:
+        """Применяет изменения при потере фокуса полем ввода."""
         super().focusOutEvent(focus_event)
         self._commit_edit(refocus=False)
 
     def _commit_edit(self, refocus: bool = False) -> None:
+        """Парсит введенное число и испускает сигнал завершения или отмены редактирования."""
         cleaned_text = self.text().strip().replace(",", ".")
         try:
             parsed_number = float(cleaned_text)
@@ -230,18 +241,19 @@ class GridChip(QFrame):
     clicked = Signal()
 
     def __init__(self, value: float, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует капсулу чипса с указанным числовым значением."""
         super().__init__(parent)
         self._value: float = float(value)
         self.setObjectName("GridChip")
-        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self._stacked_layout = QStackedLayout(self)
         self._stacked_layout.setContentsMargins(0, 0, 0, 0)
 
         self._label_display = QLabel(self._format_value(self._value))
         self._label_display.setObjectName("GridChipLabel")
-        self._label_display.setAlignment(Qt.AlignCenter)
-        self._label_display.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._label_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label_display.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._stacked_layout.addWidget(self._label_display)
 
         self._edit_input = _ChipLineEdit()
@@ -252,6 +264,7 @@ class GridChip(QFrame):
         self._apply_styles()
 
     def _apply_styles(self) -> None:
+        """Применяет табличные CSS-стили оформления чипса."""
         self.setStyleSheet(
             "QFrame#GridChip {"
             "  background-color: #2b2d30;"
@@ -319,36 +332,39 @@ class GridChip(QFrame):
             self.setFocus()
 
     def mousePressEvent(self, mouse_event: QMouseEvent) -> None:
-        if mouse_event.button() == Qt.LeftButton:
+        """Переводит фокус на чипс при клике левой кнопкой мыши."""
+        if mouse_event.button() == Qt.MouseButton.LeftButton:
             self.setFocus()
             self.clicked.emit()
         super().mousePressEvent(mouse_event)
 
     def mouseDoubleClickEvent(self, mouse_event: QMouseEvent) -> None:
-        if mouse_event.button() == Qt.LeftButton:
+        """Открывает режим редактирования при двойном клике левой кнопкой мыши."""
+        if mouse_event.button() == Qt.MouseButton.LeftButton:
             self.start_editing()
             mouse_event.accept()
             return
         super().mouseDoubleClickEvent(mouse_event)
 
     def keyPressEvent(self, key_event: QKeyEvent) -> None:
-        if key_event.key() == Qt.Key_Backspace:
+        """Обрабатывает клавиатурную навигацию, удаление и вход в редактирование."""
+        if key_event.key() == Qt.Key.Key_Backspace:
             self.delete_requested.emit(-1)
             key_event.accept()
             return
-        if key_event.key() == Qt.Key_Delete:
+        if key_event.key() == Qt.Key.Key_Delete:
             self.delete_requested.emit(0)
             key_event.accept()
             return
-        if key_event.key() == Qt.Key_Left:
+        if key_event.key() == Qt.Key.Key_Left:
             self.navigate_requested.emit(-1)
             key_event.accept()
             return
-        if key_event.key() == Qt.Key_Right:
+        if key_event.key() == Qt.Key.Key_Right:
             self.navigate_requested.emit(1)
             key_event.accept()
             return
-        if key_event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+        if key_event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
             self.start_editing()
             key_event.accept()
             return
@@ -428,11 +444,13 @@ class GridRangeDialog(QDialog):
         dialog_layout.addLayout(form_layout)
 
         # Кнопки диалога
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        apply_button = button_box.button(QDialogButtonBox.Ok)
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        apply_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
         if apply_button is not None:
             apply_button.setText("Применить")
-        cancel_button = button_box.button(QDialogButtonBox.Cancel)
+        cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
         if cancel_button is not None:
             cancel_button.setText("Отмена")
 
@@ -443,6 +461,7 @@ class GridRangeDialog(QDialog):
         self._on_mode_changed()
 
     def _on_mode_changed(self) -> None:
+        """Переключает видимость полей шага и числа точек при смене режима генерации."""
         is_step_mode = (self.combo_mode.currentData() == "step")
         self.lbl_step_row.setVisible(is_step_mode)
         self.spin_step.setVisible(is_step_mode)
@@ -451,6 +470,7 @@ class GridRangeDialog(QDialog):
         self._update_preview()
 
     def _update_preview(self) -> None:
+        """Пересчитывает значения диапазона и обновляет текстовый предпросмотр."""
         start_value = float(self.spin_start.value())
         stop_value = float(self.spin_stop.value())
         endpoint_included = bool(self.chk_endpoint.isChecked())
@@ -527,6 +547,7 @@ class GridVariableChipsRow(QWidget):
         values: List[float],
         parent: Optional[QWidget] = None,
     ) -> None:
+        """Инициализирует строку чипсов для указанной Grid-переменной."""
         super().__init__(parent)
         self.var_name: str = str(var_name)
         self._values: List[float] = [float(number_element) for number_element in values] if values else [0.0]
@@ -537,6 +558,7 @@ class GridVariableChipsRow(QWidget):
         self._rebuild_chips()
 
     def _init_ui(self) -> None:
+        """Создает элементы интерфейса строки управления Grid-переменной."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(2, 2, 2, 2)
         main_layout.setSpacing(4)
@@ -588,6 +610,7 @@ class GridVariableChipsRow(QWidget):
         return len(self._values)
 
     def __len__(self) -> int:
+        """Возвращает длину списка значений переменной."""
         return len(self._values)
 
     @property
@@ -613,6 +636,7 @@ class GridVariableChipsRow(QWidget):
         self._rebuild_chips()
 
     def _rebuild_chips(self) -> None:
+        """Пересоздает чипсы значений в потоковом макете."""
         self._is_updating = True
         try:
             self.chips_layout.removeWidget(self.input_add_value)
@@ -636,21 +660,25 @@ class GridVariableChipsRow(QWidget):
             self._is_updating = False
 
     def _create_delete_handler(self, target_chip: GridChip) -> Any:
+        """Создает замыкание обработчика удаления для конкретного чипса."""
         def handler(direction_hint: int = 0) -> None:
             self._on_chip_delete_requested(target_chip, direction_hint)
         return handler
 
     def _create_navigate_handler(self, target_chip: GridChip) -> Any:
+        """Создает замыкание обработчика навигации для конкретного чипса."""
         def handler(direction_offset: int) -> None:
             self._on_chip_navigate_requested(target_chip, direction_offset)
         return handler
 
     def _create_value_changed_handler(self, target_chip: GridChip) -> Any:
+        """Создает замыкание обработчика изменения числа для конкретного чипса."""
         def handler(new_number: float) -> None:
             self._on_chip_value_changed(target_chip, new_number)
         return handler
 
     def _on_chip_delete_requested(self, target_chip: GridChip, direction_hint: int = 0) -> None:
+        """Удаляет выбранный чипс и переносит фокус на соседний элемент."""
         if target_chip not in self._chips:
             return
         if len(self._chips) <= 1:
@@ -678,6 +706,7 @@ class GridVariableChipsRow(QWidget):
         self.values_changed.emit(self.var_name, list(self._values))
 
     def _on_chip_navigate_requested(self, target_chip: GridChip, direction_offset: int) -> None:
+        """Перемещает клавиатурный фокус между чипсами и полем добавления."""
         if target_chip not in self._chips:
             return
         current_index = self._chips.index(target_chip)
@@ -692,6 +721,7 @@ class GridVariableChipsRow(QWidget):
                 self.input_add_value.setFocus()
 
     def _on_chip_value_changed(self, target_chip: GridChip, new_number: float) -> None:
+        """Обновляет значение чипса в списке и уведомляет подписчиков."""
         if target_chip not in self._chips:
             return
         chip_index = self._chips.index(target_chip)
@@ -704,6 +734,7 @@ class GridVariableChipsRow(QWidget):
         self.input_add_value.setStyleSheet(INPUT_ADD_VALUE_NORMAL_STYLE)
 
     def _on_add_input_entered(self) -> None:
+        """Добавляет одно или несколько значений, введенных в текстовое поле."""
         raw_text = self.input_add_value.text().strip()
         if not raw_text:
             return
@@ -726,36 +757,39 @@ class GridVariableChipsRow(QWidget):
         self.input_add_value.setFocus()
 
     def _on_grid_generator_clicked(self) -> None:
+        """Открывает диалог генератора диапазона значений сетки."""
         generator_dialog = GridRangeDialog(self.var_name, parent=self)
-        if generator_dialog.exec() == QDialog.Accepted:
+        if generator_dialog.exec() == QDialog.DialogCode.Accepted:
             generated_values = generator_dialog.get_generated_values()
             if generated_values:
                 self.set_values(generated_values)
                 self.values_changed.emit(self.var_name, list(self._values))
 
     def _on_delete_clicked(self) -> None:
+        """Запрашивает подтверждение и испускает сигнал удаления переменной."""
         user_choice = QMessageBox.question(
             self,
             "Удаление переменной",
             f"Вы уверены, что хотите удалить Grid-переменную '{self.var_name}'?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if user_choice == QMessageBox.Yes:
+        if user_choice == QMessageBox.StandardButton.Yes:
             self.variable_deleted.emit(self.var_name)
 
     def eventFilter(self, watched_object: QObject, watched_event: QEvent) -> bool:
-        if watched_object is self.input_add_value and watched_event.type() == QEvent.KeyPress:
+        """Перехватывает нажатия клавиш в поле добавления значений для навигации к чипсам."""
+        if watched_object is self.input_add_value and watched_event.type() == QEvent.Type.KeyPress:
             key_event = cast(QKeyEvent, watched_event)
-            if key_event.key() == Qt.Key_Escape:
+            if key_event.key() == Qt.Key.Key_Escape:
                 self.input_add_value.clear()
                 self._on_add_input_text_changed()
                 return True
-            if key_event.key() == Qt.Key_Left and self.input_add_value.cursorPosition() == 0:
+            if key_event.key() == Qt.Key.Key_Left and self.input_add_value.cursorPosition() == 0:
                 if self._chips:
                     self._chips[-1].setFocus()
                     return True
-            elif key_event.key() == Qt.Key_Backspace and not self.input_add_value.text():
+            elif key_event.key() == Qt.Key.Key_Backspace and not self.input_add_value.text():
                 if self._chips:
                     self._chips[-1].setFocus()
                     return True

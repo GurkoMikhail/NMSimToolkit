@@ -1,5 +1,8 @@
+"""
+Диалоговое окно настройки общих параметров симуляции, визуализации треков и привязки 3D-манипулятора.
+"""
 import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 import hepunits as units
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -30,8 +33,6 @@ class SimulationSettingsDialog(QDialog):
         self.resize(460, 440)
         self.setModal(True)
 
-        if not isinstance(current_settings, GuiSimulationSettings):
-            raise TypeError("current_settings должен быть экземпляром GuiSimulationSettings")
         self._settings: GuiSimulationSettings = current_settings
         self._variable_provider = variable_provider
         self._initial_bindings = bindings or {}
@@ -147,7 +148,11 @@ class SimulationSettingsDialog(QDialog):
         main_layout.addWidget(grp_tracks)
 
         # 3. Стандартные кнопки диалога
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, Qt.Horizontal, self)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            Qt.Orientation.Horizontal,
+            self,
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
@@ -182,3 +187,9 @@ class SimulationSettingsDialog(QDialog):
             "pseudo_xray_mode": self.chk_pseudo_xray.isChecked(),
         })
         return GuiSimulationSettings(**updated_dict)
+
+
+__all__ = [
+    "SimulationSettingsDialog",
+]
+

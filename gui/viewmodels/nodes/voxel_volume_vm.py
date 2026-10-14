@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
@@ -17,6 +17,8 @@ class VoxelVolumeViewModel(NodeViewModel):
     """
     ViewModel для воксельного фантома WoodcockVoxelVolume.
     """
+    core_node: WoodcockVoxelVolume
+
     colormap_name = gui_field(default='Physical Materials')
     lod_factor = gui_field(default=1.0)
     opacity_threshold = gui_field(default=0.05)
@@ -26,23 +28,30 @@ class VoxelVolumeViewModel(NodeViewModel):
 
     def __init__(self, core_node: WoodcockVoxelVolume, parent_vm: Optional[NodeViewModel] = None, file_path: str = "") -> None:
         super().__init__(core_node, parent_vm)
+        self.core_node = core_node
         if file_path:
             self.file_path = str(file_path)
 
     @property
     def size(self) -> np.ndarray:
-        return np.asarray(self.core_node.size, dtype=float)
+        return np.asarray(self.core_node.size, dtype=np.float64)
 
     @size.setter
     def size(self, new_size: Sequence[float]) -> None:
-        new_size_arr = np.asarray(new_size, dtype=float)
+        new_size_arr = np.asarray(new_size, dtype=np.float64)
         self.core_node.size = new_size_arr
         dims = self.dimensions
-        if all(d > 0 for d in dims):
-            new_voxel_size = new_size_arr / np.asarray(dims, dtype=float)
+        if all(dim_val > 0 for dim_val in dims):
+            new_voxel_size = new_size_arr / np.asarray(dims, dtype=np.float64)
             self.core_node.voxel_size = new_voxel_size
         self.core_node.invalidate_geometry()
         self.property_changed.emit('size', new_size_arr)
+
+    @property
+    def half_size(self) -> Tuple[float, float, float]:
+        """Половина габаритных размеров воксельного объема (мм)."""
+        half_dims = 0.5 * self.size
+        return (float(half_dims[0]), float(half_dims[1]), float(half_dims[2]))
 
     @property
     def voxel_size(self) -> np.ndarray:
@@ -50,10 +59,10 @@ class VoxelVolumeViewModel(NodeViewModel):
 
     @voxel_size.setter
     def voxel_size(self, value: Union[float, Sequence[float]]) -> None:
-        val_arr = np.asarray(value, dtype=float)
+        val_arr = np.asarray(value, dtype=np.float64)
         dist = self.core_node.material_distribution
         if dist is not None:
-            self.core_node.geometry.size = np.asarray(dist.shape, dtype=float) * val_arr
+            self.core_node.geometry.size = np.asarray(dist.shape, dtype=np.float64) * val_arr
         self.core_node.voxel_size = val_arr
         self.core_node.invalidate_geometry()
         self.property_changed.emit('voxel_size', val_arr)
@@ -110,7 +119,13 @@ class VoxelVolumeViewModel(NodeViewModel):
         """
         spacing_array = self.voxel_size
         dims = self.dimensions
-        return tuple(-0.5 * float(dimension_len) * float(voxel_step) for dimension_len, voxel_step in zip(dims, spacing_array))
+        origin_coords = [
+            -0.5 * float(dimension_len) * float(voxel_step)
+            for dimension_len, voxel_step in zip(dims, spacing_array)
+        ]
+        if len(origin_coords) >= 3:
+            return (origin_coords[0], origin_coords[1], origin_coords[2])
+        return (0.0, 0.0, 0.0)
 
     def reload_distribution(
         self,
@@ -191,7 +206,7 @@ class VoxelVolumeViewModel(NodeViewModel):
                 self.voxel_size = voxel_size
 
             self.core_node.material_distribution = mat_arr
-            new_size = np.asarray(mat_arr.shape, dtype=float) * np.asarray(self.core_node.voxel_size, dtype=float)
+            new_size = np.asarray(mat_arr.shape, dtype=np.float64) * np.asarray(self.core_node.voxel_size, dtype=np.float64)
             self.core_node.size = new_size
             self.core_node.invalidate_geometry()
 
@@ -204,3 +219,8 @@ class VoxelVolumeViewModel(NodeViewModel):
         except (OSError, ValueError, TypeError, KeyError) as err:
             _logger.warning(f"Ошибка загрузки файла фантома: {err}")
             return False
+
+
+__all__ = [
+    "VoxelVolumeViewModel",
+]

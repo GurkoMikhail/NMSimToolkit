@@ -449,7 +449,10 @@ class SpectOrbitKinematicConstraint:
                 procedure = self._procedure_ref() if self._procedure_ref is not None else None
                 node_idx = sibling_cameras.index(target_node)
 
-                if new_radius is not None:
+                shift_pressed = bool(
+                    changed_data.get('shift_pressed', changed_data.get('shift_modifier', False))
+                )
+                if new_radius is not None and not shift_pressed:
                     for sibling in sibling_cameras:
                         if sibling is not target_node:
                             sibling_position = sibling.local_matrix[0:3, 3]
@@ -505,8 +508,11 @@ class SpectOrbitKinematicConstraint:
             if isinstance(child.core_node, GammaCameraNode)
         ] if target_node.parent_vm is not None else [target_node]
 
+        shift_pressed = bool(
+            commit_data.get('shift_pressed', commit_data.get('shift_modifier', False))
+        )
 
-        if 'radius' in commit_data:
+        if 'radius' in commit_data and not shift_pressed:
             procedure.radius = float(commit_data['radius'])
 
         if 'angle' in commit_data and target_node in camera_nodes:
@@ -516,7 +522,7 @@ class SpectOrbitKinematicConstraint:
             base_start_angle = (float(commit_data['angle']) - offset) % 360.0
             procedure.start_angle = base_start_angle
 
-        if 'radius' in commit_data or 'angle' in commit_data:
+        if ('radius' in commit_data or 'angle' in commit_data) and not shift_pressed:
             procedure.sync_cameras(camera_nodes)
 
 
@@ -554,6 +560,16 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
     @gantry_vm.setter
     def gantry_vm(self, gantry: Optional[Any]) -> None:
         """Устанавливает связанный узел станины томографа."""
+        self._gantry_vm = gantry
+
+    @property
+    def gantry_node_vm(self) -> Optional[Any]:
+        """Псевдоним связанного узла станины томографа."""
+        return self._gantry_vm
+
+    @gantry_node_vm.setter
+    def gantry_node_vm(self, gantry: Optional[Any]) -> None:
+        """Устанавливает связанный узел станины томографа через псевдоним."""
         self._gantry_vm = gantry
 
     def filter_translation(
@@ -690,6 +706,9 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
         gantry_node_vm = self._gantry_vm if self._gantry_vm is not None else target_node.parent_vm
         if gantry_node_vm is not None and isinstance(gantry_node_vm.core_node, GantryNode):
             procedure = self._procedure_ref() if self._procedure_ref is not None else None
+            shift_pressed = bool(
+                changed_data.get('shift_pressed', changed_data.get('shift_modifier', False))
+            )
 
             # 1. Поворот станины при тангенциальном перемещении
             if changed_data.get('action') == 'tangential':
@@ -699,19 +718,25 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
                     if isinstance(procedure, IRotatableProcedure):
                         procedure.start_angle = float(new_gantry_angle)
 
-            # 2. Синхронизация радиуса со всеми спаренными головками
-            if changed_data.get('action') == 'radial' and 'radius' in changed_data:
+            # 2. Синхронизация радиуса со всеми спаренными головками (отключается при зажатом Shift)
+            if changed_data.get('action') == 'radial' and 'radius' in changed_data and not shift_pressed:
                 new_radius = changed_data.get('radius')
                 if new_radius is not None:
                     for sibling in gantry_node_vm.children:
                         if isinstance(sibling.core_node, GammaCameraNode) and sibling is not target_node:
                             sibling_pos = sibling.local_matrix[0:3, 3]
                             sibling_angle = float(np.degrees(np.arctan2(sibling_pos[1], sibling_pos[0])) % 360.0)
+                            sibling_dir_z = sibling.local_matrix[0:3, 2]
+                            sibling_dir_y = sibling.local_matrix[0:3, 1]
+                            cos_roll = float(np.clip(np.dot(sibling_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
+                            sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), sibling_dir_y), sibling_dir_z))
+                            sibling_roll_deg = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
                             sibling.local_matrix = compute_orbit_matrix(
                                 radius=float(new_radius),
                                 angle_deg=sibling_angle,
                                 z=float(sibling_pos[2]),
                                 half_thickness=sibling.half_thickness,
+                                roll_deg=sibling_roll_deg,
                             )
                     if procedure is not None:
                         procedure.radius = float(new_radius)
@@ -736,14 +761,17 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
         gantry_node_vm = self._gantry_vm if self._gantry_vm is not None else target_node.parent_vm
         if gantry_node_vm is not None and isinstance(gantry_node_vm.core_node, GantryNode):
             procedure = self._procedure_ref() if self._procedure_ref is not None else None
+            shift_pressed = bool(
+                commit_data.get('shift_pressed', commit_data.get('shift_modifier', False))
+            )
             if procedure is not None:
-                if commit_data.get('action') == 'radial' and 'radius' in commit_data:
+                if commit_data.get('action') == 'radial' and 'radius' in commit_data and not shift_pressed:
                     procedure.radius = float(commit_data['radius'])
                 if commit_data.get('action') == 'tangential':
                     new_gantry_angle = commit_data.get('gantry_angle', commit_data.get('angle'))
                     if new_gantry_angle is not None and isinstance(procedure, IRotatableProcedure):
                         procedure.start_angle = float(new_gantry_angle)
-                if commit_data.get('action') in ('radial', 'tangential'):
+                if commit_data.get('action') in ('radial', 'tangential') and not shift_pressed:
                     camera_nodes = [
                         child for child in gantry_node_vm.children
                         if isinstance(child.core_node, GammaCameraNode)
@@ -881,7 +909,9 @@ __all__ = [
     'IRotatableProcedure',
     'IKinematicConstraint',
     'FixedSubcomponentKinematicConstraint',
+    'RootVolumeKinematicConstraint',
     'SpectOrbitKinematicConstraint',
     'CameraMountKinematicConstraint',
     'GantryKinematicConstraint',
 ]
+

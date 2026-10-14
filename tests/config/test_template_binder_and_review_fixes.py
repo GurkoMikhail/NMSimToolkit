@@ -33,7 +33,11 @@ from core.config.models import (
 )
 from core.config.template_binder import ConfigTemplateBinder
 from core.config.yaml_dumper import dump_simulation_config
+from core.config.yaml_loader import load_raw_config, load_simulation_config
+from core.config.orchestrator import Orchestrator
+from core.config.sweep_compiler import SweepCompiler
 from core.config.simulation_worker import simulation_worker_task
+from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
 
 
 class TestReviewFixesUnitsAndKinematics(unittest.TestCase):
@@ -190,6 +194,75 @@ class TestReviewFixesTemplateBinder(unittest.TestCase):
             content = out_file.read_text(encoding="utf-8")
             self.assertIn("${root_x} mm", content)
             self.assertIn("Materials:", content)
+
+    def test_tb161_protocol_filename_template_preserved_through_full_pipeline(self):
+        """
+        Регрессионный тест: проверка сохранения полного шаблона пути data_manager.filename
+        для tb161_nema_protocol direct.yaml в цепочке:
+        extract_bindings -> apply_bindings -> Orchestrator -> inject_variables -> SimulationConfig.model_validate.
+        Гарантирует, что filename для угла 3.0 равен 'output_tb161_dual_cam/3.0_deg.hdf', а не 3.0 (float).
+        """
+        yaml_path = Path(__file__).resolve().parents[2] / "tb161_nema_protocol direct.yaml"
+        raw_dict = load_raw_config(yaml_path)
+        bindings = ConfigTemplateBinder.extract_bindings(raw_dict)
+
+        self.assertIn("data_manager", bindings)
+        self.assertEqual(bindings["data_manager"].get("filename"), "gantry_angle")
+
+        # 1. Проверка сценария GUI: конфиг загружен с resolve_protocol=True, проходит через DataManagerViewModel
+        resolved_cfg = load_simulation_config(yaml_path, resolve_protocol=True)
+        self.assertIsNotNone(resolved_cfg.data_manager)
+        assert resolved_cfg.data_manager is not None
+        dm_vm = DataManagerViewModel()
+        dm_vm.load_from_config(resolved_cfg.data_manager)
+        dm_vm.filename = raw_dict["data_manager"]["filename"]
+        roundtripped_dm = dm_vm.to_config()
+        self.assertEqual(roundtripped_dm.filename, "output_tb161_dual_cam/${gantry_angle}_deg.hdf")
+        self.assertEqual(roundtripped_dm.buffer_capacity, 100000)
+        self.assertEqual(roundtripped_dm.floating_point_precision, "float32")
+        self.assertEqual(roundtripped_dm.compression, "gzip")
+        self.assertEqual(roundtripped_dm.compression_opts, 4)
+        resolved_cfg.data_manager = roundtripped_dm
+
+        # Применение привязок (как в OrchestratorSession.generate_jobs / start), где в реестре лежит только имя переменной
+        gui_style_bindings = {
+            target_key: ({"filename": "gantry_angle"} if target_key == "data_manager" else prop_map)
+            for target_key, prop_map in bindings.items()
+        }
+        bound_cfg = ConfigTemplateBinder.apply_bindings(resolved_cfg, gui_style_bindings)
+        self.assertIsInstance(bound_cfg, SimulationConfig)
+        assert isinstance(bound_cfg, SimulationConfig)
+        assert bound_cfg.data_manager is not None
+        self.assertEqual(bound_cfg.data_manager.filename, "output_tb161_dual_cam/${gantry_angle}_deg.hdf")
+
+        orchestrator = Orchestrator(bound_cfg)
+        sweep_cfg = orchestrator.compile_protocol()
+        jobs = orchestrator._generate_job_list(sweep_cfg)
+        self.assertEqual(len(jobs), 60)
+
+        for idx, job_context in enumerate(jobs):
+            injected_dict = SweepCompiler.inject_variables(orchestrator.raw_config_dict, job_context)
+            validated_cfg = SimulationConfig.model_validate(injected_dict)
+            assert validated_cfg.data_manager is not None
+            expected_angle = job_context["gantry_angle"]
+            self.assertIsInstance(validated_cfg.data_manager.filename, str)
+            self.assertEqual(
+                validated_cfg.data_manager.filename,
+                f"output_tb161_dual_cam/{expected_angle}_deg.hdf",
+            )
+            if idx == 1:
+                self.assertEqual(
+                    validated_cfg.data_manager.filename,
+                    "output_tb161_dual_cam/3.0_deg.hdf",
+                )
+
+        # 2. Проверка привязки переменной к простому имени файла без шаблона (защита от голого макроса ${var})
+        plain_dict = {
+            "data_manager": {"filename": "results/scan.hdf"},
+            "scene": {"name": "World", "type": "Volume"},
+        }
+        ConfigTemplateBinder.apply_bindings(plain_dict, {"data_manager": {"filename": "gantry_angle"}})
+        self.assertEqual(plain_dict["data_manager"]["filename"], "results/scan_${gantry_angle}.hdf")
 
 
 class TestReviewFixesSimulationWorker(unittest.TestCase):

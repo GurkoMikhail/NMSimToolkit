@@ -1,6 +1,9 @@
+"""
+Диалоговое окно импорта трехмерных воксельных распределений для фантомов и источников.
+"""
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
@@ -18,7 +21,7 @@ from gui.models.distribution_import_params import DistributionImportParameters, 
 
 _logger = logging.getLogger(__name__)
 
-SUPPORTED_DTYPES: Dict[str, np.dtype] = {
+SUPPORTED_DTYPES: Dict[str, np.dtype[Any]] = {
     "float32 (4 байта)": np.dtype(np.float32),
     "float64 (8 байт)": np.dtype(np.float64),
     "int16 (2 байта, DICOM/HU)": np.dtype(np.int16),
@@ -39,8 +42,8 @@ class DistributionImportDialog(QDialog):
         self,
         file_path: Union[str, Path],
         target_kind: ImportTargetKind,
-        current_voxel_size: Optional[Union[float, Tuple[float, float, float], Sequence[float]]] = None,
-        default_voxel_size: Optional[Union[float, Tuple[float, float, float], Sequence[float]]] = None,
+        current_voxel_size: Optional[Union[float, Tuple[float, float, float], Sequence[float], np.ndarray]] = None,
+        default_voxel_size: Optional[Union[float, Tuple[float, float, float], Sequence[float], np.ndarray]] = None,
         current_shape: Optional[Tuple[int, ...]] = None,
         existing_mapping: Optional[Dict[float, str]] = None,
         scene_phantom_dims: Optional[Tuple[int, int, int]] = None,
@@ -59,6 +62,7 @@ class DistributionImportDialog(QDialog):
 
         self.initial_shape = current_shape or (128, 128, 92)
         self.existing_mapping = existing_mapping or {}
+        self._custom_material_mapping: Optional[Dict[float, str]] = None
 
         if scene_phantom_node is not None:
             if scene_phantom_dims is None:
@@ -151,6 +155,7 @@ class DistributionImportDialog(QDialog):
 
         self.lbl_lbyl_status = QLabel("-")
         self.lbl_lbyl_status.setWordWrap(True)
+        self.lbl_validation = self.lbl_lbyl_status
         form_format.addRow("Валидация размера буфера:", self.lbl_lbyl_status)
 
         main_layout.addWidget(self.grp_format)
@@ -161,7 +166,7 @@ class DistributionImportDialog(QDialog):
 
         if self.target_kind == ImportTargetKind.PHANTOM:
             vox_layout = QHBoxLayout()
-            if isinstance(self.initial_voxel_size, (tuple, list, np.ndarray)):
+            if isinstance(self.initial_voxel_size, (tuple, list, np.ndarray, Sequence)):
                 if len(self.initial_voxel_size) >= 3:
                     initial_v_steps = (float(self.initial_voxel_size[0]), float(self.initial_voxel_size[1]), float(self.initial_voxel_size[2]))
                 else:
@@ -199,7 +204,7 @@ class DistributionImportDialog(QDialog):
             vox_layout.addWidget(self.spin_vox_z)
             form_geom.addRow("Шаг вокселей (X, Y, Z):", vox_layout)
         else:
-            if isinstance(self.initial_voxel_size, (tuple, list, np.ndarray)):
+            if isinstance(self.initial_voxel_size, (tuple, list, np.ndarray, Sequence)):
                 initial_v_step = float(self.initial_voxel_size[0])
             else:
                 initial_v_step = float(self.initial_voxel_size)
@@ -228,12 +233,21 @@ class DistributionImportDialog(QDialog):
             self._init_source_activity_ui(main_layout)
 
         # Кнопки диалога
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        self.button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        self.btn_ok = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         main_layout.addWidget(self.button_box)
 
         self._update_geometry_metrics()
+
+    def _set_ok_button_enabled(self, enabled: bool) -> None:
+        ok_btn = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_btn is not None:
+            ok_btn.setEnabled(enabled)
 
     def _init_phantom_mapping_ui(self, main_layout: QVBoxLayout) -> None:
         self.grp_mapping = QGroupBox("3. Универсальный маппинг материалов (Material Mapping)")
@@ -260,11 +274,12 @@ class DistributionImportDialog(QDialog):
             "Значение (ID)", "Вокселей", "Доля (%)", "Цвет", "Материал NIST"
         ])
         header = self.tbl_mapping.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.Stretch)
+        if header is not None:
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.tbl_mapping.setMinimumHeight(180)
         map_layout.addWidget(self.tbl_mapping)
 
@@ -398,9 +413,24 @@ class DistributionImportDialog(QDialog):
 
     def _validate_buffer_size(self) -> None:
         """Строгая LBYL-проверка размера файла на диске относительно формы и типа данных."""
+        actual_bytes = int(self.metadata.get("file_size", 0))
+        if actual_bytes <= 0:
+            self.lbl_lbyl_status.setText(
+                "<font color='#F44336'>⚠ Файл пуст (0 байт) или недоступен для чтения</font>"
+            )
+            self._set_ok_button_enabled(False)
+            return
+
         if self.is_npy_format:
+            shape_meta = self.metadata.get("shape")
+            if shape_meta is not None and int(np.prod(shape_meta)) <= 0:
+                self.lbl_lbyl_status.setText(
+                    "<font color='#F44336'>⚠ Массив NumPy (.npy) не содержит элементов</font>"
+                )
+                self._set_ok_button_enabled(False)
+                return
             self.lbl_lbyl_status.setText("<font color='#4CAF50'>✔ Контейнер NumPy (.npy) валидирован</font>")
-            self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
+            self._set_ok_button_enabled(True)
             return
 
         dim_x = self.spin_dim_x.value()
@@ -411,44 +441,42 @@ class DistributionImportDialog(QDialog):
         encoding = self.combo_encoding.currentData()
         if encoding == "text":
             actual_count = self._get_text_element_count()
-            if actual_count is not None and actual_count > 0:
-                if actual_count == total_elements:
-                    self.lbl_lbyl_status.setText(
-                        f"<font color='#4CAF50'>✔ Точное совпадение: в файле {actual_count:,} чисел "
-                        f"({dim_x}×{dim_y}×{dim_z})</font>"
-                    )
-                    self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
-                else:
-                    diff = actual_count - total_elements
-                    self.lbl_lbyl_status.setText(
-                        f"<font color='#F44336'>⚠ Несовпадение: в файле {actual_count:,} чисел, "
-                        f"ожидается {total_elements:,} (разница: {diff:+,})</font>"
-                    )
-                    self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
-            else:
+            if actual_count is None or actual_count <= 0:
                 self.lbl_lbyl_status.setText(
-                    f"<font color='#4CAF50'>✔ Текстовый режим: готов к загрузке {total_elements:,} чисел</font>"
+                    "<font color='#F44336'>⚠ Текстовый файл не содержит корректных числовых элементов</font>"
                 )
-                self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
+                self._set_ok_button_enabled(False)
+            elif actual_count == total_elements:
+                self.lbl_lbyl_status.setText(
+                    f"<font color='#4CAF50'>✔ Точное совпадение: в файле {actual_count:,} чисел "
+                    f"({dim_x}×{dim_y}×{dim_z})</font>"
+                )
+                self._set_ok_button_enabled(True)
+            else:
+                diff = actual_count - total_elements
+                self.lbl_lbyl_status.setText(
+                    f"<font color='#F44336'>⚠ Несовпадение: в файле {actual_count:,} чисел, "
+                    f"ожидается {total_elements:,} (разница: {diff:+,})</font>"
+                )
+                self._set_ok_button_enabled(False)
             return
 
         chosen_dtype = self.combo_dtype.currentData() or np.dtype(np.float32)
         expected_bytes = total_elements * chosen_dtype.itemsize
-        actual_bytes = int(self.metadata.get("file_size", 0))
 
         if expected_bytes == actual_bytes:
             self.lbl_lbyl_status.setText(
                 f"<font color='#4CAF50'>✔ Точное совпадение: {actual_bytes:,} байт "
                 f"({dim_x}×{dim_y}×{dim_z} × {chosen_dtype.itemsize} байт)</font>"
             )
-            self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
+            self._set_ok_button_enabled(True)
         else:
             diff = actual_bytes - expected_bytes
             self.lbl_lbyl_status.setText(
                 f"<font color='#F44336'>⚠ Несовпадение размера: файл {actual_bytes:,} байт, "
                 f"ожидается {expected_bytes:,} байт (разница: {diff:+,} байт)</font>"
             )
-            self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
+            self._set_ok_button_enabled(False)
 
     def _on_copy_phantom_geometry(self) -> None:
         """Синхронизация размеров и шага источника с фантомом сцены."""
@@ -477,7 +505,7 @@ class DistributionImportDialog(QDialog):
                 encoding=encoding_val,
             )
             return data
-        except Exception as load_err:
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError) as load_err:
             QMessageBox.critical(self, "Ошибка загрузки", f"Не удалось прочитать файл с текущими параметрами:\n{load_err}")
             return None
 
@@ -497,10 +525,10 @@ class DistributionImportDialog(QDialog):
                 "Большое число уникальных значений",
                 f"В файле обнаружено {len(unique_vals):,} уникальных вещественных значений.\n"
                 f"Отобразить первые 50 наиболее частых значений материалов?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
             )
-            if reply != QMessageBox.Yes:
+            if reply != QMessageBox.StandardButton.Yes:
                 return
             sorted_indices = np.argsort(-counts)[:50]
             unique_vals = unique_vals[sorted_indices]
@@ -519,18 +547,18 @@ class DistributionImportDialog(QDialog):
             val_str = f"{val_float:.4g}"
 
             item_id = QTableWidgetItem(val_str)
-            item_id.setTextAlignment(Qt.AlignCenter)
+            item_id.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.tbl_mapping.setItem(row_idx, 0, item_id)
 
             item_count = QTableWidgetItem(f"{count_item:,}")
-            item_count.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            item_count.setFlags(Qt.ItemIsEnabled)
+            item_count.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            item_count.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.tbl_mapping.setItem(row_idx, 1, item_count)
 
             pct_val = (count_item / total_voxels) * 100.0
             item_pct = QTableWidgetItem(f"{pct_val:.2f}%")
-            item_pct.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            item_pct.setFlags(Qt.ItemIsEnabled)
+            item_pct.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            item_pct.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.tbl_mapping.setItem(row_idx, 2, item_pct)
 
             # Определение имени материала
@@ -544,7 +572,7 @@ class DistributionImportDialog(QDialog):
             color_item = QTableWidgetItem()
             red, green, blue = get_material_color(assigned_mat)
             color_item.setBackground(QBrush(QColor.fromRgbF(red, green, blue)))
-            color_item.setFlags(Qt.ItemIsEnabled)
+            color_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.tbl_mapping.setItem(row_idx, 3, color_item)
 
             combo_mat = QComboBox()
@@ -553,7 +581,7 @@ class DistributionImportDialog(QDialog):
             if found_idx >= 0:
                 combo_mat.setCurrentIndex(found_idx)
             combo_mat.currentTextChanged.connect(
-                lambda text, target_row=row_idx: self._on_table_material_changed(target_row, text)
+                lambda text, combo_ref=combo_mat: self._on_combo_material_changed(combo_ref, text)
             )
             self.tbl_mapping.setCellWidget(row_idx, 4, combo_mat)
 
@@ -563,23 +591,23 @@ class DistributionImportDialog(QDialog):
         self.tbl_mapping.setRowCount(len(mapping_dict))
         for row_idx, (val_float, mat_name) in enumerate(sorted(mapping_dict.items())):
             item_id = QTableWidgetItem(f"{float(val_float):.4g}")
-            item_id.setTextAlignment(Qt.AlignCenter)
+            item_id.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.tbl_mapping.setItem(row_idx, 0, item_id)
 
             item_count = QTableWidgetItem("–")
-            item_count.setTextAlignment(Qt.AlignCenter)
-            item_count.setFlags(Qt.ItemIsEnabled)
+            item_count.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_count.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.tbl_mapping.setItem(row_idx, 1, item_count)
 
             item_pct = QTableWidgetItem("–")
-            item_pct.setTextAlignment(Qt.AlignCenter)
-            item_pct.setFlags(Qt.ItemIsEnabled)
+            item_pct.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_pct.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.tbl_mapping.setItem(row_idx, 2, item_pct)
 
             color_item = QTableWidgetItem()
             red, green, blue = get_material_color(mat_name)
             color_item.setBackground(QBrush(QColor.fromRgbF(red, green, blue)))
-            color_item.setFlags(Qt.ItemIsEnabled)
+            color_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.tbl_mapping.setItem(row_idx, 3, color_item)
 
             combo_mat = QComboBox()
@@ -588,9 +616,16 @@ class DistributionImportDialog(QDialog):
             if found_idx >= 0:
                 combo_mat.setCurrentIndex(found_idx)
             combo_mat.currentTextChanged.connect(
-                lambda text, target_row=row_idx: self._on_table_material_changed(target_row, text)
+                lambda text, combo_ref=combo_mat: self._on_combo_material_changed(combo_ref, text)
             )
             self.tbl_mapping.setCellWidget(row_idx, 4, combo_mat)
+
+    def _on_combo_material_changed(self, combo_widget: QComboBox, mat_name: str) -> None:
+        """Динамический поиск строки таблицы, содержащей изменившийся QComboBox."""
+        for row_idx in range(self.tbl_mapping.rowCount()):
+            if self.tbl_mapping.cellWidget(row_idx, 4) is combo_widget:
+                self._on_table_material_changed(row_idx, mat_name)
+                return
 
     def _on_table_material_changed(self, row_idx: int, mat_name: str) -> None:
         color_item = self.tbl_mapping.item(row_idx, 3)
@@ -604,17 +639,17 @@ class DistributionImportDialog(QDialog):
         self.tbl_mapping.insertRow(current_rows)
 
         item_id = QTableWidgetItem(str(float(current_rows)))
-        item_id.setTextAlignment(Qt.AlignCenter)
+        item_id.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.tbl_mapping.setItem(current_rows, 0, item_id)
 
         item_count = QTableWidgetItem("–")
-        item_count.setTextAlignment(Qt.AlignCenter)
-        item_count.setFlags(Qt.ItemIsEnabled)
+        item_count.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item_count.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.tbl_mapping.setItem(current_rows, 1, item_count)
 
         item_pct = QTableWidgetItem("–")
-        item_pct.setTextAlignment(Qt.AlignCenter)
-        item_pct.setFlags(Qt.ItemIsEnabled)
+        item_pct.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item_pct.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.tbl_mapping.setItem(current_rows, 2, item_pct)
 
         air_default = "Air, Dry (near sea level)" if "Air, Dry (near sea level)" in all_materials else all_materials[0]
@@ -622,7 +657,7 @@ class DistributionImportDialog(QDialog):
         color_item = QTableWidgetItem()
         red, green, blue = get_material_color(default_mat)
         color_item.setBackground(QBrush(QColor.fromRgbF(red, green, blue)))
-        color_item.setFlags(Qt.ItemIsEnabled)
+        color_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.tbl_mapping.setItem(current_rows, 3, color_item)
 
         combo_mat = QComboBox()
@@ -631,7 +666,7 @@ class DistributionImportDialog(QDialog):
         if found_idx >= 0:
             combo_mat.setCurrentIndex(found_idx)
         combo_mat.currentTextChanged.connect(
-            lambda text, target_row=current_rows: self._on_table_material_changed(target_row, text)
+            lambda text, combo_ref=combo_mat: self._on_combo_material_changed(combo_ref, text)
         )
         self.tbl_mapping.setCellWidget(current_rows, 4, combo_mat)
 
@@ -669,13 +704,14 @@ class DistributionImportDialog(QDialog):
         chosen_dtype = self.combo_dtype.currentData() or np.dtype(np.float32)
         encoding = self.combo_encoding.currentData() or "binary"
 
+        mapping_dict: Optional[Dict[float, str]] = None
         if self.target_kind == ImportTargetKind.PHANTOM:
             voxel_size: Union[float, Tuple[float, float, float]] = (
                 self.spin_vox_x.value(),
                 self.spin_vox_y.value(),
                 self.spin_vox_z.value()
             )
-            mapping_dict: Dict[float, str] = {}
+            mapping_dict = {}
             for row_idx in range(self.tbl_mapping.rowCount()):
                 id_item = self.tbl_mapping.item(row_idx, 0)
                 combo_widget = self.tbl_mapping.cellWidget(row_idx, 4)
@@ -685,12 +721,14 @@ class DistributionImportDialog(QDialog):
                         mapping_dict[val_float] = combo_widget.currentText()
                     except ValueError:
                         pass
+            self._custom_material_mapping = mapping_dict
             fill_value = self.combo_default_material.currentText()
             total_activity = None
             noise_threshold = None
         else:
             voxel_size = self.spin_source_voxel_step.value()
             mapping_dict = None
+            self._custom_material_mapping = None
             fill_value = "Air, Dry (near sea level)"
             total_activity = self.spin_source_total_activity.value()
             noise_threshold = self.spin_source_threshold.value()
@@ -713,3 +751,10 @@ class DistributionImportDialog(QDialog):
     def get_parameters(self) -> DistributionImportParameters:
         """Алиас для get_import_parameters."""
         return self.get_import_parameters()
+
+
+__all__ = [
+    "SUPPORTED_DTYPES",
+    "DistributionImportDialog",
+]
+

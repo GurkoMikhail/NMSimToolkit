@@ -74,16 +74,16 @@ class GuiSimulationSettings(BaseModel):
     def get(self, key: str, default: Any = None) -> Any:
         return self.model_dump().get(key, default)
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> Iterator[str]:  # type: ignore[override]
         return iter(self.model_dump())
 
-    def keys(self):
+    def keys(self) -> Any:
         return self.model_dump().keys()
 
-    def items(self):
+    def items(self) -> Any:
         return self.model_dump().items()
 
-    def values(self):
+    def values(self) -> Any:
         return self.model_dump().values()
 
 

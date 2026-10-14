@@ -1,5 +1,5 @@
 from copy import copy
-from typing import Any, Dict, List, Tuple, Type, Union
+from typing import Any, Dict, List, Self, Tuple, Type, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -18,7 +18,7 @@ class NonuniqueArray(np.ndarray):
     _element_list: List[Any]
     _element_to_index: Dict[Any, int]
 
-    def __new__(cls, shape: Union[int, Tuple[int, ...]]) -> 'NonuniqueArray':
+    def __new__(cls, shape: Union[int, Tuple[int, ...]]) -> Self:
         obj = super().__new__(cls, shape, dtype=int)
         obj._element_list = [None]
         obj._element_to_index = {None: 0}
@@ -85,7 +85,8 @@ class NonuniqueArray(np.ndarray):
     def restore(self) -> NDArray[np.object_]:
         """Восстанавливает массив объектов исходных типов по сохраненным индексам."""
         indices = np.ndarray.__getitem__(self, slice(None))
-        return np.array(self._element_list, dtype=object)[indices]
+        restored_array: NDArray[np.object_] = np.array(self._element_list, dtype=object)[indices]
+        return restored_array
 
     def type_matching(self, target_type: Type[Any]) -> NDArray[np.bool_]:
         """Возвращает булеву маску совпадения элементов массива с заданным типом."""
@@ -105,7 +106,8 @@ class NonuniqueArray(np.ndarray):
         if element_idx is None:
             element_idx = self._element_list.index(value)
         indices = np.copy(self)
-        return indices == element_idx
+        match_mask: NDArray[np.bool_] = np.asarray(indices == element_idx, dtype=np.bool_)
+        return match_mask
 
     @property
     def inverse_indices(self) -> Dict[Any, Tuple[NDArray[np.int64], ...]]:

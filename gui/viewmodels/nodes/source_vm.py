@@ -1,7 +1,7 @@
 import logging
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Iterator, List, Optional, Tuple
 import numpy as np
 import hepunits as units
 
@@ -18,7 +18,7 @@ def _on_source_activity_change(instance: Any, value: float) -> None:
     if isinstance(instance, SourceViewModel) and instance._mutation_blocked:
         return
     if isinstance(instance.core_node, Source):
-        instance.core_node.initial_activity = Float(float(value) * 1e6 * units.Bq)
+        instance.core_node.initial_activity = Float(float(value) * float(units.MBq))
 
 
 def _on_source_radiation_type_change(instance: Any, value: str) -> None:
@@ -33,27 +33,32 @@ def _on_source_half_life_change(instance: Any, value: float) -> None:
         return
     if isinstance(instance.core_node, Source):
         hours_value = float(value)
-        instance.core_node.half_life = Float(hours_value * 3600.0 * units.second) if hours_value > 0 else Float(np.inf)
+        instance.core_node.half_life = (
+            Float(hours_value * float(units.hour)) if hours_value > 0.0 else Float(np.inf)
+        )
 
 
 class SourceViewModel(NodeViewModel):
     """
     ViewModel для источника излучения (Source, PointSource).
     """
+    core_node: Source
+
     activity = gui_field(default=100.0, on_change=_on_source_activity_change)      # МБк
     radiation_type = gui_field(default='Gamma', on_change=_on_source_radiation_type_change)
     half_life = gui_field(default=6.0, on_change=_on_source_half_life_change)     # часы
     file_path = gui_field(default='')
 
-    def __init__(self, core_node: Any, parent_vm: Optional[NodeViewModel] = None, file_path: str = "") -> None:
+    def __init__(self, core_node: Source, parent_vm: Optional[NodeViewModel] = None, file_path: str = "") -> None:
         self._mutation_blocked: bool = False
         super().__init__(core_node, parent_vm)
+        self.core_node = core_node
         if file_path:
             self.file_path = str(file_path)
         self._sync_from_core()
 
     @contextmanager
-    def _block_mutation(self):
+    def _block_mutation(self) -> Iterator[None]:
         """Контекстный менеджер для предотвращения обратной feedback-мутации ядра при синхронизации."""
         old_val = self._mutation_blocked
         self._mutation_blocked = True
@@ -69,8 +74,11 @@ class SourceViewModel(NodeViewModel):
         """
         if isinstance(self.core_node, Source) and self.core_node.energy is not None:
             return [
-                [float(e) / float(units.keV), float(p)]
-                for e, p in zip(self.core_node.energy["energy"], self.core_node.energy["probability"])
+                [float(energy_val) / float(units.keV), float(prob_val)]
+                for energy_val, prob_val in zip(
+                    self.core_node.energy["energy"],
+                    self.core_node.energy["probability"],
+                )
             ]
         return [[140.5, 1.0]]
 
@@ -84,7 +92,10 @@ class SourceViewModel(NodeViewModel):
         if not pairs:
             pairs = [[140.5, 1.0]]
         if isinstance(self.core_node, Source):
-            core_pairs = [[float(e) * float(units.keV), float(w)] for e, w in pairs]
+            core_pairs = [
+                [float(energy_val) * float(units.keV), float(weight_val)]
+                for energy_val, weight_val in pairs
+            ]
             self.core_node.energy = core_pairs
         self.property_changed.emit('spectrum', pairs)
         if len(pairs) > 0:
@@ -122,8 +133,7 @@ class SourceViewModel(NodeViewModel):
             if isinstance(self.core_node, Source):
                 if self.core_node.initial_activity is not None:
                     total_activity = float(np.sum(self.core_node.initial_activity))
-                    activity_bq = total_activity if total_activity >= 1e3 else (total_activity / units.Bq)
-                    self.activity = float(activity_bq / 1e6)
+                    self.activity = float(total_activity / float(units.MBq))
 
                 if self.core_node.radiation_type is not None:
                     self.radiation_type = str(self.core_node.radiation_type)
@@ -131,7 +141,11 @@ class SourceViewModel(NodeViewModel):
                 half_life_field = self.core_node.half_life
                 if half_life_field is not None:
                     half_life_float = float(half_life_field)
-                    self.half_life = (half_life_float / 3600.0) if (half_life_float > 0 and not np.isinf(half_life_float)) else 0.0
+                    self.half_life = (
+                        half_life_float / float(units.hour)
+                        if (half_life_float > 0.0 and not np.isinf(half_life_float))
+                        else 0.0
+                    )
 
         self.property_changed.emit('spectrum', self.spectrum)
         self.property_changed.emit('energy', self.energy)
@@ -214,3 +228,8 @@ class SourceViewModel(NodeViewModel):
         except (OSError, ValueError, TypeError, KeyError) as err:
             _logger.warning(f"Ошибка загрузки распределения источника: {err}")
             return False
+
+
+__all__ = [
+    "SourceViewModel",
+]

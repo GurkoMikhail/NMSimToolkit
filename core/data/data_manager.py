@@ -77,7 +77,7 @@ class DataManager(threading.Thread):
         self._start_perf_time: Optional[float] = None
         self._start_time_str: Optional[str] = None
         self._completion_time_str: Optional[str] = None
-        self._elapsed_real_time_seconds: Optional[float] = None
+        self._elapsed_real_time: Optional[float] = None
         self._error_message: Optional[str] = None
 
     @property
@@ -242,9 +242,9 @@ class DataManager(threading.Thread):
         self._is_finalized = True
         self._completion_time_str = str(time.strftime("%Y-%m-%d %H:%M:%S"))
         if self._start_perf_time is not None:
-            self._elapsed_real_time_seconds = float(time.perf_counter() - self._start_perf_time)
+            self._elapsed_real_time = float(time.perf_counter() - self._start_perf_time)
         else:
-            self._elapsed_real_time_seconds = 0.0
+            self._elapsed_real_time = 0.0
 
         if error is not None:
             self._error_message = str(error)
@@ -256,7 +256,7 @@ class DataManager(threading.Thread):
 
             task_group.attrs["status"] = self._status
             task_group.attrs["completion_time"] = self._completion_time_str
-            task_group.attrs["elapsed_real_time_seconds"] = self._elapsed_real_time_seconds
+            task_group.attrs["elapsed_real_time_seconds"] = self._elapsed_real_time
             if self._error_message is not None:
                 task_group.attrs["error"] = self._error_message
 
@@ -288,7 +288,7 @@ class DataManager(threading.Thread):
                 for handler_instance in self.handlers:
                     try:
                         handler_instance.process_chunk(frozen_chunk)
-                    except Exception as handler_error:
+                    except (OSError, RuntimeError, ValueError, KeyError, TypeError, IndexError) as handler_error:
                         _logger.error(
                             f"Ошибка обработки чанка обработчиком {handler_instance}: {handler_error}",
                             exc_info=True,
@@ -298,7 +298,7 @@ class DataManager(threading.Thread):
         for handler_instance in self.handlers:
             try:
                 handler_instance.finalize()
-            except Exception as finalize_error:
+            except (OSError, RuntimeError, ValueError, KeyError, TypeError, IndexError) as finalize_error:
                 _logger.error(
                     f"Ошибка финализации обработчика {handler_instance}: {finalize_error}",
                     exc_info=True,

@@ -1,3 +1,6 @@
+"""
+Панель визуализации результатов моделирования и телеметрии в реальном времени.
+"""
 import logging
 from typing import Any, Optional
 
@@ -32,7 +35,7 @@ class ResultsViewer(QWidget):
 
     accumulation_cleared = Signal()
 
-    def __init__(self, parent: Optional[Any] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         configure_pyqtgraph_theme()
         self.image_view: Any = None
@@ -48,7 +51,7 @@ class ResultsViewer(QWidget):
         self._current_view_idx: int = 0
         self._total_views: int = 1
         self._angular_range: float = 360.0
-        self.proj_nav_widget: Optional[Any] = None
+        self.proj_nav_widget: Optional[QWidget] = None
 
         self._init_ui()
 
@@ -76,7 +79,7 @@ class ResultsViewer(QWidget):
         self.btn_prev_proj.setFixedWidth(32)
         self.btn_prev_proj.clicked.connect(self._on_prev_projection)
 
-        self.slider_proj = QSlider(Qt.Horizontal)
+        self.slider_proj = QSlider(Qt.Orientation.Horizontal)
         self.slider_proj.setRange(1, 1)
         self.slider_proj.setValue(1)
         self.slider_proj.valueChanged.connect(self._on_slider_proj_changed)
@@ -160,9 +163,9 @@ class ResultsViewer(QWidget):
         if self.profile_plot is None:
             return
 
-        h, w = image_data.shape
-        mid_y = h // 2
-        mid_x = w // 2
+        height, width = image_data.shape
+        mid_y = height // 2
+        mid_x = width // 2
 
         prof_x = image_data[mid_y, :]
         prof_y = image_data[:, mid_x]
@@ -200,7 +203,7 @@ class ResultsViewer(QWidget):
         else:
             self._spectrum_curve.setData(bin_centers, counts)
 
-    def set_projection_stack_data(self, stack: np.ndarray, current_idx: int, total_views: int, angle_deg: float) -> None:
+    def set_projection_stack_data(self, stack: np.ndarray, current_idx: int, total_views: int, angle: float) -> None:
         """
         Обновляет стек 3D-проекций ОФЭКТ сканирования и элементы навигации.
         """
@@ -209,14 +212,16 @@ class ResultsViewer(QWidget):
         self._current_view_idx = current_idx
 
         if self._total_views > 1:
-            self.proj_nav_widget.setVisible(True)
+            if self.proj_nav_widget is not None:
+                self.proj_nav_widget.setVisible(True)
             self.slider_proj.blockSignals(True)
             self.slider_proj.setRange(1, self._total_views)
             self.slider_proj.setValue(current_idx + 1)
             self.slider_proj.blockSignals(False)
-            self.lbl_projection_info.setText(f"Проекция: {current_idx + 1} / {self._total_views} ({angle_deg:.1f}°)")
+            self.lbl_projection_info.setText(f"Проекция: {current_idx + 1} / {self._total_views} ({angle:.1f}°)")
         else:
-            self.proj_nav_widget.setVisible(False)
+            if self.proj_nav_widget is not None:
+                self.proj_nav_widget.setVisible(False)
 
         if 0 <= current_idx < stack.shape[0]:
             self.set_projection_data(stack[current_idx])
@@ -266,3 +271,10 @@ class ResultsViewer(QWidget):
             self._prof_y_curve = None
         self.lbl_stats.setText("Всего отсчетов: 0")
         self.accumulation_cleared.emit()
+
+
+__all__ = [
+    "configure_pyqtgraph_theme",
+    "ResultsViewer",
+]
+

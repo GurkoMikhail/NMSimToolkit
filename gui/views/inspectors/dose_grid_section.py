@@ -26,9 +26,11 @@ class DoseGridInspectorSection(BaseInspectorSection):
     dose_voxel_size_changed = Signal(float)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует секцию настройки воксельной сетки дозы."""
         super().__init__("Параметры сетки дозы (Dose Scorer)", parent)
 
     def _init_ui(self) -> None:
+        """Создает элементы управления геометрией и разрешением сетки дозы."""
         form_layout = QFormLayout(self)
 
         self.btn_fit_dose_grid_to_parent = QPushButton("⇲ Подогнать размер под родителя")
@@ -69,6 +71,7 @@ class DoseGridInspectorSection(BaseInspectorSection):
         form_layout.addRow(self.chk_dose_grid_active)
 
     def _create_size_spinbox(self, callback: Any) -> QDoubleSpinBox:
+        """Создает поле ввода размера сетки дозы по одной из осей."""
         spin = QDoubleSpinBox()
         spin.setRange(0.1, 5000.0)
         spin.setSingleStep(5.0)
@@ -76,9 +79,11 @@ class DoseGridInspectorSection(BaseInspectorSection):
         return spin
 
     def can_handle(self, view_model: Any) -> bool:
+        """Проверяет, является ли модель представления узлом сетки дозы."""
         return isinstance(view_model, DoseGridViewModel)
 
     def update_ui_from_vm(self) -> None:
+        """Синхронизирует виджеты размеров, шага вокселя и метрик с текущей DoseGridViewModel."""
         if not isinstance(self._current_vm, DoseGridViewModel):
             return
         old_state = self._is_updating_ui
@@ -103,6 +108,7 @@ class DoseGridInspectorSection(BaseInspectorSection):
             self._is_updating_ui = old_state
 
     def on_property_changed_externally(self, prop_name: str, new_val: Any) -> None:
+        """Обновляет поля UI при внешнем изменении свойств сетки дозы."""
         if not isinstance(self._current_vm, DoseGridViewModel):
             return
         if prop_name == "size":
@@ -142,6 +148,7 @@ class DoseGridInspectorSection(BaseInspectorSection):
         self.lbl_dose_grid_memory.setText(f"{mem_mb:.2f} МБ (float64)")
 
     def _on_dose_grid_size_changed(self) -> None:
+        """Обновляет размеры сетки дозы в ViewModel при редактировании в UI."""
         if self._is_updating_ui or not isinstance(self._current_vm, DoseGridViewModel):
             return
         self._current_vm.size = (
@@ -152,6 +159,7 @@ class DoseGridInspectorSection(BaseInspectorSection):
         self._update_dose_grid_metrics()
 
     def _on_dose_grid_voxel_step_changed(self) -> None:
+        """Обновляет шаг вокселя сетки дозы и испускает сигнал перестройки визуализации."""
         if self._is_updating_ui or not isinstance(self._current_vm, DoseGridViewModel):
             return
         self._current_vm.dose_voxel_size = self.spin_dose_grid_voxel.value()
@@ -159,6 +167,7 @@ class DoseGridInspectorSection(BaseInspectorSection):
         self.dose_voxel_size_changed.emit(self.spin_dose_grid_voxel.value())
 
     def _on_dose_grid_active_toggled(self, checked: bool) -> None:
+        """Переключает активность накопления дозы в ViewModel."""
         if self._is_updating_ui or not isinstance(self._current_vm, DoseGridViewModel):
             return
         self._current_vm.is_active = checked
@@ -182,3 +191,6 @@ class DoseGridInspectorSection(BaseInspectorSection):
             self._update_dose_grid_metrics()
         finally:
             self._is_updating_ui = False
+
+
+__all__ = ["DoseGridInspectorSection"]

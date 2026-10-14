@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from PySide6.QtCore import QObject, Signal
 
 from core.config.models import (
@@ -54,9 +54,9 @@ class BaseDataHandlerViewModel(QObject):
 
     @enabled.setter
     def enabled(self, value: bool) -> None:
-        b = bool(value)
-        if self._enabled != b:
-            self._enabled = b
+        enabled_flag = bool(value)
+        if self._enabled != enabled_flag:
+            self._enabled = enabled_flag
             self.changed.emit()
 
     def to_config(self) -> Optional[AnyDataHandlerConfig]:
@@ -85,9 +85,9 @@ class DirectStreamHandlerViewModel(BaseDataHandlerViewModel):
 
     @show_escaped_tracks.setter
     def show_escaped_tracks(self, value: bool) -> None:
-        b = bool(value)
-        if self._show_escaped_tracks != b:
-            self._show_escaped_tracks = b
+        show_escaped_flag = bool(value)
+        if self._show_escaped_tracks != show_escaped_flag:
+            self._show_escaped_tracks = show_escaped_flag
             self.changed.emit()
 
     def to_config(self) -> Optional[DirectStreamHandlerConfig]:
@@ -200,7 +200,7 @@ class SensitiveVolumeHandlerViewModel(BaseDataHandlerViewModel):
         """
         self.remove_volume(node_name)
 
-    def to_config(self) -> Optional[SensitiveVolumeHandlerConfig]:
+    def to_config(self) -> Optional[Union[SensitiveVolumeHandlerConfig, HistoryAssemblerHandlerConfig]]:
         if not self._enabled:
             return None
         return SensitiveVolumeHandlerConfig(
@@ -279,7 +279,7 @@ class DoseMapHandlerViewModel(BaseDataHandlerViewModel):
 
     @grid_names.setter
     def grid_names(self, names: List[str]) -> None:
-        self._grid_names = [str(n) for n in names]
+        self._grid_names = [str(grid_name) for grid_name in names]
         self.changed.emit()
 
     @property
@@ -322,11 +322,14 @@ class DataManagerViewModel(QObject):
         self._filename: str = filename
         self._min_buffer_capacity: int = 1
         self._buffer_capacity: int = buffer_capacity if buffer_capacity is not None else 1
+        self._floating_point_precision: Literal["float32", "float64"] = "float64"
+        self._compression: Optional[Literal["gzip", "lzf"]] = "gzip"
+        self._compression_opts: int = 4
         self._handlers: List[BaseDataHandlerViewModel] = []
 
         if handlers:
-            for h in handlers:
-                self.add_handler(h)
+            for handler_item in handlers:
+                self.add_handler(handler_item)
         else:
             # Набор обработчиков по умолчанию
             self.add_handler(DirectStreamHandlerViewModel(enabled=True))
@@ -340,9 +343,9 @@ class DataManagerViewModel(QObject):
 
     @filename.setter
     def filename(self, path: str) -> None:
-        p = str(path).strip()
-        if self._filename != p:
-            self._filename = p
+        clean_path = str(path).strip()
+        if self._filename != clean_path:
+            self._filename = clean_path
             self.changed.emit()
 
     @property
@@ -361,9 +364,9 @@ class DataManagerViewModel(QObject):
 
     @buffer_capacity.setter
     def buffer_capacity(self, cap: int) -> None:
-        c = max(self._min_buffer_capacity, int(cap))
-        if self._buffer_capacity != c:
-            self._buffer_capacity = c
+        clamped_capacity = max(self._min_buffer_capacity, int(cap))
+        if self._buffer_capacity != clamped_capacity:
+            self._buffer_capacity = clamped_capacity
             self.changed.emit()
 
     @property
@@ -398,6 +401,9 @@ class DataManagerViewModel(QObject):
         return DataManagerConfig(
             filename=self._filename,
             buffer_capacity=self._buffer_capacity,
+            floating_point_precision=self._floating_point_precision,
+            compression=self._compression,
+            compression_opts=self._compression_opts,
             handlers=configs,
         )
 
@@ -417,6 +423,9 @@ class DataManagerViewModel(QObject):
         self._filename = config.filename
         raw_capacity = config.buffer_capacity
         self.buffer_capacity = self._min_buffer_capacity if raw_capacity is None else max(self._min_buffer_capacity, int(raw_capacity))
+        self._floating_point_precision = config.floating_point_precision
+        self._compression = config.compression
+        self._compression_opts = int(config.compression_opts) if config.compression_opts is not None else 4
         for handler in list(self._handlers):
             self.remove_handler(handler)
 
@@ -480,4 +489,14 @@ class DataManagerViewModel(QObject):
             return False
 
         return False
+
+
+__all__ = [
+    "BaseDataHandlerViewModel",
+    "DirectStreamHandlerViewModel",
+    "SensitiveVolumeHandlerViewModel",
+    "HistoryAssemblerHandlerViewModel",
+    "DoseMapHandlerViewModel",
+    "DataManagerViewModel",
+]
 

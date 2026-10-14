@@ -6,10 +6,8 @@
 
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
-
-_logger = logging.getLogger(__name__)
 
 from core.config.logging_setup import (
     setup_task_logging,
@@ -33,13 +31,15 @@ from core.transport.ipc_pause_bridge import IpcPauseBridge
 from core.transport.propagator import ParticlePropagator
 from core.transport.simulation_managers import SimulationManager
 
+_logger = logging.getLogger(__name__)
 
-def _find_nodes_by_names(root_node: Any, target_names: List[str]) -> List[Any]:
+
+def _find_nodes_by_names(root_node: SpatialNode, target_names: List[str]) -> List[SpatialNode]:
     """Рекурсивный поиск узлов с указанными именами в поддереве сцены."""
-    found_nodes: List[Any] = []
+    found_nodes: List[SpatialNode] = []
 
-    def traverse(current_node: Any) -> None:
-        if isinstance(current_node, SpatialNode) and current_node.name in target_names:
+    def traverse(current_node: SpatialNode) -> None:
+        if current_node.name in target_names:
             found_nodes.append(current_node)
         if isinstance(current_node, CompositeNode):
             for child_node in current_node.childs:
@@ -49,7 +49,7 @@ def _find_nodes_by_names(root_node: Any, target_names: List[str]) -> List[Any]:
     return found_nodes
 
 
-def _find_dose_grids(root_node: Any) -> List[DoseGridNode]:
+def _find_dose_grids(root_node: SpatialNode) -> List[DoseGridNode]:
     """Рекурсивный поиск всех узлов DoseGridNode в поддереве сцены."""
     grids_list: List[DoseGridNode] = []
     if isinstance(root_node, DoseGridNode):
@@ -83,20 +83,27 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
 
     data_manager: Optional[DataManager] = None
     pause_bridge: Optional[IpcPauseBridge] = None
+    handlers: List[BaseDataHandler] = []
 
     try:
         # 2. Сборка сцены через декларативный строитель
         builder = SceneBuilder()
-        root_scene = builder.build_scene(final_config.scene)
+        built_scene = builder.build_scene(final_config.scene)
+        if isinstance(built_scene, CompositeNode):
+            root_scene: CompositeNode = built_scene
+        else:
+            root_scene = CompositeNode(name="World")
+            root_scene.add_child(built_scene)
         context_data: Dict[str, float] = task_dict.get("_context", {})
 
-        # 3. Инициализация пропагатора с изолированным генератором случайных чисел
-        random_generator = np.random.default_rng(random_seed)
-        propagator = ParticlePropagator(rng=random_generator)
+        # 3. Инициализация пропагатора и источников с изолированными потоками ГСЧ
+        base_random_generator = np.random.default_rng(random_seed)
+        propagator_rng = base_random_generator.spawn(1)[0]
+        propagator = ParticlePropagator(rng=propagator_rng)
 
-        def set_rng_for_sources(scene_node: Any) -> None:
+        def set_rng_for_sources(scene_node: SpatialNode) -> None:
             if isinstance(scene_node, Source):
-                scene_node.rng = random_generator
+                scene_node.rng = base_random_generator.spawn(1)[0]
             if isinstance(scene_node, CompositeNode):
                 for child_node in scene_node.childs:
                     set_rng_for_sources(child_node)
@@ -105,7 +112,6 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
 
         # 4. Построение конвейера обработчиков данных
         dm_cfg = final_config.data_manager
-        handlers: List[BaseDataHandler] = []
         for handler_config in dm_cfg.handlers:
             if handler_config.type == "DirectStreamHandler":
                 handlers.append(
@@ -268,11 +274,11 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
         if data_manager is not None:
             try:
                 data_manager.stop(timeout=1.0)
-            except Exception:
+            except (OSError, RuntimeError, ValueError, KeyError):
                 pass
             try:
                 data_manager.finalize_metadata(status="failed", error=str(simulation_exception))
-            except Exception as metadata_write_error:
+            except (OSError, RuntimeError, ValueError, KeyError) as metadata_write_error:
                 _logger.error(
                     f"Не удалось зафиксировать статус ошибки в HDF5 для задачи {task_id}: {metadata_write_error}",
                     exc_info=True,
@@ -284,6 +290,11 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                 pass
         raise
     finally:
+        for handler_instance in handlers:
+            try:
+                handler_instance.close()
+            except (OSError, RuntimeError, ValueError, KeyError) as close_error:
+                _logger.debug(f"Ошибка при закрытии обработчика {handler_instance}: {close_error}")
         if pause_bridge is not None:
             pause_bridge.stop_bridge()
             pause_bridge.join(timeout=1.0)
@@ -291,3 +302,4 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
 
 
 __all__ = ["simulation_worker_task"]
+

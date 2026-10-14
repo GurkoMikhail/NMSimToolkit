@@ -25,6 +25,7 @@ class BaseInspectorSection(QGroupBox):
     target_viewmodel_requested = Signal(object)
 
     def __init__(self, title: str, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует базовую секцию инспектора с указанным заголовком."""
         super().__init__(title, parent)
         self._current_vm: Optional[Any] = None
         self._scene_vm: Optional[SceneViewModel] = None
@@ -132,3 +133,6 @@ class BaseInspectorSection(QGroupBox):
                     self._scene_vm.bindings_registry[self._current_vm.core_node].pop("alpha", None)
 
         self.binding_changed.emit(prop_name, clean_var_name)
+
+
+__all__ = ["BaseInspectorSection"]

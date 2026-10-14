@@ -9,12 +9,17 @@ import hepunits as units
 
 import settings.database_setting as settings
 from core.geometry.geometries import Box, PeriodicHexPrism, ShapeDataDType
-from core.geometry.direct_collimators import DirectParallelCollimator
+from core.geometry.direct_collimators import CollimatorHoleShape, DirectParallelCollimator
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import Volume, GeometryBufferDType
 from core.geometry.geometry_compiler import GeometryCompiler
 from core.geometry.flattened_scene import FlattenedScene
-from core.geometry.geometry_kernels import _hex_prism_intersect, _get_intersection, _trace_single_ray
+from core.geometry.geometry_kernels import (
+    GEOMETRY_EPSILON,
+    _get_intersection,
+    _hex_prism_intersect,
+    _trace_single_ray,
+)
 from core.scene.nodes import CompositeNode
 from core.other.typing_definitions import Float
 
@@ -373,8 +378,6 @@ class TestDirectParallelCollimator(unittest.TestCase):
 
     def test_hole_shape_universalization(self) -> None:
         """Проверка поддержки и валидации параметра hole_shape (универсализация форм каналов)."""
-        from core.geometry.direct_collimators import CollimatorHoleShape
-
         # 1. Значение по умолчанию - гексагональная форма
         self.assertEqual(self.collimator.hole_shape, CollimatorHoleShape.HEXAGONAL)
 
@@ -443,7 +446,72 @@ class TestDirectParallelCollimator(unittest.TestCase):
         with self.assertRaises(TypeError):
             self.collimator.hole_shape = 456  # type: ignore
 
+    def test_hex_prism_blind_spot_and_parent_clipping(self) -> None:
+        """
+        Регрессионный тест _hex_prism_intersect и _trace_single_ray:
+        1. Устранение слепой зоны [0, GEOMETRY_EPSILON] вблизи стенки канала при движении из септы в канал.
+        2. Корректный учет пересечения с септой и родительским объемом lead_body при входе снаружи под углом.
+        """
+        compiler = GeometryCompiler()
+        geometry_buffer = compiler.compile_scene(self.collimator)
+        shape_data = geometry_buffer[1]["shape_data"]
+
+        # 1. Слепая зона: частица в септе на расстоянии 0.5 * GEOMETRY_EPSILON от стенки канала x = 0.75 мм
+        channel_wall_x = 0.5 * self.hole_diameter  # 0.75 мм
+        near_wall_x = Float(channel_wall_x + 0.5 * GEOMETRY_EPSILON)
+        time_min, time_max = _hex_prism_intersect(
+            near_wall_x,
+            Float(0.0),
+            Float(0.0),
+            Float(-1.0),
+            Float(0.0),
+            Float(0.0),
+            shape_data,
+        )
+        # Не должно перепрыгивать через весь канал (1.5 мм); должно вернуть GEOMETRY_EPSILON
+        self.assertAlmostEqual(float(time_min), float(GEOMETRY_EPSILON), places=12)
+        self.assertEqual(time_max, np.inf)
+
+        # 2. Вход снаружи по оси Z в септу под углом к границе ячейки Вороного (x = 0.85 мм):
+        # Полувысота коллиматора 17.5 мм (size[2] = 35.0 мм).
+        # Луч стартует при z = -20.0 мм (до торца 2.5 мм вдоль Z) и входит в торец z = -17.5 мм
+        # в точке x = 0.80 мм (внутри септы) с dir_x = +0.6 > 0 (движение к границе ячейки x = 0.85 мм).
+        dir_x = Float(0.6)
+        dir_y = Float(0.0)
+        dir_z = Float(0.8)
+        time_offset = 2.5 / 0.8
+        start_x = Float(0.80 - dir_x * time_offset)
+        start_z = Float(-20.0)
+
+        t_hex_min, t_hex_max = _hex_prism_intersect(
+            start_x,
+            Float(0.0),
+            start_z,
+            dir_x,
+            dir_y,
+            dir_z,
+            shape_data,
+        )
+        # Внутри септы от x=0.80 до границы ячейки Вороного x=0.85 при dir_x=0.6 путь равен 0.05 / 0.6
+        expected_internal_step = (0.85 - 0.80) / 0.6
+        self.assertAlmostEqual(float(t_hex_min), time_offset + expected_internal_step, places=6)
+        self.assertEqual(t_hex_max, np.inf)
+
+        # Трассировка _trace_single_ray снаружи коллиматора должна вернуть расстояние до входа в родительский lead_body (time_offset)
+        closest_dist, detected_vol = _trace_single_ray(
+            start_x,
+            Float(0.0),
+            start_z,
+            dir_x,
+            dir_y,
+            dir_z,
+            geometry_buffer,
+        )
+        self.assertEqual(detected_vol, -1)
+        self.assertAlmostEqual(float(closest_dist), time_offset, places=6)
+
 
 if __name__ == '__main__':
     unittest.main()
+
 

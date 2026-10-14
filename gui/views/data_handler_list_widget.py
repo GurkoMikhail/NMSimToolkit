@@ -1,9 +1,12 @@
+"""
+Док-панель управления списком обработчиков данных (DataHandlers).
+"""
 import logging
 from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-    QPushButton, QMenu, QDockWidget, QMessageBox
+    QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
+    QPushButton, QMenu, QDockWidget
 )
 
 from gui.viewmodels.data_handler_viewmodel import (
@@ -35,7 +38,7 @@ class DataHandlerListWidget(QDockWidget):
     ) -> None:
         super().__init__("Обработчики данных", parent)
         self.setObjectName("DockDataHandlerList")
-        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
 
         self.data_manager_vm = data_manager_vm or DataManagerViewModel()
         self._is_updating_ui: bool = False
@@ -53,7 +56,7 @@ class DataHandlerListWidget(QDockWidget):
 
         # 1. Плоский список обработчиков данных
         self.list_widget = QListWidget(container)
-        self.list_widget.setSelectionMode(QListWidget.SingleSelection)
+        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list_widget.itemChanged.connect(self._on_item_changed)
         self.list_widget.itemClicked.connect(self._on_item_clicked)
         self.list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
@@ -113,7 +116,7 @@ class DataHandlerListWidget(QDockWidget):
         for handler in self.data_manager_vm.handlers:
             item = QListWidgetItem(self.list_widget)
             item.setText(handler.name)
-            item.setData(Qt.UserRole, handler)
+            item.setData(Qt.ItemDataRole.UserRole, handler)
 
         self._is_updating_ui = False
 
@@ -121,36 +124,37 @@ class DataHandlerListWidget(QDockWidget):
         pass
 
     def _on_item_clicked(self, item: QListWidgetItem) -> None:
-        handler = item.data(Qt.UserRole)
+        handler = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(handler, BaseDataHandlerViewModel):
             self.handler_selected.emit(handler)
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
-        handler = item.data(Qt.UserRole)
+        handler = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(handler, BaseDataHandlerViewModel):
             self.handler_selected.emit(handler)
 
     def _add_handler_type(self, handler_type: str) -> None:
+        new_vm: BaseDataHandlerViewModel
         if handler_type == "DirectStreamHandler":
-            vm = DirectStreamHandlerViewModel()
+            new_vm = DirectStreamHandlerViewModel()
         elif handler_type == "HistoryAssemblerHandler":
-            vm = HistoryAssemblerHandlerViewModel()
+            new_vm = HistoryAssemblerHandlerViewModel()
         elif handler_type == "SensitiveVolumeHandler":
-            vm = SensitiveVolumeHandlerViewModel()
+            new_vm = SensitiveVolumeHandlerViewModel()
         elif handler_type == "DoseMapHandler":
-            vm = DoseMapHandlerViewModel()
+            new_vm = DoseMapHandlerViewModel()
         else:
             return
 
-        self.data_manager_vm.add_handler(vm)
-        self.handler_selected.emit(vm)
+        self.data_manager_vm.add_handler(new_vm)
+        self.handler_selected.emit(new_vm)
 
     def _on_remove_clicked(self) -> None:
         current_item = self.list_widget.currentItem()
         if current_item is None:
             return
 
-        handler = current_item.data(Qt.UserRole)
+        handler = current_item.data(Qt.ItemDataRole.UserRole)
         if isinstance(handler, BaseDataHandlerViewModel):
             self.data_manager_vm.remove_handler(handler)
 
@@ -166,3 +170,9 @@ class DataHandlerListWidget(QDockWidget):
             self.data_manager_vm = vm
             self._connect_signals()
             self.rebuild_list()
+
+
+__all__ = [
+    "DataHandlerListWidget",
+]
+

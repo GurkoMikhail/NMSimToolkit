@@ -42,10 +42,12 @@ class ProcedureInspectorSection(BaseInspectorSection):
     """Секция настройки кинематических протоколов и матриц варьируемых переменных сканирования."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует секцию настройки протокола исследования."""
         self._grid_var_widgets: dict[str, GridVariableChipsRow] = {}
         super().__init__("Параметры протокола исследования", parent)
 
     def _init_ui(self) -> None:
+        """Создает элементы управления протоколами сканирования и таблицами переменных."""
         proc_form = QFormLayout(self)
         self.lbl_proc_type = QLabel("ОФЭКТ (SPECT)")
         proc_form.addRow("Тип протокола:", self.lbl_proc_type)
@@ -183,9 +185,11 @@ class ProcedureInspectorSection(BaseInspectorSection):
         return widget
 
     def can_handle(self, view_model: Any) -> bool:
+        """Проверяет, является ли модель представления протоколом исследования."""
         return isinstance(view_model, BaseProcedureViewModel)
 
     def unbind(self) -> None:
+        """Отвязывает текущую модель протокола и очищает таблицы переменных."""
         super().unbind()
         self.spin_proc_radius.unbind()
         self.spin_proc_time.unbind()
@@ -197,6 +201,7 @@ class ProcedureInspectorSection(BaseInspectorSection):
         self._grid_var_widgets.clear()
 
     def update_ui_from_vm(self) -> None:
+        """Синхронизирует элементы управления протоколом и таблицы с текущей ViewModel."""
         vm = self._current_vm
         if not isinstance(vm, BaseProcedureViewModel):
             return
@@ -265,6 +270,7 @@ class ProcedureInspectorSection(BaseInspectorSection):
         self.spin_proc_time.setValue(float(vm.time_per_frame))
 
     def _set_step_controls_visible(self, visible: bool) -> None:
+        """Управляет видимостью специфичных для Step-and-Shoot угловых настроек."""
         self.spin_proc_start_angle.setVisible(visible)
         self.spin_proc_end_angle.setVisible(visible)
         self.combo_proc_head_mode.setVisible(visible)
@@ -289,10 +295,14 @@ class ProcedureInspectorSection(BaseInspectorSection):
 
             if isinstance(procedure_vm, StepAndShootProcedureViewModel):
                 std_order = ["gantry_angle", "radius", "step_time"]
-                other = [k for k in zipped_dict if k not in std_order and k not in ("current_angle", "current_time")]
-                cols = [k for k in std_order if k in zipped_dict] + other
+                other = [
+                    var_key
+                    for var_key in zipped_dict
+                    if var_key not in std_order and var_key not in ("current_angle", "current_time")
+                ]
+                cols = [var_key for var_key in std_order if var_key in zipped_dict] + other
             else:
-                cols = [k for k in zipped_dict if k not in ("current_angle", "current_time")]
+                cols = [var_key for var_key in zipped_dict if var_key not in ("current_angle", "current_time")]
 
             rows = len(next(iter(zipped_dict.values()))) if zipped_dict else 0
             tbl.setColumnCount(len(cols))
@@ -300,9 +310,12 @@ class ProcedureInspectorSection(BaseInspectorSection):
             tbl.setVerticalHeaderLabels([f"Шаг {idx + 1}" for idx in range(rows)])
 
             for col_idx, col_name in enumerate(cols):
-                is_ro = isinstance(procedure_vm, StepAndShootProcedureViewModel) and col_name in ("gantry_angle", "step_time")
+                is_ro = isinstance(procedure_vm, StepAndShootProcedureViewModel) and col_name in (
+                    "gantry_angle",
+                    "step_time",
+                )
                 item = QTableWidgetItem(f"🔒 {col_name}" if is_ro else col_name)
-                item.setData(Qt.UserRole, col_name)
+                item.setData(Qt.ItemDataRole.UserRole, col_name)
                 if is_ro:
                     item.setToolTip("Стандартная переменная протокола: вычисляется из кинематических параметров")
                 tbl.setHorizontalHeaderItem(col_idx, item)
@@ -311,14 +324,14 @@ class ProcedureInspectorSection(BaseInspectorSection):
                 for row_idx in range(rows):
                     val = val_list[row_idx] if row_idx < len(val_list) else 0.0
                     cell = QTableWidgetItem(f"{float(val):.4f}")
-                    cell.setTextAlignment(Qt.AlignCenter)
-                    flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
                     if is_ro:
                         cell.setFlags(flags)
                         cell.setForeground(QColor("#888888"))
                         cell.setBackground(QColor("#252830"))
                     else:
-                        cell.setFlags(flags | Qt.ItemIsEditable)
+                        cell.setFlags(flags | Qt.ItemFlag.ItemIsEditable)
                     tbl.setItem(row_idx, col_idx, cell)
         finally:
             tbl.blockSignals(False)
@@ -326,7 +339,7 @@ class ProcedureInspectorSection(BaseInspectorSection):
     def _populate_grid_tables(self, procedure_vm: CustomSweepProcedureViewModel) -> None:
         """Обновление списка и значений чипов Grid-переменных."""
         grid_dict = procedure_vm.grid_variables
-        for rem in (set(self._grid_var_widgets.keys()) - set(grid_dict.keys())):
+        for rem in set(self._grid_var_widgets.keys()) - set(grid_dict.keys()):
             widget = self._grid_var_widgets.pop(rem)
             self.grid_vars_layout.removeWidget(widget)
             widget.deleteLater()
@@ -349,12 +362,13 @@ class ProcedureInspectorSection(BaseInspectorSection):
                 self._grid_var_widgets[name].set_values(vals)
             else:
                 chips = GridVariableChipsRow(name, vals, parent=self.grid_vars_container)
-                chips.values_changed.connect(lambda v, n=name: self._on_grid_values_changed(n, v))
-                chips.variable_deleted.connect(lambda n=name: self._on_grid_deleted(n))
+                chips.values_changed.connect(self._on_grid_values_changed)
+                chips.variable_deleted.connect(self._on_grid_deleted)
                 self.grid_vars_layout.addWidget(chips)
                 self._grid_var_widgets[name] = chips
 
     def _on_proc_steps_changed(self, steps_val: int) -> None:
+        """Обновляет количество шагов сканирования в StepAndShootProcedureViewModel."""
         if not self._is_updating_ui and isinstance(self._current_vm, StepAndShootProcedureViewModel):
             self._current_vm.steps = steps_val
             self._is_updating_ui = True
@@ -363,14 +377,18 @@ class ProcedureInspectorSection(BaseInspectorSection):
             self._populate_zipped_table(self._current_vm)
 
     def _on_proc_cameras_changed(self, cam_count: int) -> None:
+        """Обновляет число гамма-камер в StepAndShootProcedureViewModel."""
         if not self._is_updating_ui and isinstance(self._current_vm, StepAndShootProcedureViewModel):
             self._current_vm.gamma_cameras = cam_count
             self._is_updating_ui = True
             self.lbl_proc_total_views.setText(str(self._current_vm.total_projections))
-            self.txt_proc_head_angles.setText(", ".join(f"{a:.1f}" for a in self._current_vm.head_angles))
+            self.txt_proc_head_angles.setText(
+                ", ".join(f"{angle_val:.1f}" for angle_val in self._current_vm.head_angles)
+            )
             self._is_updating_ui = False
 
     def _on_proc_radius_changed(self, radius: float) -> None:
+        """Обновляет радиус орбиты в ViewModel протокола."""
         if not self._is_updating_ui and isinstance(self._current_vm, StepAndShootProcedureViewModel):
             self._current_vm.radius = radius
             self._populate_zipped_table(self._current_vm)
@@ -378,6 +396,7 @@ class ProcedureInspectorSection(BaseInspectorSection):
             self._current_vm.ring_radius = radius
 
     def _on_proc_time_changed(self, step_time: float) -> None:
+        """Обновляет экспозицию на один ракурс/кадр в ViewModel протокола."""
         if not self._is_updating_ui and isinstance(self._current_vm, StepAndShootProcedureViewModel):
             self._current_vm.time_per_step = step_time
             self._populate_zipped_table(self._current_vm)
@@ -385,30 +404,40 @@ class ProcedureInspectorSection(BaseInspectorSection):
             self._current_vm.time_per_frame = step_time
 
     def _on_proc_start_angle_changed(self, angle: float) -> None:
+        """Обновляет начальный угол вращения гентри."""
         if not self._is_updating_ui and isinstance(self._current_vm, StepAndShootProcedureViewModel):
             self._current_vm.start_angle = angle
             self._populate_zipped_table(self._current_vm)
 
     def _on_proc_end_angle_changed(self, angle: float) -> None:
+        """Обновляет конечный угол вращения гентри."""
         if not self._is_updating_ui and isinstance(self._current_vm, StepAndShootProcedureViewModel):
             self._current_vm.end_angle = angle
             self._populate_zipped_table(self._current_vm)
 
     def _on_proc_head_mode_changed(self, text: str) -> None:
+        """Обновляет режим взаимного расположения детекторных головок."""
         if not self._is_updating_ui and isinstance(self._current_vm, StepAndShootProcedureViewModel):
             self._current_vm.head_mode = text
             self._is_updating_ui = True
             self.spin_proc_cameras.setValue(self._current_vm.gamma_cameras)
-            self.txt_proc_head_angles.setText(", ".join(f"{a:.1f}" for a in self._current_vm.head_angles))
+            self.txt_proc_head_angles.setText(
+                ", ".join(f"{angle_val:.1f}" for angle_val in self._current_vm.head_angles)
+            )
             self._is_updating_ui = False
 
     def _on_proc_head_angles_edited(self) -> None:
+        """Разбирает и сохраняет пользовательские углы смещения детекторных головок."""
         if not self._is_updating_ui and isinstance(self._current_vm, StepAndShootProcedureViewModel):
             raw = self.txt_proc_head_angles.text().strip()
             if ";" in raw:
-                parts = [p.strip().replace(",", ".") for p in raw.split(";") if p.strip()]
+                parts = [part_item.strip().replace(",", ".") for part_item in raw.split(";") if part_item.strip()]
             else:
-                parts = [p.strip().replace(",", ".") for p in re.split(r"[, \t]+", raw) if p.strip()]
+                parts = [
+                    part_item.strip().replace(",", ".")
+                    for part_item in re.split(r"[, \t]+", raw)
+                    if part_item.strip()
+                ]
             angles: list[float] = []
             for part in parts:
                 if _FLOAT_PATTERN.match(part):
@@ -418,14 +447,18 @@ class ProcedureInspectorSection(BaseInspectorSection):
             if angles:
                 self._current_vm.head_angles = angles
             else:
-                self.txt_proc_head_angles.setText(", ".join(f"{a:.1f}" for a in self._current_vm.head_angles))
+                self.txt_proc_head_angles.setText(
+                    ", ".join(f"{angle_val:.1f}" for angle_val in self._current_vm.head_angles)
+                )
 
     def _on_proc_endpoint_toggled(self, checked: bool) -> None:
+        """Переключает флаг включения конечного угла в диапазон шагов сканирования."""
         if not self._is_updating_ui and isinstance(self._current_vm, StepAndShootProcedureViewModel):
             self._current_vm.endpoint = checked
             self._populate_zipped_table(self._current_vm)
 
     def _on_grid_values_changed(self, var_name: str, values: List[float]) -> None:
+        """Обновляет список значений Grid-переменной в ViewModel."""
         vm = self._current_vm
         if isinstance(vm, CustomSweepProcedureViewModel):
             self._is_updating_ui = True
@@ -435,6 +468,7 @@ class ProcedureInspectorSection(BaseInspectorSection):
                 self._is_updating_ui = False
 
     def _on_grid_deleted(self, var_name: str) -> None:
+        """Удаляет Grid-переменную из ViewModel и обновляет панель чипов."""
         vm = self._current_vm
         if isinstance(vm, CustomSweepProcedureViewModel):
             self._is_updating_ui = True
@@ -469,7 +503,8 @@ class ProcedureInspectorSection(BaseInspectorSection):
         cell = tbl.item(row_idx, col_idx)
         if hdr is None or cell is None:
             return
-        var_name = str(hdr.data(Qt.UserRole)) if hdr.data(Qt.UserRole) else hdr.text().replace("🔒", "").strip()
+        raw_role = hdr.data(Qt.ItemDataRole.UserRole)
+        var_name = str(raw_role) if raw_role else hdr.text().replace("🔒", "").strip()
         if isinstance(vm, StepAndShootProcedureViewModel) and vm.is_read_only_variable(var_name):
             return
 
@@ -495,6 +530,7 @@ class ProcedureInspectorSection(BaseInspectorSection):
                 self._update_zipped_variable(vm, var_name, values)
 
     def _update_zipped_variable(self, vm: CustomSweepProcedureViewModel, var_name: str, values: List[float]) -> None:
+        """Сохраняет обновленный вектор значений Zipped-переменной в ViewModel."""
         self._is_updating_ui = True
         try:
             vm.set_variable(var_name, values, sweep_type="zipped")
@@ -518,8 +554,10 @@ class ProcedureInspectorSection(BaseInspectorSection):
         if clean in vm.all_variables:
             QMessageBox.warning(self, "Ошибка", f"Переменная '{clean}' уже существует.")
             return
-        rows = len(next(iter(vm.zipped_variables.values()))) if vm.zipped_variables else (
-            vm.steps if isinstance(vm, StepAndShootProcedureViewModel) else 1
+        rows = (
+            len(next(iter(vm.zipped_variables.values())))
+            if vm.zipped_variables
+            else (vm.steps if isinstance(vm, StepAndShootProcedureViewModel) else 1)
         )
         vm.set_variable(clean, [0.0] * rows, sweep_type="zipped")
         self._populate_zipped_table(vm)
@@ -536,7 +574,8 @@ class ProcedureInspectorSection(BaseInspectorSection):
         hdr = tbl.horizontalHeaderItem(col)
         if hdr is None:
             return
-        var_name = str(hdr.data(Qt.UserRole)) if hdr.data(Qt.UserRole) else hdr.text().replace("🔒", "").strip()
+        raw_role = hdr.data(Qt.ItemDataRole.UserRole)
+        var_name = str(raw_role) if raw_role else hdr.text().replace("🔒", "").strip()
         if isinstance(vm, StepAndShootProcedureViewModel) and vm.is_standard_variable(var_name):
             QMessageBox.warning(self, "Запрещено", f"Стандартная переменная '{var_name}' не может быть удалена.")
             return
@@ -570,6 +609,7 @@ class ProcedureInspectorSection(BaseInspectorSection):
         self._populate_zipped_table(vm)
 
     def _sync_step_and_shoot(self, vm: CustomSweepProcedureViewModel) -> None:
+        """Синхронизирует счетчик шагов и общего числа проекций для Step-and-Shoot."""
         if isinstance(vm, StepAndShootProcedureViewModel):
             self._is_updating_ui = True
             try:
@@ -579,9 +619,13 @@ class ProcedureInspectorSection(BaseInspectorSection):
                 self._is_updating_ui = False
 
     def _on_procedure_binding_changed(self, prop_name: str, var_name: str) -> None:
+        """Обновляет привязку параметра протокола к переменной в словаре bindings."""
         if self._is_updating_ui or not isinstance(self._current_vm, BaseProcedureViewModel):
             return
         if var_name:
             self._current_vm.bindings[prop_name] = str(var_name)
         else:
             self._current_vm.bindings.pop(prop_name, None)
+
+
+__all__ = ["ProcedureInspectorSection"]

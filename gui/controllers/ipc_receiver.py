@@ -32,7 +32,7 @@ class IPCReceiver(QThread):
         track_queue: Optional[Any] = None,
         shm_name: Optional[str] = None,
         projection_shape: Tuple[int, int] = (128, 128),
-        projection_dtype: np.dtype = np.float32,
+        projection_dtype: Any = np.float32,
         fps: float = 30.0,
         dose_shm_name: Optional[str] = None,
         dose_grid_shape: Tuple[int, int, int] = (64, 64, 64),
@@ -62,10 +62,11 @@ class IPCReceiver(QThread):
         self._multi_dose_bufs: Dict[str, np.ndarray] = {}
 
         self._stop_event = threading.Event()
+        self._lock = threading.Lock()
         self._last_proj_emit_time = 0.0
         self._last_spec_emit_time = 0.0
         self._last_dose_emit_time = 0.0
-        self._accumulated_energies: list = []
+        self._accumulated_energies: List[np.ndarray] = []
         self._spectrum_dirty = False
         self.max_spectrum_samples = 50000
         self.spectrum_poll_interval = 0.2
@@ -76,14 +77,15 @@ class IPCReceiver(QThread):
         """
         Сброс накопленного массива энергий для спектра, проекции и карты дозы.
         """
-        self._accumulated_energies = []
-        self._spectrum_dirty = False
-        if self._projection_buf is not None:
-            self._projection_buf.fill(0.0)
-        if self._dose_buf is not None:
-            self._dose_buf.fill(0.0)
-        for buf in self._multi_dose_bufs.values():
-            buf.fill(0.0)
+        with self._lock:
+            self._accumulated_energies = []
+            self._spectrum_dirty = False
+            if self._projection_buf is not None:
+                self._projection_buf.fill(0.0)
+            if self._dose_buf is not None:
+                self._dose_buf.fill(0.0)
+            for buf in self._multi_dose_bufs.values():
+                buf.fill(0.0)
 
     @property
     def _stop_requested(self) -> bool:
@@ -105,8 +107,8 @@ class IPCReceiver(QThread):
                     dtype=self.projection_dtype,
                     buffer=self._shm.buf
                 )
-            except Exception as e:
-                _logger.debug(f"IPCReceiver: SharedMemory '{self.shm_name}' пока недоступен: {e}")
+            except (OSError, ValueError, BufferError, TypeError) as shm_err:
+                _logger.debug(f"IPCReceiver: SharedMemory '{self.shm_name}' пока недоступен: {shm_err}")
                 self._shm = None
                 self._projection_buf = None
 
@@ -118,8 +120,8 @@ class IPCReceiver(QThread):
                     dtype=np.float64,
                     buffer=self._dose_shm.buf
                 )
-            except Exception as e:
-                _logger.debug(f"IPCReceiver: Dose SharedMemory '{self.dose_shm_name}' пока недоступен: {e}")
+            except (OSError, ValueError, BufferError, TypeError) as dose_err:
+                _logger.debug(f"IPCReceiver: Dose SharedMemory '{self.dose_shm_name}' пока недоступен: {dose_err}")
                 self._dose_shm = None
                 self._dose_buf = None
 
@@ -134,8 +136,8 @@ class IPCReceiver(QThread):
                         buf = np.ndarray(shape, dtype=np.float64, buffer=shm.buf)
                         self._multi_dose_shms[name] = shm
                         self._multi_dose_bufs[name] = buf
-                    except Exception as e:
-                        _logger.debug(f"IPCReceiver: Dose SharedMemory '{shm_n}' для '{name}' пока недоступен: {e}")
+                    except (OSError, ValueError, BufferError, TypeError, KeyError) as multi_err:
+                        _logger.debug(f"IPCReceiver: Dose SharedMemory '{shm_n}' для '{name}' пока недоступен: {multi_err}")
 
     def _process_track_item(self, item: Any) -> bool:
         """
@@ -156,14 +158,15 @@ class IPCReceiver(QThread):
                     valid_edep = edep_arr[edep_arr > 0]
                     if len(valid_edep) > 0:
                         energies = (valid_edep / units.keV).astype(np.float32)
-                        self._accumulated_energies.append(energies)
-                        self._spectrum_dirty = True
-                        # Предотвращение лавинообразного роста памяти: периодическая компактификация
-                        total_len = sum(len(a) for a in self._accumulated_energies)
-                        if total_len > self.max_spectrum_samples * 2:
-                            merged = np.concatenate(self._accumulated_energies)
-                            step = int(np.ceil(len(merged) / self.max_spectrum_samples))
-                            self._accumulated_energies = [merged[::step]]
+                        with self._lock:
+                            self._accumulated_energies.append(energies)
+                            self._spectrum_dirty = True
+                            # Предотвращение лавинообразного роста памяти: периодическая компактификация
+                            total_len = sum(len(arr_chunk) for arr_chunk in self._accumulated_energies)
+                            if total_len > self.max_spectrum_samples * 2:
+                                merged = np.concatenate(self._accumulated_energies)
+                                step = int(np.ceil(len(merged) / self.max_spectrum_samples))
+                                self._accumulated_energies = [merged[::step]]
             elif item_type in ('task_started', 'task_finished', 'task_progress', 'task_error'):
                 self.task_event.emit(item)
         return False
@@ -173,8 +176,9 @@ class IPCReceiver(QThread):
         Рабочий цикл приема IPC-данных без busy-wait (блокирующее чтение с таймаутом кадра).
         """
         self._stop_event.clear()
-        self._accumulated_energies = []
-        self._spectrum_dirty = False
+        with self._lock:
+            self._accumulated_energies = []
+            self._spectrum_dirty = False
         self._last_spec_emit_time = 0.0
         self._last_proj_emit_time = 0.0
         last_stats_time = time.time()
@@ -196,26 +200,33 @@ class IPCReceiver(QThread):
                     while not self._stop_event.is_set():
                         try:
                             item = self.track_queue.get_nowait()
-                        except (queue.Empty, Exception):
+                        except (queue.Empty, OSError, EOFError, ValueError):
                             break
                         if self._process_track_item(item):
                             break
                 except queue.Empty:
                     pass
-                except Exception as e:
-                    _logger.debug(f"Ошибка чтения из очереди треков: {e}")
+                except (OSError, EOFError, RuntimeError, ValueError, TypeError) as queue_err:
+                    _logger.debug(f"Ошибка чтения из очереди треков: {queue_err}")
             else:
                 time.sleep(self.poll_interval)
 
             now = time.time()
 
             # 3. Периодическая передача накопленного спектра по таймингу
-            if self._spectrum_dirty and (now - self._last_spec_emit_time) >= self.spectrum_poll_interval:
-                if len(self._accumulated_energies) > 0:
-                    all_energies = np.concatenate(self._accumulated_energies) if len(self._accumulated_energies) > 1 else self._accumulated_energies[0]
+            if (now - self._last_spec_emit_time) >= self.spectrum_poll_interval:
+                all_energies: Optional[np.ndarray] = None
+                with self._lock:
+                    if self._spectrum_dirty and len(self._accumulated_energies) > 0:
+                        all_energies = (
+                            np.concatenate(self._accumulated_energies)
+                            if len(self._accumulated_energies) > 1
+                            else self._accumulated_energies[0]
+                        )
+                        self._last_spec_emit_time = now
+                        self._spectrum_dirty = False
+                if all_energies is not None:
                     self.spectrum_received.emit(all_energies)
-                    self._last_spec_emit_time = now
-                    self._spectrum_dirty = False
 
             # 4. Периодическая передача среза проекции из SharedMemory по таймингу кадра
             if self._projection_buf is not None and (now - self._last_proj_emit_time) >= self.poll_interval:
@@ -231,8 +242,8 @@ class IPCReceiver(QThread):
                         self.stats_updated.emit(total_counts, max(0.0, cps))
                         counts_at_last_stats = total_counts
                         last_stats_time = now
-                except Exception as e:
-                    _logger.debug(f"Ошибка чтения снимка проекции: {e}")
+                except (OSError, RuntimeError, ValueError, BufferError, TypeError) as proj_err:
+                    _logger.debug(f"Ошибка чтения снимка проекции: {proj_err}")
 
             # 5. Периодическая передача 3D-среза дозы из SharedMemory (с частотой dose_fps ~ 2 FPS)
             if (now - self._last_dose_emit_time) >= self.dose_poll_interval:
@@ -241,31 +252,38 @@ class IPCReceiver(QThread):
                         dose_dict = {name: buf.copy() for name, buf in self._multi_dose_bufs.items()}
                         self.dose_volume_received.emit(dose_dict)
                         self._last_dose_emit_time = now
-                    except Exception as e:
-                        _logger.debug(f"Ошибка чтения снимков дозы: {e}")
+                    except (OSError, RuntimeError, ValueError, BufferError, TypeError) as multi_dose_err:
+                        _logger.debug(f"Ошибка чтения снимков дозы: {multi_dose_err}")
                 elif self._dose_buf is not None:
                     try:
                         dose_snapshot = self._dose_buf.copy()
                         self.dose_volume_received.emit(dose_snapshot)
                         self._last_dose_emit_time = now
-                    except Exception as e:
-                        _logger.debug(f"Ошибка чтения снимка дозы: {e}")
+                    except (OSError, RuntimeError, ValueError, BufferError, TypeError) as single_dose_err:
+                        _logger.debug(f"Ошибка чтения снимка дозы: {single_dose_err}")
 
         # Финальный дренаж очереди треков перед завершением
         if self.track_queue is not None:
             while True:
                 try:
                     item = self.track_queue.get_nowait()
-                except (queue.Empty, Exception):
+                except (queue.Empty, OSError, EOFError, ValueError):
                     break
                 if self._process_track_item(item):
                     break
 
         # Финальный сброс спектра
-        if len(self._accumulated_energies) > 0:
-            all_energies = np.concatenate(self._accumulated_energies) if len(self._accumulated_energies) > 1 else self._accumulated_energies[0]
-            self.spectrum_received.emit(all_energies)
-            self._spectrum_dirty = False
+        final_energies: Optional[np.ndarray] = None
+        with self._lock:
+            if len(self._accumulated_energies) > 0:
+                final_energies = (
+                    np.concatenate(self._accumulated_energies)
+                    if len(self._accumulated_energies) > 1
+                    else self._accumulated_energies[0]
+                )
+                self._spectrum_dirty = False
+        if final_energies is not None:
+            self.spectrum_received.emit(final_energies)
 
         # Финальный снимок проекции
         if self._projection_buf is not None:
@@ -274,14 +292,20 @@ class IPCReceiver(QThread):
                 self.projection_received.emit(snapshot)
                 total_counts = int(np.sum(snapshot))
                 self.stats_updated.emit(total_counts, 0.0)
-            except Exception:
+            except (OSError, RuntimeError, ValueError, BufferError, TypeError):
                 pass
 
         # Финальный снимок дозы
-        if self._dose_buf is not None:
+        if self.dose_grids_info and len(self._multi_dose_bufs) > 0:
+            try:
+                final_dose_dict = {name: buf.copy() for name, buf in self._multi_dose_bufs.items()}
+                self.dose_volume_received.emit(final_dose_dict)
+            except (OSError, RuntimeError, ValueError, BufferError, TypeError):
+                pass
+        elif self._dose_buf is not None:
             try:
                 self.dose_volume_received.emit(self._dose_buf.copy())
-            except Exception:
+            except (OSError, RuntimeError, ValueError, BufferError, TypeError):
                 pass
 
     def stop(self, timeout_ms: int = 200) -> None:
@@ -292,7 +316,7 @@ class IPCReceiver(QThread):
         if self.track_queue is not None:
             try:
                 self.track_queue.put_nowait('stop')
-            except Exception:
+            except (queue.Full, OSError, RuntimeError, ValueError):
                 pass
         if self.isRunning() and timeout_ms > 0:
             self.wait(timeout_ms)
@@ -302,18 +326,32 @@ class IPCReceiver(QThread):
         Освобождение дескрипторов IPC.
         """
         self.stop()
+        self._projection_buf = None
         if self._shm is not None:
             try:
                 self._shm.close()
-            except Exception:
+            except (OSError, BufferError, ValueError):
                 pass
             self._shm = None
-            self._projection_buf = None
 
+        self._dose_buf = None
         if self._dose_shm is not None:
             try:
                 self._dose_shm.close()
-            except Exception:
+            except (OSError, BufferError, ValueError):
                 pass
             self._dose_shm = None
-            self._dose_buf = None
+
+        self._multi_dose_bufs.clear()
+        for multi_shm in list(self._multi_dose_shms.values()):
+            try:
+                multi_shm.close()
+            except (OSError, BufferError, ValueError):
+                pass
+        self._multi_dose_shms.clear()
+
+
+__all__ = [
+    "IPCReceiver",
+]
+

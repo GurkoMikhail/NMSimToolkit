@@ -1,8 +1,11 @@
+"""
+Док-виджет выбора и управления активным протоколом или процедурой исследования.
+"""
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
+    QWidget, QVBoxLayout, QLabel, QComboBox,
     QPushButton, QGroupBox, QDockWidget
 )
 
@@ -28,7 +31,7 @@ class ProcedureSelectorWidget(QDockWidget):
     def __init__(self, scene_vm: Optional[Any] = None, parent: Optional[QWidget] = None) -> None:
         super().__init__("Процедуры / Протоколы", parent)
         self.setObjectName("DockProcedureSelector")
-        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
 
         self.scene_vm = scene_vm
 
@@ -38,6 +41,8 @@ class ProcedureSelectorWidget(QDockWidget):
             "CustomSweep": CustomSweepProcedureViewModel(),
         }
         self._active_key: str = "StepAndShoot"
+        self._connected_vm: Optional[BaseProcedureViewModel] = None
+        self._connected_vms: List[BaseProcedureViewModel] = []
 
         self._init_ui()
         self._connect_procedure_signals()
@@ -82,7 +87,10 @@ class ProcedureSelectorWidget(QDockWidget):
 
     def _connect_procedure_signals(self) -> None:
         for vm in self._procedures.values():
-            vm.changed.connect(self._on_procedure_data_changed)
+            if vm not in self._connected_vms:
+                vm.changed.connect(self._on_procedure_data_changed)
+                self._connected_vms.append(vm)
+        self._connected_vm = self._procedures.get(self._active_key)
 
     def _on_procedure_data_changed(self) -> None:
         self._update_summary()
@@ -122,6 +130,7 @@ class ProcedureSelectorWidget(QDockWidget):
         key = str(self.combo_type.itemData(index))
         if key in self._procedures:
             self._active_key = key
+            self._connected_vm = self.active_procedure
             self._update_summary()
             if self.scene_vm is not None:
                 self.active_procedure.sync_with_scene(self.scene_vm)
@@ -152,15 +161,35 @@ class ProcedureSelectorWidget(QDockWidget):
         else:
             key = ptype
 
+        old_vm = self._procedures.get(key)
+        if old_vm is not None and old_vm is not proc_vm and old_vm in self._connected_vms:
+            old_vm.changed.disconnect(self._on_procedure_data_changed)
+            self._connected_vms.remove(old_vm)
+
+        if self._connected_vm is not None and self._connected_vm is not proc_vm and self._connected_vm not in self._procedures.values():
+            if self._connected_vm in self._connected_vms:
+                self._connected_vm.changed.disconnect(self._on_procedure_data_changed)
+                self._connected_vms.remove(self._connected_vm)
+
         self._procedures[key] = proc_vm
-        proc_vm.changed.connect(self._on_procedure_data_changed)
-        for i in range(self.combo_type.count()):
-            if self.combo_type.itemData(i) == key:
+        if proc_vm not in self._connected_vms:
+            proc_vm.changed.connect(self._on_procedure_data_changed)
+            self._connected_vms.append(proc_vm)
+        self._connected_vm = proc_vm
+
+        for idx in range(self.combo_type.count()):
+            if self.combo_type.itemData(idx) == key:
                 self.combo_type.blockSignals(True)
-                self.combo_type.setCurrentIndex(i)
+                self.combo_type.setCurrentIndex(idx)
                 self.combo_type.blockSignals(False)
                 break
         self._active_key = key
         self._update_summary()
         self.procedure_changed.emit(proc_vm)
         self.procedure_selected.emit(proc_vm)
+
+
+__all__ = [
+    "ProcedureSelectorWidget",
+]
+

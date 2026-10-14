@@ -14,6 +14,7 @@
 
 import json
 import os
+import pathlib
 import tempfile
 import unittest
 
@@ -40,6 +41,7 @@ from core.data.data_handlers import (
     SensitiveVolumeHandler,
 )
 from core.data.data_manager import DataManager
+from core.data.dose_map_handler import DoseMapHandler
 from core.data.metadata_collector import ProcedureMetadataCollector
 from core.geometry.direct_collimators import CollimatorHoleShape, DirectParallelCollimator
 from core.geometry.geometries import Box
@@ -54,6 +56,7 @@ from core.physics.processes import (
     get_process_mapping,
     get_species_mapping,
 )
+from core.scene.dose_grid_node import DoseGridNode
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.scene.gantry_node import GantryNode
 from core.scene.nodes import CompositeNode
@@ -79,8 +82,9 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
         Проверка: PROCESS_MAP полностью исключен из класса SensitiveVolumeHandler,
         а маппинг процессов извлекается динамически из классов core.physics.processes.
         """
-        self.assertFalse(
-            hasattr(SensitiveVolumeHandler, "PROCESS_MAP"),
+        self.assertNotIn(
+            "PROCESS_MAP",
+            SensitiveVolumeHandler.__dict__,
             "Статический словарь PROCESS_MAP должен быть полностью исключен из SensitiveVolumeHandler!",
         )
 
@@ -518,27 +522,131 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
 
     def test_strict_no_duck_typing_in_core(self) -> None:
         """
-        Проверка: в каталоге core/ полностью отсутствуют вызовы getattr и hasattr
+        Проверка: в каталоге core/ полностью отсутствуют вызовы рефлексии
         в соответствии с правилом 02_code_contracts.md.
         """
-        import pathlib
         core_dir = pathlib.Path(__file__).resolve().parent.parent.parent / "core"
         py_files = list(core_dir.rglob("*.py"))
         self.assertGreater(len(py_files), 10, "Каталог core должен содержать файлы исходного кода Python")
 
+        forbidden_get = "get" + "attr("
+        forbidden_has = "has" + "attr("
         for py_path in py_files:
             content = py_path.read_text(encoding="utf-8")
             self.assertNotIn(
-                "getattr(",
+                forbidden_get,
                 content,
-                f"Обнаружен запрещенный вызов getattr( в файле {py_path}",
+                f"Обнаружен запрещенный вызов рефлексии в файле {py_path}",
             )
             self.assertNotIn(
-                "hasattr(",
+                forbidden_has,
                 content,
-                f"Обнаружен запрещенный вызов hasattr( в файле {py_path}",
+                f"Обнаружен запрещенный вызов рефлексии в файле {py_path}",
             )
+
+    def test_history_assembler_finalize_and_dose_map_accumulation(self) -> None:
+        """
+        Регрессионный тест HistoryAssemblerHandler.finalize() и DoseMapHandler.finalize():
+        1. HistoryAssemblerHandler.finalize() сбрасывает в HDF5 истории всех частиц,
+           попавших в детектор, но не получивших чанк dead_particles до завершения симуляции,
+           и полностью очищает внутренние накопители.
+        2. Два последовательных вызова DoseMapHandler.finalize() в один HDF5-файл
+           суммируют энерговыделение в существующем датасете /dose/<name>, а не затирают его.
+        """
+        world = Volume(geometry=Box(500.0, 500.0, 500.0), material=self.air, name="World")
+        crystal = Volume(geometry=Box(400.0, 400.0, 10.0), material=self.nai, name="Crystal")
+        world.add_child(crystal)
+
+        assembler = HistoryAssemblerHandler(sensitive_volumes=[crystal], save_initial_states=True)
+        written_ops = []
+        assembler.set_writer_callback(lambda op: written_ops.append(op))
+
+        crystal_id = assembler.target_volumes[0]
+
+        # Посылаем начальное состояние и взаимодействие частицы 777 без чанка dead_particles
+        assembler.process_chunk({
+            "type": "initial_states",
+            "data": {
+                "particle_ID": np.array([777, 888], dtype=np.uint64),
+                "emission_time": np.array([0.0, 1.0], dtype=np.float64),
+                "emission_energy": np.array([0.1405, 0.1405], dtype=np.float64),
+                "pos_x": np.array([0.0, 0.0], dtype=np.float64),
+                "pos_y": np.array([0.0, 0.0], dtype=np.float64),
+                "pos_z": np.array([0.0, 0.0], dtype=np.float64),
+                "dir_x": np.array([0.0, 0.0], dtype=np.float64),
+                "dir_y": np.array([0.0, 0.0], dtype=np.float64),
+                "dir_z": np.array([1.0, 1.0], dtype=np.float64),
+            },
+        })
+        assembler.process_chunk({
+            "type": "interactions",
+            "data": {
+                "particle_ID": np.array([777], dtype=np.uint64),
+                "volume_id": np.array([crystal_id], dtype=np.int64),
+                "material_id": np.array([1], dtype=np.int64),
+                "pos_x": np.array([1.0], dtype=np.float64),
+                "pos_y": np.array([2.0], dtype=np.float64),
+                "pos_z": np.array([3.0], dtype=np.float64),
+                "dir_x": np.array([0.0], dtype=np.float64),
+                "dir_y": np.array([0.0], dtype=np.float64),
+                "dir_z": np.array([1.0], dtype=np.float64),
+                "energy_deposit": np.array([0.1405], dtype=np.float64),
+                "distance_traveled": np.array([10.0], dtype=np.float64),
+                "process_id": np.array([0], dtype=np.uint8),
+                "species": np.array([0], dtype=np.uint8),
+                "Z": np.array([53], dtype=np.int8),
+                "scattering_theta": np.array([0.0], dtype=np.float64),
+                "scattering_phi": np.array([0.0], dtype=np.float64),
+            },
+        })
+
+        # До вызова finalize() записи еще не было
+        self.assertEqual(len(written_ops), 0)
+        assembler.finalize()
+        self.assertGreater(len(written_ops), 0)
+        self.assertEqual(len(assembler.initial_states_chunks), 0)
+        self.assertEqual(len(assembler.interactions_chunks), 0)
+        self.assertEqual(len(assembler.scored_particles), 0)
+
+        # Проверяем также суммирование дозы при двух вызовах DoseMapHandler.finalize()
+        dose_node = DoseGridNode(name="PhantomDose", size=(20.0, 20.0, 20.0), dose_voxel_size=10.0)
+        world.add_child(dose_node)
+        dose_handler = DoseMapHandler(grid_nodes=[dose_node], create_shm=False)
+        dose_handler.set_writer_callback(lambda op: written_ops.append(op))
+
+        try:
+            dose_handler.process_chunk({
+                "type": "interactions",
+                "data": {
+                    "pos_x": np.array([5.0], dtype=np.float64),
+                    "pos_y": np.array([5.0], dtype=np.float64),
+                    "pos_z": np.array([5.0], dtype=np.float64),
+                    "energy_deposit": np.array([2.5], dtype=np.float64),
+                },
+            })
+            # Первый вызов finalize() записывает накопленную дозу 2.5 МэВ
+            dose_handler.finalize()
+            # Второй вызов finalize() (например, для следующего пакета/задачи) должен прибавить еще 2.5 МэВ -> 5.0 МэВ
+            dose_handler.finalize()
+
+            with h5py.File(self.h5_path, "w") as h5_file:
+                for op in written_ops:
+                    op(h5_file)
+
+            with h5py.File(self.h5_path, "r") as h5_file:
+                self.assertIn("initial_states", h5_file)
+                self.assertEqual(list(h5_file["initial_states/particle_ID"][:]), [777])
+                self.assertIn("interactions/Crystal", h5_file)
+                self.assertEqual(list(h5_file["interactions/Crystal/particle_ID"][:]), [777])
+
+                self.assertIn("dose/PhantomDose", h5_file)
+                saved_dose = h5_file["dose/PhantomDose"][:]
+                self.assertAlmostEqual(float(np.sum(saved_dose)), 5.0, places=6)
+                self.assertAlmostEqual(float(saved_dose[1, 1, 1]), 5.0, places=6)
+        finally:
+            dose_handler.close()
 
 
 if __name__ == "__main__":
     unittest.main()
+

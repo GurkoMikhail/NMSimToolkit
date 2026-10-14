@@ -89,7 +89,7 @@ class Orchestrator:
                 f"Оркестратор: запуск моделирования ({len(task_contexts)} задач, pool_size={pool_size})."
             )
             file_locks: Dict[str, Any] = {}
-            seed_sequence = SeedSequence()
+            seed_sequence = SeedSequence(self.parsed_config.simulation_manager.seed)
             seeds = seed_sequence.spawn(len(task_contexts))
 
             payloads: List[Tuple[Any, ...]] = []

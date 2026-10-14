@@ -148,3 +148,9 @@ class SPECTManipulator(QObject):
             self.viewport.remove_actor(self.orbit_actor_name)
             self.viewport.remove_actor(self.detector_indicator_name)
             self.viewport.render()
+
+
+__all__ = [
+    "SPECTManipulator",
+]
+

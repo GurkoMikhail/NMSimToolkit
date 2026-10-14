@@ -14,9 +14,11 @@ class GantryInspectorSection(BaseInspectorSection):
     """Секция настройки угла ротора гентри и видимости кинематических направляющих."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует секцию настройки станины томографа."""
         super().__init__("Параметры станины томографа (Gantry)", parent)
 
     def _init_ui(self) -> None:
+        """Создает поле ввода угла ротора и флажок видимости направляющих."""
         form_layout = QFormLayout(self)
 
         self.spin_gantry_angle = BindableDoubleField(
@@ -38,13 +40,16 @@ class GantryInspectorSection(BaseInspectorSection):
         form_layout.addRow(self.chk_wireframe_visible)
 
     def can_handle(self, view_model: Any) -> bool:
+        """Проверяет, является ли модель представления станиной GantryViewModel."""
         return isinstance(view_model, GantryViewModel)
 
     def unbind(self) -> None:
+        """Сбрасывает привязку угла ротора при отвязке модели станины."""
         super().unbind()
         self.spin_gantry_angle.unbind()
 
     def update_ui_from_vm(self) -> None:
+        """Синхронизирует угол ротора, привязку и флажок каркаса из GantryViewModel."""
         if not isinstance(self._current_vm, GantryViewModel):
             return
 
@@ -65,6 +70,7 @@ class GantryInspectorSection(BaseInspectorSection):
             self._is_updating_ui = old_state
 
     def on_property_changed_externally(self, prop_name: str, new_val: Any) -> None:
+        """Точечно обновляет угол ротора, каркас или привязку при внешнем изменении."""
         if not isinstance(self._current_vm, GantryViewModel):
             return
 
@@ -88,19 +94,23 @@ class GantryInspectorSection(BaseInspectorSection):
                 self.spin_gantry_angle.unbind()
 
     def _on_gantry_angle_changed(self, value: float) -> None:
+        """Передает новое значение угла поворота ротора в модель GantryViewModel."""
         if self._is_updating_ui or not isinstance(self._current_vm, GantryViewModel):
             return
         self._current_vm.gantry_angle_deg = float(value)
 
     def _on_gantry_wireframe_toggled(self, checked: bool) -> None:
+        """Переключает видимость кинематических направляющих станины."""
         if self._is_updating_ui or not isinstance(self._current_vm, GantryViewModel):
             return
         self._current_vm.wireframe_visible = checked
 
     def _on_gantry_binding_changed(self, var_name: str) -> None:
+        """Обрабатывает изменение привязки поля угла ротора гентри."""
         self._on_field_binding_changed("gantry_angle", var_name)
 
     def _on_field_binding_changed(self, prop_name: str, var_name: str) -> None:
+        """Синхронизирует привязку угла ротора между gantry_angle и rotation.alpha."""
         if self._is_updating_ui or not isinstance(self._current_vm, GantryViewModel):
             return
 
@@ -130,3 +140,6 @@ class GantryInspectorSection(BaseInspectorSection):
                 self._scene_vm.bindings_registry[self._current_vm.core_node].pop("alpha", None)
 
         self.binding_changed.emit(prop_name, clean_var_name)
+
+
+__all__ = ["GantryInspectorSection"]

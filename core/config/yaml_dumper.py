@@ -26,7 +26,7 @@ class MaterialAnchorDumper(yaml.SafeDumper):
     def ignore_aliases(self, data: Any) -> bool:
         if isinstance(data, AnchorStr):
             return False
-        return super().ignore_aliases(data)
+        return bool(super().ignore_aliases(data))
 
 
 def represent_anchor_str(yaml_dumper: yaml.SafeDumper, str_data: AnchorStr) -> yaml.Node:
@@ -133,3 +133,11 @@ def dump_simulation_config(config: Union[SimulationConfig, Dict[str, Any]], file
 
     with open(filepath, 'w', encoding='utf-8') as yaml_file:
         yaml.dump(final_dict, yaml_file, Dumper=MaterialAnchorDumper, default_flow_style=False, sort_keys=False)
+
+
+__all__ = [
+    "AnchorStr",
+    "MaterialAnchorDumper",
+    "represent_anchor_str",
+    "dump_simulation_config",
+]

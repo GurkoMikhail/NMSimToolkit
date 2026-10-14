@@ -293,14 +293,14 @@ class CollimatorHoleRenderer:
     def render_holes(
         self,
         actor_name: str,
-        geometry_or_size: Optional[Union[PeriodicHexPrism, Sequence[float]]] = None,
+        geometry_or_size: Optional[Union[PeriodicHexPrism, Sequence[float], np.ndarray]] = None,
         global_matrix: Optional[np.ndarray] = None,
         hole_diameter: Optional[float] = None,
         septa: Optional[float] = None,
         hole_shape: CollimatorHoleShape = CollimatorHoleShape.HEXAGONAL,
         hole_color: Tuple[float, float, float] = COLLIMATOR_HOLE_ACCENT_COLOR,
         hole_opacity: float = COLLIMATOR_HOLE_OPACITY,
-        geometry: Optional[PeriodicHexPrism] = None,
+        geometry: Optional[Union[PeriodicHexPrism, Sequence[float], np.ndarray]] = None,
     ) -> Optional[vtk.vtkActor]:
         """
         Создает или обновляет инстансированный GPU-меш каналов коллиматора.
@@ -315,9 +315,18 @@ class CollimatorHoleRenderer:
         if isinstance(target_geometry, PeriodicHexPrism):
             hole_diameter_val = float(target_geometry.hole_diameter)
             septa_val = float(target_geometry.septa)
-            collimator_size = target_geometry.size
+            raw_size = target_geometry.size
+            collimator_size: Tuple[float, float, float] = (
+                float(raw_size[0]),
+                float(raw_size[1]),
+                float(raw_size[2]),
+            )
         else:
-            collimator_size = target_geometry
+            collimator_size = (
+                float(target_geometry[0]),
+                float(target_geometry[1]),
+                float(target_geometry[2]),
+            )
             if hole_diameter is None or septa is None:
                 raise ValueError("При передаче размеров коллиматора hole_diameter и septa обязательны.")
             hole_diameter_val = float(hole_diameter)
@@ -405,7 +414,7 @@ class CollimatorHoleRenderer:
 
         # 6. Регистрация актора во вьюпорте
         self.viewport.add_actor(actor_name, hole_actor)
-        self.viewport.update_actor_transform(actor_name, global_matrix)
+        self.viewport.update_actor_transform(actor_name, actual_matrix)
 
         self._actors[actor_name] = hole_actor
         self._last_geometries[actor_name] = geometry_key

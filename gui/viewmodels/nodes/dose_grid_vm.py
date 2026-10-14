@@ -16,12 +16,14 @@ class DoseGridViewModel(NodeViewModel):
     а также сигналы обновления параметров для PropertyInspector и VTKViewport.
     """
 
+    core_node: DoseGridNode
     color = gui_field(default=(0.2, 0.9, 0.2, 0.8))
     wireframe_visible = gui_field(default=True)
     dose_visible = gui_field(default=True)
 
     def __init__(self, core_node: DoseGridNode, parent_vm: Optional[NodeViewModel] = None) -> None:
         super().__init__(core_node, parent_vm)
+        self.core_node = core_node
 
     @property
     def size(self) -> np.ndarray:
@@ -52,7 +54,8 @@ class DoseGridViewModel(NodeViewModel):
     @property
     def grid_shape(self) -> Tuple[int, int, int]:
         """Количество вокселей по осям (Nx, Ny, Nz)."""
-        return self.core_node.grid_shape
+        shape_vals = self.core_node.grid_shape
+        return (int(shape_vals[0]), int(shape_vals[1]), int(shape_vals[2]))
 
     @property
     def memory_mb(self) -> float:
@@ -62,15 +65,21 @@ class DoseGridViewModel(NodeViewModel):
     @property
     def origin(self) -> Tuple[float, float, float]:
         """Локальные координаты нижнего угла параллелепипеда сетки дозы (-Lx/2, -Ly/2, -Lz/2)."""
-        return self.core_node.origin
+        origin_vals = self.core_node.origin
+        return (float(origin_vals[0]), float(origin_vals[1]), float(origin_vals[2]))
 
     @property
     def is_active(self) -> bool:
         """Флаг активности сетки для накопления дозы."""
-        return self.core_node.is_active
+        return bool(self.core_node.is_active)
 
     @is_active.setter
     def is_active(self, val: bool) -> None:
         active_bool = bool(val)
         self.core_node.is_active = active_bool
         self.property_changed.emit('is_active', active_bool)
+
+
+__all__ = [
+    "DoseGridViewModel",
+]

@@ -1,11 +1,14 @@
+"""
+Виджет иерархического дерева сцены (Scene Graph) с поддержкой Drag-and-Drop.
+"""
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import hepunits as units
-from PySide6.QtCore import Qt, Signal, QPoint, QObject
+from PySide6.QtCore import Qt, QPoint, QObject
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget,
+    QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget,
     QTreeWidgetItem, QPushButton, QLabel, QHeaderView,
     QMenu, QMessageBox
 )
@@ -17,17 +20,15 @@ from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
 from gui.viewmodels.nodes.source_vm import SourceViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
 from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
-from gui.viewmodels.nodes.factory import create_node_viewmodel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
 from core.geometry.direct_collimators import DirectParallelCollimator
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
-from core.scene.gamma_camera_node import GammaCameraNode
 from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from core.materials.materials import Material, MaterialArray
 from core.source.sources import Source, PointSource
-from core.scene.nodes import CompositeNode, SpatialNode
+from core.scene.nodes import CompositeNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.other.typing_definitions import Float
 import settings.database_setting as database_setting
@@ -46,21 +47,21 @@ class SceneTree(QTreeWidget):
         self.owner = owner
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QTreeWidget.DragDrop)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
 
-    def startDrag(self, supportedActions) -> None:
+    def startDrag(self, supported_actions: Any) -> None:
         src_item = self.currentItem()
         if src_item is not None and self.owner is not None:
             self.owner._dragged_vm = self.owner._vm_by_item.get(src_item)
             SceneTreeWidget._current_dragged_vm = self.owner._dragged_vm
         try:
-            super().startDrag(supportedActions)
+            super().startDrag(supported_actions)
         finally:
             if self.owner is not None:
                 self.owner._dragged_vm = None
             SceneTreeWidget._current_dragged_vm = None
 
-    def dropEvent(self, event) -> None:
+    def dropEvent(self, event: Any) -> None:
         src_item = self.currentItem()
         if not src_item or self.owner.scene_vm is None:
             event.ignore()
@@ -78,7 +79,7 @@ class SceneTree(QTreeWidget):
         if target_item is not None:
             target_vm = self.owner._vm_by_item.get(target_item)
             if target_vm is not None:
-                curr = target_vm
+                curr: Optional[NodeViewModel] = target_vm
                 while curr is not None:
                     if curr is src_vm:
                         event.ignore()
@@ -112,7 +113,7 @@ class SceneTreeWidget(QWidget):
 
     _current_dragged_vm: Optional[NodeViewModel] = None
 
-    def __init__(self, scene_vm: Optional[SceneViewModel] = None, parent: Optional[Any] = None) -> None:
+    def __init__(self, scene_vm: Optional[SceneViewModel] = None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.scene_vm = scene_vm
         self._item_map: Dict[int, QTreeWidgetItem] = {}
@@ -137,9 +138,11 @@ class SceneTreeWidget(QWidget):
         # Дерево узлов с поддержкой Drag-and-Drop
         self.tree = SceneTree(self)
         self.tree.setHeaderLabels(["Имя узла", "Тип"])
-        self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        tree_header = self.tree.header()
+        if tree_header is not None:
+            tree_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            tree_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
         main_layout.addWidget(self.tree)
@@ -164,20 +167,20 @@ class SceneTreeWidget(QWidget):
         """
         Подключает модель представления сцены к дереву с корректным отключением старых сигналов.
         """
-        for c in self._scene_vm_conns:
+        for conn_item in self._scene_vm_conns:
             try:
-                QObject.disconnect(c)
+                QObject.disconnect(conn_item)
             except (RuntimeError, TypeError):
                 pass
         self._scene_vm_conns.clear()
 
         self.scene_vm = scene_vm
         if self.scene_vm is not None:
-            c1 = self.scene_vm.scene_loaded.connect(self.rebuild_tree)
-            c2 = self.scene_vm.node_selected.connect(self._on_node_selected_externally)
-            c3 = self.scene_vm.node_added.connect(lambda n: self.rebuild_tree())
-            c4 = self.scene_vm.node_removed.connect(lambda n: self.rebuild_tree())
-            self._scene_vm_conns.extend([c1, c2, c3, c4])
+            conn_loaded = self.scene_vm.scene_loaded.connect(self.rebuild_tree)
+            conn_selected = self.scene_vm.node_selected.connect(self._on_node_selected_externally)
+            conn_added = self.scene_vm.node_added.connect(lambda _node: self.rebuild_tree())
+            conn_removed = self.scene_vm.node_removed.connect(lambda _node: self.rebuild_tree())
+            self._scene_vm_conns.extend([conn_loaded, conn_selected, conn_added, conn_removed])
 
             if self.scene_vm.root_vm is not None:
                 self.rebuild_tree()
@@ -187,7 +190,7 @@ class SceneTreeWidget(QWidget):
         Полная перестройка элементов дерева по иерархии ViewModel.
         """
         # Отключаем обработчики сигналов от предыдущей структуры дерева
-        for node_id, (vm, conn) in list(self._connected_vms.items()):
+        for _node_id, (_vm, conn) in list(self._connected_vms.items()):
             try:
                 QObject.disconnect(conn)
             except (RuntimeError, TypeError):
@@ -217,7 +220,7 @@ class SceneTreeWidget(QWidget):
         node_id = id(vm)
         if node_id not in self._connected_vms:
             conn = vm.property_changed.connect(
-                lambda prop, val, n=vm: self._on_node_property_changed(n, prop, val)
+                lambda prop, val, node_ref=vm: self._on_node_property_changed(node_ref, prop, val)
             )
             self._connected_vms[node_id] = (vm, conn)
 
@@ -264,6 +267,8 @@ class SceneTreeWidget(QWidget):
         target_vm = self._vm_by_item.get(item) if item is not None else self.scene_vm.root_vm
         if target_vm is None:
             target_vm = self.scene_vm.root_vm
+        if target_vm is None:
+            return
 
         menu = QMenu(self)
 
@@ -283,7 +288,9 @@ class SceneTreeWidget(QWidget):
             act_del = menu.addAction("Удалить")
             act_del.triggered.connect(lambda: self._remove_specific_node(target_vm))
 
-        menu.exec(self.tree.viewport().mapToGlobal(pos))
+        viewport_widget = self.tree.viewport()
+        if viewport_widget is not None:
+            menu.exec(viewport_widget.mapToGlobal(pos))
 
     def _populate_add_menu(self, menu: QMenu, parent_vm: Optional[NodeViewModel] = None) -> None:
         """
@@ -353,9 +360,9 @@ class SceneTreeWidget(QWidget):
         lead_material = database_setting.material_database.get("Pb", Material(name="Pb"))
         vacuum_material = database_setting.material_database.get("Vacuum", Material(name="Vacuum"))
         collimator = DirectParallelCollimator(
-            size=[400.0, 400.0, 30.0],
-            hole_diameter=2.5,
-            septa=0.5,
+            size=[Float(400.0), Float(400.0), Float(30.0)],
+            hole_diameter=Float(2.5),
+            septa=Float(0.5),
             material=lead_material,
             hole_material=vacuum_material,
             name=collimator_name,
@@ -378,8 +385,8 @@ class SceneTreeWidget(QWidget):
         vm = VoxelVolumeViewModel(vol)
         try:
             self.scene_vm.add_node(parent, vm)
-        except (TypeError, ValueError) as e:
-            QMessageBox.warning(self, "Ошибка добавления", str(e))
+        except (TypeError, ValueError) as err:
+            QMessageBox.warning(self, "Ошибка добавления", str(err))
 
     def _add_point_source(self, parent_vm: Optional[NodeViewModel] = None) -> None:
         parent = self._get_parent_vm(parent_vm)
@@ -395,8 +402,8 @@ class SceneTreeWidget(QWidget):
         vm = SourceViewModel(src)
         try:
             self.scene_vm.add_node(parent, vm)
-        except (TypeError, ValueError) as e:
-            QMessageBox.warning(self, "Ошибка добавления", str(e))
+        except (TypeError, ValueError) as err:
+            QMessageBox.warning(self, "Ошибка добавления", str(err))
 
     def _add_voxel_source(self, parent_vm: Optional[NodeViewModel] = None) -> None:
         parent = self._get_parent_vm(parent_vm)
@@ -415,8 +422,8 @@ class SceneTreeWidget(QWidget):
         vm = SourceViewModel(src)
         try:
             self.scene_vm.add_node(parent, vm)
-        except (TypeError, ValueError) as e:
-            QMessageBox.warning(self, "Ошибка добавления", str(e))
+        except (TypeError, ValueError) as err:
+            QMessageBox.warning(self, "Ошибка добавления", str(err))
 
     def _add_composite_node(self, parent_vm: Optional[NodeViewModel] = None) -> None:
         parent = self._get_parent_vm(parent_vm)
@@ -428,8 +435,8 @@ class SceneTreeWidget(QWidget):
         vm = NodeViewModel(node)
         try:
             self.scene_vm.add_node(parent, vm)
-        except (TypeError, ValueError) as e:
-            QMessageBox.warning(self, "Ошибка добавления", str(e))
+        except (TypeError, ValueError) as err:
+            QMessageBox.warning(self, "Ошибка добавления", str(err))
 
     def _add_gamma_camera(self, parent_vm: Optional[NodeViewModel] = None) -> None:
         parent = self._get_parent_vm(parent_vm)
@@ -471,8 +478,8 @@ class SceneTreeWidget(QWidget):
         vm = DoseGridViewModel(node)
         try:
             self.scene_vm.add_node(parent, vm)
-        except (TypeError, ValueError) as e:
-            QMessageBox.warning(self, "Ошибка добавления", str(e))
+        except (TypeError, ValueError) as err:
+            QMessageBox.warning(self, "Ошибка добавления", str(err))
 
     def _add_dose_grid_for_volume(self, volume_vm: NodeViewModel) -> None:
         """
@@ -504,3 +511,10 @@ class SceneTreeWidget(QWidget):
             return  # Корневой узел удалять нельзя
 
         self.scene_vm.remove_node(target)
+
+
+__all__ = [
+    "SceneTree",
+    "SceneTreeWidget",
+]
+

@@ -87,8 +87,8 @@ class PETManipulator(QObject):
             )
             self.viewport.render()
 
-        except Exception as e:
-            _logger.debug(f"Ошибка визуализации ПЭТ манипулятора: {e}")
+        except (RuntimeError, ValueError, TypeError) as pet_error:
+            _logger.debug(f"Ошибка визуализации ПЭТ манипулятора: {pet_error}")
 
     def remove_visuals(self) -> None:
         """
@@ -97,3 +97,9 @@ class PETManipulator(QObject):
         if self.viewport is not None:
             self.viewport.remove_actor(self.actor_name)
             self.viewport.render()
+
+
+__all__ = [
+    "PETManipulator",
+]
+

@@ -1,11 +1,14 @@
+"""
+Док-панель управления и мониторинга параллельных задач симуляции (Simulation Jobs).
+"""
 import logging
 import os
 from typing import Any, Dict, List, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton,
+    QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QButtonGroup,
-    QProgressBar, QDockWidget, QMessageBox
+    QProgressBar, QDockWidget
 )
 
 _logger = logging.getLogger(__name__)
@@ -27,7 +30,11 @@ class SimulationJobsWidget(QDockWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__("Задачи симуляции (Jobs)", parent)
         self.setObjectName("DockSimulationJobs")
-        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea)
+        self.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea
+            | Qt.DockWidgetArea.RightDockWidgetArea
+            | Qt.DockWidgetArea.BottomDockWidgetArea
+        )
 
         self._jobs: List[Dict[str, Any]] = []
         self._focused_index: int = 0
@@ -66,15 +73,19 @@ class SimulationJobsWidget(QDockWidget):
         # 2. Таблица задач
         self.table = QTableWidget(0, 6, container)
         self.table.setHorizontalHeaderLabels(["№", "Фокус", "Параметры ракурса", "Статус", "Прогресс", "Предпросмотр"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        horiz_header = self.table.horizontalHeader()
+        if horiz_header is not None:
+            horiz_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            horiz_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            horiz_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            horiz_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+            horiz_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+            horiz_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        vert_header = self.table.verticalHeader()
+        if vert_header is not None:
+            vert_header.setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
         layout.addWidget(self.table)
 
@@ -102,14 +113,14 @@ class SimulationJobsWidget(QDockWidget):
         for row_idx, job in enumerate(jobs):
             # №
             item_id = QTableWidgetItem(f"#{row_idx + 1}")
-            item_id.setTextAlignment(Qt.AlignCenter)
+            item_id.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row_idx, 0, item_id)
 
             # Фокус радиокнопка
             radio_widget = QWidget()
             radio_layout = QHBoxLayout(radio_widget)
             radio_layout.setContentsMargins(0, 0, 0, 0)
-            radio_layout.setAlignment(Qt.AlignCenter)
+            radio_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             radio_btn = QRadioButton()
             if row_idx == self._focused_index:
                 radio_btn.setChecked(True)
@@ -119,13 +130,17 @@ class SimulationJobsWidget(QDockWidget):
             self.table.setCellWidget(row_idx, 1, radio_widget)
 
             # Параметры ракурса
-            params_str = ", ".join(f"{k}={v:.1f}" if isinstance(v, float) else f"{k}={v}" for k, v in job.items() if not k.startswith('_'))
+            params_str = ", ".join(
+                f"{key_name}={val:.1f}" if isinstance(val, float) else f"{key_name}={val}"
+                for key_name, val in job.items()
+                if not key_name.startswith('_')
+            )
             item_params = QTableWidgetItem(params_str or "Базовая задача")
             self.table.setItem(row_idx, 2, item_params)
 
             # Статус
             item_status = QTableWidgetItem("В очереди")
-            item_status.setTextAlignment(Qt.AlignCenter)
+            item_status.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row_idx, 3, item_status)
 
             # Прогресс бар
@@ -140,7 +155,7 @@ class SimulationJobsWidget(QDockWidget):
             # Кнопка предпросмотра в 3D
             btn_preview = QPushButton("👁 Предпросмотр")
             btn_preview.setStyleSheet("padding: 2px 6px; font-size: 11px;")
-            btn_preview.clicked.connect(lambda _, j=job: self.job_preview_requested.emit(j))
+            btn_preview.clicked.connect(lambda _, job_item=job: self.job_preview_requested.emit(job_item))
             self.table.setCellWidget(row_idx, 5, btn_preview)
 
         self._update_status_counts()
@@ -162,7 +177,7 @@ class SimulationJobsWidget(QDockWidget):
             item = self.table.item(task_id, 3)
             if item is not None:
                 item.setText("Выполняется")
-                item.setForeground(Qt.yellow)
+                item.setForeground(Qt.GlobalColor.yellow)
         self._update_status_counts()
 
     def on_job_progress(self, task_id: int, progress: float, counts: int, cps: float) -> None:
@@ -177,7 +192,7 @@ class SimulationJobsWidget(QDockWidget):
             item = self.table.item(task_id, 3)
             if item is not None:
                 item.setText("Завершено")
-                item.setForeground(Qt.green)
+                item.setForeground(Qt.GlobalColor.green)
             if task_id in self._progress_bars:
                 self._progress_bars[task_id].setValue(100)
         self._update_status_counts()
@@ -189,10 +204,10 @@ class SimulationJobsWidget(QDockWidget):
             if item is not None:
                 if is_local:
                     item.setText("Пауза (Локально)")
-                    item.setForeground(Qt.darkYellow)
+                    item.setForeground(Qt.GlobalColor.darkYellow)
                 else:
                     item.setText("Пауза")
-                    item.setForeground(Qt.yellow)
+                    item.setForeground(Qt.GlobalColor.yellow)
         self._update_status_counts()
 
     def on_job_resumed(self, task_id: int) -> None:
@@ -201,7 +216,7 @@ class SimulationJobsWidget(QDockWidget):
             item = self.table.item(task_id, 3)
             if item is not None:
                 item.setText("Выполняется")
-                item.setForeground(Qt.yellow)
+                item.setForeground(Qt.GlobalColor.yellow)
         self._update_status_counts()
 
     def on_job_error(self, task_id: int, error_text: str) -> None:
@@ -210,7 +225,7 @@ class SimulationJobsWidget(QDockWidget):
             item = self.table.item(task_id, 3)
             if item is not None:
                 item.setText("Ошибка")
-                item.setForeground(Qt.red)
+                item.setForeground(Qt.GlobalColor.red)
         self._update_status_counts()
 
     def _update_status_counts(self) -> None:
@@ -225,8 +240,8 @@ class SimulationJobsWidget(QDockWidget):
         done = 0
         err = 0
 
-        for r in range(total):
-            item = self.table.item(r, 3)
+        for row_idx in range(total):
+            item = self.table.item(row_idx, 3)
             text = item.text() if item is not None else ""
             if text == "Выполняется":
                 running += 1
@@ -246,3 +261,9 @@ class SimulationJobsWidget(QDockWidget):
         if err > 0:
             status_text += f" | Ошибок: {err}"
         self.lbl_status.setText(status_text)
+
+
+__all__ = [
+    "SimulationJobsWidget",
+]
+

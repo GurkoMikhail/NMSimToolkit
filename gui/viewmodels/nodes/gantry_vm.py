@@ -28,10 +28,12 @@ class GantryViewModel(NodeViewModel):
     ViewModel для станины томографа (ротора).
     """
 
+    core_node: GantryNode
     wireframe_visible = gui_field(default=True)
 
     def __init__(self, core_node: GantryNode, parent_vm: Optional[NodeViewModel] = None) -> None:
         super().__init__(core_node, parent_vm)
+        self.core_node = core_node
         self._procedure_ref: Optional[weakref.ref] = None
         self.bindings.setdefault('gantry_angle', 'gantry_angle')
         self.bindings.setdefault('rotation.alpha', 'gantry_angle')
@@ -88,25 +90,42 @@ class GantryViewModel(NodeViewModel):
         return mount_constraint
 
     @property
-    def gantry_angle_deg(self) -> float:
+    def gantry_angle(self) -> float:
         """Угол поворота станины вокруг оси Z в градусах."""
         if isinstance(self.core_node, GantryNode):
             return float(math.degrees(self.core_node.gantry_angle) % 360.0)
         return 0.0
 
-    @gantry_angle_deg.setter
-    def gantry_angle_deg(self, angle_deg: float) -> None:
+    @gantry_angle.setter
+    def gantry_angle(self, angle: float) -> None:
         """Установка угла поворота станины вокруг оси Z в градусах."""
         if isinstance(self.core_node, GantryNode):
-            angle_value = float(angle_deg)
+            angle_value = float(angle)
             self.core_node.set_rotation_angle(math.radians(angle_value))
             self._notify_transform_changed()
-            self.property_changed.emit("gantry_angle_deg", self.gantry_angle_deg)
+            self.property_changed.emit("gantry_angle_deg", self.gantry_angle)
             self.property_changed.emit("local_matrix", self.core_node.local_matrix)
 
-    @NodeViewModel.local_matrix.setter
+    @property
+    def gantry_angle_deg(self) -> float:
+        """Угол поворота станины вокруг оси Z в градусах (алиас для инспектора и тестов)."""
+        return self.gantry_angle
+
+    @gantry_angle_deg.setter
+    def gantry_angle_deg(self, angle: float) -> None:
+        """Установка угла поворота станины вокруг оси Z в градусах."""
+        self.gantry_angle = angle
+
+    @property
+    def local_matrix(self) -> np.ndarray:
+        return self.core_node.local_matrix
+
+    @local_matrix.setter
     def local_matrix(self, matrix: np.ndarray) -> None:
-        NodeViewModel.local_matrix.fset(self, matrix)
+        self.core_node.local_matrix = np.asarray(matrix, dtype=self.core_node.local_matrix.dtype)
+        self.core_node.invalidate_matrix_cache()
+        self._notify_transform_changed()
+        self.property_changed.emit("local_matrix", self.core_node.local_matrix)
         self.property_changed.emit("gantry_angle_deg", self.gantry_angle_deg)
 
     def rotate(
@@ -121,9 +140,9 @@ class GantryViewModel(NodeViewModel):
         super().rotate(alpha=alpha, beta=beta, gamma=gamma, rotation_center=rotation_center, in_local=in_local)
         self.property_changed.emit("gantry_angle_deg", self.gantry_angle_deg)
 
-    def set_gantry_angle(self, angle_deg: float) -> None:
+    def set_gantry_angle(self, angle: float) -> None:
         """Метод установки угла поворота станины."""
-        self.gantry_angle_deg = angle_deg
+        self.gantry_angle = angle
 
 
 __all__ = ["GantryViewModel"]

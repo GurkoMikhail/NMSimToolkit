@@ -45,13 +45,13 @@ def _emit_property_change(
     if on_change is not None:
         try:
             on_change(instance, value)
-        except Exception as err:
+        except (RuntimeError, TypeError, ValueError) as err:
             _logger.error(f"Ошибка в колбэке on_change для поля {name}: {err}", exc_info=True)
 
     if isinstance(instance, IViewModelWithPropertyChanged) and name is not None:
         try:
             instance.property_changed.emit(name, value)
-        except Exception as err:
+        except (RuntimeError, TypeError) as err:
             _logger.error(f"Ошибка эмиссии сигнала property_changed для поля {name}: {err}", exc_info=True)
 
 
@@ -82,13 +82,15 @@ class core_field:
     def __get__(self, instance: Any, owner: Optional[Any] = None) -> Any:
         if instance is None:
             return self
+        if self.core_attr is None:
+            return self.default
         try:
             return instance.core_node.__getattribute__(self.core_attr)
         except AttributeError:
             return self.default
 
     def __set__(self, instance: Any, value: Any) -> None:
-        if self.name is None:
+        if self.name is None or self.core_attr is None:
             return
 
         old_value = self.__get__(instance)
@@ -96,7 +98,7 @@ class core_field:
             return
 
         try:
-            setattr(instance.core_node, self.core_attr, value)
+            instance.core_node.__setattr__(self.core_attr, value)
         except AttributeError:
             raise AttributeError(
                 f"Невозможно установить атрибут '{self.core_attr}': core_node не содержит данного поля"
@@ -140,3 +142,10 @@ class gui_field:
 
         instance.__dict__[self.name] = value
         _emit_property_change(instance, self.name, value, self.on_change)
+
+
+__all__ = [
+    "IViewModelWithPropertyChanged",
+    "core_field",
+    "gui_field",
+]

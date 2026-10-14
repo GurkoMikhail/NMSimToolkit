@@ -1,3 +1,7 @@
+"""
+Главная точка входа графического интерфейса NMSimToolkit.
+Инициализирует окружение Qt6/VTK, палитру темной темы и запускает главное окно приложения.
+"""
 import logging
 import multiprocessing
 import os
@@ -137,7 +141,7 @@ QStatusBar {
 """
 
 
-def main():
+def main() -> None:
     """
     Главная точка входа для запуска графического интерфейса NMSimToolkit.
     Вызов freeze_support обязателен для предотвращения рекурсивного создания
@@ -152,17 +156,17 @@ def main():
 
     # Настройка палитры темного оформления
     palette = QPalette()
-    palette.setColor(QPalette.Window, QColor('#1e1e1e'))
-    palette.setColor(QPalette.WindowText, QColor('#cccccc'))
-    palette.setColor(QPalette.Base, QColor('#252526'))
-    palette.setColor(QPalette.AlternateBase, QColor('#2d2d30'))
-    palette.setColor(QPalette.ToolTipBase, QColor('#252526'))
-    palette.setColor(QPalette.ToolTipText, QColor('#ffffff'))
-    palette.setColor(QPalette.Text, QColor('#ffffff'))
-    palette.setColor(QPalette.Button, QColor('#2d2d30'))
-    palette.setColor(QPalette.ButtonText, QColor('#ffffff'))
-    palette.setColor(QPalette.Highlight, QColor('#094771'))
-    palette.setColor(QPalette.HighlightedText, QColor('#ffffff'))
+    palette.setColor(QPalette.ColorRole.Window, QColor('#1e1e1e'))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor('#cccccc'))
+    palette.setColor(QPalette.ColorRole.Base, QColor('#252526'))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor('#2d2d30'))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor('#252526'))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor('#ffffff'))
+    palette.setColor(QPalette.ColorRole.Text, QColor('#ffffff'))
+    palette.setColor(QPalette.ColorRole.Button, QColor('#2d2d30'))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor('#ffffff'))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor('#094771'))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor('#ffffff'))
     app.setPalette(palette)
 
     window = MainWindow()
@@ -171,5 +175,12 @@ def main():
     sys.exit(app.exec())
 
 
+__all__ = [
+    "DARK_STYLE_SHEET",
+    "main",
+]
+
+
 if __name__ == '__main__':
     main()
+

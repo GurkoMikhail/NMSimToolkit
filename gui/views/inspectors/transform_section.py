@@ -4,17 +4,10 @@
 from typing import Any, Optional
 
 import numpy as np
-from scipy.spatial.transform import Rotation
 from PySide6.QtWidgets import QFormLayout, QWidget
+from scipy.spatial.transform import Rotation
 
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
-from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
-from gui.viewmodels.nodes.gantry_vm import GantryViewModel
-from gui.viewmodels.nodes.volume_vm import VolumeViewModel
-from gui.viewmodels.procedure_viewmodel import (
-    CustomSweepProcedureViewModel,
-    StepAndShootProcedureViewModel,
-)
 from gui.viewport_3d.transform_gizmo import GizmoAxis, GizmoMode
 from gui.views.inspectors.base_section import BaseInspectorSection
 from gui.views.widgets import BindableDoubleField
@@ -24,10 +17,12 @@ class TransformInspectorSection(BaseInspectorSection):
     """Секция редактирования пространственных координат и углов поворота."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует секцию положения и ориентации узла."""
         self._is_transform_connected: bool = False
         super().__init__("Положение и ориентация", parent)
 
     def _init_ui(self) -> None:
+        """Создает поля ввода координат и углов Эйлера."""
         form_layout = QFormLayout(self)
 
         self.spin_x = self._create_coord_spinbox(self._on_transform_changed, "translation.x")
@@ -46,6 +41,7 @@ class TransformInspectorSection(BaseInspectorSection):
         form_layout.addRow("Поворот Yaw (°):", self.spin_rot_z)
 
     def _create_coord_spinbox(self, callback: Any, prop_name: str) -> BindableDoubleField:
+        """Создает связываемое поле для пространственной координаты."""
         field = BindableDoubleField(
             min_val=-5000.0,
             max_val=5000.0,
@@ -61,6 +57,7 @@ class TransformInspectorSection(BaseInspectorSection):
         return field
 
     def _create_rot_spinbox(self, callback: Any, prop_name: str) -> BindableDoubleField:
+        """Создает связываемое поле для угла поворота."""
         field = BindableDoubleField(
             min_val=-180.0,
             max_val=180.0,
@@ -76,15 +73,18 @@ class TransformInspectorSection(BaseInspectorSection):
         return field
 
     def can_handle(self, view_model: Any) -> bool:
+        """Проверяет, является ли модель представления узлом сцены NodeViewModel."""
         return isinstance(view_model, NodeViewModel)
 
     def bind_viewmodel(self, view_model: Any) -> None:
+        """Связывает секцию с моделью узла и подписывается на изменения матрицы трансформации."""
         super().bind_viewmodel(view_model)
         if isinstance(self._current_vm, NodeViewModel) and not self._is_transform_connected:
             self._current_vm.transform_changed.connect(self.update_transform_fields)
             self._is_transform_connected = True
 
     def unbind(self) -> None:
+        """Отписывается от сигналов матрицы трансформации и сбрасывает привязки полей."""
         if self._is_transform_connected and isinstance(self._current_vm, NodeViewModel):
             self._current_vm.transform_changed.disconnect(self.update_transform_fields)
             self._is_transform_connected = False
@@ -97,9 +97,11 @@ class TransformInspectorSection(BaseInspectorSection):
         self.spin_rot_z.unbind()
 
     def update_ui_from_vm(self) -> None:
+        """Обновляет поля положения и ориентации из текущей модели представления."""
         self.update_transform_fields()
 
     def on_property_changed_externally(self, prop_name: str, new_val: Any) -> None:
+        """Обновляет привязки полей при внешнем изменении реестра привязок."""
         if prop_name == "bindings":
             self.update_transform_fields()
 
@@ -148,62 +150,51 @@ class TransformInspectorSection(BaseInspectorSection):
                         self.spin_rot_y.setValue(float(euler[1]))
                         self.spin_rot_z.setValue(float(euler[2]))
 
-            # Синхронизация биндингов пространственных трансформаций
+            # Синхронизация биндингов пространственных трансформаций строго по данным модели
             bindings = self._current_vm.bindings
             if not bindings and self._scene_vm is not None and self._current_vm.core_node in self._scene_vm.bindings_registry:
                 bindings = self._scene_vm.bindings_registry[self._current_vm.core_node]
 
-            bx = bindings.get("translation.x") or bindings.get("x")
-            if bx:
-                self.spin_x.bind_variable(bx)
+            bound_x = bindings.get("translation.x") or bindings.get("x")
+            if bound_x:
+                self.spin_x.bind_variable(bound_x)
             else:
                 self.spin_x.unbind()
 
-            by = bindings.get("translation.y") or bindings.get("y") or bindings.get("radius")
-            if not by and isinstance(self._current_vm, GammaCameraViewModel) and self._procedure_vm is not None:
-                if isinstance(self._procedure_vm, StepAndShootProcedureViewModel):
-                    by = "radius"
-                elif isinstance(self._procedure_vm, CustomSweepProcedureViewModel):
-                    if "radius" in self._procedure_vm.grid_variables or "radius" in self._procedure_vm.zipped_variables:
-                        by = "radius"
-            if by:
-                self.spin_y.bind_variable(by)
+            bound_y = bindings.get("translation.y") or bindings.get("y") or bindings.get("radius")
+            if bound_y:
+                self.spin_y.bind_variable(bound_y)
             else:
                 self.spin_y.unbind()
 
-            bz = bindings.get("translation.z") or bindings.get("z")
-            if bz:
-                self.spin_z.bind_variable(bz)
+            bound_z = bindings.get("translation.z") or bindings.get("z")
+            if bound_z:
+                self.spin_z.bind_variable(bound_z)
             else:
                 self.spin_z.unbind()
 
-            b_alpha = bindings.get("rotation.alpha") or bindings.get("alpha") or bindings.get("gantry_angle")
-            if not b_alpha and isinstance(self._current_vm, GantryViewModel) and self._procedure_vm is not None:
-                if isinstance(self._procedure_vm, StepAndShootProcedureViewModel):
-                    b_alpha = "gantry_angle"
-                elif isinstance(self._procedure_vm, CustomSweepProcedureViewModel):
-                    if "gantry_angle" in self._procedure_vm.grid_variables or "gantry_angle" in self._procedure_vm.zipped_variables:
-                        b_alpha = "gantry_angle"
-            if b_alpha:
-                self.spin_rot_x.bind_variable(b_alpha)
+            bound_alpha = bindings.get("rotation.alpha") or bindings.get("alpha") or bindings.get("gantry_angle")
+            if bound_alpha:
+                self.spin_rot_x.bind_variable(bound_alpha)
             else:
                 self.spin_rot_x.unbind()
 
-            b_beta = bindings.get("rotation.beta") or bindings.get("beta")
-            if b_beta:
-                self.spin_rot_y.bind_variable(b_beta)
+            bound_beta = bindings.get("rotation.beta") or bindings.get("beta")
+            if bound_beta:
+                self.spin_rot_y.bind_variable(bound_beta)
             else:
                 self.spin_rot_y.unbind()
 
-            b_gamma = bindings.get("rotation.gamma") or bindings.get("gamma")
-            if b_gamma:
-                self.spin_rot_z.bind_variable(b_gamma)
+            bound_gamma = bindings.get("rotation.gamma") or bindings.get("gamma")
+            if bound_gamma:
+                self.spin_rot_z.bind_variable(bound_gamma)
             else:
                 self.spin_rot_z.unbind()
         finally:
             self._is_updating_ui = old_state
 
     def _on_transform_changed(self) -> None:
+        """Формирует новую локальную матрицу трансформации при редактировании спинбоксов."""
         if self._is_updating_ui or not isinstance(self._current_vm, NodeViewModel):
             return
         mat = np.eye(4, dtype=float)
@@ -222,3 +213,6 @@ class TransformInspectorSection(BaseInspectorSection):
         mat[1, 3] = self.spin_y.value()
         mat[2, 3] = self.spin_z.value()
         self._current_vm.local_matrix = mat
+
+
+__all__ = ["TransformInspectorSection"]

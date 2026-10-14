@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable
 
 import numpy as np
 import vtk
@@ -25,7 +25,7 @@ class ISceneViewport(Protocol):
         self,
         name: str,
         mesh: Any,
-        color: Optional[str] = 'white',
+        color: Optional[Union[str, Sequence[float]]] = 'white',
         opacity: float = 1.0,
         style: str = 'surface',
         wireframe: bool = False,
@@ -78,7 +78,7 @@ class VTKViewport(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
 
-        self.plotter: Optional[QtInteractor] = None
+        self.plotter: Optional[Any] = None
         self._actors: Dict[str, Any] = {}
         self._is_interacting: bool = False
 
@@ -89,7 +89,8 @@ class VTKViewport(QWidget):
         Инициализация QtInteractor или информативной заглушки при недоступности графического сервера.
         """
         try:
-            self.plotter = QtInteractor(self)
+            plotter_instance: Any = QtInteractor(self)
+            self.plotter = plotter_instance
             self.plotter.set_background('#1e1e1e')
             self.plotter.add_axes(interactive=True)
             self.plotter.enable_anti_aliasing('fxaa')
@@ -108,7 +109,7 @@ class VTKViewport(QWidget):
                 "Убедитесь, что установлены пакеты: pyvista, pyvistaqt, vtk, PySide6."
             )
             fallback_label.setWordWrap(True)
-            fallback_label.setAlignment(Qt.AlignCenter)
+            fallback_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fallback_label.setStyleSheet(
                 "color: #aaaaaa; font-size: 13px; padding: 24px; "
                 "background-color: #1e1e1e; border: 1px dashed #444444;"
@@ -142,7 +143,7 @@ class VTKViewport(QWidget):
         self,
         name: str,
         mesh: Any,
-        color: Optional[str] = 'white',
+        color: Optional[Union[str, Sequence[float]]] = 'white',
         opacity: float = 1.0,
         style: str = 'surface',
         wireframe: bool = False,
@@ -221,7 +222,7 @@ class VTKViewport(QWidget):
         self,
         name: str,
         grid: Any,
-        cmap: str = 'Hot Iron',
+        cmap: Any = 'Hot Iron',
         opacity: Any = 'linear',
         mapper: str = 'smart',
         **kwargs: Any
@@ -234,11 +235,12 @@ class VTKViewport(QWidget):
 
         self.remove_actor(name)
         try:
+            cmap_resolved: Any = cmap
             if isinstance(cmap, str) and cmap in get_available_colormaps():
-                cmap = ListedColormap(get_colormap_lut(cmap))
+                cmap_resolved = ListedColormap(get_colormap_lut(cmap))
 
             vol_kwargs: Dict[str, Any] = {
-                'cmap': cmap,
+                'cmap': cmap_resolved,
                 'opacity': opacity,
                 'mapper': mapper,
                 'name': name,
@@ -332,7 +334,10 @@ class VTKViewport(QWidget):
             self.plotter.view_yz()
             self.render()
 
-    def render(self) -> None:
+    def render(self, *args: Any, **kwargs: Any) -> None:
+        if args or kwargs:
+            super().render(*args, **kwargs)
+            return
         if self.plotter is not None:
             if self._is_interacting:
                 return
@@ -352,3 +357,10 @@ class VTKViewport(QWidget):
                 pass
             self.plotter = None
         return super().close()
+
+
+__all__ = [
+    "ISceneViewport",
+    "VTKViewport",
+]
+

@@ -3,10 +3,12 @@
 Предоставляет универсальный класс ParametricParallelCollimator с поддержкой различных форм каналов
 (гексагональные, квадратные) через компилируемые Numba-кернелы.
 """
+from __future__ import annotations
 
-from typing import Optional, Tuple, Union
+from typing import Any, Optional, Sequence, Tuple
 import numpy as np
 from numba import cfunc, njit
+from numpy.typing import NDArray
 
 import settings.database_setting as settings
 from core.geometry.direct_collimators import CollimatorHoleShape
@@ -14,7 +16,7 @@ from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.geometry.woodcock_volumes import WoodcockParametricVolume
 from core.materials.materials import Material
-from core.other.typing_definitions import Float, NumbaFloat, NumbaIndex, Vector3D
+from core.other.typing_definitions import Float, Index, Length, NumbaFloat, NumbaIndex, Vector3D
 
 
 class ParametricParallelCollimator(WoodcockParametricVolume):
@@ -22,10 +24,7 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
     Универсальный класс параметрического коллиматора с параллельными каналами.
     Поддерживает гексагональные и квадратные формы каналов с динамическим выбором Numba-кернела.
 
-    [origin = (x, y, z)] = units.mm
-    [size = (dx, dy, dz)] = units.mm
-    [hole_diameter] = units.mm
-    [septa] = units.mm
+    Все линейные размеры (size, hole_diameter, septa) задаются в базовых единицах (мм).
     """
 
     _hole_diameter: Float
@@ -34,14 +33,14 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
 
     def __init__(
         self,
-        size: Vector3D | Tuple[Float, Float, Float] | list[Float],
-        hole_diameter: Float,
-        septa: Float,
+        size: Vector3D | Sequence[Length | float],
+        hole_diameter: Float | float,
+        septa: Float | float,
         material: Optional[Material] = None,
         hole_shape: CollimatorHoleShape = CollimatorHoleShape.HEXAGONAL,
         name: Optional[str] = None,
     ) -> None:
-        material_lead = settings.material_database["Pb"] if material is None else material
+        material_lead: Material = settings.material_database["Pb"] if material is None else material
         size_arr = np.asarray(size, dtype=Float)
         if size_arr.shape != (3,):
             raise ValueError(f"Размер коллиматора должен содержать 3 координаты, получено shape={size_arr.shape}")
@@ -55,7 +54,7 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
             raise TypeError(f"hole_shape должен быть строго CollimatorHoleShape, получено {type(hole_shape).__name__}")
 
         super().__init__(
-            geometry=Box(size_arr[0], size_arr[1], size_arr[2]),
+            geometry=Box(Float(size_arr[0]), Float(size_arr[1]), Float(size_arr[2])),
             material=material_lead,
             name=name,
         )
@@ -76,7 +75,7 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
         return self._hole_diameter
 
     @hole_diameter.setter
-    def hole_diameter(self, value: Float) -> None:
+    def hole_diameter(self, value: Float | float) -> None:
         numeric_value = Float(value)
         if numeric_value <= 0.0:
             raise ValueError(f"Диаметр отверстия должен быть строго положительным (> 0), получено {value}")
@@ -90,7 +89,7 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
         return self._hole_diameter
 
     @hole_width.setter
-    def hole_width(self, value: Float) -> None:
+    def hole_width(self, value: Float | float) -> None:
         self.hole_diameter = value
 
     @property
@@ -99,7 +98,7 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
         return self._septa
 
     @septa.setter
-    def septa(self, value: Float) -> None:
+    def septa(self, value: Float | float) -> None:
         numeric_value = Float(value)
         if numeric_value <= 0.0:
             raise ValueError(f"Толщина септы должна быть строго положительной (> 0), получено {value}")
@@ -139,7 +138,8 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
                 return current_ancestor.material
             current_ancestor = current_ancestor.parent
         if "Vacuum" in settings.material_database:
-            return settings.material_database["Vacuum"]
+            vacuum_mat: Material = settings.material_database["Vacuum"]
+            return vacuum_mat
         return Material(name="Vacuum")
 
     @property
@@ -159,18 +159,18 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
             self._hex_bound = self._hex_slope * hex_diameter
             self._hex_bound_half = self._hex_bound / 2.0
         elif self._hole_shape == CollimatorHoleShape.SQUARE:
-            self._square_period = self._hole_diameter + self._septa
-            self._square_half_period = 0.5 * self._square_period
-            self._square_half_hole = 0.5 * self._hole_diameter
+            self._square_period = Float(self._hole_diameter + self._septa)
+            self._square_half_period = Float(0.5 * self._square_period)
+            self._square_half_hole = Float(0.5 * self._hole_diameter)
         elif self._hole_shape == CollimatorHoleShape.ROUND:
             raise NotImplementedError(
                 "Форма каналов 'round' еще не реализована в параметрическом коллиматоре."
             )
 
-    def _compile_cfunc(self):
+    def _compile_cfunc(self) -> Any:
         """Компилирует специализированную Numba-функцию трассировки материала по координатам."""
-        material_lead_identifier = self.material.ID
-        hole_material_identifier = self._resolve_hole_material().ID
+        material_lead_identifier = Index(self.material.ID)
+        hole_material_identifier = Index(self._resolve_hole_material().ID)
 
         if self._hole_shape == CollimatorHoleShape.HEXAGONAL:
             period_x = Float(self._period[0])
@@ -182,11 +182,11 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
             bound_half = Float(self._hex_bound_half)
 
             @njit(inline="always", cache=True)
-            def is_in_hex_cell(delta_x, delta_y):
-                return (delta_x <= bound_val) and (slope_val * delta_y + delta_x / 4.0 <= bound_half)
+            def is_in_hex_cell(delta_x: Float, delta_y: Float) -> bool:
+                return bool((delta_x <= bound_val) and (slope_val * delta_y + delta_x / 4.0 <= bound_half))
 
             @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat), cache=True)
-            def parametric_func_hex(coordinate_x, coordinate_y, coordinate_z):
+            def parametric_func_hex(coordinate_x: Float, coordinate_y: Float, coordinate_z: Float) -> Index:
                 mod_x = coordinate_x % period_x
                 mod_y = coordinate_y % period_y
                 offset_x1 = abs(mod_x - corner_x)
@@ -211,10 +211,10 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
             half_hole_val = Float(self._square_half_hole)
 
             @cfunc(NumbaIndex(NumbaFloat, NumbaFloat, NumbaFloat), cache=True)
-            def parametric_func_square(coordinate_x, coordinate_y, coordinate_z):
-                offset_ux = (coordinate_x % period_val) - half_period_val
-                offset_uy = (coordinate_y % period_val) - half_period_val
-                if abs(offset_ux) <= half_hole_val and abs(offset_uy) <= half_hole_val:
+            def parametric_func_square(coordinate_x: Float, coordinate_y: Float, coordinate_z: Float) -> Index:
+                x_mod = ((coordinate_x + half_period_val) % period_val) - half_period_val
+                y_mod = ((coordinate_y + half_period_val) % period_val) - half_period_val
+                if abs(x_mod) < half_hole_val and abs(y_mod) < half_hole_val:
                     return hole_material_identifier
                 return material_lead_identifier
 
@@ -224,13 +224,16 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
             f"Форма каналов '{self._hole_shape.value}' еще не реализована для Numba-компиляции."
         )
 
-    def _parametric_function(self, position: Vector3D) -> Tuple[np.ndarray, Material]:
+    def _parametric_function(self, position: Vector3D) -> Tuple[NDArray[np.bool_], Material]:
         """Векторизованное определение попадания массива точек в каналы коллиматора."""
         effective_hole_material = self._resolve_hole_material()
 
         if self._hole_shape == CollimatorHoleShape.HEXAGONAL:
-            def is_in_hex_vectorized(delta_x, delta_y):
-                return (delta_x <= self._hex_bound) * (self._hex_slope * delta_y + delta_x / 4.0 <= self._hex_bound_half)
+            def is_in_hex_vectorized(delta_x: NDArray[Float], delta_y: NDArray[Float]) -> NDArray[np.bool_]:
+                res: NDArray[np.bool_] = (delta_x <= self._hex_bound) * (
+                    self._hex_slope * delta_y + delta_x / 4.0 <= self._hex_bound_half
+                )
+                return res
 
             position_2d = np.mod(position[:, :2], self._period)
             position_2d = np.abs(position_2d - self._corner)
@@ -242,15 +245,20 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
 
         elif self._hole_shape == CollimatorHoleShape.SQUARE:
             coordinates_xy = position[:, :2]
-            cell_offsets = np.mod(coordinates_xy, self._square_period) - self._square_half_period
-            is_in_square_hole = (np.abs(cell_offsets[:, 0]) <= self._square_half_hole) & (np.abs(cell_offsets[:, 1]) <= self._square_half_hole)
+            cell_offsets = np.mod(coordinates_xy + self._square_half_period, self._square_period) - self._square_half_period
+            is_in_square_hole: NDArray[np.bool_] = (
+                (np.abs(cell_offsets[:, 0]) < self._square_half_hole)
+                & (np.abs(cell_offsets[:, 1]) < self._square_half_hole)
+            )
             return is_in_square_hole, effective_hole_material
 
         raise NotImplementedError(
             f"Форма каналов '{self._hole_shape.value}' еще не реализована в параметрической функции."
         )
 
+
 __all__ = [
     "ParametricParallelCollimator",
 ]
+
 

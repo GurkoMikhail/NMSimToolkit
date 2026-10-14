@@ -19,9 +19,11 @@ class VolumeInspectorSection(BaseInspectorSection):
     """Секция редактирования размеров Box и выбора материала NIST."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует секцию редактирования геометрии и материала объема."""
         super().__init__("Геометрия и материал", parent)
 
     def _init_ui(self) -> None:
+        """Создает спинбоксы размеров и выпадающий список материалов."""
         form_layout = QFormLayout(self)
 
         self.spin_size_x = self._create_size_spinbox(self._on_volume_size_changed)
@@ -38,6 +40,7 @@ class VolumeInspectorSection(BaseInspectorSection):
         form_layout.addRow("Материал:", self.combo_material)
 
     def _create_size_spinbox(self, callback: Any) -> QDoubleSpinBox:
+        """Создает спинбокс для габаритного размера объема."""
         spin = QDoubleSpinBox()
         spin.setRange(0.1, 5000.0)
         spin.setSingleStep(5.0)
@@ -45,6 +48,7 @@ class VolumeInspectorSection(BaseInspectorSection):
         return spin
 
     def _populate_materials(self) -> None:
+        """Заполняет выпадающий список доступными материалами из базы NIST."""
         if database_setting.material_database:
             for name in sorted(database_setting.material_database.keys()):
                 self.combo_material.addItem(name)
@@ -52,6 +56,7 @@ class VolumeInspectorSection(BaseInspectorSection):
             self.combo_material.addItems(["Water", "Air", "Lead", "Vacuum"])
 
     def can_handle(self, view_model: Any) -> bool:
+        """Проверяет применимость секции к моделям объема и коллиматора."""
         return (
             (isinstance(view_model, VolumeViewModel) or isinstance(view_model, CollimatorViewModel))
             and not isinstance(view_model, (GammaCameraViewModel, VoxelVolumeViewModel))
@@ -85,6 +90,7 @@ class VolumeInspectorSection(BaseInspectorSection):
             self.spin_size_z.setEnabled(True)
 
     def update_ui_from_vm(self) -> None:
+        """Синхронизирует размеры и материал объема из текущей модели представления."""
         if not isinstance(self._current_vm, (VolumeViewModel, CollimatorViewModel)):
             return
 
@@ -104,6 +110,7 @@ class VolumeInspectorSection(BaseInspectorSection):
             self._is_updating_ui = old_state
 
     def on_property_changed_externally(self, prop_name: str, new_val: Any) -> None:
+        """Обновляет поля размеров или материала при внешнем изменении свойств модели."""
         if not isinstance(self._current_vm, (VolumeViewModel, CollimatorViewModel)):
             return
         if prop_name == "size":
@@ -125,6 +132,7 @@ class VolumeInspectorSection(BaseInspectorSection):
                     self._is_updating_ui = False
 
     def _on_volume_size_changed(self) -> None:
+        """Применяет новые габаритные размеры к модели представления объема."""
         if self._is_updating_ui or not isinstance(self._current_vm, (VolumeViewModel, CollimatorViewModel)):
             return
         self._current_vm.size = [
@@ -134,6 +142,10 @@ class VolumeInspectorSection(BaseInspectorSection):
         ]
 
     def _on_material_changed(self, mat_name: str) -> None:
+        """Применяет выбранный материал NIST к модели представления объема."""
         if self._is_updating_ui or not isinstance(self._current_vm, (VolumeViewModel, CollimatorViewModel)):
             return
         self._current_vm.material_name = mat_name
+
+
+__all__ = ["VolumeInspectorSection"]

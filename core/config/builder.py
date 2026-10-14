@@ -10,29 +10,32 @@ from core.config.models import (
     AnyNodeConfig, VolumeConfig, GammaCameraConfig, GammaCameraSlotsConfig, WoodcockVoxelVolumeConfig,
     ParametricParallelCollimatorConfig,
     DirectParallelCollimatorConfig,
-    SourceConfig, BoxConfig, SimulationConfig, TranslateConfig, RotateConfig,
+    SourceMetadataConfig, SourceConfig, BoxConfig, GeometryConfig, SimulationConfig, TranslateConfig, RotateConfig,
     MatrixTransformConfig,
     NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig,
-    DoseGridNodeConfig, GantryConfig, CompositeNodeConfig
+    DoseGridNodeConfig, GantryConfig, CompositeNodeConfig, BaseSpatialNodeConfig, BaseCompositeNodeConfig
 )
-from core.geometry.geometries import Box
+from core.config.exporter import SceneExporter
+from core.geometry.geometries import Box, Geometry
 from core.geometry.volumes import Volume
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.direct_collimators import DirectParallelCollimator, CollimatorHoleShape
-from core.materials.materials import MaterialArray
+from core.materials.materials import Material, MaterialArray
+from core.other.typing_definitions import Float
 from core.source.sources import Source
 from core.scene.nodes import SpatialNode, CompositeNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.scene.gantry_node import GantryNode
 
 class SceneBuilder:
-    def __init__(self, base_dir: Optional[Any] = None):
+    def __init__(self, base_dir: Optional[Any] = None) -> None:
         self.base_dir = Path(base_dir) if base_dir else None
         self.distribution_registry: Dict[SpatialNode, AnyDistributionConfig] = {}
         self.slots_registry: Dict[SpatialNode, GammaCameraSlotsConfig] = {}
-        self.factory_map: Dict[str, Callable[[AnyNodeConfig], SpatialNode]] = {
+        self.source_metadata_registry: Dict[SpatialNode, SourceMetadataConfig] = {}
+        self.factory_map: Dict[str, Callable[[Any], SpatialNode]] = {
             'SpatialNode': self._build_spatial_node,
             'CompositeNode': self._build_composite_node,
             'Volume': self._build_volume,
@@ -47,12 +50,12 @@ class SceneBuilder:
         }
         self.node_cache: Dict[str, SpatialNode] = {}
 
-    def _build_spatial_node(self, config) -> SpatialNode:
-        node = SpatialNode()
+    def _build_spatial_node(self, config: BaseSpatialNodeConfig) -> SpatialNode:
+        node = SpatialNode(name=config.name)
         return node
 
-    def _build_composite_node(self, config) -> SpatialNode:
-        node = CompositeNode()
+    def _build_composite_node(self, config: BaseCompositeNodeConfig) -> SpatialNode:
+        node = CompositeNode(name=config.name)
         return node
 
     def build_scene(self, config: AnyNodeConfig) -> SpatialNode:
@@ -93,10 +96,10 @@ class SceneBuilder:
         # Применение трансформаций
         for transform in config.transformations:
             if isinstance(transform, TranslateConfig):
-                x = self._to_float(transform.x)
-                y = self._to_float(transform.y)
-                z = self._to_float(transform.z)
-                node.translate(x, y, z, transform.in_local)
+                trans_x = self._to_float(transform.x)
+                trans_y = self._to_float(transform.y)
+                trans_z = self._to_float(transform.z)
+                node.translate(trans_x, trans_y, trans_z, transform.in_local)
             elif isinstance(transform, RotateConfig):
                 alpha = self._to_float(transform.alpha)
                 beta = self._to_float(transform.beta)
@@ -120,18 +123,18 @@ class SceneBuilder:
 
         return node
 
-    def _get_material(self, name: str):
+    def _get_material(self, name: str) -> Material:
         """Получение объекта материала из базы данных по каноническому имени."""
         if name not in database_setting.material_database:
             raise ValueError(f"Материал '{name}' не найден в базе данных.")
         return database_setting.material_database[name]
 
-    def _build_geometry(self, config):
+    def _build_geometry(self, config: GeometryConfig) -> Geometry:
         if isinstance(config, BoxConfig):
-            x = self._to_float(config.x, check_positive=True)
-            y = self._to_float(config.y, check_positive=True)
-            z = self._to_float(config.z, check_positive=True)
-            return Box(x, y, z)
+            size_x = Float(self._to_float(config.x, check_positive=True))
+            size_y = Float(self._to_float(config.y, check_positive=True))
+            size_z = Float(self._to_float(config.z, check_positive=True))
+            return Box(size_x, size_y, size_z)
         raise ValueError(f"Unknown geometry type: {config.type}")
 
     def _build_volume(self, config: VolumeConfig) -> Volume:
@@ -159,13 +162,16 @@ class SceneBuilder:
         if isinstance(dist_config, NumpyDistributionConfig):
             file_path = Path(resolved_path)
             if file_path.suffix.lower() in ('.txt', '.dat'):
-                return np.loadtxt(resolved_path)
+                loaded_txt: np.ndarray = np.loadtxt(resolved_path)
+                return loaded_txt
             elif file_path.suffix.lower() == '.npy':
-                return np.load(resolved_path, allow_pickle=True)
+                loaded_npy: np.ndarray = np.load(resolved_path, allow_pickle=True)
+                return loaded_npy
             else:
                 raise ValueError(f"Неподдерживаемое расширение для NumpyDistributionConfig: {file_path.suffix}")
         elif isinstance(dist_config, RawDistributionConfig):
             file_path = Path(resolved_path)
+            data: np.ndarray
             if dist_config.encoding == 'binary':
                 file_size = file_path.stat().st_size
                 expected_size = int(np.prod(dist_config.shape) * 4)
@@ -204,7 +210,7 @@ class SceneBuilder:
             raise ValueError("WoodcockVoxelVolumeConfig mapping requires an explicit mapping, raw IDs are not currently supported by MaterialArray.")
 
         v_size_raw = config.voxel_size if config.voxel_size is not None else 1.0
-        voxel_size = self._to_float(v_size_raw, check_positive=True)
+        voxel_size = Float(self._to_float(v_size_raw, check_positive=True))
         node = WoodcockVoxelVolume(voxel_size=voxel_size, material_distribution=mat_arr, name=config.name)
         self.distribution_registry[node] = dist_config
         return node
@@ -222,9 +228,13 @@ class SceneBuilder:
 
     def _build_parametric_parallel_collimator(self, config: ParametricParallelCollimatorConfig) -> ParametricParallelCollimator:
         material = self._get_material(config.material)
-        size = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
-        hole_diameter = self._to_float(config.hole_diameter, check_positive=True)
-        septa = self._to_float(config.septa, check_positive=True)
+        size = (
+            [Float(self._to_float(dimension_value, check_positive=True)) for dimension_value in config.size]
+            if isinstance(config.size, (list, tuple))
+            else [Float(self._to_float(config.size, check_positive=True))] * 3
+        )
+        hole_diameter = Float(self._to_float(config.hole_diameter, check_positive=True))
+        septa = Float(self._to_float(config.septa, check_positive=True))
         hole_shape = CollimatorHoleShape(config.hole_shape.lower())
         return ParametricParallelCollimator(
             size=size,
@@ -238,9 +248,13 @@ class SceneBuilder:
     def _build_direct_parallel_collimator(self, config: DirectParallelCollimatorConfig) -> DirectParallelCollimator:
         material = self._get_material(config.material)
         hole_material = self._get_material(config.hole_material) if config.hole_material is not None else None
-        size = [self._to_float(dimension_value, check_positive=True) for dimension_value in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
-        hole_diameter = self._to_float(config.hole_diameter, check_positive=True)
-        septa = self._to_float(config.septa, check_positive=True)
+        size = (
+            [Float(self._to_float(dimension_value, check_positive=True)) for dimension_value in config.size]
+            if isinstance(config.size, (list, tuple))
+            else [Float(self._to_float(config.size, check_positive=True))] * 3
+        )
+        hole_diameter = Float(self._to_float(config.hole_diameter, check_positive=True))
+        septa = Float(self._to_float(config.septa, check_positive=True))
         hole_shape = CollimatorHoleShape(config.hole_shape.lower())
         return DirectParallelCollimator(
             size=size,
@@ -266,8 +280,8 @@ class SceneBuilder:
                 mask = np.isclose(raw_distribution, map_val)
                 distribution[mask] = float(act_val)
 
-        activity = self._to_float(config.activity, check_positive=True) if config.activity is not None else None
-        voxel_size = self._to_float(config.voxel_size, check_positive=True)
+        activity = Float(self._to_float(config.activity, check_positive=True)) if config.activity is not None else None
+        voxel_size = Float(self._to_float(config.voxel_size, check_positive=True))
         if isinstance(config.energy, list):
             energy_validator = unit_validator_factory('MeV', float(units.MeV))
             energy: Any = [
@@ -275,8 +289,8 @@ class SceneBuilder:
                 for item in config.energy
             ]
         else:
-            energy = self._to_float(config.energy, check_positive=True)
-        half_life = self._to_float(config.half_life, check_positive=True)
+            energy = Float(self._to_float(config.energy, check_positive=True))
+        half_life = Float(self._to_float(config.half_life, check_positive=True))
 
         node = Source(
             distribution=distribution,
@@ -284,11 +298,18 @@ class SceneBuilder:
             voxel_size=voxel_size,
             radiation_type=config.radiation_type,
             energy=energy,
-            half_life=half_life
+            half_life=half_life,
         )
         if config.name is not None:
             node.name = config.name
         self.distribution_registry[node] = dist_config
+        if config.radionuclide is not None or config.phantom_type is not None:
+            source_meta = SourceMetadataConfig(
+                radionuclide=config.radionuclide,
+                phantom_type=config.phantom_type,
+            )
+            self.source_metadata_registry[node] = source_meta
+            SceneExporter.register_source_metadata(node, source_meta)
         return node
 
     def get_distribution_path(self, node: SpatialNode) -> Optional[str]:
@@ -319,4 +340,7 @@ class SceneBuilder:
     def _build_gantry(self, config: GantryConfig) -> GantryNode:
         """Сборка поворотной станины томографа GantryNode."""
         return GantryNode(name=config.name)
+
+
+__all__ = ["SceneBuilder"]
 

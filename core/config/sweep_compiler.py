@@ -35,9 +35,16 @@ class SweepCompiler:
         if isinstance(protocol, StepAndShootProtocolConfig):
             steps = max(1, int(protocol.steps))
             endpoint = bool(protocol.endpoint)
+            start_angle_val = float(protocol.start_angle)
+            end_angle_val = float(protocol.end_angle)
+            if protocol.rotation_direction == "CCW":
+                angle_span = end_angle_val - start_angle_val
+                target_end_angle = start_angle_val - angle_span
+            else:
+                target_end_angle = end_angle_val
             angles_list = np.linspace(
-                float(protocol.start_angle),
-                float(protocol.end_angle),
+                start_angle_val,
+                target_end_angle,
                 steps,
                 endpoint=endpoint,
             ).tolist()
@@ -116,21 +123,27 @@ class SweepCompiler:
         elif isinstance(data, list):
             return [cls.inject_variables(list_element, context) for list_element in data]
         elif isinstance(data, str):
-            # Точное совпадение с шаблоном "${var}" возвращает типизированное числовое значение
-            if data.startswith("${") and data.endswith("}"):
-                variable_name = data[2:-1]
-                if variable_name in context:
-                    return context[variable_name]
+            # Точное совпадение с одиночным шаблоном "${var}" возвращает типизированное числовое значение
+            exact_match = re.fullmatch(r"\$\{([^{}]+)\}", data.strip())
+            if exact_match is not None:
+                variable_name = exact_match.group(1)
+                if variable_name not in context:
+                    raise ValueError(
+                        f"Неразрешенная переменная шаблона '${{{variable_name}}}' отсутствует в контексте задач: {list(context.keys())}"
+                    )
+                return context[variable_name]
 
             # Составные строковые выражения с шаблонами
             if "${" in data:
-                def replace_pattern(match_object: re.Match) -> str:
+                def replace_pattern(match_object: re.Match[str]) -> str:
                     variable_name = match_object.group(1)
-                    if variable_name in context:
-                        return str(context[variable_name])
-                    return match_object.group(0)
+                    if variable_name not in context:
+                        raise ValueError(
+                            f"Неразрешенная переменная шаблона '${{{variable_name}}}' в выражении '{data}' отсутствует в контексте задач: {list(context.keys())}"
+                        )
+                    return str(context[variable_name])
 
-                return re.sub(r'\$\{([^}]+)\}', replace_pattern, data)
+                return re.sub(r"\$\{([^{}]+)\}", replace_pattern, data)
 
             return data
         else:

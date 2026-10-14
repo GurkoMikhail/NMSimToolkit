@@ -54,6 +54,8 @@ from core.geometry import compute_spect_poses, compute_orbit_matrix
 from core.geometry.geometries import PeriodicHexPrism
 from core.geometry.direct_collimators import DirectParallelCollimator
 from core.geometry.volumes import Volume
+from core.geometry.voxel_volumes import WoodcockVoxelVolume
+from core.scene.nodes import CompositeNode
 
 _logger = logging.getLogger(__name__)
 
@@ -163,7 +165,12 @@ class SceneViewportController(QObject):
                 elif isinstance(node_vm, VoxelVolumeViewModel):
                     if self.voxel_renderer is not None and self.voxel_renderer.volume_actor is not None:
                         if node_vm.colormap_name == 'Physical Materials' or self._xray_mode:
-                            distribution_instance = node_vm.core_node.material_distribution
+                            core_voxel = node_vm.core_node
+                            distribution_instance = (
+                                core_voxel.material_distribution
+                                if isinstance(core_voxel, WoodcockVoxelVolume)
+                                else None
+                            )
                             if distribution_instance is not None:
                                 voxel_characteristic_length = float(np.mean(node_vm.voxel_size))
                                 self.voxel_renderer.apply_material_transfer_functions(
@@ -259,7 +266,11 @@ class SceneViewportController(QObject):
         for node_vm in all_nodes:
             actor_name = f"mesh_{id(node_vm)}"
             current_actor_names.add(actor_name)
-            if isinstance(node_vm, VolumeViewModel) and isinstance(node_vm.core_node.geometry, PeriodicHexPrism):
+            if (
+                isinstance(node_vm, VolumeViewModel)
+                and isinstance(node_vm.core_node, Volume)
+                and isinstance(node_vm.core_node.geometry, PeriodicHexPrism)
+            ):
                 current_hole_actor_names.add(f"holes_{id(node_vm)}")
             elif isinstance(node_vm, CollimatorViewModel) and isinstance(node_vm.core_node, Volume):
                 current_hole_actor_names.add(f"holes_{id(node_vm)}")
@@ -289,23 +300,6 @@ class SceneViewportController(QObject):
 
         self.viewport.render()
 
-    def disconnect_node(self, node_id: int) -> None:
-        """Отключение Qt-сигналов и удаление ссылки на ViewModel узла."""
-        if node_id in self._node_connections:
-            node_vm, conns = self._node_connections.pop(node_id)
-            for conn in conns:
-                try:
-                    QObject.disconnect(conn)
-                except (RuntimeError, TypeError):
-                    pass
-        if self.collimator_hole_renderer is not None:
-            self.collimator_hole_renderer.remove_actor(f"holes_{node_id}")
-
-    def disconnect_all_nodes(self) -> None:
-        """Полное отключение подписок на все узлы сцены."""
-        for node_id in list(self._node_connections.keys()):
-            self.disconnect_node(node_id)
-
     def add_or_update_node_actor(self, node_vm: NodeViewModel) -> None:
         """
         Добавление или обновление геометрического актора узла в 3D вьюпорте.
@@ -313,7 +307,11 @@ class SceneViewportController(QObject):
         actor_name = f"mesh_{id(node_vm)}"
         holes_actor_name = f"holes_{id(node_vm)}"
 
-        if isinstance(node_vm, VolumeViewModel) and isinstance(node_vm.core_node.geometry, PeriodicHexPrism):
+        if (
+            isinstance(node_vm, VolumeViewModel)
+            and isinstance(node_vm.core_node, Volume)
+            and isinstance(node_vm.core_node.geometry, PeriodicHexPrism)
+        ):
             # Каналы коллиматора: удаляем сплошной меш Box и визуализируем через CollimatorHoleRenderer
             self.viewport.remove_actor(actor_name)
             prism_geometry: PeriodicHexPrism = node_vm.core_node.geometry
@@ -358,7 +356,11 @@ class SceneViewportController(QObject):
                 is_collimator_body = True
             elif isinstance(node_vm.core_node.parent, DirectParallelCollimator):
                 is_collimator_body = True
-            elif any(isinstance(child_core.geometry, PeriodicHexPrism) for child_core in node_vm.core_node.childs if isinstance(child_core, Volume)):
+            elif isinstance(node_vm.core_node, CompositeNode) and any(
+                isinstance(child_core.geometry, PeriodicHexPrism)
+                for child_core in node_vm.core_node.childs
+                if isinstance(child_core, Volume)
+            ):
                 is_collimator_body = True
 
             if self._xray_mode:
@@ -398,13 +400,13 @@ class SceneViewportController(QObject):
             if isinstance(node_vm, CollimatorViewModel) and isinstance(node_vm.core_node, Volume):
                 ((_, _), (hole_rgb, hole_opacity)) = get_collimator_visual_properties(
                     body_material_name=node_vm.material_name,
-                    hole_material_name=node_vm.hole_material_name,
+                    hole_material_name=node_vm.hole_material_name or "Vacuum",
                     energy=self._xray_energy,
                     pseudo_xray_mode=self._xray_mode,
                 )
                 self.collimator_hole_renderer.render_holes(
                     actor_name=holes_actor_name,
-                    geometry_or_size=node_vm.size,
+                    geometry=node_vm.size,
                     global_matrix=node_vm.global_matrix,
                     hole_diameter=node_vm.hole_diameter,
                     septa=node_vm.septa,
@@ -414,12 +416,22 @@ class SceneViewportController(QObject):
                 )
 
         elif isinstance(node_vm, VoxelVolumeViewModel):
-            dist = node_vm.core_node.material_distribution
+            core_voxel_node = node_vm.core_node
+            dist = (
+                core_voxel_node.material_distribution
+                if isinstance(core_voxel_node, WoodcockVoxelVolume)
+                else None
+            )
             if dist is not None:
                 data = np.asarray(dist.view(np.ndarray), dtype=np.float32)
+                voxel_spacing_tuple: Tuple[float, float, float] = (
+                    float(node_vm.voxel_size[0]),
+                    float(node_vm.voxel_size[1]),
+                    float(node_vm.voxel_size[2]),
+                )
                 self.voxel_renderer.set_volume_data(
                     data,
-                    voxel_size=node_vm.voxel_size,
+                    voxel_size=voxel_spacing_tuple,
                     origin=node_vm.origin,
                     element_list=dist.element_list,
                 )
@@ -451,18 +463,48 @@ class SceneViewportController(QObject):
                 sphere = pv.Sphere(radius=8.0)
                 self.viewport.add_mesh_actor(actor_name, sphere, color=(1.0, 0.2, 0.2), opacity=0.85)
             else:
-                source_size = node_vm.size
-                if any(dimension_val <= 0 for dimension_val in source_size):
-                    source_size = (50.0, 50.0, 50.0)
-                box = pv.Box(bounds=(-source_size[0]/2, source_size[0]/2, -source_size[1]/2, source_size[1]/2, -source_size[2]/2, source_size[2]/2))
+                raw_source_size = node_vm.size
+                if any(dimension_val <= 0 for dimension_val in raw_source_size):
+                    source_size_tuple: Tuple[float, float, float] = (50.0, 50.0, 50.0)
+                else:
+                    source_size_tuple = (
+                        float(raw_source_size[0]),
+                        float(raw_source_size[1]),
+                        float(raw_source_size[2]),
+                    )
+                box = pv.Box(
+                    bounds=(
+                        -source_size_tuple[0] / 2.0,
+                        source_size_tuple[0] / 2.0,
+                        -source_size_tuple[1] / 2.0,
+                        source_size_tuple[1] / 2.0,
+                        -source_size_tuple[2] / 2.0,
+                        source_size_tuple[2] / 2.0,
+                    )
+                )
                 self.viewport.add_mesh_actor(actor_name, box, color=(1.0, 0.8, 0.1), opacity=0.35, style='wireframe')
             self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
 
         elif isinstance(node_vm, DoseGridViewModel):
-            grid_size = node_vm.size
-            if any(dimension_val <= 0 for dimension_val in grid_size):
-                grid_size = (100.0, 100.0, 100.0)
-            box = pv.Box(bounds=(-grid_size[0]/2, grid_size[0]/2, -grid_size[1]/2, grid_size[1]/2, -grid_size[2]/2, grid_size[2]/2))
+            raw_grid_size = node_vm.size
+            if any(dimension_val <= 0 for dimension_val in raw_grid_size):
+                grid_size_tuple: Tuple[float, float, float] = (100.0, 100.0, 100.0)
+            else:
+                grid_size_tuple = (
+                    float(raw_grid_size[0]),
+                    float(raw_grid_size[1]),
+                    float(raw_grid_size[2]),
+                )
+            box = pv.Box(
+                bounds=(
+                    -grid_size_tuple[0] / 2.0,
+                    grid_size_tuple[0] / 2.0,
+                    -grid_size_tuple[1] / 2.0,
+                    grid_size_tuple[1] / 2.0,
+                    -grid_size_tuple[2] / 2.0,
+                    grid_size_tuple[2] / 2.0,
+                )
+            )
             color = (0.2, 0.9, 0.3)
             opacity = 0.85 if node_vm.is_active else 0.3
             self.viewport.add_mesh_actor(
@@ -505,6 +547,8 @@ class SceneViewportController(QObject):
                     QObject.disconnect(connection)
                 except (RuntimeError, TypeError):
                     pass
+        if self.collimator_hole_renderer is not None:
+            self.collimator_hole_renderer.remove_actor(f"holes_{node_id}")
 
     def disconnect_all_nodes(self) -> None:
         """
@@ -550,7 +594,12 @@ class SceneViewportController(QObject):
             )
         elif prop_name == 'material_distribution' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
-                dist = node_vm.core_node.material_distribution
+                core_voxel_node = node_vm.core_node
+                dist = (
+                    core_voxel_node.material_distribution
+                    if isinstance(core_voxel_node, WoodcockVoxelVolume)
+                    else None
+                )
                 if dist is not None:
                     voxel_characteristic_length = float(np.mean(node_vm.voxel_size))
                     self.voxel_renderer.apply_material_transfer_functions(
@@ -563,7 +612,12 @@ class SceneViewportController(QObject):
         elif prop_name == 'colormap_name' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
                 if str(value) == 'Physical Materials' or self._xray_mode:
-                    dist = node_vm.core_node.material_distribution
+                    core_voxel_node = node_vm.core_node
+                    dist = (
+                        core_voxel_node.material_distribution
+                        if isinstance(core_voxel_node, WoodcockVoxelVolume)
+                        else None
+                    )
                     if dist is not None:
                         voxel_characteristic_length = float(np.mean(node_vm.voxel_size))
                         self.voxel_renderer.apply_material_transfer_functions(
@@ -737,7 +791,15 @@ class SceneViewportController(QObject):
         self._active_selection_box_actor = box_actor_name
 
         if self.voxel_renderer is not None and self.voxel_renderer.grid is not None:
-            box_bounds = self.voxel_renderer.grid.bounds
+            raw_bounds = self.voxel_renderer.grid.bounds
+            box_bounds: Tuple[float, float, float, float, float, float] = (
+                float(raw_bounds[0]),
+                float(raw_bounds[1]),
+                float(raw_bounds[2]),
+                float(raw_bounds[3]),
+                float(raw_bounds[4]),
+                float(raw_bounds[5]),
+            )
         else:
             voxel_dimensions = node_vm.dimensions
             if any(dim_val <= 0 for dim_val in voxel_dimensions):
@@ -745,9 +807,12 @@ class SceneViewportController(QObject):
             voxel_origin = node_vm.origin
             voxel_spacing = node_vm.voxel_size
             box_bounds = (
-                voxel_origin[0], voxel_origin[0] + max(0, voxel_dimensions[0] - 1) * voxel_spacing[0],
-                voxel_origin[1], voxel_origin[1] + max(0, voxel_dimensions[1] - 1) * voxel_spacing[1],
-                voxel_origin[2], voxel_origin[2] + max(0, voxel_dimensions[2] - 1) * voxel_spacing[2],
+                float(voxel_origin[0]),
+                float(voxel_origin[0] + max(0, voxel_dimensions[0] - 1) * voxel_spacing[0]),
+                float(voxel_origin[1]),
+                float(voxel_origin[1] + max(0, voxel_dimensions[1] - 1) * voxel_spacing[1]),
+                float(voxel_origin[2]),
+                float(voxel_origin[2] + max(0, voxel_dimensions[2] - 1) * voxel_spacing[2]),
             )
 
         bounding_box = pv.Box(bounds=box_bounds)
@@ -878,10 +943,28 @@ class SceneViewportController(QObject):
         self.viewport.render()
 
 
+    @property
+    def dose_volume_renderer(self) -> DoseVolumeRenderer:
+        """Псевдоним рендерера объемной карты дозы."""
+        return self.dose_renderer
+
+    @staticmethod
+    def _extract_camera_roll_deg(camera_vm: GammaCameraViewModel) -> float:
+        """Извлекает угол крена детектора (roll, в градусах) в собственной плоскости из local_matrix."""
+        matrix = camera_vm.local_matrix
+        if matrix is None:
+            return 0.0
+        current_dir_z = matrix[0:3, 2]
+        current_dir_y = matrix[0:3, 1]
+        cos_roll = float(np.clip(np.dot(current_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
+        sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), current_dir_y), current_dir_z))
+        return float(np.degrees(np.arctan2(sin_roll, cos_roll)))
+
     def on_spect_manipulator_changed(self, radius: float, angle_deg: float, z_pos: float) -> None:
         """Обработка перемещения ОФЭКТ-манипулятора в 3D-пространстве."""
         if self.scene_vm is not None and isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
             camera_vm = self.scene_vm.selected_node
+            roll_deg = self._extract_camera_roll_deg(camera_vm)
             if isinstance(camera_vm.parent_vm, GantryViewModel):
                 camera_vm.parent_vm.gantry_angle_deg = angle_deg
                 local_angle = float(np.degrees(np.arctan2(camera_vm.local_matrix[1, 3], camera_vm.local_matrix[0, 3])) % 360.0)
@@ -890,6 +973,7 @@ class SceneViewportController(QObject):
                     angle_deg=local_angle,
                     z=z_pos,
                     half_thickness=camera_vm.half_thickness,
+                    roll_deg=roll_deg,
                 )
             else:
                 camera_vm.local_matrix = compute_orbit_matrix(
@@ -897,6 +981,7 @@ class SceneViewportController(QObject):
                     angle_deg=angle_deg,
                     z=z_pos,
                     half_thickness=camera_vm.half_thickness,
+                    roll_deg=roll_deg,
                 )
 
     def apply_job_angles_to_viewport(
@@ -904,45 +989,125 @@ class SceneViewportController(QObject):
         context: Dict[str, Any],
         procedure_vm: Optional[BaseProcedureViewModel] = None
     ) -> None:
-        """Применяет углы из контекста задачи к гамма-камерам во вьюпорте."""
+        """Применяет углы из контекста задачи к станине гантри и гамма-камерам во вьюпорте."""
         if self.scene_vm is None:
             return
 
+        active_procedure = procedure_vm if procedure_vm is not None else self.procedure_vm
+
+        # Если передан индекс ракурса и активна процедура StepAndShoot без переопределения радиуса/угла, делегируем в preview_view
+        if (
+            "view_index" in context
+            and isinstance(active_procedure, StepAndShootProcedureViewModel)
+            and "radius" not in context
+            and "gantry_angle" not in context
+            and "current_angle" not in context
+        ):
+            self.preview_view(int(context["view_index"]) + 1, active_procedure)
+            return
+
         camera_vms = [node for node in self.scene_vm.all_nodes() if isinstance(node, GammaCameraViewModel)]
-        if not camera_vms:
+        gantry_vms = [node for node in self.scene_vm.all_nodes() if isinstance(node, GantryViewModel)]
+        if not camera_vms and not gantry_vms:
             return
 
         radius = 250.0
-        if isinstance(procedure_vm, StepAndShootProcedureViewModel):
-            radius = float(procedure_vm.radius)
+        has_explicit_radius = "radius" in context and context["radius"] is not None
+        if has_explicit_radius:
+            radius = float(context["radius"])
+        elif isinstance(active_procedure, StepAndShootProcedureViewModel):
+            radius = float(active_procedure.radius)
 
-        for camera_index, camera_view_model in enumerate(camera_vms):
-            angle_val = context.get(f"head_{camera_index}_angle")
-            if angle_val is None:
-                angle_val = context.get("current_angle")
-            if angle_val is not None:
-                z_pos = float(camera_view_model.local_matrix[2, 3]) if camera_view_model.local_matrix is not None else 0.0
-                camera_view_model.local_matrix = compute_orbit_matrix(
-                    radius=radius,
-                    angle_deg=float(angle_val),
-                    z=z_pos,
-                    half_thickness=camera_view_model.half_thickness,
-                )
+        is_radians_context = ("step_index" in context or "gantry_angle" in context)
 
-        if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
-            selected_camera = self.scene_vm.selected_node
-            pos = selected_camera.local_matrix[0:3, 3]
-            cam_radius = max(10.0, float(np.hypot(pos[0], pos[1])) - selected_camera.half_thickness)
-            cam_angle = float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
-            self.spect_manipulator.set_orbit_parameters(
-                cam_radius,
-                cam_angle,
-                z=float(pos[2]),
-                render=False,
-                emit_signal=False
+        def _to_degrees(raw_val: float) -> float:
+            if is_radians_context:
+                return float(np.degrees(raw_val))
+            return float(raw_val)
+
+        previous_sync_state = active_procedure._is_syncing_with_scene if active_procedure is not None else False
+        if active_procedure is not None:
+            active_procedure._is_syncing_with_scene = True
+        try:
+            raw_gantry_angle = context.get("gantry_angle", context.get("current_angle", context.get("head_0_angle")))
+            target_gantry_angle_deg: Optional[float] = (
+                _to_degrees(float(raw_gantry_angle)) % 360.0
+                if raw_gantry_angle is not None
+                else None
             )
 
-        self.viewport.render()
+            for gantry_vm in gantry_vms:
+                if target_gantry_angle_deg is not None:
+                    gantry_vm.gantry_angle_deg = target_gantry_angle_deg
+
+            for camera_index, camera_view_model in enumerate(camera_vms):
+                if isinstance(active_procedure, StepAndShootProcedureViewModel) and camera_index < len(active_procedure.head_angles):
+                    head_offset_deg = float(active_procedure.head_angles[camera_index])
+                elif len(camera_vms) > 1:
+                    head_offset_deg = (360.0 / len(camera_vms)) * camera_index
+                else:
+                    local_pos = camera_view_model.local_matrix[0:3, 3]
+                    head_offset_deg = float(np.degrees(np.arctan2(local_pos[1], local_pos[0])) % 360.0)
+
+                z_pos = float(camera_view_model.local_matrix[2, 3]) if camera_view_model.local_matrix is not None else 0.0
+                roll_deg = self._extract_camera_roll_deg(camera_view_model)
+
+                if isinstance(camera_view_model.parent_vm, GantryViewModel):
+                    # Камера смонтирована на станине: поворот станины уже обновил global_matrix.
+                    # Локальную матрицу обновляем только при явном изменении радиуса или монтажного угла.
+                    explicit_head_angle = context.get(f"head_{camera_index}_angle")
+                    if has_explicit_radius or explicit_head_angle is not None:
+                        local_mount_deg = (
+                            _to_degrees(float(explicit_head_angle)) % 360.0
+                            if explicit_head_angle is not None
+                            else head_offset_deg
+                        )
+                        camera_view_model.local_matrix = compute_orbit_matrix(
+                            radius=radius,
+                            angle_deg=local_mount_deg,
+                            z=z_pos,
+                            half_thickness=camera_view_model.half_thickness,
+                            roll_deg=roll_deg,
+                        )
+                else:
+                    # Автономная камера без станины гантри
+                    explicit_head_angle = context.get(f"head_{camera_index}_angle")
+                    if explicit_head_angle is not None:
+                        head_angle_deg = _to_degrees(float(explicit_head_angle)) % 360.0
+                    elif target_gantry_angle_deg is not None:
+                        head_angle_deg = (target_gantry_angle_deg + head_offset_deg) % 360.0
+                    else:
+                        head_angle_deg = head_offset_deg
+
+                    camera_view_model.local_matrix = compute_orbit_matrix(
+                        radius=radius,
+                        angle_deg=head_angle_deg,
+                        z=z_pos,
+                        half_thickness=camera_view_model.half_thickness,
+                        roll_deg=roll_deg,
+                    )
+
+            if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
+                selected_camera = self.scene_vm.selected_node
+                pos = selected_camera.local_matrix[0:3, 3]
+                cam_radius = max(10.0, float(np.hypot(pos[0], pos[1])) - selected_camera.half_thickness)
+                cam_angle = (
+                    selected_camera.parent_vm.gantry_angle_deg
+                    if isinstance(selected_camera.parent_vm, GantryViewModel)
+                    else float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
+                )
+                self.spect_manipulator.set_orbit_parameters(
+                    cam_radius,
+                    cam_angle,
+                    z=float(pos[2]),
+                    render=False,
+                    emit_signal=False
+                )
+
+            self.viewport.render()
+        finally:
+            if active_procedure is not None:
+                active_procedure._is_syncing_with_scene = previous_sync_state
 
     def preview_view(
         self,
@@ -958,7 +1123,8 @@ class SceneViewportController(QObject):
 
         view_index = max(0, view_number_1based - 1)
         camera_vms = [node for node in self.scene_vm.all_nodes() if isinstance(node, GammaCameraViewModel)]
-        if not camera_vms:
+        gantry_vms = [node for node in self.scene_vm.all_nodes() if isinstance(node, GantryViewModel)]
+        if not camera_vms and not gantry_vms:
             return 0.0
 
         base_angle = 0.0
@@ -977,44 +1143,50 @@ class SceneViewportController(QObject):
                     endpoint=active_procedure.endpoint,
                 )
                 pose_index = min(view_index, len(calculated_poses) - 1) if calculated_poses else 0
-                angles = calculated_poses[pose_index] if calculated_poses else [0.0] * len(camera_vms)
-                base_angle = angles[0] if angles else 0.0
+                angles = calculated_poses[pose_index] if calculated_poses else [0.0] * max(1, len(camera_vms))
+                base_angle = float(angles[0]) if angles else 0.0
+                head_offset_0 = float(active_procedure.head_angles[0]) if active_procedure.head_angles else 0.0
+                gantry_rot_angle = (base_angle - head_offset_0) % 360.0
 
-                gantry_vms = [node for node in self.scene_vm.all_nodes() if isinstance(node, GantryViewModel)]
-                if gantry_vms and any(cam_vm.parent_vm in gantry_vms for cam_vm in camera_vms):
-                    gantry_vm = gantry_vms[0]
-                    head_offset_0 = active_procedure.head_angles[0] if active_procedure.head_angles else 0.0
-                    gantry_rot_angle = (angles[0] - head_offset_0) % 360.0
+                for gantry_vm in gantry_vms:
                     gantry_vm.gantry_angle_deg = gantry_rot_angle
-                    for camera_index, cam_vm in enumerate(camera_vms):
-                        head_offset = (
-                            active_procedure.head_angles[camera_index]
-                            if camera_index < len(active_procedure.head_angles)
-                            else (360.0 / max(1, len(camera_vms))) * camera_index
-                        )
-                        z_pos = float(cam_vm.local_matrix[2, 3]) if cam_vm.local_matrix is not None else 0.0
+
+                for camera_index, cam_vm in enumerate(camera_vms):
+                    head_offset = (
+                        float(active_procedure.head_angles[camera_index])
+                        if camera_index < len(active_procedure.head_angles)
+                        else (360.0 / max(1, len(camera_vms))) * camera_index
+                    )
+                    z_pos = float(cam_vm.local_matrix[2, 3]) if cam_vm.local_matrix is not None else 0.0
+                    roll_deg = self._extract_camera_roll_deg(cam_vm)
+
+                    if isinstance(cam_vm.parent_vm, GantryViewModel):
                         cam_vm.local_matrix = compute_orbit_matrix(
                             radius=radius,
-                            angle_deg=float(head_offset),
+                            angle_deg=head_offset,
                             z=z_pos,
                             half_thickness=cam_vm.half_thickness,
+                            roll_deg=roll_deg,
                         )
-                else:
-                    for camera_index, cam_vm in enumerate(camera_vms):
-                        angle_val = angles[camera_index] if camera_index < len(angles) else angles[0]
-                        z_pos = float(cam_vm.local_matrix[2, 3]) if cam_vm.local_matrix is not None else 0.0
+                    else:
+                        angle_val = float(angles[camera_index]) if camera_index < len(angles) else (gantry_rot_angle + head_offset) % 360.0
                         cam_vm.local_matrix = compute_orbit_matrix(
                             radius=radius,
-                            angle_deg=float(angle_val),
+                            angle_deg=angle_val,
                             z=z_pos,
                             half_thickness=cam_vm.half_thickness,
+                            roll_deg=roll_deg,
                         )
 
                 if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
                     selected_camera = self.scene_vm.selected_node
                     pos = selected_camera.local_matrix[0:3, 3]
                     cam_radius = max(10.0, float(np.hypot(pos[0], pos[1])) - selected_camera.half_thickness)
-                    cam_angle = float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
+                    cam_angle = (
+                        selected_camera.parent_vm.gantry_angle_deg
+                        if isinstance(selected_camera.parent_vm, GantryViewModel)
+                        else float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
+                    )
                     self.spect_manipulator.set_orbit_parameters(
                         cam_radius,
                         cam_angle,
@@ -1030,13 +1202,14 @@ class SceneViewportController(QObject):
 
     def on_dose_volume_received(
         self,
-        dose_data: np.ndarray,
-        session: Optional[Union[IDoseGeometryProvider, Any]] = None
+        dose_data: Union[np.ndarray, Dict[str, np.ndarray]],
+        session: Optional[Union[IDoseGeometryProvider, float, Any]] = None,
+        simulation_time: float = 0.0,
     ) -> None:
         """
-        Прием и отображение очередного снимка 3D-карты дозы.
-        Использует геометрические параметры активной сессии или последние сохраненные
-        параметры сетки, гарантируя неизменность origin и матриц при остановке симуляции.
+        Прием и отображение очередного снимка 3D-карты дозы (одиночного массива или словаря сеток).
+        Использует геометрические параметры активной сессии, выбранного узла DoseGridViewModel
+        или последние сохраненные параметры сетки.
         """
         if self.dose_renderer is None:
             return
@@ -1049,11 +1222,74 @@ class SceneViewportController(QObject):
             if session.dose_transform_matrix is not None:
                 self._active_dose_transform_matrix = session.dose_transform_matrix
 
+        dose_array: np.ndarray
+        if isinstance(dose_data, dict):
+            if not dose_data:
+                return
+
+            dose_grid_vm: Optional[DoseGridViewModel] = None
+            selected_arr: Optional[np.ndarray] = None
+
+            selected_vm = (
+                self._selected_node_vm
+                if self._selected_node_vm is not None
+                else (self.scene_vm.selected_node if self.scene_vm is not None else None)
+            )
+            if isinstance(selected_vm, DoseGridViewModel) and selected_vm.name in dose_data:
+                dose_grid_vm = selected_vm
+                selected_arr = dose_data[selected_vm.name]
+            elif self.scene_vm is not None:
+                dose_nodes = [
+                    node for node in self.scene_vm.all_nodes()
+                    if isinstance(node, DoseGridViewModel)
+                ]
+                for candidate_vm in dose_nodes:
+                    if candidate_vm.name in dose_data and candidate_vm.is_active:
+                        dose_grid_vm = candidate_vm
+                        selected_arr = dose_data[candidate_vm.name]
+                        break
+                if dose_grid_vm is None:
+                    for candidate_vm in dose_nodes:
+                        if candidate_vm.name in dose_data:
+                            dose_grid_vm = candidate_vm
+                            selected_arr = dose_data[candidate_vm.name]
+                            break
+                if dose_grid_vm is None and dose_nodes:
+                    dose_grid_vm = dose_nodes[0]
+
+            if selected_arr is None:
+                selected_arr = next(iter(dose_data.values()))
+
+            dose_array = np.asarray(selected_arr)
+            if dose_grid_vm is not None:
+                self._active_dose_voxel_size = float(dose_grid_vm.dose_voxel_size)
+                self._active_dose_origin = dose_grid_vm.origin
+                self._active_dose_transform_matrix = dose_grid_vm.global_matrix
+        else:
+            dose_array = np.asarray(dose_data)
+            if self._active_dose_origin is None and self.scene_vm is not None:
+                selected_vm = (
+                    self._selected_node_vm
+                    if self._selected_node_vm is not None
+                    else self.scene_vm.selected_node
+                )
+                if isinstance(selected_vm, DoseGridViewModel):
+                    self._active_dose_voxel_size = float(selected_vm.dose_voxel_size)
+                    self._active_dose_origin = selected_vm.origin
+                    self._active_dose_transform_matrix = selected_vm.global_matrix
+                else:
+                    for node_vm in self.scene_vm.all_nodes():
+                        if isinstance(node_vm, DoseGridViewModel) and node_vm.is_active:
+                            self._active_dose_voxel_size = float(node_vm.dose_voxel_size)
+                            self._active_dose_origin = node_vm.origin
+                            self._active_dose_transform_matrix = node_vm.global_matrix
+                            break
+
         self.dose_renderer.update_dose_data(
-            dose_data,
+            dose_array,
             voxel_size=self._active_dose_voxel_size,
             origin=self._active_dose_origin,
-            transform_matrix=self._active_dose_transform_matrix
+            transform_matrix=self._active_dose_transform_matrix,
         )
 
     def clear_dose_volume(self) -> None:
@@ -1077,3 +1313,10 @@ class SceneViewportController(QObject):
         self.pet_manipulator.remove_visuals()
         self.clear_tracks()
         self.clear_dose_volume()
+
+
+__all__ = [
+    "IDoseGeometryProvider",
+    "SceneViewportController",
+]
+

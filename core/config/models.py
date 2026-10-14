@@ -28,14 +28,22 @@ class MatrixTransformConfig(BaseModel):
     @model_validator(mode='after')
     def validate_matrix_shape(self) -> 'MatrixTransformConfig':
         raw = self.matrix
-        if len(raw) == 16 and all(isinstance(x, (int, float)) for x in raw):
+        if len(raw) == 16 and all(isinstance(elem, (int, float)) for elem in raw):
+            flat_values: List[float] = [float(elem) for elem in raw if isinstance(elem, (int, float))]
             self.matrix = [
-                [float(raw[i * 4 + j]) for j in range(4)]
+                [flat_values[i * 4 + j] for j in range(4)]
                 for i in range(4)
             ]
             return self
-        if len(raw) == 4 and all(len(row) == 4 and all(isinstance(x, (int, float)) for x in row) for row in raw):
-            self.matrix = [[float(x) for x in row] for row in raw]
+        if len(raw) == 4 and all(
+            isinstance(row, list) and len(row) == 4 and all(isinstance(elem, (int, float)) for elem in row)
+            for row in raw
+        ):
+            self.matrix = [
+                [float(elem) for elem in row]
+                for row in raw
+                if isinstance(row, list)
+            ]
             return self
         raise ValueError(
             f"Матрица трансформации должна иметь размерность 4x4 (16 элементов) или список 4x4, получено {len(raw)} строк"
@@ -120,6 +128,10 @@ class DirectParallelCollimatorConfig(CompositeNodeConfig):
     hole_material: Optional[str] = None
     hole_shape: str = 'hexagonal'
 
+class SourceMetadataConfig(BaseModel):
+    radionuclide: Optional[str] = None
+    phantom_type: Optional[str] = None
+
 class SourceConfig(CompositeNodeConfig):
     type: Literal['Source'] = 'Source'
     activity: Optional[ActivityConfig] = None
@@ -134,15 +146,15 @@ class SourceConfig(CompositeNodeConfig):
     @field_serializer('activity', when_used='unless-none')
     def serialize_activity(self, value: Any) -> Any:
         if isinstance(value, (int, float)):
-            act_mbq = float(value) / float(units.MBq)
-            return f"{act_mbq:.6g} MBq"
+            activity_value = float(value) / float(units.MBq)
+            return f"{activity_value:.6g} MBq"
         return value
 
     @field_serializer('energy', when_used='unless-none')
     def serialize_energy(self, value: Any) -> Any:
         if isinstance(value, (int, float)):
-            energy_kev = float(value) / float(units.keV)
-            return [[f"{energy_kev:.6g} keV", 1.0]]
+            energy_value = float(value) / float(units.keV)
+            return [[f"{energy_value:.6g} keV", 1.0]]
         if isinstance(value, str):
             return [[str(value), 1.0]]
         if isinstance(value, list):
@@ -243,6 +255,7 @@ class SimulationManagerConfig(BaseModel):
     particles_number: CountConfig = 10_000
     min_energy: EnergyConfig = 1.0 * units.keV
     physics_list: Optional[str] = None
+    seed: Optional[int] = None
 
 class BaseProtocolConfig(BaseModel):
     pass
@@ -331,7 +344,7 @@ class LoggingConfig(BaseModel):
             raise ValueError("Шаблон имени файла лога не может быть пустым.")
         try:
             formatted_name = value.format(task_id=0)
-        except Exception as format_error:
+        except (KeyError, IndexError, ValueError) as format_error:
             raise ValueError(
                 f"Некорректный шаблон имени файла лога '{value}'. "
                 f"Шаблон обязан поддерживать подстановку ключа 'task_id': {format_error}"
@@ -358,5 +371,47 @@ class SimulationConfig(BaseModel):
                 "блокировок файлов в ОС Windows."
             )
         return self
+
+
+__all__ = [
+    "TranslateConfig",
+    "RotateConfig",
+    "MatrixTransformConfig",
+    "TransformConfig",
+    "BoxConfig",
+    "GeometryConfig",
+    "SpatialNodeConfig",
+    "CompositeNodeConfig",
+    "VolumeConfig",
+    "BaseDistributionConfig",
+    "NumpyDistributionConfig",
+    "RawDistributionConfig",
+    "AnyDistributionConfig",
+    "WoodcockVoxelVolumeConfig",
+    "GammaCameraSlotsConfig",
+    "GammaCameraConfig",
+    "ParametricParallelCollimatorConfig",
+    "DirectParallelCollimatorConfig",
+    "SourceMetadataConfig",
+    "SourceConfig",
+    "DoseGridNodeConfig",
+    "GantryConfig",
+    "BaseSpatialNodeConfig",
+    "BaseCompositeNodeConfig",
+    "AnyNodeConfig",
+    "DirectStreamHandlerConfig",
+    "SensitiveVolumeHandlerConfig",
+    "HistoryAssemblerHandlerConfig",
+    "DoseMapHandlerConfig",
+    "AnyDataHandlerConfig",
+    "DataManagerConfig",
+    "SimulationManagerConfig",
+    "BaseProtocolConfig",
+    "CustomSweepProtocolConfig",
+    "StepAndShootProtocolConfig",
+    "AnyProtocolConfig",
+    "LoggingConfig",
+    "SimulationConfig",
+]
 
 

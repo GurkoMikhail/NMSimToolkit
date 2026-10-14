@@ -1,8 +1,11 @@
-from typing import TypeAlias
+"""
+Определения базовых физических и индексных псевдонимов типов (TypeAlias) расчетного ядра.
+"""
 import ctypes
+from typing import TypeAlias
 import numpy as np
-from numpy.typing import NDArray
 from numba import from_dtype
+from numpy.typing import NDArray
 
 Float: TypeAlias = np.float64
 Length: TypeAlias = Float
@@ -19,12 +22,12 @@ Index: TypeAlias = np.int64
 
 ShapeID: TypeAlias = np.int32
 
-# CFUNCTYPE strictly signatured for material lookup functions
+# Сигнатура CFUNCTYPE для функций пространственного поиска материала Вудкока
 CMaterialFunc = ctypes.CFUNCTYPE(
     np.ctypeslib.as_ctypes_type(Index),
     np.ctypeslib.as_ctypes_type(Float),
     np.ctypeslib.as_ctypes_type(Float),
-    np.ctypeslib.as_ctypes_type(Float)
+    np.ctypeslib.as_ctypes_type(Float),
 )
 
 CFuncAddress: TypeAlias = np.uint64
@@ -34,3 +37,25 @@ NumbaIndex = from_dtype(np.dtype(Index))
 
 ProcessID: TypeAlias = np.uint8
 Charge: TypeAlias = np.int8
+
+__all__ = [
+    "Float",
+    "Length",
+    "Energy",
+    "Time",
+    "Activity",
+    "Angle",
+    "Density",
+    "Vector3D",
+    "ID",
+    "Species",
+    "Index",
+    "ShapeID",
+    "CMaterialFunc",
+    "CFuncAddress",
+    "NumbaFloat",
+    "NumbaIndex",
+    "ProcessID",
+    "Charge",
+]
+

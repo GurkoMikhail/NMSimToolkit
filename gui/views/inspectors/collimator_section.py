@@ -2,7 +2,7 @@
 Секция параметров коллиматора (прямой Direct и параметрический Parametric).
 """
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Union
 
 import numpy as np
 from PySide6.QtWidgets import (
@@ -27,20 +27,29 @@ class CollimatorInspectorSection(BaseInspectorSection):
     """Секция настройки геометрии каналов коллиматора, септ и переключения типов."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует секцию настройки параметров коллиматора."""
         super().__init__("Параметры коллиматора (Collimator)", parent)
 
     def _init_ui(self) -> None:
+        """Создает выпадающие списки типа, формы и материала каналов, а также спинбоксы размеров."""
         form_layout = QFormLayout(self)
 
         self.combo_collimator_type = QComboBox()
-        for title, val in (("Детерминированный (Сквозные каналы)", "direct"), ("Параметрический (RayCasting)", "parametric")):
+        for title, val in (
+            ("Детерминированный (Сквозные каналы)", "direct"),
+            ("Параметрический (RayCasting)", "parametric"),
+        ):
             self.combo_collimator_type.addItem(title, val)
         self.combo_collimator_type.currentIndexChanged.connect(self._on_collimator_type_changed)
         form_layout.addRow("Тип коллиматора:", self.combo_collimator_type)
 
         self.lbl_collimator_shape = QLabel("Форма каналов:")
         self.combo_collimator_shape = QComboBox()
-        for title, shape in (("Гексагональный", CollimatorHoleShape.HEXAGONAL), ("Квадратный", CollimatorHoleShape.SQUARE), ("Круглый", CollimatorHoleShape.ROUND)):
+        for title, shape in (
+            ("Гексагональный", CollimatorHoleShape.HEXAGONAL),
+            ("Квадратный", CollimatorHoleShape.SQUARE),
+            ("Круглый", CollimatorHoleShape.ROUND),
+        ):
             self.combo_collimator_shape.addItem(title, shape)
         self.combo_collimator_shape.currentIndexChanged.connect(self._on_collimator_shape_changed)
         form_layout.addRow(self.lbl_collimator_shape, self.combo_collimator_shape)
@@ -69,6 +78,7 @@ class CollimatorInspectorSection(BaseInspectorSection):
         form_layout.addRow("Толщина септ:", self.spin_collimator_septa)
 
     def _populate_hole_materials(self) -> None:
+        """Заполняет выпадающий список материалов каналов коллиматора."""
         self.combo_hole_material.clear()
         self.combo_hole_material.addItem("По умолчанию (от родителя)", None)
         if database_setting.material_database:
@@ -79,9 +89,11 @@ class CollimatorInspectorSection(BaseInspectorSection):
                 self.combo_hole_material.addItem(name, name)
 
     def can_handle(self, view_model: Any) -> bool:
+        """Проверяет, является ли модель представления коллиматором CollimatorViewModel."""
         return isinstance(view_model, CollimatorViewModel)
 
     def update_ui_from_vm(self) -> None:
+        """Синхронизирует все поля секции с текущей моделью CollimatorViewModel."""
         if not isinstance(self._current_vm, CollimatorViewModel):
             return
 
@@ -127,7 +139,8 @@ class CollimatorInspectorSection(BaseInspectorSection):
         finally:
             self._is_updating_ui = old_state
 
-    def _run_ui_update(self, callback: Any) -> None:
+    def _run_ui_update(self, callback: Callable[[], None]) -> None:
+        """Выполняет обновление виджетов с блокировкой рекурсивных сигналов."""
         self._is_updating_ui = True
         try:
             callback()
@@ -135,34 +148,53 @@ class CollimatorInspectorSection(BaseInspectorSection):
             self._is_updating_ui = False
 
     def on_property_changed_externally(self, prop_name: str, new_val: Any) -> None:
+        """Точечно обновляет поля секции при внешнем изменении свойств коллиматора."""
         if not isinstance(self._current_vm, CollimatorViewModel):
             return
         if prop_name == "hole_material_name":
             found_idx = self.combo_hole_material.findData(str(new_val)) if new_val is not None else 0
-            self._run_ui_update(lambda: self.combo_hole_material.setCurrentIndex(max(0, found_idx)))
+
+            def _apply_hole_mat() -> None:
+                self.combo_hole_material.setCurrentIndex(max(0, found_idx))
+
+            self._run_ui_update(_apply_hole_mat)
         elif prop_name in ("hole_diameter", "hole_width"):
-            self._run_ui_update(lambda: self.spin_collimator_hole.setValue(float(new_val)))
+            def _apply_hole_diam() -> None:
+                self.spin_collimator_hole.setValue(float(new_val))
+
+            self._run_ui_update(_apply_hole_diam)
         elif prop_name == "septa":
-            self._run_ui_update(lambda: self.spin_collimator_septa.setValue(float(new_val)))
+            def _apply_septa() -> None:
+                self.spin_collimator_septa.setValue(float(new_val))
+
+            self._run_ui_update(_apply_septa)
         elif prop_name == "hole_shape":
             new_shape_val = new_val.value if isinstance(new_val, CollimatorHoleShape) else new_val
             for shape_index in range(self.combo_collimator_shape.count()):
                 item_shape = self.combo_collimator_shape.itemData(shape_index)
                 if item_shape in (new_val, new_shape_val):
-                    self._run_ui_update(lambda idx=shape_index: self.combo_collimator_shape.setCurrentIndex(idx))
+                    target_idx = shape_index
+
+                    def _apply_shape() -> None:
+                        self.combo_collimator_shape.setCurrentIndex(target_idx)
+
+                    self._run_ui_update(_apply_shape)
                     break
 
     def _on_collimator_hole_changed(self, value: float) -> None:
+        """Применяет новое значение диаметра или ширины отверстий коллиматора."""
         if self._is_updating_ui or not isinstance(self._current_vm, CollimatorViewModel):
             return
         self._current_vm.hole_diameter = float(value)
 
     def _on_collimator_septa_changed(self, value: float) -> None:
+        """Применяет новое значение толщины септ коллиматора."""
         if self._is_updating_ui or not isinstance(self._current_vm, CollimatorViewModel):
             return
         self._current_vm.septa = float(value)
 
     def _on_collimator_shape_changed(self, index: int) -> None:
+        """Применяет выбранную форму каналов коллиматора."""
         if self._is_updating_ui or not isinstance(self._current_vm, CollimatorViewModel):
             return
         shape_data = self.combo_collimator_shape.itemData(index)
@@ -187,12 +219,14 @@ class CollimatorInspectorSection(BaseInspectorSection):
         self._current_vm.hole_shape = shape_data
 
     def _on_hole_material_changed(self, index: int) -> None:
+        """Применяет выбранный материал заполнения каналов прямого коллиматора."""
         if self._is_updating_ui or not isinstance(self._current_vm, CollimatorViewModel):
             return
         selected_hole_mat_name = self.combo_hole_material.itemData(index)
         self._current_vm.hole_material_name = selected_hole_mat_name
 
     def _on_collimator_type_changed(self, index: int) -> None:
+        """Заменяет узел коллиматора в сцене при переключении между прямым и параметрическим типом."""
         if self._is_updating_ui or not isinstance(self._current_vm, CollimatorViewModel):
             return
         collimator_vm = self._current_vm
@@ -201,14 +235,15 @@ class CollimatorInspectorSection(BaseInspectorSection):
             return
 
         col_size = np.copy(collimator_vm.size)
-        hole_diameter = float(collimator_vm.hole_diameter)
-        septa = float(collimator_vm.septa)
+        hole_diameter = np.float64(collimator_vm.hole_diameter)
+        septa = np.float64(collimator_vm.septa)
         hole_shape = collimator_vm.hole_shape
         material_name = collimator_vm.material_name
         lead_mat = database_setting.material_database.get(material_name, Material(name=material_name))
 
+        collimator_node: Union[DirectParallelCollimator, ParametricParallelCollimator]
         if target_kind == "direct":
-            new_core = DirectParallelCollimator(
+            collimator_node = DirectParallelCollimator(
                 size=col_size,
                 hole_diameter=hole_diameter,
                 septa=septa,
@@ -218,7 +253,7 @@ class CollimatorInspectorSection(BaseInspectorSection):
                 name=collimator_vm.name,
             )
         elif target_kind == "parametric":
-            new_core = ParametricParallelCollimator(
+            collimator_node = ParametricParallelCollimator(
                 size=col_size,
                 hole_diameter=hole_diameter,
                 septa=septa,
@@ -229,9 +264,12 @@ class CollimatorInspectorSection(BaseInspectorSection):
         else:
             return
 
-        new_core.local_matrix = np.copy(collimator_vm.local_matrix)
-        new_col_vm = CollimatorViewModel(new_core)
+        collimator_node.local_matrix = np.copy(collimator_vm.local_matrix)
+        new_col_vm = CollimatorViewModel(collimator_node)
 
         if self._scene_vm is not None:
             self._scene_vm.replace_node(collimator_vm, new_col_vm)
             self.target_viewmodel_requested.emit(new_col_vm)
+
+
+__all__ = ["CollimatorInspectorSection"]

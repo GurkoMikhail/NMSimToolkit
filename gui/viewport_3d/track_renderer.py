@@ -68,17 +68,16 @@ class TrackRenderer:
         process_ids = batch.get('process_id')
         particle_ids = batch.get('particle_id')
 
-        if pos_x is None or len(pos_x) == 0:
+        if pos_x is None or pos_y is None or len(pos_x) == 0:
             return
 
-        if pos_z is None:
-            pos_z = np.zeros_like(pos_x)
+        pos_z_arr: np.ndarray = np.zeros_like(pos_x) if pos_z is None else np.asarray(pos_z)
 
         n_new = len(pos_x)
 
         # Добавляем точки и цвета в кольцевые буферы
         for i in range(n_new):
-            pt = (float(pos_x[i]), float(pos_y[i]), float(pos_z[i]))
+            pt = (float(pos_x[i]), float(pos_y[i]), float(pos_z_arr[i]))
             self._point_buffer.append(pt)
 
             proc = int(process_ids[i]) if process_ids is not None else 1
@@ -95,14 +94,14 @@ class TrackRenderer:
                         self._lines_buffer.append((prev_pt, pt, color))
                     self._particle_last_pos[pid] = pt
                 elif i > 0:
-                    prev_pt = (float(pos_x[i - 1]), float(pos_y[i - 1]), float(pos_z[i - 1]))
+                    prev_pt = (float(pos_x[i - 1]), float(pos_y[i - 1]), float(pos_z_arr[i - 1]))
                     self._lines_buffer.append((prev_pt, pt, color))
 
         # Ограничение размера карты предыдущих позиций частиц
         if len(self._particle_last_pos) > 10000:
             keys_to_remove = list(self._particle_last_pos.keys())[:5000]
-            for k in keys_to_remove:
-                del self._particle_last_pos[k]
+            for key_id in keys_to_remove:
+                del self._particle_last_pos[key_id]
 
         # Троттлинг отрисовки во избежание блокировки главного потока GUI
         now = time.time()
@@ -193,8 +192,8 @@ class TrackRenderer:
 
             self._last_update_time = time.time()
 
-        except Exception as e:
-            _logger.debug(f"Ошибка обновления треков: {e}")
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError) as track_error:
+            _logger.debug(f"Ошибка обновления треков: {track_error}")
 
     def clear(self) -> None:
         """
@@ -246,3 +245,10 @@ class TrackRenderer:
         self._color_buffer = new_col
         self._lines_buffer = new_lines
         self.update_mesh()
+
+
+__all__ = [
+    "PROCESS_COLORS",
+    "TrackRenderer",
+]
+

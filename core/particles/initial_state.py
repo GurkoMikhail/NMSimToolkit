@@ -1,8 +1,13 @@
-import numpy as np
+"""
+Модуль структуры начального состояния частиц (InitialState) в формате Structure of Arrays (SoA).
+"""
+
 from typing import NamedTuple
+
+import numpy as np
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Energy, Time, Length, Float, ID
+from core.other.typing_definitions import Energy, Float, ID, Length, Time
 from core.other.vectors import Vector3DSoA
 
 
@@ -13,6 +18,7 @@ class InitialState(NamedTuple):
     Содержит плоские одномерные C-непрерывные массивы NumPy с начальными
     параметрами и идентификаторами сгенерированных частиц.
     """
+
     ID: NDArray[ID]
     has_interacted: NDArray[np.bool_]
 
@@ -27,7 +33,8 @@ class InitialState(NamedTuple):
 
     @property
     def capacity(self) -> int:
-        return self.emission_time.shape[0]
+        """Емкость пула начальных состояний частиц."""
+        return int(self.emission_time.shape[0])
 
     def validate(self) -> None:
         """
@@ -68,7 +75,11 @@ class InitialState(NamedTuple):
             emission_time=np.empty(capacity, dtype=Time),
             emission_energy=np.empty(capacity, dtype=Energy),
             emission_position=Vector3DSoA.allocate(capacity, dtype=Length),
-            emission_direction=Vector3DSoA.allocate(capacity, dtype=Float)
+            emission_direction=Vector3DSoA.allocate(capacity, dtype=Float),
         )
         buffer.validate()
         return buffer
+
+
+__all__ = ["InitialState"]
+

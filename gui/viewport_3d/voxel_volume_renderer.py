@@ -76,17 +76,20 @@ class VoxelVolumeRenderer:
             self.current_element_list = element_list
 
         if isinstance(voxel_size, (int, float)):
-            spacing = (float(voxel_size), float(voxel_size), float(voxel_size))
+            spacing: Tuple[float, float, float] = (float(voxel_size), float(voxel_size), float(voxel_size))
             self.base_voxel_size = float(voxel_size)
         else:
-            spacing = tuple(float(spacing_component) for spacing_component in voxel_size)
+            spacing = (float(voxel_size[0]), float(voxel_size[1]), float(voxel_size[2]))
             self.base_voxel_size = float(np.mean(spacing))
 
         if origin is None:
-            origin = tuple(
-                -0.5 * float(dimension_size) * float(spacing_step)
-                for dimension_size, spacing_step in zip(data_3d.shape, spacing)
+            actual_origin: Tuple[float, float, float] = (
+                -0.5 * float(data_3d.shape[0]) * spacing[0],
+                -0.5 * float(data_3d.shape[1]) * spacing[1],
+                -0.5 * float(data_3d.shape[2]) * spacing[2],
             )
+        else:
+            actual_origin = (float(origin[0]), float(origin[1]), float(origin[2]))
 
         try:
             self.scalar_range = (float(np.min(data_3d)), float(np.max(data_3d)))
@@ -94,9 +97,9 @@ class VoxelVolumeRenderer:
             # Если ImageData уже создана и совпадает по размерности, выполняем быстрое in-place обновление
             if (self.grid is not None and self.volume_actor is not None and
                     self.grid.dimensions == data_3d.shape):
-                self.grid.origin = origin
+                self.grid.origin = actual_origin
                 self.grid.spacing = spacing
-                self.grid.point_data['values'][:] = data_3d.flatten(order='F').astype(np.float32)
+                np.asarray(self.grid.point_data['values'])[:] = data_3d.flatten(order='F').astype(np.float32)
                 scalars = self.grid.GetPointData().GetScalars()
                 if scalars is not None:
                     scalars.Modified()
@@ -146,7 +149,7 @@ class VoxelVolumeRenderer:
             grid = pv.ImageData(
                 dimensions=data_3d.shape,
                 spacing=spacing,
-                origin=origin
+                origin=actual_origin
             )
             grid.point_data['values'] = data_3d.flatten(order='F').astype(np.float32)
             self.grid = grid
@@ -386,3 +389,9 @@ class VoxelVolumeRenderer:
         self.grid = None
         self.current_element_list = None
         self.is_physical_mode = False
+
+
+__all__ = [
+    "VoxelVolumeRenderer",
+]
+

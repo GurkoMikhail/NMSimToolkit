@@ -202,7 +202,8 @@ class DirectParallelCollimator(CompositeNode):
                 return current_node.material
             current_node = current_node.parent
         if "Vacuum" in settings.material_database:
-            return settings.material_database["Vacuum"]
+            vacuum_mat: Material = settings.material_database["Vacuum"]
+            return vacuum_mat
         return Material(name="Vacuum")
 
     def _sync_hole_material(self) -> None:

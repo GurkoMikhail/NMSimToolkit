@@ -7,15 +7,18 @@ from core.config.models import SimulationConfig
 from core.config.sweep_compiler import SweepCompiler
 
 
-def load_raw_config(filepath: str | Path) -> dict:
-    """Loads a YAML file and returns the raw dictionary, stripping YAML anchors."""
-    with open(filepath, 'r', encoding='utf-8') as f:
-        config_dict = yaml.safe_load(f)
+def load_raw_config(filepath: str | Path) -> Dict[str, Any]:
+    """Загружает YAML-файл и возвращает сырой словарь конфигурации без секции YAML-якорей Materials."""
+    with open(filepath, 'r', encoding='utf-8') as yaml_file:
+        config_dict = yaml.safe_load(yaml_file)
+
+    if not isinstance(config_dict, dict):
+        raise ValueError(f"Некорректный формат YAML-конфигурации в '{filepath}': ожидался словарь.")
 
     if 'Materials' in config_dict:
         del config_dict['Materials']
-        
-    return config_dict
+
+    return dict(config_dict)
 
 
 def load_simulation_config(
@@ -43,3 +46,6 @@ def load_simulation_config(
                     config_dict = SweepCompiler.inject_variables(deepcopy(config_dict), tasks[0])
 
     return SimulationConfig.model_validate(config_dict)
+
+
+__all__ = ["load_raw_config", "load_simulation_config"]

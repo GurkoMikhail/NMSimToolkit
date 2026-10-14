@@ -91,10 +91,10 @@ class SimulationRunner(QThread):
             self.status_updated.emit("Моделирование успешно завершено")
             self.simulation_finished.emit()
 
-        except Exception as e:
-            _logger.error(f"Ошибка в SimulationRunner: {e}", exc_info=True)
-            self.simulation_error.emit(str(e))
-            self.status_updated.emit(f"Ошибка: {e}")
+        except (OSError, RuntimeError, ValueError, KeyError, BufferError, TypeError) as sim_error:
+            _logger.error(f"Ошибка в SimulationRunner: {sim_error}", exc_info=True)
+            self.simulation_error.emit(str(sim_error))
+            self.status_updated.emit(f"Ошибка: {sim_error}")
 
         finally:
             self._running_event.clear()
@@ -133,3 +133,9 @@ class SimulationRunner(QThread):
         if self.manager is not None:
             self.manager.step_once()
             self.status_updated.emit(f"Выполнен шаг {self.manager.step}")
+
+
+__all__ = [
+    "SimulationRunner",
+]
+

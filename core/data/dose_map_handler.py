@@ -1,3 +1,8 @@
+"""
+Модуль сеточного накопления поглощенной дозы (энерговыделения) в трехмерных воксельных объемах
+и потоковой синхронизации с памятью SharedMemory и файлами HDF5.
+"""
+
 import logging
 from collections.abc import Mapping
 from multiprocessing import shared_memory
@@ -31,7 +36,11 @@ class DoseGridEntry:
         node: Optional[DoseGridNode] = None,
     ) -> None:
         self.name = name
-        self.grid_shape = tuple(int(s) for s in grid_shape)
+        self.grid_shape: Tuple[int, int, int] = (
+            int(grid_shape[0]),
+            int(grid_shape[1]),
+            int(grid_shape[2]),
+        )
         if isinstance(voxel_size, (int, float)):
             self.voxel_size = (float(voxel_size), float(voxel_size), float(voxel_size))
         else:
@@ -60,11 +69,11 @@ class DoseGridEntry:
                     temp_shm = shared_memory.SharedMemory(name=self.shm_name, create=False)
                     temp_shm.close()
                     temp_shm.unlink()
-                except Exception:
+                except (OSError, RuntimeError, ValueError, KeyError, BufferError):
                     pass
                 try:
                     self._shm = shared_memory.SharedMemory(name=self.shm_name, create=True, size=nbytes)
-                except Exception:
+                except (OSError, RuntimeError, ValueError, KeyError, BufferError):
                     self._shm = shared_memory.SharedMemory(name=self.shm_name, create=False)
         else:
             try:
@@ -123,8 +132,8 @@ class DoseGridEntry:
                 self._shm.close()
                 if self._owns_shm:
                     self._shm.unlink()
-            except Exception as e:
-                _logger.debug(f"Ошибка закрытия SharedMemory '{self.shm_name}': {e}")
+            except (OSError, RuntimeError, ValueError, KeyError, BufferError) as shm_error:
+                _logger.debug(f"Ошибка закрытия SharedMemory '{self.shm_name}': {shm_error}")
             finally:
                 self._shm = None
                 self._dose_grid = None
@@ -187,7 +196,6 @@ class DoseMapHandler(BaseDataHandler):
         self.entries.append(entry)
         self._entries_by_name[node_name] = entry
 
-
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         """
         Векторизованное накопление энерговыделения из чанка взаимодействий
@@ -208,45 +216,43 @@ class DoseMapHandler(BaseDataHandler):
         if pos_x is None or energy_deposit is None or len(pos_x) == 0:
             return
 
-        pos_x = np.asarray(pos_x)
-        pos_y = np.asarray(pos_y)
-        pos_z = np.asarray(pos_z) if pos_z is not None else np.zeros_like(pos_x)
-        energy_deposit = np.asarray(energy_deposit)
+        pos_x_arr = np.asarray(pos_x)
+        pos_y_arr = np.asarray(pos_y) if pos_y is not None else np.zeros_like(pos_x_arr)
+        pos_z_arr = np.asarray(pos_z) if pos_z is not None else np.zeros_like(pos_x_arr)
+        energy_deposit_arr = np.asarray(energy_deposit)
 
         # Отбираем события с депонированием энергии > 0
-        valid_mask = energy_deposit > 0.0
+        valid_mask = energy_deposit_arr > 0.0
         if not np.any(valid_mask):
             return
 
-        px = pos_x[valid_mask]
-        py = pos_y[valid_mask]
-        pz = pos_z[valid_mask]
-        edep = energy_deposit[valid_mask]
+        filtered_px = pos_x_arr[valid_mask]
+        filtered_py = pos_y_arr[valid_mask]
+        filtered_pz = pos_z_arr[valid_mask]
+        filtered_edep = energy_deposit_arr[valid_mask]
 
         for entry in self.entries:
-            entry.accumulate(px, py, pz, edep)
+            entry.accumulate(filtered_px, filtered_py, filtered_pz, filtered_edep)
 
     def get_dose_snapshot(self, name: Optional[str] = None) -> Optional[np.ndarray]:
         """
         Возвращает локальную копию 3D-массива дозы.
         Если указано имя name, возвращает массив указанной сетки.
-        Если name не указано и зарегистрирована одна сетка, возвращает ее массив.
+        Если name не указано и зарегистрирована хотя бы одна сетка, возвращает массив первой сетки.
         """
         if name is not None:
             entry = self._entries_by_name.get(name)
-            return entry._dose_grid.copy() if entry and entry._dose_grid is not None else None
-        if len(self.entries) == 1:
+            return entry._dose_grid.copy() if entry is not None and entry._dose_grid is not None else None
+        if len(self.entries) >= 1:
             entry = self.entries[0]
-            return entry._dose_grid.copy() if entry and entry._dose_grid is not None else None
-        if len(self.entries) > 1:
-            return {e.name: e._dose_grid.copy() for e in self.entries if e._dose_grid is not None}
+            return entry._dose_grid.copy() if entry._dose_grid is not None else None
         return None
 
     def get_dose_snapshots(self) -> Dict[str, np.ndarray]:
         """
         Возвращает словарь локальных копий всех сеток {имя: ndarray}.
         """
-        return {e.name: e._dose_grid.copy() for e in self.entries if e._dose_grid is not None}
+        return {entry.name: entry._dose_grid.copy() for entry in self.entries if entry._dose_grid is not None}
 
     def clear(self) -> None:
         """
@@ -257,17 +263,23 @@ class DoseMapHandler(BaseDataHandler):
 
     def finalize(self) -> None:
         """
-        Сохранение накопленных дозовых карт в группу /dose HDF5 файла.
+        Сохранение и аккумуляция накопленных дозовых карт в группу /dose HDF5 файла.
         """
         if self.writer_callback is not None:
-            def write_func(f: h5py.File) -> None:
-                if 'dose' not in f:
-                    dose_group = f.create_group('dose')
-                else:
-                    dose_group = f['dose']
+            def write_func(h5_file: h5py.File) -> None:
+                dose_group = h5_file.require_group('dose')
                 for entry in self.entries:
                     if entry._dose_grid is not None:
                         if entry.name in dose_group:
+                            existing_dset = dose_group[entry.name]
+                            if isinstance(existing_dset, h5py.Dataset) and existing_dset.shape == entry._dose_grid.shape:
+                                existing_dset[...] = (
+                                    np.asarray(existing_dset[...], dtype=np.float64) + entry._dose_grid
+                                )
+                                existing_dset.attrs['voxel_size'] = entry.voxel_size
+                                existing_dset.attrs['origin'] = entry.origin
+                                existing_dset.attrs['grid_shape'] = entry.grid_shape
+                                continue
                             del dose_group[entry.name]
                         dset = dose_group.create_dataset(entry.name, data=entry._dose_grid)
                         dset.attrs['voxel_size'] = entry.voxel_size
@@ -286,4 +298,8 @@ class DoseMapHandler(BaseDataHandler):
 
     def __del__(self) -> None:
         self.close()
+
+
+__all__ = ["DoseGridEntry", "DoseMapHandler"]
+
 

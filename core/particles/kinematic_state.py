@@ -1,9 +1,15 @@
-import numpy as np
+"""
+Модуль структуры текущего кинематического состояния частиц (KinematicState) в формате SoA.
+"""
+
 from typing import NamedTuple
+
+import numpy as np
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Energy, Float, Length, Species
 from core.other.vectors import Vector3DSoA
+
 
 class KinematicState(NamedTuple):
     """
@@ -12,6 +18,7 @@ class KinematicState(NamedTuple):
     Содержит исключительно одномерные плоские C-непрерывные массивы NumPy для «горячих» данных,
     активно используемых физическими кернелами.
     """
+
     is_active: NDArray[np.bool_]
     species: NDArray[Species]
 
@@ -27,7 +34,8 @@ class KinematicState(NamedTuple):
 
     @property
     def capacity(self) -> int:
-        return self.is_active.shape[0]
+        """Емкость пула кинематических состояний частиц."""
+        return int(self.is_active.shape[0])
 
     def validate(self) -> None:
         """
@@ -72,3 +80,7 @@ class KinematicState(NamedTuple):
         )
         buffer.validate()
         return buffer
+
+
+__all__ = ["KinematicState"]
+

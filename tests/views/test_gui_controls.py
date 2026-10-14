@@ -291,7 +291,7 @@ class TestAll14GUIFixes(unittest.TestCase):
         self.assertEqual(len(matching_nodes), 1)
         matching_nodes[0].is_sensitive_detector = True
         self.assertTrue(matching_nodes[0].is_sensitive_detector)
-        self.assertFalse(hasattr(vol, 'is_sensitive_detector'))
+        self.assertNotIn('is_sensitive_detector', vol.__dict__)
 
     # 14. Многопроекционный просмотр в ResultsViewer
     def test_14_results_viewer_multi_projection(self):
@@ -300,7 +300,7 @@ class TestAll14GUIFixes(unittest.TestCase):
         for i in range(8):
             stack[i] *= (i + 1)
 
-        viewer.set_projection_stack_data(stack, current_idx=0, total_views=8, angle_deg=0.0)
+        viewer.set_projection_stack_data(stack, current_idx=0, total_views=8, angle=0.0)
         self.assertFalse(viewer.proj_nav_widget.isHidden())
         self.assertEqual(viewer.slider_proj.maximum(), 8)
         self.assertEqual(viewer.slider_proj.value(), 1)

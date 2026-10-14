@@ -1,7 +1,7 @@
 """
 Секция параметров воксельного фантома (WoodcockVoxelVolume / VoxelVolumeViewModel).
 """
-from typing import Any, Optional
+from typing import Any, Callable, Dict, Optional, Union
 
 import numpy as np
 from PySide6.QtCore import Qt
@@ -36,9 +36,11 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
     """Секция настройки импорта фантомов, воксельного разрешения, палитры и таблицы NIST."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует секцию параметров воксельного фантома."""
         super().__init__("Параметры фантома (DICOM / Voxel)", parent)
 
     def _init_ui(self) -> None:
+        """Создает элементы управления файлом фантома, шагом вокселя, палитрой и таблицей NIST."""
         form_layout = QFormLayout(self)
 
         self.txt_voxel_path = QLineEdit()
@@ -68,7 +70,7 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
         self.combo_colormap.currentTextChanged.connect(self._on_colormap_changed)
         form_layout.addRow("Палитра:", self.combo_colormap)
 
-        self.slider_lod = QSlider(Qt.Horizontal)
+        self.slider_lod = QSlider(Qt.Orientation.Horizontal)
         self.slider_lod.setRange(1, 10)
         self.slider_lod.setValue(5)
         self.slider_lod.valueChanged.connect(self._on_lod_changed)
@@ -103,13 +105,20 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
         self.tbl_material_mapping = QTableWidget()
         self.tbl_material_mapping.setColumnCount(3)
         self.tbl_material_mapping.setHorizontalHeaderLabels(["ID", "Цвет", "Материал NIST"])
-        self.tbl_material_mapping.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.tbl_material_mapping.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.tbl_material_mapping.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.tbl_material_mapping.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.tbl_material_mapping.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.tbl_material_mapping.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch
+        )
         self.tbl_material_mapping.setMinimumHeight(150)
         form_layout.addRow("Таблица материалов:", self.tbl_material_mapping)
 
     def _create_voxel_spin(self) -> QDoubleSpinBox:
+        """Создает спинбокс для размера вокселя по одной из осей."""
         spin = QDoubleSpinBox()
         spin.setRange(0.01, 100.0)
         spin.setSingleStep(0.5)
@@ -119,39 +128,45 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
         return spin
 
     def can_handle(self, view_model: Any) -> bool:
+        """Проверяет, является ли модель представления воксельным фантомом VoxelVolumeViewModel."""
         return isinstance(view_model, VoxelVolumeViewModel)
 
     def unbind(self) -> None:
+        """Очищает таблицу сопоставления материалов при отвязке модели представления."""
         super().unbind()
         self.tbl_material_mapping.setRowCount(0)
 
     def update_ui_from_vm(self) -> None:
-        vm = self._current_vm
-        if not isinstance(vm, VoxelVolumeViewModel):
+        """Синхронизирует все поля секции с текущей моделью VoxelVolumeViewModel."""
+        view_model = self._current_vm
+        if not isinstance(view_model, VoxelVolumeViewModel):
             return
 
         def _apply_vm_values() -> None:
-            self.txt_voxel_path.setText(str(vm.file_path))
-            self.lbl_voxel_shape.setText(f"{vm.dimensions[0]} × {vm.dimensions[1]} × {vm.dimensions[2]}")
-            if len(vm.voxel_size) >= 3:
-                self.spin_voxel_size_x.setValue(float(vm.voxel_size[0]))
-                self.spin_voxel_size_y.setValue(float(vm.voxel_size[1]))
-                self.spin_voxel_size_z.setValue(float(vm.voxel_size[2]))
-            colormap_index = self.combo_colormap.findText(vm.colormap_name)
+            self.txt_voxel_path.setText(str(view_model.file_path))
+            self.lbl_voxel_shape.setText(
+                f"{view_model.dimensions[0]} × {view_model.dimensions[1]} × {view_model.dimensions[2]}"
+            )
+            if len(view_model.voxel_size) >= 3:
+                self.spin_voxel_size_x.setValue(float(view_model.voxel_size[0]))
+                self.spin_voxel_size_y.setValue(float(view_model.voxel_size[1]))
+                self.spin_voxel_size_z.setValue(float(view_model.voxel_size[2]))
+            colormap_index = self.combo_colormap.findText(view_model.colormap_name)
             if colormap_index >= 0:
                 self.combo_colormap.setCurrentIndex(colormap_index)
-            self._update_voxel_opacity_controls_state(vm.colormap_name)
-            self.slider_lod.setValue(int(round(float(vm.lod_factor) * 5.0)))
-            self.spin_opacity_thresh.setValue(float(vm.opacity_threshold))
-            self.spin_max_opacity.setValue(float(vm.max_opacity))
-            preset_idx = self.combo_opacity_preset.findData(vm.opacity_preset)
+            self._update_voxel_opacity_controls_state(view_model.colormap_name)
+            self.slider_lod.setValue(int(round(float(view_model.lod_factor) * 5.0)))
+            self.spin_opacity_thresh.setValue(float(view_model.opacity_threshold))
+            self.spin_max_opacity.setValue(float(view_model.max_opacity))
+            preset_idx = self.combo_opacity_preset.findData(view_model.opacity_preset)
             if preset_idx >= 0:
                 self.combo_opacity_preset.setCurrentIndex(preset_idx)
             self._update_material_mapping_table()
 
         self._run_ui_update(_apply_vm_values)
 
-    def _run_ui_update(self, callback: Any) -> None:
+    def _run_ui_update(self, callback: Callable[[], None]) -> None:
+        """Выполняет обновление виджетов с блокировкой обратных сигналов."""
         self._is_updating_ui = True
         try:
             callback()
@@ -159,81 +174,101 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
             self._is_updating_ui = False
 
     def on_property_changed_externally(self, prop_name: str, new_val: Any) -> None:
+        """Точечно обновляет поля секции при внешнем изменении свойств VoxelVolumeViewModel."""
         if not isinstance(self._current_vm, VoxelVolumeViewModel):
             return
 
         if prop_name == "colormap_name":
             colormap_index = self.combo_colormap.findText(str(new_val))
             if colormap_index >= 0:
-                self._run_ui_update(lambda: (
-                    self.combo_colormap.setCurrentIndex(colormap_index),
-                    self._update_voxel_opacity_controls_state(str(new_val)),
-                ))
+                def _apply_colormap() -> None:
+                    self.combo_colormap.setCurrentIndex(colormap_index)
+                    self._update_voxel_opacity_controls_state(str(new_val))
+
+                self._run_ui_update(_apply_colormap)
         elif prop_name == "opacity_threshold":
             self._set_spin_safe(self.spin_opacity_thresh, float(new_val))
         elif prop_name == "max_opacity":
             self._set_spin_safe(self.spin_max_opacity, float(new_val))
         elif prop_name == "lod_factor":
-            self._run_ui_update(lambda: self.slider_lod.setValue(int(round(float(new_val) * 5.0))))
+            def _apply_lod() -> None:
+                self.slider_lod.setValue(int(round(float(new_val) * 5.0)))
+
+            self._run_ui_update(_apply_lod)
         elif prop_name == "file_path":
             dims = self._current_vm.dimensions
-            self._run_ui_update(lambda: (
-                self.txt_voxel_path.setText(str(new_val)),
-                self.lbl_voxel_shape.setText(f"{dims[0]} × {dims[1]} × {dims[2]}"),
-            ))
+
+            def _apply_file_path() -> None:
+                self.txt_voxel_path.setText(str(new_val))
+                self.lbl_voxel_shape.setText(f"{dims[0]} × {dims[1]} × {dims[2]}")
+
+            self._run_ui_update(_apply_file_path)
         elif prop_name == "material_distribution":
             self._update_material_mapping_table()
         elif prop_name == "voxel_size":
             self._update_voxel_size_fields(new_val)
 
     def _set_spin_safe(self, spin: QDoubleSpinBox, val: float) -> None:
-        self._run_ui_update(lambda spin_widget=spin, new_value=val: spin_widget.setValue(new_value))
+        """Безопасно устанавливает значение спинбокса без вызова рекурсивных сигналов."""
+        def _apply_spin() -> None:
+            spin.setValue(val)
+
+        self._run_ui_update(_apply_spin)
 
     def _update_voxel_size_fields(self, new_val: Any) -> None:
+        """Обновляет три спинбокса шага вокселей по осям X, Y, Z."""
         if not isinstance(self._current_vm, VoxelVolumeViewModel):
             return
         volume_size = new_val if isinstance(new_val, (list, tuple, np.ndarray)) else self._current_vm.voxel_size
         if len(volume_size) >= 3:
-            self._run_ui_update(lambda: (
-                self.spin_voxel_size_x.setValue(float(volume_size[0])),
-                self.spin_voxel_size_y.setValue(float(volume_size[1])),
-                self.spin_voxel_size_z.setValue(float(volume_size[2])),
-            ))
+            def _apply_sizes() -> None:
+                self.spin_voxel_size_x.setValue(float(volume_size[0]))
+                self.spin_voxel_size_y.setValue(float(volume_size[1]))
+                self.spin_voxel_size_z.setValue(float(volume_size[2]))
+
+            self._run_ui_update(_apply_sizes)
 
     def _update_voxel_opacity_controls_state(self, colormap_name: str) -> None:
+        """Включает или отключает элементы настройки прозрачности в зависимости от палитры."""
         is_physical_mode = (str(colormap_name) == "Physical Materials")
         self.spin_opacity_thresh.setEnabled(not is_physical_mode)
         self.spin_max_opacity.setEnabled(not is_physical_mode)
         self.combo_opacity_preset.setEnabled(not is_physical_mode)
 
     def _on_colormap_changed(self, cmap_name: str) -> None:
+        """Обрабатывает выбор цветовой палитры отображения воксельного фантома."""
         if self._is_updating_ui or not isinstance(self._current_vm, VoxelVolumeViewModel):
             return
         self._current_vm.colormap_name = cmap_name
         self._update_voxel_opacity_controls_state(cmap_name)
 
     def _on_lod_changed(self, value: int) -> None:
+        """Обрабатывает изменение ползунка уровня детализации (LOD)."""
         if self._is_updating_ui or not isinstance(self._current_vm, VoxelVolumeViewModel):
             return
         self._current_vm.lod_factor = float(value) / 5.0
 
     def _on_opacity_threshold_changed(self, value: float) -> None:
+        """Обрабатывает изменение порога отсечения воздуха (Air Cutoff)."""
         if self._is_updating_ui or not isinstance(self._current_vm, VoxelVolumeViewModel):
             return
         self._current_vm.opacity_threshold = float(value)
 
     def _on_max_opacity_changed(self, value: float) -> None:
+        """Обрабатывает изменение максимальной непрозрачности вокселей."""
         if self._is_updating_ui or not isinstance(self._current_vm, VoxelVolumeViewModel):
             return
         self._current_vm.max_opacity = float(value)
 
     def _on_opacity_preset_changed(self, index: int) -> None:
+        """Обрабатывает смену пресета кривой непрозрачности."""
         if self._is_updating_ui or not isinstance(self._current_vm, VoxelVolumeViewModel):
             return
         preset = self.combo_opacity_preset.currentData() or "air_cutoff"
         self._current_vm.opacity_preset = str(preset)
 
     def _on_voxel_size_changed(self) -> None:
+        """Передает измененные размеры вокселя (X, Y, Z) в модель представления."""
         if self._is_updating_ui or not isinstance(self._current_vm, VoxelVolumeViewModel):
             return
         self._current_vm.voxel_size = (
@@ -261,7 +296,7 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
             target_kind=ImportTargetKind.PHANTOM,
             default_voxel_size=self._current_vm.voxel_size,
         )
-        if dialog.exec() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             params = dialog.get_parameters()
             file_path_str = str(params.file_path)
             self.txt_voxel_path.setText(file_path_str)
@@ -276,21 +311,34 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
                 fill_value=params.fill_value,
             )
             if success:
+                if isinstance(params.voxel_size, tuple):
+                    voxel_x, voxel_y, voxel_z = (
+                        float(params.voxel_size[0]),
+                        float(params.voxel_size[1]),
+                        float(params.voxel_size[2]),
+                    )
+                else:
+                    scalar_voxel = float(params.voxel_size)
+                    voxel_x, voxel_y, voxel_z = scalar_voxel, scalar_voxel, scalar_voxel
+
                 self._is_updating_ui = True
                 try:
-                    self.spin_voxel_size_x.setValue(params.voxel_size[0])
-                    self.spin_voxel_size_y.setValue(params.voxel_size[1])
-                    self.spin_voxel_size_z.setValue(params.voxel_size[2])
+                    self.spin_voxel_size_x.setValue(voxel_x)
+                    self.spin_voxel_size_y.setValue(voxel_y)
+                    self.spin_voxel_size_z.setValue(voxel_z)
                     dims = self._current_vm.dimensions
                     self.lbl_voxel_shape.setText(f"{dims[0]} × {dims[1]} × {dims[2]}")
                 finally:
                     self._is_updating_ui = False
 
                 if self._scene_vm is not None:
+                    mapping_for_scene: Optional[Dict[float, Union[str, float]]] = (
+                        dict(params.material_mapping) if params.material_mapping is not None else None
+                    )
                     self._scene_vm.update_distribution_path(
                         self._current_vm.core_node,
                         file_path_str,
-                        mapping=params.material_mapping,
+                        mapping=mapping_for_scene,
                     )
                 self._update_material_mapping_table()
 
@@ -312,7 +360,7 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
             red, green, blue = get_material_color(material_name)
             color_item.setBackground(QBrush(QColor.fromRgbF(red, green, blue)))
         if self._scene_vm is not None:
-            mapping_dict = {
+            mapping_dict: Dict[float, Union[str, float]] = {
                 float(idx): mat.name
                 for idx, mat in enumerate(self._current_vm.material_list)
             }
@@ -330,14 +378,14 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
             self.tbl_material_mapping.setRowCount(len(materials))
             for material_id, material in enumerate(materials):
                 id_item = QTableWidgetItem(str(material_id))
-                id_item.setTextAlignment(Qt.AlignCenter)
-                id_item.setFlags(Qt.ItemIsEnabled)
+                id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                id_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 self.tbl_material_mapping.setItem(material_id, 0, id_item)
 
                 color_item = QTableWidgetItem()
                 red, green, blue = get_material_color(material.name)
                 color_item.setBackground(QBrush(QColor.fromRgbF(red, green, blue)))
-                color_item.setFlags(Qt.ItemIsEnabled)
+                color_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 self.tbl_material_mapping.setItem(material_id, 1, color_item)
 
                 material_combo = QComboBox()
@@ -353,3 +401,6 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
                 self.tbl_material_mapping.setCellWidget(material_id, 2, material_combo)
         finally:
             self.tbl_material_mapping.blockSignals(False)
+
+
+__all__ = ["VoxelVolumeInspectorSection"]

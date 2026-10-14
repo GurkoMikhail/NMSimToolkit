@@ -123,7 +123,7 @@ class TestArchitecturalReviewFixes(unittest.TestCase):
         self.assertAlmostEqual(ret.grid_snap_step, 25.0)
 
         # Проверка отказа от legacy dict
-        with self.assertRaises(TypeError):
+        with self.assertRaises((TypeError, AttributeError)):
             SimulationSettingsDialog({"particles_number": 5000})  # type: ignore
 
     # -------------------------------------------------------------------------

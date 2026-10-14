@@ -20,9 +20,11 @@ class GammaCameraInspectorSection(BaseInspectorSection):
     """Секция настройки геометрии детекторной головки, кристалла, защитного экрана Pb и корпуса."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует секцию параметров гамма-камеры."""
         super().__init__("Параметры гамма-камеры", parent)
 
     def _init_ui(self) -> None:
+        """Создает элементы управления габаритами детекторной головки, кристалла и защиты."""
         form_layout = QFormLayout(self)
 
         self.spin_detector_size_x = QDoubleSpinBox()
@@ -87,9 +89,11 @@ class GammaCameraInspectorSection(BaseInspectorSection):
         form_layout.addRow("Габариты корпуса (X×Y×Z):", self.lbl_housing_size)
 
     def can_handle(self, view_model: Any) -> bool:
+        """Проверяет, является ли модель представления гамма-камерой GammaCameraViewModel."""
         return isinstance(view_model, GammaCameraViewModel)
 
     def update_ui_from_vm(self) -> None:
+        """Синхронизирует все поля секции с текущей моделью GammaCameraViewModel."""
         if not isinstance(self._current_vm, GammaCameraViewModel):
             return
 
@@ -109,6 +113,7 @@ class GammaCameraInspectorSection(BaseInspectorSection):
             self._is_updating_ui = old_state
 
     def on_property_changed_externally(self, prop_name: str, new_val: Any) -> None:
+        """Обновляет поля размеров и толщин гамма-камеры при внешнем изменении модели."""
         if not isinstance(self._current_vm, GammaCameraViewModel):
             return
 
@@ -136,11 +141,13 @@ class GammaCameraInspectorSection(BaseInspectorSection):
                 self._is_updating_ui = False
 
     def _update_housing_size_label(self) -> None:
+        """Обновляет информационную метку внешних габаритов корпуса гамма-камеры."""
         if isinstance(self._current_vm, GammaCameraViewModel):
             housing_dims = self._current_vm.housing_size
             self.lbl_housing_size.setText(f"{housing_dims[0]:.1f} × {housing_dims[1]:.1f} × {housing_dims[2]:.1f} мм")
 
     def _on_spect_detector_size_changed(self) -> None:
+        """Применяет новые размеры активного поля детектора (X, Y)."""
         if self._is_updating_ui or not isinstance(self._current_vm, GammaCameraViewModel):
             return
         size_x = float(self.spin_detector_size_x.value())
@@ -149,31 +156,39 @@ class GammaCameraInspectorSection(BaseInspectorSection):
         self._update_housing_size_label()
 
     def _on_spect_detector_thickness_changed(self, value: float) -> None:
+        """Применяет новую толщину сцинтилляционного кристалла."""
         if self._is_updating_ui or not isinstance(self._current_vm, GammaCameraViewModel):
             return
         self._current_vm.detector_thickness = float(value)
         self._update_housing_size_label()
 
     def _on_spect_collimator_thickness_changed(self, value: float) -> None:
+        """Применяет новую толщину коллиматора."""
         if self._is_updating_ui or not isinstance(self._current_vm, GammaCameraViewModel):
             return
         self._current_vm.collimator_thickness = float(value)
         self._update_housing_size_label()
 
     def _on_spect_cam_gap_changed(self, value: float) -> None:
+        """Применяет новое значение воздушного зазора между детектором и коллиматором."""
         if self._is_updating_ui or not isinstance(self._current_vm, GammaCameraViewModel):
             return
         self._current_vm.gap = float(value)
         self._update_housing_size_label()
 
     def _on_spect_cam_shielding_changed(self, value: float) -> None:
+        """Применяет новую толщину свинцового защитного экрана."""
         if self._is_updating_ui or not isinstance(self._current_vm, GammaCameraViewModel):
             return
         self._current_vm.shielding_thickness = float(value)
         self._update_housing_size_label()
 
     def _on_spect_cam_glass_changed(self, value: float) -> None:
+        """Применяет новую толщину заднего оптического световода."""
         if self._is_updating_ui or not isinstance(self._current_vm, GammaCameraViewModel):
             return
         self._current_vm.glass_backend_thickness = float(value)
         self._update_housing_size_label()
+
+
+__all__ = ["GammaCameraInspectorSection"]

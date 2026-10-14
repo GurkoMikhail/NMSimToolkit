@@ -29,9 +29,9 @@ class NodeViewModel(QObject):
 
     def __init__(self, core_node: SpatialNode, parent_vm: Optional['NodeViewModel'] = None) -> None:
         super().__init__()
-        self.core_node = core_node
+        self.core_node: SpatialNode = core_node
         self.parent_vm = parent_vm
-        self.children: List['NodeViewModel'] = []
+        self.children: List['NodeViewModel'] = []  # type: ignore[assignment]
         self.bindings: dict[str, str] = {}
         self._self_kinematic_constraint: Optional[IKinematicConstraint] = None
         self._default_child_kinematic_constraint: Optional[IKinematicConstraint] = None
@@ -43,7 +43,7 @@ class NodeViewModel(QObject):
                 if child_core.parent is not core_node:
                     child_core.parent = core_node
                 if NodeViewModel._factory is not None:
-                    child_vm = NodeViewModel._factory(child_core, parent_vm=self)
+                    child_vm = NodeViewModel._factory(child_core, self)
                 else:
                     child_vm = NodeViewModel(child_core, parent_vm=self)
                 self.children.append(child_vm)
@@ -268,7 +268,7 @@ class NodeViewModel(QObject):
 
             if id(child_core) not in current_view_models:
                 if NodeViewModel._factory is not None:
-                    child_vm = NodeViewModel._factory(child_core, parent_vm=self)
+                    child_vm = NodeViewModel._factory(child_core, self)
                 else:
                     child_vm = NodeViewModel(child_core, parent_vm=self)
                 self.children.append(child_vm)
@@ -283,4 +283,9 @@ class NodeViewModel(QObject):
         # Синхронизация порядка children с core_node.childs
         core_order = {id(child): idx for idx, child in enumerate(self.core_node.childs)}
         self.children.sort(key=lambda child_vm_item: core_order.get(id(child_vm_item.core_node), 0))
+
+
+__all__ = [
+    "NodeViewModel",
+]
 

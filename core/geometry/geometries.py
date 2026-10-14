@@ -1,11 +1,16 @@
-from abc import ABC, abstractmethod
-from typing import Any, Sequence, Union
+"""
+Модуль базовых геометрических примитивов (Geometry, Box, PeriodicHexPrism)
+и структурированного типа данных ShapeDataDType для Numba-кернелов.
+"""
+from __future__ import annotations
 
-import numpy as np
+from abc import ABC, abstractmethod
+from typing import Sequence, Union
 import hepunits as units
+import numpy as np
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Float, Length, Vector3D, ShapeID
+from core.other.typing_definitions import Float, Length, ShapeID, Vector3D
 
 ShapeDataDType = np.dtype([
     ('shape', ShapeID),
@@ -17,55 +22,76 @@ ShapeDataDType = np.dtype([
     ('param_5', Float),
 ])
 
+
 class Geometry(ABC):
+    """
+    Абстрактный базовый класс геометрического примитива физического объема.
+    """
+
     size: Vector3D
-    
-    def __init__(self, size: Sequence[Length] | Vector3D) -> None:
+
+    def __init__(self, size: Sequence[Length | float] | Vector3D) -> None:
         self.size = np.asarray(size, dtype=Float)
 
     @property
     def half_size(self) -> Vector3D:
-        return self.size/2
+        """Половинные габаритные размеры геометрии [Lx/2, Ly/2, Lz/2]."""
+        res: Vector3D = self.size / 2.0
+        return res
 
     @property
     def quarter_size(self) -> Vector3D:
-        return self.size/4
+        """Четвертные габаритные размеры геометрии [Lx/4, Ly/4, Lz/4]."""
+        res: Vector3D = self.size / 4.0
+        return res
 
     @abstractmethod
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
+        """Записывает параметры геометрической формы в элемент структурированного массива ShapeDataDType."""
         pass
 
+
 class Box(Geometry):
+    """
+    Геометрический примитив прямоугольного параллелепипеда (AABB Box) с центром в начале координат.
+    """
+
     distance_method: str
     distance_epsilon: Length
 
     def __init__(
         self,
-        x: Length,
-        y: Length,
-        z: Length,
+        x: Length | float,
+        y: Length | float,
+        z: Length | float,
         distance_method: str = 'ray_casting',
-        distance_epsilon: Float = Float(1. * units.micron),
+        distance_epsilon: Float | float = Float(1.0 * units.micron),
     ) -> None:
         if Float(x) <= 0.0 or Float(y) <= 0.0 or Float(z) <= 0.0:
-            raise ValueError(f"Габаритные размеры Box должны быть строго положительными (> 0), получено x={x}, y={y}, z={z}")
+            raise ValueError(
+                f"Габаритные размеры Box должны быть строго положительными (> 0), получено x={x}, y={y}, z={z}"
+            )
         super().__init__([Float(x), Float(y), Float(z)])
         self.distance_method = distance_method
         self.distance_epsilon = Float(distance_epsilon)
 
     @property
     def x(self) -> Length:
-        return self.size[0]
+        """Размер параллелепипеда вдоль оси X."""
+        return Float(self.size[0])
 
     @property
     def y(self) -> Length:
-        return self.size[1]
+        """Размер параллелепипеда вдоль оси Y."""
+        return Float(self.size[1])
 
     @property
     def z(self) -> Length:
-        return self.size[2]
+        """Размер параллелепипеда вдоль оси Z."""
+        return Float(self.size[2])
 
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
+        """Записывает полуразмеры параллелепипеда в буфер ShapeDataDType (код формы 0)."""
         shape_data_array[index]['shape'] = 0
         shape_data_array[index]['param_0'] = self.half_size[0]
         shape_data_array[index]['param_1'] = self.half_size[1]
@@ -77,6 +103,7 @@ class PeriodicHexPrism(Geometry):
     Геометрия бесконечной периодической гексагональной решетки шестиугольных каналов (призм),
     ограниченная по оси Z габаритами коллиматора.
     """
+
     _hole_diameter: Float
     _septa: Float
     _x_period: Float
@@ -87,9 +114,9 @@ class PeriodicHexPrism(Geometry):
 
     def __init__(
         self,
-        size: Union[Sequence[Length], Vector3D],
-        hole_diameter: Float,
-        septa: Float,
+        size: Union[Sequence[Length | float], Vector3D],
+        hole_diameter: Float | float,
+        septa: Float | float,
     ) -> None:
         super().__init__(size)
         if any(dimension <= 0.0 for dimension in self.size):
@@ -115,7 +142,7 @@ class PeriodicHexPrism(Geometry):
         return self._hole_diameter
 
     @hole_diameter.setter
-    def hole_diameter(self, value: Float) -> None:
+    def hole_diameter(self, value: Float | float) -> None:
         float_value = Float(value)
         if float_value <= 0.0:
             raise ValueError(f"Диаметр отверстия должен быть строго положительным (> 0), получено {value}")
@@ -128,7 +155,7 @@ class PeriodicHexPrism(Geometry):
         return self._septa
 
     @septa.setter
-    def septa(self, value: Float) -> None:
+    def septa(self, value: Float | float) -> None:
         float_value = Float(value)
         if float_value <= 0.0:
             raise ValueError(f"Толщина септы должна быть строго положительной (> 0), получено {value}")
@@ -136,6 +163,7 @@ class PeriodicHexPrism(Geometry):
         self._compute_parameters()
 
     def write_shape_data(self, shape_data_array: NDArray[np.void], index: int) -> None:
+        """Записывает параметры гексагональной решетки в буфер ShapeDataDType (код формы 1)."""
         shape_data_array[index]['shape'] = 1
         shape_data_array[index]['param_0'] = self._x_period
         shape_data_array[index]['param_1'] = self._y_period
@@ -143,4 +171,13 @@ class PeriodicHexPrism(Geometry):
         shape_data_array[index]['param_3'] = self._channel_side_limit
         shape_data_array[index]['param_4'] = Float(self.half_size[2])
         shape_data_array[index]['param_5'] = self._cell_half_width
+
+
+__all__ = [
+    "ShapeDataDType",
+    "Geometry",
+    "Box",
+    "PeriodicHexPrism",
+]
+
 

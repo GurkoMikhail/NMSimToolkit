@@ -15,7 +15,7 @@ from core.config.models import (
 from core.config.orchestrator import Orchestrator
 from gui.controllers.ipc_receiver import IPCReceiver
 from gui.controllers.stream_handlers import create_gui_stream_handler
-from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
+from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel, DoseMapHandlerViewModel
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
     StepAndShootProcedureViewModel,
@@ -76,7 +76,7 @@ class _OrchestratorWorkerThread(QThread):
                 ),
             )
             self.completed.emit(results)
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError, KeyError, BufferError, TypeError) as exc:
             _logger.exception(f"Сбой при выполнении пула задач оркестратора: {exc}")
             self.failed.emit(str(exc))
 
@@ -237,12 +237,51 @@ class OrchestratorSession(QObject):
         self.focused_job_index = max(0, int(index))
 
     def clear_accumulation(self) -> None:
-        """Сброс накопленных данных моделирования."""
-        pass
+        """Сброс накопленных данных моделирования в IPCReceiver и буфере SharedMemory."""
+        if self._ipc_receiver is not None:
+            self._ipc_receiver.clear_accumulation()
+        elif self._shm is not None:
+            try:
+                np_buf = np.ndarray(self.projection_shape, dtype=np.float32, buffer=self._shm.buf)
+                np_buf.fill(0.0)
+            except (OSError, ValueError, BufferError, TypeError):
+                pass
 
     def step_once(self) -> None:
         """Выполнение одного расчетного шага сфокусированным воркером."""
         self.step_focused_worker()
+
+    def _collect_dose_ipc_config(self) -> Tuple[Optional[str], Tuple[int, int, int], List[Dict[str, Any]]]:
+        """Собирает метаданные активных сеток дозы для подключения IPCReceiver к SharedMemory."""
+        base_shm_name = "nmsim_dose_shm"
+        if self.data_manager_vm is not None:
+            for handler_vm in self.data_manager_vm.handlers:
+                if isinstance(handler_vm, DoseMapHandlerViewModel) and handler_vm.shm_name:
+                    base_shm_name = str(handler_vm.shm_name)
+                    break
+
+        active_dose_nodes: List[DoseGridViewModel] = []
+        if self.scene_vm is not None:
+            for node_vm in self.scene_vm.all_nodes():
+                if isinstance(node_vm, DoseGridViewModel) and node_vm.is_active:
+                    active_dose_nodes.append(node_vm)
+
+        if not active_dose_nodes:
+            return None, (64, 64, 64), []
+
+        dose_grids_info: List[Dict[str, Any]] = []
+        for idx, dose_node_vm in enumerate(active_dose_nodes):
+            grid_name = dose_node_vm.name or f"DoseGrid_{idx}"
+            grid_shm = f"{base_shm_name}_{grid_name}" if len(active_dose_nodes) > 1 else base_shm_name
+            dose_grids_info.append({
+                "name": grid_name,
+                "shm_name": grid_shm,
+                "grid_shape": dose_node_vm.grid_shape,
+            })
+
+        first_grid = active_dose_nodes[0]
+        single_shm_name = base_shm_name if len(active_dose_nodes) == 1 else None
+        return single_shm_name, first_grid.grid_shape, dose_grids_info
 
     def generate_jobs(self) -> List[Dict[str, Any]]:
         """
@@ -295,7 +334,9 @@ class OrchestratorSession(QObject):
             )
             sim_config.protocol = self.procedure_vm.to_config()
             if bindings_reg:
-                sim_config = ConfigTemplateBinder.apply_bindings(sim_config, bindings_reg)
+                bound_cfg = ConfigTemplateBinder.apply_bindings(sim_config, bindings_reg)
+                if isinstance(bound_cfg, SimulationConfig):
+                    sim_config = bound_cfg
 
             orchestrator = Orchestrator(sim_config)
             sweep_config = orchestrator.compile_protocol()
@@ -359,7 +400,9 @@ class OrchestratorSession(QObject):
         )
         sim_config.protocol = self.procedure_vm.to_config()
         if bindings_reg:
-            sim_config = ConfigTemplateBinder.apply_bindings(sim_config, bindings_reg)
+            bound_cfg = ConfigTemplateBinder.apply_bindings(sim_config, bindings_reg)
+            if isinstance(bound_cfg, SimulationConfig):
+                sim_config = bound_cfg
 
         # 2. Инициализация IPC и SharedMemory для сфокусированного воркера
         self._cleanup_ipc()
@@ -383,13 +426,18 @@ class OrchestratorSession(QObject):
         self._step_trigger_event = self._mp_manager.Event()
         self._step_trigger_event.clear()
 
+        dose_shm_name, dose_grid_shape, dose_grids_info = self._collect_dose_ipc_config()
+
         # 3. Запуск приемника телеметрии IPCReceiver
         self._ipc_receiver = IPCReceiver(
             track_queue=self._telemetry_queue,
             shm_name=self.shm_name,
             projection_shape=self.projection_shape,
-            projection_dtype=np.float32,
+            projection_dtype=np.dtype(np.float32),
             fps=30.0,
+            dose_shm_name=dose_shm_name,
+            dose_grid_shape=dose_grid_shape,
+            dose_grids_info=dose_grids_info,
             parent=self,
         )
         self._ipc_receiver.tracks_received.connect(self.tracks_received)
@@ -532,7 +580,7 @@ class OrchestratorSession(QObject):
         if self._mp_manager is not None:
             try:
                 self._mp_manager.shutdown()
-            except Exception:
+            except (OSError, RuntimeError, ValueError):
                 pass
             self._mp_manager = None
         self._telemetry_queue = None
@@ -542,3 +590,9 @@ class OrchestratorSession(QObject):
 
     def close(self) -> None:
         self.stop()
+
+
+__all__ = [
+    "OrchestratorSession",
+]
+

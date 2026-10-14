@@ -1,28 +1,26 @@
+"""
+Главное окно графического интерфейса NMSimToolkit.
+Объединяет 3D-вьюпорт, док-панели дерева сцены, инспектора свойств, протоколов,
+обработчиков данных, очереди задач и панели результатов.
+"""
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Optional
 
 import numpy as np
-import pyvista as pv
 import hepunits as units
-from PySide6.QtCore import Qt, QSize, QTimer, QObject, QEvent
-from PySide6.QtGui import QAction, QIcon, QKeySequence, QActionGroup
+from PySide6.QtCore import Qt, QSize, QTimer, QEvent
+from PySide6.QtGui import QAction, QKeySequence, QActionGroup
 from PySide6.QtWidgets import (
-    QMainWindow, QDockWidget, QToolBar, QStatusBar,
+    QMainWindow, QDockWidget, QToolBar,
     QFileDialog, QMessageBox, QLabel, QSpinBox, QComboBox,
-    QApplication, QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox
+    QApplication, QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QWidget
 )
 
 from gui.viewport_3d.transform_gizmo import GizmoMode, GizmoSpace
 
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
-from gui.viewmodels.nodes.volume_vm import VolumeViewModel
-from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
-from gui.viewmodels.nodes.source_vm import SourceViewModel
-from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
-from gui.viewmodels.nodes.pet_scanner_vm import PetScannerViewModel
-from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
 from gui.views.scene_tree_widget import SceneTreeWidget
 from gui.views.property_inspector import PropertyInspector
 from gui.views.results_viewer import ResultsViewer
@@ -36,12 +34,12 @@ from gui.viewmodels.procedure_viewmodel import (
     SpectProcedureViewModel,
     procedure_from_config,
 )
-from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel, DirectStreamHandlerViewModel
+from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
 from gui.viewport_3d.vtk_viewport import VTKViewport
 from gui.controllers.orchestrator_session import OrchestratorSession
 from gui.controllers.viewport_controller import SceneViewportController
 from gui.models.gui_settings import GuiSimulationSettings
-from core.scene.nodes import CompositeNode
+from core.scene.nodes import CompositeNode, SpatialNode
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
 from core.materials.materials import Material
@@ -49,11 +47,10 @@ from core.config.exporter import SceneExporter
 from core.config.template_binder import ConfigTemplateBinder
 from core.config.yaml_loader import load_simulation_config, load_raw_config
 from core.config.builder import SceneBuilder
-from core.config.orchestrator import Orchestrator
 from core.config.models import (
     DataManagerConfig,
-    HistoryAssemblerHandlerConfig,
     SimulationManagerConfig,
+    SourceMetadataConfig,
 )
 import settings.database_setting as database_setting
 
@@ -69,12 +66,14 @@ class MainWindow(QMainWindow):
     а параллельный расчет — OrchestratorSession.
     """
 
-    def __init__(self, scene_vm: Optional[SceneViewModel] = None, parent: Optional[Any] = None) -> None:
+    def __init__(self, scene_vm: Optional[SceneViewModel] = None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("NMSimToolkit - Интерактивное 3D моделирование ядерной медицины")
         self.resize(1400, 900)
 
         self.viewport_controller: Optional[SceneViewportController] = None
+        self._connected_procedure_vm: Optional[BaseProcedureViewModel] = None
+        self.source_metadata_registry: Dict[SpatialNode, SourceMetadataConfig] = {}
 
         # Модель представления сцены
         if scene_vm is None:
@@ -146,7 +145,7 @@ class MainWindow(QMainWindow):
         self.results_viewer = ResultsViewer(self)
 
         # Модели процедур и диспетчера данных
-        self.procedure_vm = SpectProcedureViewModel()
+        self.procedure_vm: BaseProcedureViewModel = SpectProcedureViewModel()
         self.property_inspector.set_procedure_viewmodel(self.procedure_vm)
         self.viewport_controller.procedure_vm = self.procedure_vm
         self.data_manager_vm = DataManagerViewModel()
@@ -171,18 +170,18 @@ class MainWindow(QMainWindow):
         # 1. Левый док: Дерево сцены
         self.dock_tree = QDockWidget("Иерархия сцены", self)
         self.dock_tree.setWidget(self.scene_tree)
-        self.dock_tree.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.dock_tree)
+        self.dock_tree.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_tree)
 
         # 2. Левый док: Процедуры
         self.dock_procedures = self.procedure_selector
-        self.dock_procedures.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.dock_procedures)
+        self.dock_procedures.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_procedures)
 
         # 3. Левый док: Обработчики данных
         self.dock_handlers = self.data_handler_list
-        self.dock_handlers.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.dock_handlers)
+        self.dock_handlers.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_handlers)
 
         # Табификация доков слева
         self.tabifyDockWidget(self.dock_tree, self.dock_procedures)
@@ -191,20 +190,20 @@ class MainWindow(QMainWindow):
         # 4. Правый док: Инспектор свойств
         self.dock_inspector = QDockWidget("Свойства объекта", self)
         self.dock_inspector.setWidget(self.property_inspector)
-        self.dock_inspector.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_inspector)
+        self.dock_inspector.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_inspector)
 
         # 5. Правый док: Задачи симуляции (Jobs)
         self.dock_jobs = self.jobs_widget
-        self.dock_jobs.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_jobs)
+        self.dock_jobs.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_jobs)
         self.tabifyDockWidget(self.dock_inspector, self.dock_jobs)
 
         # 6. Нижний док: Результаты и телеметрия
         self.dock_results = QDockWidget("Телеметрия и результаты", self)
         self.dock_results.setWidget(self.results_viewer)
-        self.dock_results.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.dock_results)
+        self.dock_results.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.dock_results)
 
     def _init_gizmo_actions(self) -> None:
         """Инициализация действий и элементов управления интерактивного манипулятора Gizmo."""
@@ -262,18 +261,18 @@ class MainWindow(QMainWindow):
         file_menu.addAction(act_new)
 
         act_open = QAction("&Открыть конфигурацию (YAML)...", self)
-        act_open.setShortcut(QKeySequence.Open)
+        act_open.setShortcut(QKeySequence.StandardKey.Open)
         act_open.triggered.connect(self._on_open_yaml)
         file_menu.addAction(act_open)
 
         act_save = QAction("&Сохранить конфигурацию (YAML)...", self)
-        act_save.setShortcut(QKeySequence.Save)
+        act_save.setShortcut(QKeySequence.StandardKey.Save)
         act_save.triggered.connect(self._on_save_yaml)
         file_menu.addAction(act_save)
 
         file_menu.addSeparator()
         act_exit = QAction("&Выход", self)
-        act_exit.setShortcut(QKeySequence.Quit)
+        act_exit.setShortcut(QKeySequence.StandardKey.Quit)
         act_exit.triggered.connect(self.close)
         file_menu.addAction(act_exit)
 
@@ -321,13 +320,15 @@ class MainWindow(QMainWindow):
         self.act_toggle_tracks = QAction("Отображать треки", self)
         self.act_toggle_tracks.setCheckable(True)
         self.act_toggle_tracks.setChecked(True)
-        self.act_toggle_tracks.toggled.connect(self.viewport_controller.track_renderer.set_visible)
+        if self.viewport_controller is not None:
+            self.act_toggle_tracks.toggled.connect(self.viewport_controller.track_renderer.set_visible)
         view_menu.addAction(self.act_toggle_tracks)
 
         self.act_toggle_dose = QAction("Отображать карту дозы", self)
         self.act_toggle_dose.setCheckable(True)
         self.act_toggle_dose.setChecked(True)
-        self.act_toggle_dose.toggled.connect(self.viewport_controller.dose_renderer.set_visible)
+        if self.viewport_controller is not None:
+            self.act_toggle_dose.toggled.connect(self.viewport_controller.dose_renderer.set_visible)
         view_menu.addAction(self.act_toggle_dose)
 
         view_menu.addSeparator()
@@ -431,10 +432,15 @@ class MainWindow(QMainWindow):
         self.orchestrator_session.job_progress.connect(self.jobs_widget.on_job_progress)
         self.orchestrator_session.job_finished.connect(self.jobs_widget.on_job_finished)
         self.orchestrator_session.session_finished.connect(self._on_simulation_finished)
-        self.orchestrator_session.session_error.connect(lambda err: QMessageBox.critical(self, "Ошибка", f"Сбой расчета:\n{err}"))
+        self.orchestrator_session.session_error.connect(
+            lambda err: QMessageBox.critical(self, "Ошибка", f"Сбой расчета:\n{err}")
+        )
 
         # Потоковая визуализация от сфокусированного воркера
-        self.orchestrator_session.tracks_received.connect(self.viewport_controller.track_renderer.add_tracks_batch)
+        if self.viewport_controller is not None:
+            self.orchestrator_session.tracks_received.connect(
+                self.viewport_controller.track_renderer.add_tracks_batch
+            )
         self.orchestrator_session.projection_received.connect(self.results_viewer.set_projection_data)
         self.orchestrator_session.projection_stack_updated.connect(self._on_projection_stack_updated)
         self.orchestrator_session.spectrum_received.connect(self.results_viewer.set_spectrum_data)
@@ -444,15 +450,15 @@ class MainWindow(QMainWindow):
         )
 
         # Раздельные подписки для оптимизированной инкрементальной синхронизации
-        self.scene_vm.scene_loaded.connect(lambda vm: self.viewport_controller.sync_viewport_scene())
+        self.scene_vm.scene_loaded.connect(self._on_scene_loaded_sync)
         self.scene_vm.node_added.connect(self._on_node_added)
         self.scene_vm.node_removed.connect(self._on_node_removed)
         self.scene_vm.node_renamed.connect(self.data_manager_vm.on_node_renamed)
 
         # Автоматическая генерация задач при изменении сцены и параметров процедуры
-        self.scene_vm.node_added.connect(lambda n: self._on_generate_jobs())
-        self.scene_vm.node_removed.connect(lambda n: self._on_generate_jobs())
-        self.procedure_vm.changed.connect(self._on_generate_jobs)
+        self.scene_vm.node_added.connect(lambda _node: self._on_generate_jobs())
+        self.scene_vm.node_removed.connect(lambda _node: self._on_generate_jobs())
+        self._connect_procedure_vm_signals(self.procedure_vm)
 
         # Управляющие действия моделирования
         self.act_run.triggered.connect(self._on_start_simulation)
@@ -466,8 +472,12 @@ class MainWindow(QMainWindow):
         # Сигналы сессии оркестратора для паузы и возобновления
         self.orchestrator_session.session_paused.connect(self._on_session_paused)
         self.orchestrator_session.session_resumed.connect(self._on_session_resumed)
-        self.orchestrator_session.focused_worker_paused.connect(lambda tid: self.jobs_widget.on_job_paused(tid, is_local=True))
-        self.orchestrator_session.focused_worker_resumed.connect(lambda tid: self.jobs_widget.on_job_resumed(tid))
+        self.orchestrator_session.focused_worker_paused.connect(
+            lambda tid: self.jobs_widget.on_job_paused(tid, is_local=True)
+        )
+        self.orchestrator_session.focused_worker_resumed.connect(
+            lambda tid: self.jobs_widget.on_job_resumed(tid)
+        )
 
         # Сброс накопления из панели результатов
         self.results_viewer.accumulation_cleared.connect(self._on_clear_accumulation)
@@ -479,24 +489,34 @@ class MainWindow(QMainWindow):
             self.viewport_controller.transform_gizmo.status_message_requested.connect(self.lbl_status.setText)
 
         # Начальная отрисовка сцены во вьюпорте и генерация задач
-        self.viewport_controller.sync_viewport_scene()
+        if self.viewport_controller is not None:
+            self.viewport_controller.sync_viewport_scene()
         self._on_generate_jobs()
+
+    def _on_scene_loaded_sync(self, _root_vm: Any = None) -> None:
+        """Синхронизация 3D-вьюпорта после полной перезагрузки сцены."""
+        if self.viewport_controller is not None:
+            self.viewport_controller.sync_viewport_scene()
 
     def _on_node_transform_changed(self, node_vm: NodeViewModel) -> None:
         """Инкрементальное обновление матрицы трансформации актора без пересоздания меша."""
-        self.viewport_controller.on_node_transform_changed(node_vm)
+        if self.viewport_controller is not None:
+            self.viewport_controller.on_node_transform_changed(node_vm)
 
     def _on_node_property_changed(self, node_vm: NodeViewModel, prop_name: str, value: Any) -> None:
         """Инкрементальное обновление параметров актора при смене геометрии или свойств."""
-        self.viewport_controller.on_node_property_changed(node_vm, prop_name, value)
+        if self.viewport_controller is not None:
+            self.viewport_controller.on_node_property_changed(node_vm, prop_name, value)
 
     def _on_node_added(self, node_vm: NodeViewModel) -> None:
         """Точечное добавление нового актора в сцену."""
-        self.viewport_controller.on_node_added(node_vm)
+        if self.viewport_controller is not None:
+            self.viewport_controller.on_node_added(node_vm)
 
     def _on_node_removed(self, node_vm: NodeViewModel) -> None:
         """Точечное удаление актора из сцены."""
-        self.viewport_controller.on_node_removed(node_vm)
+        if self.viewport_controller is not None:
+            self.viewport_controller.on_node_removed(node_vm)
         self.data_manager_vm.on_node_removed(node_vm.name)
 
     def _on_sensitive_volume_selected_in_editor(self, volume_name: str) -> None:
@@ -513,7 +533,8 @@ class MainWindow(QMainWindow):
         if self.dock_inspector.isHidden():
             self.dock_inspector.show()
         self.dock_inspector.raise_()
-        self.viewport_controller.on_node_selected(node_view_model)
+        if self.viewport_controller is not None:
+            self.viewport_controller.on_node_selected(node_view_model)
         self._update_gizmo_toolbar_state(node_view_model)
         if node_view_model is not None:
             constraint = node_view_model.kinematic_constraint
@@ -623,14 +644,18 @@ class MainWindow(QMainWindow):
 
     def _apply_job_angles_to_viewport(self, context: Dict[str, Any]) -> None:
         """Применяет углы из контекста задачи к гамма-камерам во вьюпорте."""
-        self.viewport_controller.apply_job_angles_to_viewport(context, self.procedure_vm)
+        if self.viewport_controller is not None:
+            self.viewport_controller.apply_job_angles_to_viewport(context, self.procedure_vm)
 
     def _on_preview_view_changed(self, view_number_1based: int) -> None:
         """Предварительный кинематический поворот детекторов на выбранный шаг ОФЭКТ."""
-        base_angle = self.viewport_controller.preview_view(view_number_1based, self.procedure_vm)
+        base_angle = (
+            self.viewport_controller.preview_view(view_number_1based, self.procedure_vm)
+            if self.viewport_controller is not None
+            else 0.0
+        )
         steps_total = self.procedure_vm.steps if isinstance(self.procedure_vm, StepAndShootProcedureViewModel) else 1
         self.lbl_status.setText(f"Предпросмотр ОФЭКТ: Шаг {view_number_1based}/{steps_total} (угол {base_angle:.1f}°)")
-
 
     def _on_projection_stack_updated(self, stack: np.ndarray, current_view: int, total_views: int, angle: float) -> None:
         """
@@ -643,22 +668,45 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(f"Моделирование ОФЭКТ: Ракурс {current_view + 1}/{total_views} ({angle:.1f}°)")
         self.viewport.render()
 
+    def _on_procedure_parameter_changed(self, param_name: str, _param_val: Any) -> None:
+        """Обновляет диапазон шагов предпросмотра при изменении параметров процедуры ОФЭКТ."""
+        if param_name in ("steps", "gamma_cameras") and isinstance(
+            self.procedure_vm, StepAndShootProcedureViewModel
+        ):
+            self.spin_preview_view.setRange(1, max(1, int(self.procedure_vm.steps)))
+
+    def _connect_procedure_vm_signals(self, proc_vm: BaseProcedureViewModel) -> None:
+        """Переподключает сигналы модели представления процедуры без накопления дубликатов."""
+        if self._connected_procedure_vm is not None:
+            try:
+                self._connected_procedure_vm.changed.disconnect(self._on_generate_jobs)
+            except (TypeError, RuntimeError):
+                pass
+            if isinstance(self._connected_procedure_vm, StepAndShootProcedureViewModel):
+                try:
+                    self._connected_procedure_vm.parameter_changed.disconnect(
+                        self._on_procedure_parameter_changed
+                    )
+                except (TypeError, RuntimeError):
+                    pass
+
+        self._connected_procedure_vm = proc_vm
+        proc_vm.changed.connect(self._on_generate_jobs)
+        if isinstance(proc_vm, StepAndShootProcedureViewModel):
+            self.spin_preview_view.setRange(1, max(1, proc_vm.steps))
+            proc_vm.parameter_changed.connect(self._on_procedure_parameter_changed)
+
     def _on_procedure_changed(self, proc_vm: BaseProcedureViewModel) -> None:
         """
         Смена активной процедуры сканирования.
         """
         self.procedure_vm = proc_vm
-        self.viewport_controller.on_procedure_changed(proc_vm)
+        if self.viewport_controller is not None:
+            self.viewport_controller.on_procedure_changed(proc_vm)
         self.orchestrator_session.procedure_vm = proc_vm
         self.property_inspector.set_target_viewmodel(proc_vm)
         self.property_inspector.set_procedure_viewmodel(proc_vm)
-        if isinstance(proc_vm, StepAndShootProcedureViewModel):
-            self.spin_preview_view.setRange(1, max(1, proc_vm.steps))
-            def _on_proc_param_changed(param_name: str, param_val: Any) -> None:
-                if param_name in ("steps", "gamma_cameras"):
-                    self.spin_preview_view.setRange(1, max(1, int(proc_vm.steps)))
-            proc_vm.parameter_changed.connect(_on_proc_param_changed)
-        proc_vm.changed.connect(self._on_generate_jobs)
+        self._connect_procedure_vm_signals(proc_vm)
         self._on_generate_jobs()
 
     def _on_generate_jobs(self) -> None:
@@ -750,7 +798,7 @@ class MainWindow(QMainWindow):
             self.orchestrator_session.start()
             self._update_action_states(running=True, paused=False)
             self.lbl_status.setText(f"Моделирование запущено ({len(self.orchestrator_session.jobs)} задач)")
-        except Exception as exc:
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
             QMessageBox.critical(self, "Ошибка запуска", f"Не удалось запустить моделирование:\n{exc}")
 
     def _on_clear_accumulation(self) -> None:
@@ -760,8 +808,9 @@ class MainWindow(QMainWindow):
         """
         if self.orchestrator_session is not None:
             self.orchestrator_session.clear_accumulation()
-        self.viewport_controller.clear_dose_volume()
-        self.viewport_controller.clear_tracks()
+        if self.viewport_controller is not None:
+            self.viewport_controller.clear_dose_volume()
+            self.viewport_controller.clear_tracks()
         self.lbl_status.setText("Накопление данных сброшено")
 
     def _on_pause_all(self) -> None:
@@ -822,7 +871,8 @@ class MainWindow(QMainWindow):
         Использует геометрические параметры активной сессии или последние сохраненные
         параметры сетки, гарантируя неизменность origin и матриц при остановке симуляции.
         """
-        self.viewport_controller.on_dose_volume_received(dose_data, session=self.session)
+        if self.viewport_controller is not None:
+            self.viewport_controller.on_dose_volume_received(dose_data, session=self.session)
 
     def _update_action_states(self, running: bool, paused: bool, focused_paused: bool = False) -> None:
         pool_size = self.orchestrator_session.pool_size
@@ -842,23 +892,13 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         QTimer.singleShot(50, self.viewport.reset_camera)
 
-    def closeEvent(self, event: Any) -> None:
-        app_inst = QApplication.instance()
-        if app_inst is not None:
-            app_inst.removeEventFilter(self)
-        if self.orchestrator_session is not None:
-            self.orchestrator_session.close()
-        if self.viewport_controller is not None:
-            self.viewport_controller.close()
-        self.viewport.close()
-        super().closeEvent(event)
-
     def _on_new_scene(self) -> None:
         root = CompositeNode(name="WorldScene")
         if self.viewport_controller is not None:
             self.viewport_controller.disconnect_all_nodes()
             self.viewport_controller.clear_dose_volume()
             self.viewport_controller.clear_tracks()
+        self.source_metadata_registry.clear()
         self.scene_vm.load_scene(root)
         if self.data_manager_vm is not None:
             for handler in list(self.data_manager_vm.handlers):
@@ -877,10 +917,15 @@ class MainWindow(QMainWindow):
                 filepath = Path(filename)
                 raw_dict = load_raw_config(filepath)
                 all_extracted_bindings = ConfigTemplateBinder.extract_bindings(raw_dict)
-                scene_bindings = {k: v for k, v in all_extracted_bindings.items() if k not in ("simulation_manager", "data_manager")}
+                scene_bindings = {
+                    node_key: node_bindings
+                    for node_key, node_bindings in all_extracted_bindings.items()
+                    if node_key not in ("simulation_manager", "data_manager")
+                }
                 cfg = load_simulation_config(filepath, resolve_protocol=True)
                 builder = SceneBuilder(base_dir=filepath.parent)
                 root_node = builder.build_scene(cfg.scene)
+                self.source_metadata_registry = dict(builder.source_metadata_registry)
                 if self.viewport_controller is not None:
                     self.viewport_controller.disconnect_all_nodes()
                     self.viewport_controller.clear_dose_volume()
@@ -906,13 +951,17 @@ class MainWindow(QMainWindow):
                             proc_vm.bind_property("simulation_manager", prop_name, var_name)
                     if "data_manager" in all_extracted_bindings:
                         for prop_name, var_name in all_extracted_bindings["data_manager"].items():
-                            proc_vm.bind_property("data_manager", prop_name, var_name)
+                            if prop_name == "filename":
+                                proc_vm.bind_property("data_manager", prop_name, var_name)
                     self.procedure_selector.set_procedure(proc_vm)
-                    self._on_procedure_changed(proc_vm)
 
                 # Восстановление обработчиков данных
                 if cfg.data_manager is not None:
                     self.data_manager_vm.load_from_config(cfg.data_manager)
+                    raw_dm = raw_dict.get("data_manager")
+                    if isinstance(raw_dm, dict) and isinstance(raw_dm.get("filename"), str):
+                        self.data_manager_vm.filename = raw_dm["filename"]
+                    self.property_inspector.data_manager_section.update_ui_from_vm()
                     self.data_handler_list.rebuild_list()
 
                 # Восстановление параметров менеджера симуляции и пула
@@ -967,7 +1016,7 @@ class MainWindow(QMainWindow):
                 self._on_generate_jobs()
                 self.viewport.reset_camera()
                 self.lbl_status.setText(f"Загружена сцена и конфигурация из {filepath.name}")
-            except Exception as exc:
+            except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
                 QMessageBox.critical(self, "Ошибка загрузки", f"Не удалось загрузить YAML:\n{exc}")
 
     def _on_save_yaml(self) -> None:
@@ -976,11 +1025,7 @@ class MainWindow(QMainWindow):
             try:
                 data_mgr = None
                 if self.data_manager_vm is not None and self.data_manager_vm.handlers:
-                    handlers_cfg = self.data_manager_vm.to_core_handlers()
-                    data_mgr = DataManagerConfig(
-                        filename=self.data_manager_vm.filename,
-                        handlers=handlers_cfg
-                    )
+                    data_mgr = self.data_manager_vm.to_config()
                 sim_mgr = SimulationManagerConfig(
                     particles_number=int(self.sim_settings.particles_number),
                     min_energy=float(self.sim_settings.min_energy) * units.keV,
@@ -1003,6 +1048,7 @@ class MainWindow(QMainWindow):
                         pool_size=int(self.sim_settings.pool_size),
                         distribution_registry=self.scene_vm.distribution_registry,
                         slots_registry=self.scene_vm.slots_registry,
+                        source_metadata_registry=self.source_metadata_registry,
                     )
                 else:
                     SceneExporter.export_to_yaml(
@@ -1014,9 +1060,10 @@ class MainWindow(QMainWindow):
                         pool_size=int(self.sim_settings.pool_size),
                         distribution_registry=self.scene_vm.distribution_registry,
                         slots_registry=self.scene_vm.slots_registry,
+                        source_metadata_registry=self.source_metadata_registry,
                     )
                 QMessageBox.information(self, "Успех", f"Конфигурация сохранена в:\n{filename}")
-            except Exception as exc:
+            except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
                 QMessageBox.critical(self, "Ошибка сохранения", f"Не удалось сохранить YAML:\n{exc}")
 
     def _on_open_simulation_settings(self) -> None:
@@ -1175,10 +1222,17 @@ class MainWindow(QMainWindow):
         return super().eventFilter(watched, event)
 
     def closeEvent(self, event: Any) -> None:
-        """Очистка глобальных фильтров событий и ресурсов при закрытии главного окна."""
+        """Очистка глобальных фильтров событий, сессий, таймеров и 3D-ресурсов при закрытии главного окна."""
         app_inst = QApplication.instance()
         if app_inst is not None:
             app_inst.removeEventFilter(self)
+        if self.orchestrator_session is not None:
+            self.orchestrator_session.close()
+        if self.results_viewer is not None:
+            self.results_viewer.close()
+        if self.viewport_controller is not None:
+            self.viewport_controller.close()
+        self.viewport.close()
         super().closeEvent(event)
 
     def keyPressEvent(self, event: Any) -> None:
@@ -1219,3 +1273,7 @@ class MainWindow(QMainWindow):
                 event.accept()
                 return
         super().keyPressEvent(event)
+
+
+__all__ = ["MainWindow"]
+

@@ -6,6 +6,7 @@ from PySide6.QtCore import QObject, Signal
 
 from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
+from core.scene.gamma_camera_node import GammaCameraNode
 from core.scene.nodes import SpatialNode, CompositeNode
 from core.source.sources import Source
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
@@ -253,21 +254,27 @@ class SceneViewModel(QObject):
         for node_vm in self.all_nodes():
             if isinstance(node_vm, GammaCameraViewModel):
                 slots_config = node_vm.slots
+                camera_node = node_vm.core_node
                 if slots_config.casing == old_name:
                     slots_config.casing = new_name
-                    node_vm.core_node.slots['casing'] = new_name
+                    if isinstance(camera_node, GammaCameraNode):
+                        camera_node.slots['casing'] = new_name
                 if slots_config.detector_box == old_name:
                     slots_config.detector_box = new_name
-                    node_vm.core_node.slots['detector_box'] = new_name
+                    if isinstance(camera_node, GammaCameraNode):
+                        camera_node.slots['detector_box'] = new_name
                 if slots_config.collimator == old_name:
                     slots_config.collimator = new_name
-                    node_vm.core_node.slots['collimator'] = new_name
+                    if isinstance(camera_node, GammaCameraNode):
+                        camera_node.slots['collimator'] = new_name
                 if slots_config.crystal == old_name:
                     slots_config.crystal = new_name
-                    node_vm.core_node.slots['crystal'] = new_name
+                    if isinstance(camera_node, GammaCameraNode):
+                        camera_node.slots['crystal'] = new_name
                 if slots_config.glass_backend == old_name:
                     slots_config.glass_backend = new_name
-                    node_vm.core_node.slots['glass_backend'] = new_name
+                    if isinstance(camera_node, GammaCameraNode):
+                        camera_node.slots['glass_backend'] = new_name
 
         for camera_core_node, slots_config in self.slots_registry.items():
             if slots_config.casing == old_name:
@@ -283,9 +290,14 @@ class SceneViewModel(QObject):
 
         # 3. Определение индексов вставки в родительском узле
         child_index = parent_vm.children.index(target_vm) if target_vm in parent_vm.children else len(parent_vm.children)
-        core_index = parent_vm.core_node.childs.index(target_vm.core_node) if (
-            isinstance(parent_vm.core_node, CompositeNode) and target_vm.core_node in parent_vm.core_node.childs
-        ) else len(parent_vm.core_node.childs)
+        if isinstance(parent_vm.core_node, CompositeNode):
+            core_index = (
+                parent_vm.core_node.childs.index(target_vm.core_node)
+                if target_vm.core_node in parent_vm.core_node.childs
+                else len(parent_vm.core_node.childs)
+            )
+        else:
+            core_index = 0
 
         # 4. Удаление старого узла target_vm
         parent_vm.remove_child(target_vm)
@@ -335,7 +347,7 @@ class SceneViewModel(QObject):
             self.node_added.emit(node_vm)
             self.node_selected.emit(node_vm)
             return True
-        except Exception:
+        except (TypeError, ValueError):
             return False
 
     def _unregister_node_recursive(self, vm: NodeViewModel) -> None:
@@ -408,4 +420,9 @@ class SceneViewModel(QObject):
         if root_volume_node_vm is not None:
             return node_view_model is root_volume_node_vm
         return node_view_model.is_root_volume
+
+
+__all__ = [
+    "SceneViewModel",
+]
 

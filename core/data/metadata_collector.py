@@ -8,11 +8,13 @@
 metadata/gantry, metadata/geometry, metadata/source, metadata/simulation.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import hepunits as units
 
+from core.config.exporter import SceneExporter
 from core.config.models import (
+    AnyNodeConfig,
     BaseProtocolConfig,
     CompositeNodeConfig,
     CustomSweepProtocolConfig,
@@ -222,27 +224,28 @@ class GantryMetadataProvider:
         protocol: Optional[BaseProtocolConfig] = None,
         context: Optional[Dict[str, Any]] = None,
         task_id: int = 0,
+        sim_config: Optional[SimulationManagerConfig] = None,
     ) -> Dict[str, Any]:
         context_dict: Dict[str, Any] = context if context is not None else {}
         gantry_nodes: List[GantryNode] = _find_nodes_recursive(root_scene, GantryNode)
 
         if gantry_nodes:
-            gantry_angle_rad = float(gantry_nodes[0].gantry_angle)
+            gantry_angle = float(gantry_nodes[0].gantry_angle)
         elif "gantry_angle" in context_dict:
-            gantry_angle_rad = float(context_dict["gantry_angle"])
+            gantry_angle = float(context_dict["gantry_angle"])
         elif "current_angle" in context_dict:
-            gantry_angle_rad = float(context_dict["current_angle"])
+            gantry_angle = float(context_dict["current_angle"])
         else:
-            gantry_angle_rad = 0.0
+            gantry_angle = 0.0
 
-        gantry_angle_deg = float(np.rad2deg(gantry_angle_rad))
+        converted_gantry_angle = float(np.rad2deg(gantry_angle))
 
         view_index = int(context_dict.get("view_index", task_id))
         orbit_radius_val = 0.0
         rotation_direction_val = "CW"
         frame_duration_val = 0.0
-        angular_step_rad = 0.0
-        angular_step_deg = 0.0
+        angular_step = 0.0
+        converted_angular_step = 0.0
 
         if isinstance(protocol, StepAndShootProtocolConfig):
             rotation_direction_val = str(protocol.rotation_direction)
@@ -255,9 +258,14 @@ class GantryMetadataProvider:
             steps_count = int(protocol.steps)
             if steps_count > 1:
                 denominator = (steps_count - 1) if protocol.endpoint else steps_count
-                angular_step_rad = abs(float(protocol.end_angle) - float(protocol.start_angle)) / float(denominator)
-                angular_step_deg = float(np.rad2deg(angular_step_rad))
+                angular_step = abs(float(protocol.end_angle) - float(protocol.start_angle)) / float(denominator)
+                converted_angular_step = float(np.rad2deg(angular_step))
         else:
+            if isinstance(protocol, CustomSweepProtocolConfig):
+                angle_values = protocol.zipped_variables.get("gantry_angle") or protocol.grid_variables.get("gantry_angle")
+            if isinstance(protocol, CustomSweepProtocolConfig) and angle_values and len(angle_values) > 1:
+                angular_step = abs(float(angle_values[1]) - float(angle_values[0]))
+                converted_angular_step = float(np.rad2deg(angular_step))
             if "radius" in context_dict:
                 orbit_radius_val = float(context_dict["radius"])
             if "step_time" in context_dict:
@@ -265,18 +273,43 @@ class GantryMetadataProvider:
             elif "current_time" in context_dict:
                 frame_duration_val = float(context_dict["current_time"]) / float(units.s)
 
+        if frame_duration_val == 0.0 and sim_config is not None:
+            if not isinstance(sim_config.stop_time, str) and not isinstance(sim_config.start_time, str):
+                frame_duration_val = (
+                    float(sim_config.stop_time) - float(sim_config.start_time)
+                ) / float(units.s)
+
+        camera_nodes: List[GammaCameraNode] = _find_nodes_recursive(root_scene, GammaCameraNode)
+        if orbit_radius_val == 0.0 and camera_nodes:
+            primary_camera = camera_nodes[0]
+            cam_local_pos = primary_camera.local_matrix[:3, 3]
+            computed_radius = float(np.hypot(cam_local_pos[0], cam_local_pos[1]))
+            if computed_radius == 0.0:
+                cam_global_pos = primary_camera.global_matrix[:3, 3]
+                computed_radius = float(np.hypot(cam_global_pos[0], cam_global_pos[1]))
+            if computed_radius == 0.0:
+                crystal_slot_name = primary_camera.slots.get("crystal")
+                if crystal_slot_name is not None:
+                    crystal_target = (
+                        _find_node_by_name(primary_camera, crystal_slot_name)
+                        or _find_node_by_name(root_scene, crystal_slot_name)
+                    )
+                    if crystal_target is not None:
+                        crystal_global_pos = crystal_target.global_matrix[:3, 3]
+                        computed_radius = float(np.hypot(crystal_global_pos[0], crystal_global_pos[1]))
+            orbit_radius_val = computed_radius
+
         gantry_data: Dict[str, Any] = {
-            "gantry_angle": gantry_angle_rad,
-            "gantry_angle_deg": gantry_angle_deg,
+            "gantry_angle": gantry_angle,
+            "gantry_angle_deg": converted_gantry_angle,
             "orbit_radius": orbit_radius_val,
             "rotation_direction": rotation_direction_val,
             "frame_duration": frame_duration_val,
-            "angular_step": angular_step_deg,
-            "angular_step_rad": angular_step_rad,
+            "angular_step": converted_angular_step,
+            "angular_step_rad": angular_step,
         }
 
         # Матрицы поз детекторов
-        camera_nodes: List[GammaCameraNode] = _find_nodes_recursive(root_scene, GammaCameraNode)
         for cam_index, camera_node in enumerate(camera_nodes):
             crystal_name = camera_node.slots.get("crystal")
             crystal_node = None
@@ -288,12 +321,11 @@ class GantryMetadataProvider:
             else:
                 pose_matrix = np.array(camera_node.global_matrix, dtype=np.float64)
 
-            cam_name = camera_node.name or f"detector_{cam_index + 1}"
+            cam_name = camera_node.name if camera_node.name else f"detector_{cam_index + 1}"
             gantry_data[f"pose_matrix_{cam_name}"] = pose_matrix
-
-            canonical_alias = f"pose_matrix_detector_{cam_index + 1}"
-            if canonical_alias not in gantry_data:
-                gantry_data[canonical_alias] = pose_matrix
+            default_detector_name = f"detector_{cam_index + 1}"
+            if cam_name.lower() == default_detector_name and cam_name != default_detector_name:
+                gantry_data[f"pose_matrix_{default_detector_name}"] = pose_matrix
 
         return gantry_data
 
@@ -412,19 +444,25 @@ class SourceMetadataProvider:
     def collect(
         self,
         root_scene: SpatialNode,
-        scene_config: Optional[CompositeNodeConfig] = None,
+        scene_config: Optional[Union[AnyNodeConfig, CompositeNodeConfig]] = None,
     ) -> Dict[str, Any]:
         sources: List[Source] = _find_nodes_recursive(root_scene, Source)
+        radionuclide_name = "Custom / Unspecified"
+        phantom_model_name = "Custom / Unspecified"
+
         if sources:
             primary_source = sources[0]
             half_life_val = float(primary_source.half_life) / float(units.s)
             simulated_activity_val = float(primary_source.initial_activity) / float(units.Bq)
+            registered_meta = SceneExporter.get_source_metadata(primary_source)
+            if registered_meta is not None:
+                if registered_meta.radionuclide:
+                    radionuclide_name = registered_meta.radionuclide
+                if registered_meta.phantom_type:
+                    phantom_model_name = registered_meta.phantom_type
         else:
             half_life_val = 0.0
             simulated_activity_val = 0.0
-
-        radionuclide_name = "Custom / Unspecified"
-        phantom_model_name = "Custom / Unspecified"
 
         if scene_config is not None:
             source_cfg = _find_source_config(scene_config)
@@ -496,7 +534,7 @@ class ProcedureMetadataCollector:
         context: Optional[Dict[str, Any]] = None,
         task_id: int = 0,
         sim_config: Optional[SimulationManagerConfig] = None,
-        scene_config: Optional[CompositeNodeConfig] = None,
+        scene_config: Optional[Union[AnyNodeConfig, CompositeNodeConfig]] = None,
         random_seed: Optional[int] = None,
         precision_mode: str = "single",
         active_processes: Optional[List[Any]] = None,
@@ -520,7 +558,13 @@ class ProcedureMetadataCollector:
         kinematics_meta = self.kinematics_provider.collect(root_scene=root_scene, context=context_dict)
         detectors_meta = self.detector_provider.collect(root_scene=root_scene)
         geometry_meta = self.geometry_provider.collect(root_scene=root_scene)
-        gantry_meta = self.gantry_provider.collect(root_scene=root_scene, protocol=protocol, context=context_dict, task_id=task_id)
+        gantry_meta = self.gantry_provider.collect(
+            root_scene=root_scene,
+            protocol=protocol,
+            context=context_dict,
+            task_id=task_id,
+            sim_config=sim_config,
+        )
         source_meta = self.source_provider.collect(root_scene=root_scene, scene_config=scene_config)
         simulation_meta = self.simulation_provider.collect(
             sim_config=sim_config,
@@ -557,3 +601,4 @@ __all__ = [
     "SimulationMetadataProvider",
     "ProcedureMetadataCollector",
 ]
+

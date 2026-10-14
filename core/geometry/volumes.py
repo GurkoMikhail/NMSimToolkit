@@ -1,25 +1,20 @@
-from itertools import count
-from typing import Any, List, Optional, Sequence
+"""
+Модуль базовых физических объемов (Volume) и индексированных массивов объемов (VolumeArray).
+"""
+from __future__ import annotations
 
+from itertools import chain, count
+from typing import Any, Callable, Iterator, List, Optional, Sequence
 import numpy as np
 from numpy.typing import NDArray
 
-from core.scene.nodes import CompositeNode
 from core.geometry.geometries import Geometry
+import core.geometry.geometry_compiler as geom_compiler
+from core.geometry.geometry_compiler import GeometryBufferDType
 from core.materials.materials import Material, MaterialArray
 from core.other.nonunique_array import NonuniqueArray
-from core.other.typing_definitions import Float, Vector3D, Index, CMaterialFunc
-from core.other.transform import TransformDType
-from core.geometry.geometries import ShapeDataDType
-GeometryBufferDType = np.dtype([
-    ('shape_data', ShapeDataDType),
-    ('transform', TransformDType),
-    ('miss_index', Index),
-    ('parent_index', Index),
-    ('volume_index', Index)
-])
-
-import core.geometry.geometry_compiler as geom_compiler
+from core.other.typing_definitions import Float, Index, Vector3D
+from core.scene.nodes import CompositeNode, SpatialNode
 
 
 class Volume(CompositeNode):
@@ -34,21 +29,27 @@ class Volume(CompositeNode):
     material: Material
     name: str
 
-    def __init__(self, geometry: Geometry, material: Material, name: Optional[str] = None, tags: Optional[Sequence[str]] = None) -> None:
+    def __init__(
+        self,
+        geometry: Geometry,
+        material: Material,
+        name: Optional[str] = None,
+        tags: Optional[Sequence[str]] = None,
+    ) -> None:
         super().__init__(name=name, tags=tags)
         self.geometry = geometry
         self.material = material
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name
         self._geometry_buffer: Optional[NDArray[Any]] = None
 
-    def __init_subclass__(cls):
+    def __init_subclass__(cls) -> None:
         cls._counter = count(1)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'{self.name}'
 
     @property
-    def material_cfunc(self) -> CMaterialFunc:
+    def material_cfunc(self) -> Optional[Callable[[Float, Float, Float], Index]]:
         """Указатель CFUNCTYPE на @cfunc для параметрических объемов Вудкока (None для стандартных объемов)."""
         return None
 
@@ -59,18 +60,22 @@ class Volume(CompositeNode):
 
     @property
     def material_list(self) -> List[Material]:
-        """Возвращает список всех уникальных материалов, используемых в данном объеме и его потомках."""
-        def recursive_generator(node):
-            if isinstance(node, Volume):
-                yield node.material
-            for child in node.childs:
+        """
+        Возвращает список всех уникальных материалов, используемых в данном объеме и всем его поддереве,
+        включая объемы внутри промежуточных CompositeNode и дочерние параметрические объемы Вудкока.
+        """
+        def collect_from_children(parent_node: CompositeNode) -> Iterator[Material]:
+            for child in parent_node.childs:
                 if isinstance(child, Volume):
-                    yield from recursive_generator(child)
+                    yield from child.material_list
+                elif isinstance(child, CompositeNode):
+                    yield from collect_from_children(child)
 
-        return list(dict.fromkeys(recursive_generator(self)))
+        return list(dict.fromkeys(chain((self.material,), collect_from_children(self))))
 
     @property
     def size(self) -> Vector3D:
+        """Габаритные размеры объема [Lx, Ly, Lz] в мм."""
         return self.geometry.size
 
     @size.setter
@@ -93,7 +98,7 @@ class Volume(CompositeNode):
     def invalidate_geometry(self) -> None:
         """Сбрасывает кэш скомпилированной геометрии у этого объёма и всех родительских Volume."""
         self._geometry_buffer = None
-        curr = self.parent
+        curr: Optional[CompositeNode] = self.parent
         while curr is not None:
             if isinstance(curr, Volume):
                 curr._geometry_buffer = None
@@ -104,42 +109,51 @@ class Volume(CompositeNode):
         super().invalidate_matrix_cache()
         self.invalidate_geometry()
 
-    def add_child(self, child: 'SpatialNode') -> None:
+    def add_child(self, child: SpatialNode) -> None:
         """Добавление дочернего узла с инвалидацией буферов геометрии."""
         super().add_child(child)
         self.invalidate_geometry()
 
-    def remove_child(self, child: 'SpatialNode') -> None:
+    def remove_child(self, child: SpatialNode) -> None:
         """Удаление дочернего узла с инвалидацией буферов геометрии."""
         super().remove_child(child)
         self.invalidate_geometry()
 
     @property
-    def top_volume(self) -> 'Volume':
+    def top_volume(self) -> Volume:
         """Возвращает наивысший узел Volume в текущей ветви иерархии сцены."""
-        current = self
-        top_vol = self
+        current: SpatialNode = self
+        top_vol: Volume = self
         while current.parent is not None:
             current = current.parent
             if isinstance(current, Volume):
                 top_vol = current
         return top_vol
 
-    def set_parent(self, parent: 'CompositeNode') -> None:
+    def set_parent(self, parent: CompositeNode) -> None:
+        """Устанавливает родительский составной узел."""
         parent.add_child(self)
 
 
-
 class VolumeArray(NonuniqueArray):
-    """ Класс списка объёмов """
+    """Индексированный массив физических объемов."""
+
     element_list: List[Optional[Volume]]
 
     @property
     def material(self) -> MaterialArray:
-        """ Список материалов """
+        """Массив материалов, соответствующих объемам в ячейках."""
         material = MaterialArray(self.shape)
         for volume, indices in self.inverse_indices.items():
             if volume is None:
                 continue
             material[indices] = volume.material
         return material
+
+
+__all__ = [
+    "GeometryBufferDType",
+    "Volume",
+    "VolumeArray",
+]
+

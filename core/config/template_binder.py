@@ -8,6 +8,7 @@ from copy import deepcopy
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+import numpy as np
 
 from core.config.models import (
     SimulationConfig,
@@ -16,6 +17,9 @@ from core.config.models import (
     AnyProtocolConfig,
     AnyDistributionConfig,
     GammaCameraSlotsConfig,
+    StepAndShootProtocolConfig,
+    TranslateConfig,
+    RotateConfig,
 )
 from core.config.exporter import SceneExporter
 from core.config.yaml_dumper import dump_simulation_config
@@ -59,6 +63,7 @@ class ConfigTemplateBinder:
                 match = re.search(r'\$\{([^}]+)\}', filename_val)
                 if match:
                     dm_bindings["filename"] = match.group(1)
+                    dm_bindings["filename_template"] = filename_val
             if dm_bindings:
                 bindings_by_target["data_manager"] = dm_bindings
 
@@ -185,10 +190,16 @@ class ConfigTemplateBinder:
 
             if isinstance(prop_map, dict):
                 normalized_bindings.setdefault(node_name, {}).update(
-                    {str(k): str(v) for k, v in prop_map.items()}
+                    {str(prop_key): str(prop_val) for prop_key, prop_val in prop_map.items()}
                 )
             elif isinstance(prop_map, str):
                 normalized_bindings.setdefault(node_name, {})[str(key)] = str(prop_map)
+
+        protocol_val = data_dict.get("protocol")
+        is_step_and_shoot = (
+            (isinstance(protocol_val, dict) and protocol_val.get("type") == "StepAndShoot")
+            or isinstance(protocol_val, StepAndShootProtocolConfig)
+        )
 
         # 1. Привязки simulation_manager
         if "simulation_manager" in data_dict and isinstance(data_dict["simulation_manager"], dict):
@@ -199,33 +210,102 @@ class ConfigTemplateBinder:
             if "min_energy" in sim_bindings:
                 sim_dict["min_energy"] = f"${{{sim_bindings['min_energy']}}} keV"
             if "start_time" in sim_bindings:
-                sim_dict["start_time"] = f"${{{sim_bindings['start_time']}}} s"
+                start_var = sim_bindings["start_time"]
+                start_unit = "ns" if (is_step_and_shoot and start_var in ("step_time", "current_time")) else "s"
+                sim_dict["start_time"] = f"${{{start_var}}} {start_unit}"
             if "stop_time" in sim_bindings:
-                sim_dict["stop_time"] = f"${{{sim_bindings['stop_time']}}} s"
+                stop_var = sim_bindings["stop_time"]
+                stop_unit = "ns" if (is_step_and_shoot and stop_var in ("step_time", "current_time")) else "s"
+                sim_dict["stop_time"] = f"${{{stop_var}}} {stop_unit}"
 
         # 2. Привязки data_manager
         if "data_manager" in data_dict and isinstance(data_dict["data_manager"], dict):
             dm_dict = data_dict["data_manager"]
             dm_bindings = normalized_bindings.get("data_manager", {})
             if "filename" in dm_bindings:
-                dm_dict["filename"] = f"${{{dm_bindings['filename']}}}"
+                bound_val = dm_bindings["filename"]
+                template_val = dm_bindings.get("filename_template", "")
+                current_filename = str(dm_dict.get("filename", ""))
+                if "${" in current_filename:
+                    # Текущий filename уже содержит шаблон макроса — сохраняем его без перезаписи
+                    pass
+                elif "${" in template_val:
+                    dm_dict["filename"] = template_val
+                elif "${" in bound_val:
+                    dm_dict["filename"] = bound_val
+                else:
+                    file_path = Path(current_filename) if current_filename else Path("output.h5")
+                    suffix = file_path.suffix or ".h5"
+                    stem = file_path.stem or "output"
+                    new_name = f"{stem}_${{{bound_val}}}{suffix}"
+                    dm_dict["filename"] = (
+                        str(file_path.with_name(new_name)).replace("\\", "/")
+                        if file_path.parent != Path(".")
+                        else new_name
+                    )
 
         # 3. Привязки узлов сцены
         scene_dict = data_dict.get("scene", data_dict) if isinstance(data_dict, dict) else data_dict
+
+        def _format_angle_macro(var_name: str) -> str:
+            angle_unit = "rad" if (is_step_and_shoot and var_name in ("gantry_angle", "current_angle")) else "deg"
+            return f"${{{var_name}}} {angle_unit}"
 
         def _traverse(node_dict: Dict[str, Any]) -> None:
             node_name = node_dict.get("name")
             node_bindings = normalized_bindings.get(node_name, {}) if node_name else {}
 
             has_trans = any(
-                k in node_bindings for k in ("translation.x", "translation.y", "translation.z", "x", "y", "z", "radius")
+                prop_key in node_bindings for prop_key in ("translation.x", "translation.y", "translation.z", "x", "y", "z", "radius")
             )
             has_rot = any(
-                k in node_bindings for k in ("rotation.alpha", "rotation.beta", "rotation.gamma", "alpha", "beta", "gamma", "gantry_angle")
+                prop_key in node_bindings for prop_key in ("rotation.alpha", "rotation.beta", "rotation.gamma", "alpha", "beta", "gamma", "gantry_angle")
             )
 
             if has_trans or has_rot:
                 transforms_list: List[Dict[str, Any]] = node_dict.setdefault("transformations", [])
+
+                has_explicit_tr_or_rot = any(
+                    isinstance(tr_item, dict)
+                    and (
+                        tr_item.get("type", "").lower() in ("translate", "rotate")
+                        or any(coord_key in tr_item for coord_key in ("x", "y", "z", "alpha", "beta", "gamma"))
+                    )
+                    for tr_item in transforms_list
+                )
+                has_matrix_transform = any(
+                    isinstance(tr_item, dict) and tr_item.get("type", "").lower() == "matrix" and "matrix" in tr_item
+                    for tr_item in transforms_list
+                )
+                if has_matrix_transform and not has_explicit_tr_or_rot:
+                    expanded_transforms: List[Dict[str, Any]] = []
+                    for tr_item in transforms_list:
+                        if isinstance(tr_item, dict) and tr_item.get("type", "").lower() == "matrix" and "matrix" in tr_item:
+                            decomposed_cfgs = SceneExporter.decompose_matrix(
+                                np.array(tr_item["matrix"], dtype=float),
+                                as_matrix=False,
+                            )
+                            for dec_cfg in decomposed_cfgs:
+                                if isinstance(dec_cfg, TranslateConfig):
+                                    expanded_transforms.append({
+                                        "type": "translate",
+                                        "x": float(dec_cfg.x),
+                                        "y": float(dec_cfg.y),
+                                        "z": float(dec_cfg.z),
+                                        "in_local": bool(tr_item.get("in_local", False)),
+                                    })
+                                elif isinstance(dec_cfg, RotateConfig):
+                                    expanded_transforms.append({
+                                        "type": "rotate",
+                                        "alpha": f"{float(np.degrees(dec_cfg.alpha)):.6g} deg",
+                                        "beta": f"{float(np.degrees(dec_cfg.beta)):.6g} deg",
+                                        "gamma": f"{float(np.degrees(dec_cfg.gamma)):.6g} deg",
+                                        "rotation_center": list(dec_cfg.rotation_center),
+                                        "in_local": bool(tr_item.get("in_local", False)),
+                                    })
+                        else:
+                            expanded_transforms.append(tr_item)
+                    transforms_list[:] = expanded_transforms
 
                 # 1.1. Трансляция
                 bx = node_bindings.get("translation.x") or node_bindings.get("x")
@@ -244,7 +324,7 @@ class ConfigTemplateBinder:
                     if not isinstance(transform, dict):
                         continue
                     t_type = transform.get("type", "").lower()
-                    if (t_type == "translate" or any(k in transform for k in ("x", "y", "z"))) and not trans_applied and has_trans:
+                    if (t_type == "translate" or any(coord_key in transform for coord_key in ("x", "y", "z"))) and not trans_applied and has_trans:
                         if bx:
                             transform["x"] = f"${{{bx}}} mm"
                         if by:
@@ -253,13 +333,13 @@ class ConfigTemplateBinder:
                             transform["z"] = f"${{{bz}}} mm"
                         transform.setdefault("type", "translate")
                         trans_applied = True
-                    elif (t_type == "rotate" or any(k in transform for k in ("alpha", "beta", "gamma"))) and not rot_applied and has_rot:
+                    elif (t_type == "rotate" or any(rot_key in transform for rot_key in ("alpha", "beta", "gamma"))) and not rot_applied and has_rot:
                         if b_alpha:
-                            transform["alpha"] = f"${{{b_alpha}}} deg"
+                            transform["alpha"] = _format_angle_macro(b_alpha)
                         if b_beta:
-                            transform["beta"] = f"${{{b_beta}}} deg"
+                            transform["beta"] = _format_angle_macro(b_beta)
                         if b_gamma:
-                            transform["gamma"] = f"${{{b_gamma}}} deg"
+                            transform["gamma"] = _format_angle_macro(b_gamma)
                         transform.setdefault("type", "rotate")
                         rot_applied = True
 
@@ -276,11 +356,11 @@ class ConfigTemplateBinder:
                 if has_rot and not rot_applied:
                     new_rot: Dict[str, Any] = {"type": "rotate", "alpha": 0.0, "beta": 0.0, "gamma": 0.0}
                     if b_alpha:
-                        new_rot["alpha"] = f"${{{b_alpha}}} deg"
+                        new_rot["alpha"] = _format_angle_macro(b_alpha)
                     if b_beta:
-                        new_rot["beta"] = f"${{{b_beta}}} deg"
+                        new_rot["beta"] = _format_angle_macro(b_beta)
                     if b_gamma:
-                        new_rot["gamma"] = f"${{{b_gamma}}} deg"
+                        new_rot["gamma"] = _format_angle_macro(b_gamma)
                     transforms_list.append(new_rot)
 
             # 2. Активность источника
@@ -310,7 +390,6 @@ class ConfigTemplateBinder:
 
         if isinstance(scene_dict, dict) and (scene_dict.get("name") or scene_dict.get("children")):
             _traverse(scene_dict)
-        return scene_dict
 
     @classmethod
     def export_templated_yaml(
@@ -324,6 +403,7 @@ class ConfigTemplateBinder:
         protocol: Optional[AnyProtocolConfig] = None,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        source_metadata_registry: Optional[Dict[SpatialNode, Any]] = None,
     ) -> None:
         """
         Экспортирует сцену и конфигурацию в YAML с наложением шаблонных макросов ${variable}.
@@ -338,6 +418,7 @@ class ConfigTemplateBinder:
             protocol=protocol,
             distribution_registry=distribution_registry,
             slots_registry=slots_registry,
+            source_metadata_registry=source_metadata_registry,
         )
 
         # 2. Сериализация в raw dict

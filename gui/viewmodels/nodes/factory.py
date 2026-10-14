@@ -53,3 +53,7 @@ def create_node_viewmodel(core_node: SpatialNode, parent_vm: Optional[NodeViewMo
 
 # Регистрация фабрики в базовом классе для исключения циклических импортов
 NodeViewModel._factory = create_node_viewmodel
+
+__all__ = [
+    "create_node_viewmodel",
+]

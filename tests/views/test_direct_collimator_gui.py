@@ -7,6 +7,7 @@
 """
 
 import sys
+from typing import Any
 import unittest
 import numpy as np
 from PySide6.QtWidgets import QApplication

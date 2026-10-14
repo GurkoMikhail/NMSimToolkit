@@ -28,6 +28,7 @@ class GammaCameraViewModel(NodeViewModel):
     """
     ViewModel для физической детекторной головки гамма-камеры с архитектурой слотов.
     """
+    core_node: GammaCameraNode
 
     def __init__(
         self,
@@ -36,6 +37,7 @@ class GammaCameraViewModel(NodeViewModel):
         slots: Optional[Union[GammaCameraSlotsConfig, Dict[str, str]]] = None,
     ) -> None:
         super().__init__(core_node, parent_vm)
+        self.core_node = core_node
         if slots is not None:
             if isinstance(slots, GammaCameraSlotsConfig):
                 self.slots: GammaCameraSlotsConfig = slots
@@ -314,19 +316,22 @@ class GammaCameraViewModel(NodeViewModel):
         casing_z = det_box_z + shielding_value
         casing.size = [casing_x, casing_y, casing_z]
 
-        detector_box.local_matrix = np.eye(4, dtype=Float)
-        detector_box.translate(z=shielding_value / 2.0)
+        detector_box.core_node.local_matrix = np.eye(4, dtype=Float)
+        detector_box.core_node.translate(z=shielding_value / 2.0)
 
-        collimator.local_matrix = np.eye(4, dtype=Float)
-        collimator.translate(z=(det_box_z / 2.0 - collimator.size[2] / 2.0))
+        collimator.core_node.local_matrix = np.eye(4, dtype=Float)
+        collimator.core_node.translate(z=(det_box_z / 2.0 - collimator.size[2] / 2.0))
 
-        crystal.local_matrix = np.eye(4, dtype=Float)
-        crystal.translate(z=(det_box_z / 2.0 - collimator.size[2] - crystal.size[2] / 2.0 - gap_value))
+        crystal.core_node.local_matrix = np.eye(4, dtype=Float)
+        crystal.core_node.translate(z=(det_box_z / 2.0 - collimator.size[2] - crystal.size[2] / 2.0 - gap_value))
 
         glass_size = [det_size_x, det_size_y, glass_backend.size[2]]
         glass_backend.size = glass_size
-        glass_backend.local_matrix = np.eye(4, dtype=Float)
-        glass_backend.translate(z=(glass_backend.size[2] / 2.0 - det_box_z / 2.0))
+        glass_backend.core_node.local_matrix = np.eye(4, dtype=Float)
+        glass_backend.core_node.translate(z=(glass_backend.size[2] / 2.0 - det_box_z / 2.0))
+
+        for subcomponent_vm in (detector_box, collimator, crystal, glass_backend):
+            subcomponent_vm.property_changed.emit('local_matrix', subcomponent_vm.core_node.local_matrix)
 
         casing.core_node.invalidate_geometry()
 
@@ -358,9 +363,6 @@ class GammaCameraViewModel(NodeViewModel):
     def sync_children_from_core(self) -> None:
         super().sync_children_from_core()
         self._apply_fixed_constraints_to_subcomponents()
-        crystal = self.crystal_vm
-        if crystal is not None:
-            crystal.is_sensitive_detector = True
 
 
 def create_default_gamma_camera_vm(

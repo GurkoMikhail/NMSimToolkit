@@ -303,21 +303,25 @@ class TestGuiRefactoringVerification(unittest.TestCase):
         Проверка детерминированного завершения потока DataManager.stop()
         без возникновения AttributeError и утечки фоновых потоков.
         """
+        import os
+        import queue
+        import tempfile
         from core.data.data_manager import DataManager
         from core.data.data_handlers import BaseDataHandler
-        import queue
 
         class DummyHandler(BaseDataHandler):
             def process_chunk(self, chunk):
                 pass
 
-        q = queue.Queue()
-        dm = DataManager(filename="test_dm_stop.h5", handlers=[DummyHandler()], queue=q)
-        dm.start()
-        self.assertTrue(dm.is_alive())
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            h5_path = os.path.join(tmp_dir, "test_dm_stop.h5")
+            task_queue = queue.Queue()
+            dm = DataManager(filename=h5_path, handlers=[DummyHandler()], queue=task_queue)
+            dm.start()
+            self.assertTrue(dm.is_alive())
 
-        dm.stop(timeout=1.0)
-        self.assertFalse(dm.is_alive())
+            dm.stop(timeout=1.0)
+            self.assertFalse(dm.is_alive())
 
     def test_scene_tree_widget_live_rename(self):
         """

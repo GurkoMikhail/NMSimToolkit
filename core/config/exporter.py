@@ -4,6 +4,7 @@ import logging
 import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
+from weakref import WeakKeyDictionary
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -27,6 +28,7 @@ from core.config.models import (
     RotateConfig,
     SimulationConfig,
     SimulationManagerConfig,
+    SourceMetadataConfig,
     SourceConfig,
     TransformConfig,
     TranslateConfig,
@@ -62,6 +64,18 @@ class SceneExporter:
     Класс для обратной сериализации чистого графа сцены (SpatialNode, Volume)
     в Pydantic-конфигурации SimulationConfig и сохранения в формат YAML.
     """
+
+    _source_metadata_registry: WeakKeyDictionary[SpatialNode, SourceMetadataConfig] = WeakKeyDictionary()
+
+    @classmethod
+    def register_source_metadata(cls, node: SpatialNode, metadata: SourceMetadataConfig) -> None:
+        """Регистрирует декларативные метаданные источника во внешнем реестре без модификации узла ядра."""
+        cls._source_metadata_registry[node] = metadata
+
+    @classmethod
+    def get_source_metadata(cls, node: SpatialNode) -> Optional[SourceMetadataConfig]:
+        """Возвращает зарегистрированные декларативные метаданные источника из внешнего реестра."""
+        return cls._source_metadata_registry.get(node)
 
     @classmethod
     def decompose_matrix(cls, matrix: np.ndarray, as_matrix: bool = True) -> List[TransformConfig]:
@@ -114,6 +128,7 @@ class SceneExporter:
         node: SpatialNode,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        source_metadata_registry: Optional[Dict[SpatialNode, SourceMetadataConfig]] = None,
     ) -> AnyNodeConfig:
         """
         Рекурсивно экспортирует узел сцены в Pydantic-модель конфигурации.
@@ -125,7 +140,12 @@ class SceneExporter:
         # 1. GammaCameraNode
         if isinstance(node, GammaCameraNode):
             children_cfgs = [
-                cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry)
+                cls.export_node(
+                    child_node,
+                    distribution_registry=distribution_registry,
+                    slots_registry=slots_registry,
+                    source_metadata_registry=source_metadata_registry,
+                )
                 for child_node in node.childs
             ]
             slots_cfg = None
@@ -153,6 +173,15 @@ class SceneExporter:
             size_tuple = (float(node.size[0]), float(node.size[1]), float(node.size[2]))
             mat_name = node.material.name
             hole_shape_val = node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape)
+            children_cfgs = [
+                cls.export_node(
+                    child_node,
+                    distribution_registry=distribution_registry,
+                    slots_registry=slots_registry,
+                    source_metadata_registry=source_metadata_registry,
+                )
+                for child_node in node.childs
+            ]
             return ParametricParallelCollimatorConfig(
                 name=node_name,
                 tags=node_tags,
@@ -162,6 +191,7 @@ class SceneExporter:
                 septa=float(node.septa),
                 material=mat_name,
                 hole_shape=hole_shape_val,
+                children=children_cfgs,
             )
 
         # 3.1. DirectParallelCollimator
@@ -170,6 +200,16 @@ class SceneExporter:
             mat_name = node.material.name
             hole_mat_name = node.explicit_hole_material.name if node.explicit_hole_material is not None else None
             hole_shape_val = node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape)
+            children_cfgs = [
+                cls.export_node(
+                    child_node,
+                    distribution_registry=distribution_registry,
+                    slots_registry=slots_registry,
+                    source_metadata_registry=source_metadata_registry,
+                )
+                for child_node in node.childs
+                if child_node is not node.lead_body and child_node is not node.channels
+            ]
             return DirectParallelCollimatorConfig(
                 name=node_name,
                 tags=node_tags,
@@ -180,6 +220,7 @@ class SceneExporter:
                 material=mat_name,
                 hole_material=hole_mat_name,
                 hole_shape=hole_shape_val,
+                children=children_cfgs,
             )
 
         # 4. WoodcockVoxelVolume
@@ -210,7 +251,15 @@ class SceneExporter:
                 if actual_mapping is not None:
                     dist_cfg = dist_cfg.model_copy(update={'mapping': actual_mapping})
 
-            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
+            children_cfgs = [
+                cls.export_node(
+                    child_node,
+                    distribution_registry=distribution_registry,
+                    slots_registry=slots_registry,
+                    source_metadata_registry=source_metadata_registry,
+                )
+                for child_node in node.childs
+            ]
             return WoodcockVoxelVolumeConfig(
                 name=node_name,
                 tags=node_tags,
@@ -226,10 +275,23 @@ class SceneExporter:
             if isinstance(geo, Box):
                 geo_cfg = BoxConfig(x=float(geo.size[0]), y=float(geo.size[1]), z=float(geo.size[2]))
             else:
-                geo_cfg = BoxConfig(x=float(node.size[0]), y=float(node.size[1]), z=float(node.size[2]))
+                bounds = node.local_bound
+                geo_cfg = BoxConfig(
+                    x=float(bounds[1, 0] - bounds[0, 0]),
+                    y=float(bounds[1, 1] - bounds[0, 1]),
+                    z=float(bounds[1, 2] - bounds[0, 2]),
+                )
 
             mat_name = node.material.name
-            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
+            children_cfgs = [
+                cls.export_node(
+                    child_node,
+                    distribution_registry=distribution_registry,
+                    slots_registry=slots_registry,
+                    source_metadata_registry=source_metadata_registry,
+                )
+                for child_node in node.childs
+            ]
 
             return VolumeConfig(
                 name=node_name,
@@ -245,8 +307,8 @@ class SceneExporter:
             act = float(np.sum(node.initial_activity)) if node.initial_activity is not None else None
             act_val = None
             if act is not None:
-                act_mbq = float(act) / float(units.MBq)
-                act_val = f"{act_mbq:.6g} MBq"
+                scaled_activity = float(act) / float(units.MBq)
+                act_val = f"{scaled_activity:.6g} MBq"
 
             v_sz = float(np.mean(node.voxel_size)) if isinstance(node.voxel_size, (list, tuple, np.ndarray, Sequence)) else float(node.voxel_size)
             dist_cfg = None
@@ -254,9 +316,24 @@ class SceneExporter:
                 dist_cfg = distribution_registry.get(node)
             if dist_cfg is None:
                 dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'source_dist'}.npy")
-            children_cfgs = [cls.export_node(child_node, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_node in node.childs]
+            children_cfgs = [
+                cls.export_node(
+                    child_node,
+                    distribution_registry=distribution_registry,
+                    slots_registry=slots_registry,
+                    source_metadata_registry=source_metadata_registry,
+                )
+                for child_node in node.childs
+            ]
             half_life = float(node.half_life)
             rad_type = node.radiation_type
+            source_meta: Optional[SourceMetadataConfig] = None
+            if source_metadata_registry is not None:
+                source_meta = source_metadata_registry.get(node)
+            if source_meta is None:
+                source_meta = cls._source_metadata_registry.get(node)
+            radionuclide_val = source_meta.radionuclide if source_meta is not None else None
+            phantom_type_val = source_meta.phantom_type if source_meta is not None else None
 
             energy_val = [
                 [f"{float(energy_value) / float(units.keV):.6g} keV", float(probability_value)]
@@ -272,12 +349,22 @@ class SceneExporter:
                 radiation_type=str(rad_type),
                 energy=energy_val,
                 half_life=half_life,
+                radionuclide=radionuclide_val,
+                phantom_type=phantom_type_val,
                 children=children_cfgs,
             )
 
         # 7. DoseGridNode
         if isinstance(node, DoseGridNode):
-            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
+            children_cfgs = [
+                cls.export_node(
+                    child_item,
+                    distribution_registry=distribution_registry,
+                    slots_registry=slots_registry,
+                    source_metadata_registry=source_metadata_registry,
+                )
+                for child_item in node.childs
+            ]
             return DoseGridNodeConfig(
                 name=node_name,
                 tags=node_tags,
@@ -290,8 +377,32 @@ class SceneExporter:
 
         # 7.1. GantryNode
         if isinstance(node, GantryNode):
-            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
-            gantry_transforms = [RotateConfig(alpha=f"{node.gantry_angle / float(units.deg):.4g} deg")]
+            children_cfgs = [
+                cls.export_node(
+                    child_item,
+                    distribution_registry=distribution_registry,
+                    slots_registry=slots_registry,
+                    source_metadata_registry=source_metadata_registry,
+                )
+                for child_item in node.childs
+            ]
+            gantry_transforms: List[TransformConfig] = []
+            trans_x = float(node.local_matrix[0, 3])
+            trans_y = float(node.local_matrix[1, 3])
+            trans_z = float(node.local_matrix[2, 3])
+            has_translation = not (
+                math.isclose(trans_x, 0.0, abs_tol=1e-6)
+                and math.isclose(trans_y, 0.0, abs_tol=1e-6)
+                and math.isclose(trans_z, 0.0, abs_tol=1e-6)
+            )
+            if has_translation:
+                gantry_transforms.append(TranslateConfig(x=trans_x, y=trans_y, z=trans_z))
+            gantry_transforms.append(
+                RotateConfig(
+                    alpha=f"{float(np.degrees(node.gantry_angle)):.12g} deg",
+                    in_local=has_translation,
+                )
+            )
 
             return GantryConfig(
                 name=node_name,
@@ -302,7 +413,15 @@ class SceneExporter:
 
         # 8. CompositeNode
         if isinstance(node, CompositeNode):
-            children_cfgs = [cls.export_node(child_item, distribution_registry=distribution_registry, slots_registry=slots_registry) for child_item in node.childs]
+            children_cfgs = [
+                cls.export_node(
+                    child_item,
+                    distribution_registry=distribution_registry,
+                    slots_registry=slots_registry,
+                    source_metadata_registry=source_metadata_registry,
+                )
+                for child_item in node.childs
+            ]
             return BaseCompositeNodeConfig(
                 name=node_name,
                 tags=node_tags,
@@ -323,6 +442,7 @@ class SceneExporter:
         root_node: SpatialNode,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        source_metadata_registry: Optional[Dict[SpatialNode, SourceMetadataConfig]] = None,
     ) -> AnyNodeConfig:
         """
         Экспортирует корневой узел графа сцены.
@@ -331,6 +451,7 @@ class SceneExporter:
             root_node,
             distribution_registry=distribution_registry,
             slots_registry=slots_registry,
+            source_metadata_registry=source_metadata_registry,
         )
 
     @classmethod
@@ -343,6 +464,7 @@ class SceneExporter:
         protocol: Optional[AnyProtocolConfig] = None,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        source_metadata_registry: Optional[Dict[SpatialNode, SourceMetadataConfig]] = None,
         logging_cfg: Optional[LoggingConfig] = None,
     ) -> SimulationConfig:
         """
@@ -352,6 +474,7 @@ class SceneExporter:
             root_node,
             distribution_registry=distribution_registry,
             slots_registry=slots_registry,
+            source_metadata_registry=source_metadata_registry,
         )
         sim_mgr = simulation_manager_cfg or SimulationManagerConfig()
         data_mgr = data_manager_cfg or DataManagerConfig(
@@ -379,6 +502,7 @@ class SceneExporter:
         protocol: Optional[AnyProtocolConfig] = None,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
+        source_metadata_registry: Optional[Dict[SpatialNode, SourceMetadataConfig]] = None,
         logging_cfg: Optional[LoggingConfig] = None,
     ) -> None:
         """
@@ -416,6 +540,10 @@ class SceneExporter:
             protocol=protocol,
             distribution_registry=adjusted_distribution_registry,
             slots_registry=slots_registry,
+            source_metadata_registry=source_metadata_registry,
             logging_cfg=logging_cfg,
         )
         dump_simulation_config(config, target_path)
+
+
+__all__ = ["SceneExporter"]

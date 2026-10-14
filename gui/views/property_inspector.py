@@ -193,3 +193,9 @@ class PropertyInspector(QWidget):
             return
         for section in self._registry.get_active_sections(self.current_vm):
             section.on_property_changed_externally("bindings", None)
+
+
+__all__ = [
+    "PropertyInspector",
+]
+

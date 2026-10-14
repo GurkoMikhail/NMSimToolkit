@@ -31,6 +31,7 @@ class GridVariableWidget(QWidget):
         values: List[float],
         parent: Optional[QWidget] = None,
     ) -> None:
+        """Инициализирует табличный виджет редактирования переменной сетки."""
         super().__init__(parent)
         self.var_name: str = str(var_name)
         self._values: List[float] = [float(val) for val in values] if values else [0.0]
@@ -40,6 +41,7 @@ class GridVariableWidget(QWidget):
         self._populate_table()
 
     def _init_ui(self) -> None:
+        """Создает элементы управления и компоновку виджета."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(2, 2, 2, 2)
         main_layout.setSpacing(4)
@@ -59,7 +61,7 @@ class GridVariableWidget(QWidget):
 
         self.table = QTableWidget(len(self._values), 1)
         self.table.setHorizontalHeaderLabels(["Значение"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.setMinimumHeight(80)
         self.table.setMaximumHeight(150)
         self.table.cellChanged.connect(self._on_cell_changed)
@@ -87,18 +89,20 @@ class GridVariableWidget(QWidget):
         self._populate_table()
 
     def _populate_table(self) -> None:
+        """Заполняет строки таблицы текущими значениями переменной."""
         self._is_updating = True
         try:
             self.table.setRowCount(len(self._values))
             for row_index, cell_value in enumerate(self._values):
                 table_item = QTableWidgetItem(f"{float(cell_value):.4f}")
-                table_item.setTextAlignment(Qt.AlignCenter)
+                table_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row_index, 0, table_item)
             self.lbl_title.setText(f"<b>{self.var_name}</b> (Grid: {len(self._values)} знач.)")
         finally:
             self._is_updating = False
 
     def _on_cell_changed(self, row_index: int, column_index: int) -> None:
+        """Обрабатывает изменение текста в ячейке таблицы."""
         if self._is_updating or column_index != 0:
             return
         table_item = self.table.item(row_index, column_index)
@@ -115,12 +119,14 @@ class GridVariableWidget(QWidget):
         self.values_changed.emit(self.var_name, list(self._values))
 
     def _on_add_value_clicked(self) -> None:
+        """Добавляет новую строку со значением в конец таблицы."""
         last_value = self._values[-1] if self._values else 0.0
         self._values.append(last_value)
         self._populate_table()
         self.values_changed.emit(self.var_name, list(self._values))
 
     def _on_remove_value_clicked(self) -> None:
+        """Удаляет выбранную или последнюю строку из таблицы значений."""
         if len(self._values) <= 1:
             QMessageBox.information(self, "Удаление", "Сетка должна содержать как минимум одно значение.")
             return
@@ -132,14 +138,15 @@ class GridVariableWidget(QWidget):
         self.values_changed.emit(self.var_name, list(self._values))
 
     def _on_delete_clicked(self) -> None:
+        """Запрашивает подтверждение удаления всей Grid-переменной."""
         user_choice = QMessageBox.question(
             self,
             "Удаление переменной",
             f"Вы уверены, что хотите удалить Grid-переменную '{self.var_name}'?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if user_choice == QMessageBox.Yes:
+        if user_choice == QMessageBox.StandardButton.Yes:
             self.variable_deleted.emit(self.var_name)
 
 

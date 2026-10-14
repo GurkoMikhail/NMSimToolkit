@@ -13,6 +13,7 @@ class InspectorRegistry:
     """
 
     def __init__(self) -> None:
+        """Инициализирует пустой реестр секций инспектора."""
         self._sections: List[BaseInspectorSection] = []
 
     def register_section(self, section: BaseInspectorSection) -> None:
@@ -37,3 +38,6 @@ class InspectorRegistry:
         if view_model is None:
             return []
         return [section for section in self._sections if section.can_handle(view_model)]
+
+
+__all__ = ["InspectorRegistry"]

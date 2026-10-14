@@ -1,9 +1,15 @@
+"""
+Модуль детерминированной загрузки матриц распределения вокселей и активности (DistributionLoader).
+"""
+
 import logging
 from pathlib import Path
-from typing import Any, Optional, Sequence, Tuple, Union
+from typing import Any, Literal, Optional, Sequence, Tuple, Union, cast
 import numpy as np
 
 _logger = logging.getLogger(__name__)
+
+ArrayOrder = Literal['C', 'F', 'A']
 
 
 class DistributionLoader:
@@ -47,15 +53,21 @@ class DistributionLoader:
                     version = np.lib.format.read_magic(file_descriptor)
                     if version == (1, 0):
                         shape, is_fortran_order, data_type = np.lib.format.read_array_header_1_0(file_descriptor)
+                        metadata_result['shape'] = tuple(shape)
+                        metadata_result['order'] = 'F' if is_fortran_order else 'C'
+                        metadata_result['dtype'] = np.dtype(data_type)
                     elif version == (2, 0):
                         shape, is_fortran_order, data_type = np.lib.format.read_array_header_2_0(file_descriptor)
+                        metadata_result['shape'] = tuple(shape)
+                        metadata_result['order'] = 'F' if is_fortran_order else 'C'
+                        metadata_result['dtype'] = np.dtype(data_type)
                     else:
-                        shape, is_fortran_order, data_type = np.lib.format._read_array_header(file_descriptor, version)
-                    metadata_result['shape'] = tuple(shape)
-                    metadata_result['order'] = 'F' if is_fortran_order else 'C'
-                    metadata_result['dtype'] = np.dtype(data_type)
-            except Exception:
-                memory_mapped_array = np.load(path_object, mmap_mode='r')
+                        memory_mapped_array = np.load(path_object, mmap_mode='r', allow_pickle=False)
+                        metadata_result['shape'] = tuple(memory_mapped_array.shape)
+                        metadata_result['order'] = 'F' if np.isfortran(memory_mapped_array) else 'C'
+                        metadata_result['dtype'] = memory_mapped_array.dtype
+            except (ValueError, OSError):
+                memory_mapped_array = np.load(path_object, mmap_mode='r', allow_pickle=False)
                 metadata_result['shape'] = tuple(memory_mapped_array.shape)
                 metadata_result['order'] = 'F' if np.isfortran(memory_mapped_array) else 'C'
                 metadata_result['dtype'] = memory_mapped_array.dtype
@@ -67,9 +79,9 @@ class DistributionLoader:
         cls,
         file_path: Union[str, Path],
         target_shape: Optional[Tuple[int, ...]] = None,
-        order: str = 'F',
+        order: Union[ArrayOrder, str] = 'F',
         dtype: Any = np.float32,
-        encoding: Optional[str] = None
+        encoding: Optional[str] = None,
     ) -> np.ndarray:
         """
         Загрузка матрицы распределения из файла.
@@ -96,7 +108,7 @@ class DistributionLoader:
 
         # 1. NumPy бинарный формат
         if suffix == '.npy':
-            loaded_data = np.load(path_object, allow_pickle=True)
+            loaded_data: np.ndarray = np.asarray(np.load(path_object, allow_pickle=False))
             return loaded_data
 
         # Для не-.npy форматов target_shape обязателен
@@ -105,6 +117,7 @@ class DistributionLoader:
                 f"Для формата '{suffix}' необходимо указать положительные размеры target_shape, получено: {target_shape}"
             )
 
+        normalized_order: ArrayOrder = cast(ArrayOrder, order if order in ('C', 'F', 'A') else 'F')
         element_dtype = np.dtype(dtype)
         expected_elements_count = int(np.prod(target_shape))
         expected_bytes_count = expected_elements_count * element_dtype.itemsize
@@ -131,7 +144,7 @@ class DistributionLoader:
                     f"требуемой форме {target_shape} для типа {element_dtype} ({expected_bytes_count} байт)"
                 )
             raw_buffer = np.fromfile(path_object, dtype=element_dtype)
-            return raw_buffer.reshape(target_shape, order=order)
+            return np.reshape(raw_buffer, target_shape, order=normalized_order)
         else:
             text_data = np.loadtxt(path_object, dtype=element_dtype)
             if text_data.shape != tuple(target_shape):
@@ -140,5 +153,9 @@ class DistributionLoader:
                         f"Количество элементов в текстовом файле ({text_data.size}) не совпадает "
                         f"с требуемой формой {target_shape} ({expected_elements_count})"
                     )
-                return text_data.reshape(target_shape, order=order)
+                return np.reshape(text_data, target_shape, order=normalized_order)
             return text_data
+
+
+__all__ = ["DistributionLoader"]
+

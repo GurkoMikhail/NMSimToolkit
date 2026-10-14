@@ -8,7 +8,7 @@ from typing import Optional, Sequence, Tuple, Union
 import numpy as np
 
 import settings.database_setting as database_setting
-from core.scene.nodes import SpatialNode
+from core.geometry.direct_collimators import DirectParallelCollimator
 from core.geometry.geometries import Box
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import Volume
@@ -31,7 +31,7 @@ def create_default_gamma_camera(
     casing_material_name: str = "Pb",
     internal_material_name: str = "Air, Dry (near sea level)",
     glass_material_name: str = "Glass, Borosilicate (Pyrex)",
-    collimator: Optional[Union[Volume, SpatialNode]] = None,
+    collimator: Optional[Union[Volume, ParametricParallelCollimator, DirectParallelCollimator]] = None,
     detector: Optional[Volume] = None,
     shielding_material: Optional[Material] = None,
     internal_medium: Optional[Material] = None,

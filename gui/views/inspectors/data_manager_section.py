@@ -21,10 +21,12 @@ class DataManagerInspectorSection(BaseInspectorSection):
     """Секция настройки файла HDF5 и емкости входного буфера хранения событий."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Инициализирует секцию настройки диспетчера данных."""
         self._min_buffer_capacity: int = 1
         super().__init__("Параметры диспетчера данных (DataManager)", parent)
 
     def _init_ui(self) -> None:
+        """Создает элементы управления выбором файла HDF5 и емкостью буфера."""
         dm_form = QFormLayout(self)
 
         fn_layout = QHBoxLayout()
@@ -51,9 +53,11 @@ class DataManagerInspectorSection(BaseInspectorSection):
             self.spin_dm_buffer.setValue(self._min_buffer_capacity)
 
     def can_handle(self, view_model: Any) -> bool:
+        """Проверяет, является ли модель представления диспетчером данных."""
         return isinstance(view_model, DataManagerViewModel)
 
     def update_ui_from_vm(self) -> None:
+        """Синхронизирует имя файла и емкость буфера с текущей DataManagerViewModel."""
         view_model = self._current_vm
         if not isinstance(view_model, DataManagerViewModel):
             return
@@ -71,10 +75,12 @@ class DataManagerInspectorSection(BaseInspectorSection):
             self._is_updating_ui = old_state
 
     def _on_dm_filename_edited(self) -> None:
+        """Сохраняет измененный путь к файлу HDF5 в ViewModel."""
         if not self._is_updating_ui and isinstance(self._current_vm, DataManagerViewModel):
             self._current_vm.filename = self.txt_dm_filename.text().strip()
 
     def _on_dm_browse_clicked(self) -> None:
+        """Открывает диалог выбора выходного файла HDF5."""
         cur_file = self.txt_dm_filename.text() or "simulation_results.h5"
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -88,6 +94,10 @@ class DataManagerInspectorSection(BaseInspectorSection):
                 self._current_vm.filename = path
 
     def _on_dm_buffer_changed(self, new_buffer_size: int) -> None:
+        """Обновляет емкость буфера частиц в DataManagerViewModel."""
         if not self._is_updating_ui and isinstance(self._current_vm, DataManagerViewModel):
             effective_val = max(new_buffer_size, self._min_buffer_capacity)
             self._current_vm.buffer_capacity = effective_val
+
+
+__all__ = ["DataManagerInspectorSection"]

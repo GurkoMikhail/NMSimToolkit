@@ -16,10 +16,12 @@ class VolumeViewModel(NodeViewModel):
     """
     ViewModel для геометрического объема Volume.
     """
+    core_node: Volume
     color = gui_field(default=(0.5, 0.7, 1.0, 0.4))
 
     def __init__(self, core_node: Volume, parent_vm: Optional[NodeViewModel] = None) -> None:
         super().__init__(core_node, parent_vm)
+        self.core_node = core_node
         initial_material_name = self.material_name
         self.color = get_material_rgba(initial_material_name)
 

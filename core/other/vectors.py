@@ -1,6 +1,11 @@
+"""
+Модуль трехмерных векторных структур данных в формате Structure of Arrays (Vector3DSoA).
+"""
+from __future__ import annotations
+
 from typing import NamedTuple
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import DTypeLike, NDArray
 
 from core.other.typing_definitions import Float
 
@@ -10,6 +15,7 @@ class Vector3DSoA(NamedTuple):
     SoA-структура (Structure of Arrays) для представления трехмерных векторных полей частиц.
     Содержит плоские одномерные C-непрерывные массивы numpy для компонент X, Y и Z.
     """
+
     x: NDArray[Float]
     y: NDArray[Float]
     z: NDArray[Float]
@@ -26,19 +32,20 @@ class Vector3DSoA(NamedTuple):
             raise ValueError("Массивы координат Vector3DSoA должны иметь одинаковую длину.")
 
     @classmethod
-    def allocate(cls, capacity: int, dtype: np.dtype = Float) -> 'Vector3DSoA':
+    def allocate(cls, capacity: int, dtype: DTypeLike = Float) -> Vector3DSoA:
         """
         Выделяет память под SoA-буфер векторов заданной емкости.
         """
         buffer = cls(
             x=np.empty(capacity, dtype=dtype),
             y=np.empty(capacity, dtype=dtype),
-            z=np.empty(capacity, dtype=dtype)
+            z=np.empty(capacity, dtype=dtype),
         )
         buffer.validate()
         return buffer
 
 
 __all__ = [
-    'Vector3DSoA',
+    "Vector3DSoA",
 ]
+

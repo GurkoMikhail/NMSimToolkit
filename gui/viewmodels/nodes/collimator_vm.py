@@ -16,6 +16,7 @@ from core.other.typing_definitions import Float
 import settings.database_setting as database_setting
 from gui.viewmodels.decorators import gui_field
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewport_3d.kinematic_constraints import FixedSubcomponentKinematicConstraint
 
 _logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class CollimatorViewModel(NodeViewModel):
     (детерминированный CompositeNode или параметрический Volume).
     """
 
+    core_node: CollimatorCoreNode
     color = gui_field(default=(0.35, 0.35, 0.35, 0.7))
 
     def __init__(
@@ -42,6 +44,7 @@ class CollimatorViewModel(NodeViewModel):
         parent_vm: Optional[NodeViewModel] = None,
     ) -> None:
         super().__init__(core_node, parent_vm)
+        self.core_node = core_node
         if isinstance(self.core_node, DirectParallelCollimator):
             self._apply_fixed_constraints_to_subcomponents()
 
@@ -70,7 +73,8 @@ class CollimatorViewModel(NodeViewModel):
         Уведомляет дочерние узлы (lead_body и channels) об обновлении геометрических параметров.
         """
         for child_vm in self.children:
-            child_vm.property_changed.emit('size', child_vm.size)
+            if isinstance(child_vm, VolumeViewModel):
+                child_vm.property_changed.emit('size', child_vm.size)
             if isinstance(self.core_node, DirectParallelCollimator):
                 if child_vm.core_node is self.core_node.channels:
                     child_vm.property_changed.emit('hole_diameter', self.hole_diameter)
@@ -135,16 +139,19 @@ class CollimatorViewModel(NodeViewModel):
     @property
     def hole_width(self) -> float:
         """Ширина отверстий канала в мм."""
-        return float(self.core_node.hole_width)
+        if isinstance(self.core_node, ParametricParallelCollimator):
+            return float(self.core_node.hole_width)
+        return float(self.core_node.hole_diameter)
 
     @hole_width.setter
     def hole_width(self, width_value: float) -> None:
         numeric_width = float(width_value)
-        self.core_node.hole_width = Float(numeric_width)
-        if isinstance(self.core_node, DirectParallelCollimator):
-            self._notify_children_geometry_changed()
-        else:
+        if isinstance(self.core_node, ParametricParallelCollimator):
+            self.core_node.hole_width = Float(numeric_width)
             self.core_node.invalidate_geometry()
+        else:
+            self.core_node.hole_diameter = Float(numeric_width)
+            self._notify_children_geometry_changed()
         self.property_changed.emit('hole_width', numeric_width)
         self.property_changed.emit('hole_diameter', numeric_width)
 
@@ -166,11 +173,13 @@ class CollimatorViewModel(NodeViewModel):
     @property
     def hole_shape(self) -> CollimatorHoleShape:
         """Форма поперечного сечения каналов коллиматора."""
-        return self.core_node.hole_shape
+        shape_val = self.core_node.hole_shape
+        return shape_val if isinstance(shape_val, CollimatorHoleShape) else CollimatorHoleShape(shape_val)
 
     @hole_shape.setter
     def hole_shape(self, shape_value: Union[CollimatorHoleShape, str]) -> None:
-        self.core_node.hole_shape = shape_value
+        resolved_shape = shape_value if isinstance(shape_value, CollimatorHoleShape) else CollimatorHoleShape(shape_value)
+        self.core_node.hole_shape = resolved_shape
         if isinstance(self.core_node, DirectParallelCollimator):
             self._notify_children_geometry_changed()
         else:

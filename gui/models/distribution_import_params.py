@@ -55,3 +55,9 @@ class DistributionImportParameters:
                 raise ValueError(f"Компоненты шага вокселей должны быть положительными: {self.voxel_size}")
         else:
             raise TypeError(f"Некорректный тип voxel_size: {type(self.voxel_size)}")
+
+
+__all__ = [
+    "ImportTargetKind",
+    "DistributionImportParameters",
+]

@@ -268,10 +268,16 @@ def compute_material_linear_attenuation(
     energy_array = mac_table['Energy']
     coefficients_table = mac_table['Coefficient']
 
-    total_mass_attenuation_array = sum(
-        coefficients_table[process_name]
-        for process_name in coefficients_table.dtype.names
-    )
+    field_names = coefficients_table.dtype.names
+    if not field_names:
+        return 0.0
+
+    total_mass_attenuation_array = np.zeros_like(energy_array, dtype=np.float64)
+    for process_name in field_names:
+        total_mass_attenuation_array = total_mass_attenuation_array + np.asarray(
+            coefficients_table[process_name],
+            dtype=np.float64,
+        )
 
     interpolated_mass_coeff = float(np.interp(energy_table_scale, energy_array, total_mass_attenuation_array))
     linear_attenuation_internal = interpolated_mass_coeff * target_material.density
@@ -439,14 +445,17 @@ def build_material_volume_opacity_tf(
     if not element_list:
         return opacity_function
 
+    background_gas_names = {
+        "vacuum",
+        "air",
+        "air, dry (near sea level)",
+        "вакуум",
+        "воздух",
+    }
+
     for material_index, material_instance in enumerate(element_list):
-        material_name_lower = material_instance.name.lower()
-        if (
-            "vacuum" in material_name_lower
-            or "air" in material_name_lower
-            or "вакуум" in material_name_lower
-            or "воздух" in material_name_lower
-        ):
+        material_name_lower = material_instance.name.strip().lower()
+        if material_name_lower in background_gas_names:
             calculated_opacity = 0.0
         elif pseudo_xray_mode:
             _, calculated_opacity = get_pseudo_xray_rgba(
@@ -498,4 +507,27 @@ def get_collimator_visual_properties(
         hole_opacity = COLLIMATOR_HOLE_OPACITY
 
     return ((body_rgb, body_opacity), (hole_rgb, hole_opacity))
+
+
+__all__ = [
+    "DETECTOR_ACCENT_COLOR",
+    "DETECTOR_ACCENT_OPACITY",
+    "SELECTED_EDGE_HIGHLIGHT_COLOR",
+    "SELECTED_EDGE_HIGHLIGHT_WIDTH",
+    "COLLIMATOR_BODY_OPACITY",
+    "COLLIMATOR_HOLE_ACCENT_COLOR",
+    "COLLIMATOR_HOLE_OPACITY",
+    "MATERIAL_COLOR_PALETTE",
+    "generate_deterministic_color",
+    "get_material_color",
+    "compute_material_linear_attenuation",
+    "compute_xray_opacity",
+    "get_material_opacity",
+    "get_material_rgba",
+    "get_pseudo_xray_rgba",
+    "build_material_volume_color_tf",
+    "build_material_volume_opacity_tf",
+    "get_collimator_visual_properties",
+]
+
 

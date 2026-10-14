@@ -1,9 +1,13 @@
+"""
+Модуль SoA-буферов регистрации взаимодействий, начальных состояний, выбывших частиц и контекста ГСЧ.
+"""
+
+from typing import Any, NamedTuple
+
 import numpy as np
-from typing import NamedTuple, Any
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Time, Length
-from core.other.typing_definitions import Index, ID, Energy, Float, ProcessID, Species, Charge
+from core.other.typing_definitions import Charge, Energy, Float, ID, Index, Length, ProcessID, Species, Time
 from core.other.vectors import Vector3DSoA
 
 
@@ -66,7 +70,7 @@ class InteractionBuffer(NamedTuple):
         self.position.validate()
         self.direction.validate()
 
-        tracked_arrays = [
+        tracked_arrays: list[NDArray[Any]] = [
             self.process_id,
             self.volume_id,
             self.material_id,
@@ -120,9 +124,9 @@ class InteractionBuffer(NamedTuple):
         buffer.validate()
         return buffer
 
-    def flush_to_dict(self, clear: bool = True) -> dict:
+    def flush_to_dict(self, clear: bool = True) -> dict[str, NDArray[Any]]:
         cursor_pos = self.cursor_value
-        chunk = {
+        chunk: dict[str, NDArray[Any]] = {
             'process_id': self.process_id[:cursor_pos].copy(),
             'volume_id': self.volume_id[:cursor_pos].copy(),
             'material_id': self.material_id[:cursor_pos].copy(),
@@ -175,7 +179,7 @@ class InitialStateBuffer(NamedTuple):
         self.emission_position.validate()
         self.emission_direction.validate()
 
-        tracked_arrays = [
+        tracked_arrays: list[NDArray[Any]] = [
             self.particle_ID,
             self.emission_time,
             self.emission_energy,
@@ -301,3 +305,13 @@ class SimulationDataBuffer(NamedTuple):
             initial_states=InitialStateBuffer.allocate(initial_state_capacity),
             dead_particles=DeadParticlesBuffer.allocate(dead_particles_capacity)
         )
+
+
+__all__ = [
+    "RNGContext",
+    "InteractionBuffer",
+    "InitialStateBuffer",
+    "DeadParticlesBuffer",
+    "SimulationDataBuffer",
+]
+

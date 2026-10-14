@@ -152,7 +152,7 @@ class DoseVolumeRenderer:
         try:
             # 1. Мутация скаляров in-place без выделения новых VTK-объектов
             flat_dose = dose_3d.flatten(order='F').astype(np.float32)
-            self.grid.point_data['dose'][:] = flat_dose
+            np.asarray(self.grid.point_data['dose'])[:] = flat_dose
 
             # 2. Оповещение конвейера VTK об изменении скалярных данных
             scalars = self.grid.GetPointData().GetScalars()
@@ -175,8 +175,8 @@ class DoseVolumeRenderer:
                     self.viewport.render()
                 self._last_render_time = now
 
-        except Exception as e:
-            _logger.debug(f"Ошибка обновления карты дозы: {e}")
+        except (RuntimeError, ValueError, TypeError, KeyError, AttributeError) as dose_update_error:
+            _logger.debug(f"Ошибка обновления карты дозы: {dose_update_error}")
 
     def _update_transfer_functions(self, max_dose: float) -> None:
         """
@@ -209,7 +209,7 @@ class DoseVolumeRenderer:
         """
         if self.grid is not None:
             try:
-                self.grid.point_data['dose'][:] = 0.0
+                np.asarray(self.grid.point_data['dose'])[:] = 0.0
                 scalars = self.grid.GetPointData().GetScalars()
                 if scalars is not None:
                     scalars.Modified()
@@ -218,8 +218,8 @@ class DoseVolumeRenderer:
                 self._update_transfer_functions(max_dose=1.0)
                 if self.viewport is not None:
                     self.viewport.render()
-            except Exception as e:
-                _logger.debug(f"Ошибка очистки карты дозы: {e}")
+            except (RuntimeError, ValueError, TypeError, KeyError, AttributeError) as dose_clear_error:
+                _logger.debug(f"Ошибка очистки карты дозы: {dose_clear_error}")
 
     def set_colormap(self, colormap_name: str) -> None:
         """
@@ -248,3 +248,9 @@ class DoseVolumeRenderer:
             self.volume_actor.SetVisibility(1 if visible else 0)
             if self.viewport is not None:
                 self.viewport.render()
+
+
+__all__ = [
+    "DoseVolumeRenderer",
+]
+

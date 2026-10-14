@@ -1,7 +1,21 @@
+from __future__ import annotations
+
 import logging
 import math
 from enum import Enum
-from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+    runtime_checkable,
+)
 
 import numpy as np
 import pyvista as pv
@@ -9,6 +23,10 @@ import vtk
 from PySide6.QtCore import QObject, Signal
 
 from core.geometry.volumes import Volume
+from gui.viewport_3d.gizmo_types import GizmoAxis, GizmoMode, GizmoSpace
+
+if TYPE_CHECKING:
+    from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 
 _logger = logging.getLogger(__name__)
 
@@ -27,7 +45,7 @@ class IViewport(Protocol):
         self,
         name: str,
         mesh: Any,
-        color: Optional[str] = 'white',
+        color: Optional[Union[str, Sequence[float]]] = 'white',
         opacity: float = 1.0,
         style: str = 'surface',
         wireframe: bool = False,
@@ -38,11 +56,6 @@ class IViewport(Protocol):
     def remove_actor(self, name: str) -> None: ...
 
     def render(self) -> None: ...
-
-
-from gui.viewport_3d.gizmo_types import GizmoAxis, GizmoMode, GizmoSpace
-
-
 
 class TransformGizmo(QObject):
     """
@@ -420,11 +433,17 @@ class TransformGizmo(QObject):
                 world_delta,
                 initial_matrix,
             )
+            changed_data.setdefault('shift_pressed', shift_modifier)
             if 'matrix' in changed_data:
-                new_matrix = changed_data['matrix']
+                new_matrix = np.asarray(changed_data['matrix'], dtype=np.float64)
             else:
                 new_matrix = initial_matrix.copy()
-                new_matrix[0:3, 3] = initial_matrix[0:3, 3] + filtered_delta
+                if self._target_node.parent_vm is not None:
+                    parent_rot = np.asarray(self._target_node.parent_vm.global_matrix[0:3, 0:3], dtype=np.float64)
+                    local_filtered_delta = np.linalg.inv(parent_rot) @ filtered_delta
+                else:
+                    local_filtered_delta = filtered_delta
+                new_matrix[0:3, 3] = initial_matrix[0:3, 3] + local_filtered_delta
             self._target_node.local_matrix = new_matrix
             self.transform_changed.emit(new_matrix)
             self._constraint.on_transform_changed(self._target_node, changed_data)
@@ -432,7 +451,7 @@ class TransformGizmo(QObject):
             if 'status_message' in changed_data:
                 self.status_message_requested.emit(str(changed_data['status_message']))
             self.update_visuals()
-            return new_matrix
+            return np.asarray(new_matrix, dtype=np.float64)
 
         current_matrix = self._target_node.local_matrix.copy()
         current_pos = current_matrix[0:3, 3].copy()
@@ -461,7 +480,7 @@ class TransformGizmo(QObject):
         self._target_node.local_matrix = current_matrix
         self.transform_changed.emit(current_matrix)
         self.update_visuals()
-        return current_matrix
+        return np.asarray(current_matrix, dtype=np.float64)
 
     def apply_rotation(
         self,
@@ -486,8 +505,9 @@ class TransformGizmo(QObject):
                 angle_deg,
                 initial_matrix,
             )
+            changed_data.setdefault('shift_pressed', shift_modifier)
             if 'matrix' in changed_data:
-                new_matrix = changed_data['matrix']
+                new_matrix = np.asarray(changed_data['matrix'], dtype=np.float64)
             else:
                 new_matrix = initial_matrix.copy()
             self._target_node.local_matrix = new_matrix
@@ -497,7 +517,7 @@ class TransformGizmo(QObject):
             if 'status_message' in changed_data:
                 self.status_message_requested.emit(str(changed_data['status_message']))
             self.update_visuals()
-            return new_matrix
+            return np.asarray(new_matrix, dtype=np.float64)
 
         snapped_angle_deg = self.snap_angle(angle_deg, shift_modifier=shift_modifier)
         angle_rad = math.radians(snapped_angle_deg)
@@ -549,7 +569,7 @@ class TransformGizmo(QObject):
         self._target_node.local_matrix = current_matrix
         self.transform_changed.emit(current_matrix)
         self.update_visuals()
-        return current_matrix
+        return np.asarray(current_matrix, dtype=np.float64)
 
     def apply_scale(
         self,
@@ -575,7 +595,7 @@ class TransformGizmo(QObject):
         self._target_node.local_matrix = current_matrix
         self.transform_changed.emit(current_matrix)
         self.update_visuals()
-        return current_matrix
+        return np.asarray(current_matrix, dtype=np.float64)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Управление горячими клавишами (UE-Style Shortcuts)
@@ -697,7 +717,7 @@ class TransformGizmo(QObject):
                                     math.radians(view_angle_deg / 2.0)
                                 )
                                 camera_size = visible_height * 0.15
-                except Exception as camera_err:
+                except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as camera_err:
                     _logger.debug(f"Ошибка вычисления размера манипулятора по камере: {camera_err}")
                     camera_size = None
 
@@ -765,8 +785,25 @@ class TransformGizmo(QObject):
 
             if render:
                 self.viewport.render()
-        except Exception as err:
+        except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as err:
             _logger.error(f"Ошибка построения мешей манипулятора Gizmo: {err}")
+
+    @staticmethod
+    def _transform_local_mesh(
+        mesh: pv.PolyData,
+        center: np.ndarray,
+        dir_x: np.ndarray,
+        dir_y: np.ndarray,
+        dir_z: np.ndarray,
+    ) -> pv.PolyData:
+        """Ориентирует и переносит локальный полигональный меш в базис (dir_x, dir_y, dir_z) с центром center."""
+        transform_mat = np.eye(4, dtype=np.float64)
+        transform_mat[0:3, 0] = dir_x
+        transform_mat[0:3, 1] = dir_y
+        transform_mat[0:3, 2] = dir_z
+        transform_mat[0:3, 3] = center
+        mesh.transform(transform_mat, inplace=True)
+        return mesh
 
     def _build_translate_visuals(
         self,
@@ -823,23 +860,38 @@ class TransformGizmo(QObject):
             )
             self._add_gizmo_mesh("gizmo_translate_z", arrow_z, self._colors[GizmoAxis.Z])
 
-        # Плоскости XY, XZ, YZ
+        # Плоскости XY, XZ, YZ (ориентированные строго по локальному базису dir_x, dir_y, dir_z)
         plane_size = size * 0.25
         plane_offset = size * 0.2
 
         if GizmoAxis.XY in allowed_axes:
-            center_xy = center + dir_x * plane_offset + dir_y * plane_offset
-            plane_xy = pv.Plane(center=center_xy, direction=dir_z, i_size=plane_size, j_size=plane_size)
+            plane_xy = pv.Plane(
+                center=(plane_offset, plane_offset, 0.0),
+                direction=(0.0, 0.0, 1.0),
+                i_size=plane_size,
+                j_size=plane_size,
+            )
+            self._transform_local_mesh(plane_xy, center, dir_x, dir_y, dir_z)
             self._add_gizmo_mesh("gizmo_translate_xy", plane_xy, self._colors[GizmoAxis.XY], opacity=0.45)
 
         if GizmoAxis.XZ in allowed_axes:
-            center_xz = center + dir_x * plane_offset + dir_z * plane_offset
-            plane_xz = pv.Plane(center=center_xz, direction=dir_y, i_size=plane_size, j_size=plane_size)
+            plane_xz = pv.Plane(
+                center=(plane_offset, 0.0, plane_offset),
+                direction=(0.0, 1.0, 0.0),
+                i_size=plane_size,
+                j_size=plane_size,
+            )
+            self._transform_local_mesh(plane_xz, center, dir_x, dir_y, dir_z)
             self._add_gizmo_mesh("gizmo_translate_xz", plane_xz, self._colors[GizmoAxis.XZ], opacity=0.45)
 
         if GizmoAxis.YZ in allowed_axes:
-            center_yz = center + dir_y * plane_offset + dir_z * plane_offset
-            plane_yz = pv.Plane(center=center_yz, direction=dir_x, i_size=plane_size, j_size=plane_size)
+            plane_yz = pv.Plane(
+                center=(0.0, plane_offset, plane_offset),
+                direction=(1.0, 0.0, 0.0),
+                i_size=plane_size,
+                j_size=plane_size,
+            )
+            self._transform_local_mesh(plane_yz, center, dir_x, dir_y, dir_z)
             self._add_gizmo_mesh("gizmo_translate_yz", plane_yz, self._colors[GizmoAxis.YZ], opacity=0.45)
 
     def _build_rotate_visuals(
@@ -893,24 +945,28 @@ class TransformGizmo(QObject):
 
         # Осевой брусок + кубик X
         cyl_x = pv.Cylinder(center=center + dir_x * (axis_len * 0.5), direction=dir_x, radius=shaft_rad, height=axis_len)
-        box_x = pv.Cube(center=center + dir_x * axis_len, x_length=box_edge, y_length=box_edge, z_length=box_edge)
+        box_x = pv.Cube(center=(axis_len, 0.0, 0.0), x_length=box_edge, y_length=box_edge, z_length=box_edge)
+        self._transform_local_mesh(box_x, center, dir_x, dir_y, dir_z)
         mesh_x = cyl_x.merge(box_x)
         self._add_gizmo_mesh("gizmo_scale_x", mesh_x, self._colors[GizmoAxis.X])
 
         # Осевой брусок + кубик Y
         cyl_y = pv.Cylinder(center=center + dir_y * (axis_len * 0.5), direction=dir_y, radius=shaft_rad, height=axis_len)
-        box_y = pv.Cube(center=center + dir_y * axis_len, x_length=box_edge, y_length=box_edge, z_length=box_edge)
+        box_y = pv.Cube(center=(0.0, axis_len, 0.0), x_length=box_edge, y_length=box_edge, z_length=box_edge)
+        self._transform_local_mesh(box_y, center, dir_x, dir_y, dir_z)
         mesh_y = cyl_y.merge(box_y)
         self._add_gizmo_mesh("gizmo_scale_y", mesh_y, self._colors[GizmoAxis.Y])
 
         # Осевой брусок + кубик Z
         cyl_z = pv.Cylinder(center=center + dir_z * (axis_len * 0.5), direction=dir_z, radius=shaft_rad, height=axis_len)
-        box_z = pv.Cube(center=center + dir_z * axis_len, x_length=box_edge, y_length=box_edge, z_length=box_edge)
+        box_z = pv.Cube(center=(0.0, 0.0, axis_len), x_length=box_edge, y_length=box_edge, z_length=box_edge)
+        self._transform_local_mesh(box_z, center, dir_x, dir_y, dir_z)
         mesh_z = cyl_z.merge(box_z)
         self._add_gizmo_mesh("gizmo_scale_z", mesh_z, self._colors[GizmoAxis.Z])
 
         # Центральный кубик для равномерного 3-осевого масштабирования (XYZ)
-        center_box = pv.Cube(center=center, x_length=box_edge * 1.2, y_length=box_edge * 1.2, z_length=box_edge * 1.2)
+        center_box = pv.Cube(center=(0.0, 0.0, 0.0), x_length=box_edge * 1.2, y_length=box_edge * 1.2, z_length=box_edge * 1.2)
+        self._transform_local_mesh(center_box, center, dir_x, dir_y, dir_z)
         self._add_gizmo_mesh("gizmo_scale_xyz", center_box, self._colors[GizmoAxis.XYZ], opacity=0.9)
 
     def _add_gizmo_mesh(
@@ -1028,7 +1084,7 @@ class TransformGizmo(QObject):
                 cmd = caller.GetCommand(tag)
                 if cmd is not None:
                     cmd.SetAbortFlag(1)
-            except Exception as err:
+            except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as err:
                 _logger.debug(f"Не удалось выставить AbortFlag для события {event_name}: {err}")
 
     def _pick_gizmo_axis(self, event_x: int, event_y: int) -> Tuple[GizmoAxis, Optional[str]]:
@@ -1070,7 +1126,7 @@ class TransformGizmo(QObject):
                 for actor_name, mesh_actor in self._mesh_actors.items():
                     if mesh_actor is picked_actor or mesh_actor == picked_actor:
                         return self._actor_axis_map.get(actor_name, GizmoAxis.NONE), actor_name
-        except Exception:
+        except (RuntimeError, ValueError, TypeError, AttributeError, KeyError):
             pass
 
         return GizmoAxis.NONE, None
@@ -1262,7 +1318,11 @@ class TransformGizmo(QObject):
         cur_y: int
     ) -> np.ndarray:
         """Пересчет экранного смещения мыши в 3D мировое смещение через обратную проекцию луча камеры."""
+        if self._target_node is None or self.viewport is None or self.viewport.plotter is None:
+            return np.zeros(3, dtype=np.float64)
         renderer = self.viewport.plotter.renderer
+        if renderer is None:
+            return np.zeros(3, dtype=np.float64)
         global_matrix = self._target_node.global_matrix
         gizmo_center = global_matrix[0:3, 3]
 
@@ -1276,12 +1336,15 @@ class TransformGizmo(QObject):
             renderer.DisplayToWorld()
             world_pt = renderer.GetWorldPoint()
             if world_pt[3] != 0.0:
-                return np.array([world_pt[0], world_pt[1], world_pt[2]], dtype=np.float64) / world_pt[3]
+                return np.asarray(
+                    np.array([world_pt[0], world_pt[1], world_pt[2]], dtype=np.float64) / float(world_pt[3]),
+                    dtype=np.float64,
+                )
             return np.array([world_pt[0], world_pt[1], world_pt[2]], dtype=np.float64)
 
         world_prev = _screen_point_to_world(float(last_x), float(last_y))
         world_cur = _screen_point_to_world(float(cur_x), float(cur_y))
-        return world_cur - world_prev
+        return np.asarray(world_cur - world_prev, dtype=np.float64)
 
     def _apply_drag_translation(self, total_world_delta: np.ndarray, shift_modifier: bool) -> None:
         """Проекция общего мирового смещения на активную ось/плоскость относительно исходной точки перетаскивания."""
@@ -1295,12 +1358,18 @@ class TransformGizmo(QObject):
                 self._initial_drag_matrix,
                 active_axis=self._active_axis,
             )
+            changed_data.setdefault('shift_pressed', shift_modifier)
             self._last_changed_data = changed_data
             if 'matrix' in changed_data:
                 new_matrix = changed_data['matrix']
             else:
                 new_matrix = self._initial_drag_matrix.copy()
-                new_matrix[0:3, 3] = self._initial_drag_matrix[0:3, 3] + filtered_delta
+                if self._target_node.parent_vm is not None:
+                    parent_rot = np.asarray(self._target_node.parent_vm.global_matrix[0:3, 0:3], dtype=np.float64)
+                    local_filtered_delta = np.linalg.inv(parent_rot) @ filtered_delta
+                else:
+                    local_filtered_delta = filtered_delta
+                new_matrix[0:3, 3] = self._initial_drag_matrix[0:3, 3] + local_filtered_delta
 
             self._target_node.local_matrix = new_matrix
             self.transform_changed.emit(new_matrix)

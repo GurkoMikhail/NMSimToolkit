@@ -33,7 +33,7 @@ def unit_validator_factory(target_unit: str, to_hepunits_factor: float = 1.0):
                 return float(magnitude_val * to_hepunits_factor)
             except (pint.DimensionalityError, pint.UndefinedUnitError) as unit_err:
                 raise ValueError(f"Невозможно преобразовать '{input_value}' к единицам {target_unit}: {unit_err}")
-            except Exception as parse_err:
+            except (ValueError, TypeError, ArithmeticError, pint.PintError) as parse_err:
                 raise ValueError(f"Ошибка парсинга физической величины '{input_value}': {parse_err}")
         raise ValueError(f"Ожидалось число или строка с единицами, получено {type(input_value)}")
     return validator
@@ -80,4 +80,16 @@ def integer_count_validator(input_value: Any) -> Any:
 
 
 CountConfig = Annotated[Any, BeforeValidator(integer_count_validator)]
+
+__all__ = [
+    "ureg",
+    "unit_validator_factory",
+    "integer_count_validator",
+    "LengthConfig",
+    "EnergyConfig",
+    "TimeConfig",
+    "ActivityConfig",
+    "AngleConfig",
+    "CountConfig",
+]
 
