@@ -1,0 +1,134 @@
+[
+  {
+    "collimator_code": "LEHR",
+    "nuclide_name": "131I (364.5 кэВ)",
+    "sensitivity_parametric": {
+      "emitted_count": 2500000,
+      "solid_angle_fraction": 0.030313643576310556,
+      "total": {
+        "count": 351579,
+        "sensitivity": 0.004263056197966276,
+        "sensitivity_error": 7.1896805528738565e-06,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 8280,
+        "sensitivity": 0.00010039878752474057,
+        "sensitivity_error": 1.1033500007737745e-06,
+        "fraction_of_total": 0.02355089467800978
+      },
+      "septal_penetration": {
+        "count": 276364,
+        "sensitivity": 0.0033510399173293966,
+        "sensitivity_error": 6.374393450797103e-06,
+        "fraction_of_total": 0.7860651517866539
+      },
+      "collimator_scatter": {
+        "count": 66935,
+        "sensitivity": 0.0008116174931121388,
+        "sensitivity_error": 3.1370740129298873e-06,
+        "fraction_of_total": 0.1903839535353363
+      }
+    },
+    "sensitivity_direct": {
+      "emitted_count": 2500000,
+      "solid_angle_fraction": 0.030313643576310556,
+      "total": {
+        "count": 352973,
+        "sensitivity": 0.004279959085624427,
+        "sensitivity_error": 7.203919884141158e-06,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 8038,
+        "sensitivity": 9.74644268265537e-05,
+        "sensitivity_error": 1.0871065994077213e-06,
+        "fraction_of_total": 0.02277228003275038
+      },
+      "septal_penetration": {
+        "count": 277358,
+        "sensitivity": 0.0033630926220153375,
+        "sensitivity_error": 6.38584657059321e-06,
+        "fraction_of_total": 0.7857768157904429
+      },
+      "collimator_scatter": {
+        "count": 67577,
+        "sensitivity": 0.0008194020367825355,
+        "sensitivity_error": 3.1520825680003174e-06,
+        "fraction_of_total": 0.1914509041768067
+      }
+    },
+    "anisotropy_contrast_parametric": 0.1774577279293058,
+    "anisotropy_contrast_direct": 0.1778886466543686,
+    "harmonic6_ratio_parametric": 0.10057404951075005,
+    "harmonic6_ratio_direct": 0.10902911841821729,
+    "azimuthal_profile_correlation": 0.983858329456771,
+    "passed": true
+  },
+  {
+    "collimator_code": "HEGP",
+    "nuclide_name": "131I (364.5 кэВ)",
+    "sensitivity_parametric": {
+      "emitted_count": 2500000,
+      "solid_angle_fraction": 0.030313643576310556,
+      "total": {
+        "count": 14722,
+        "sensitivity": 0.00017851098429217763,
+        "sensitivity_error": 1.4712332720937826e-06,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 9957,
+        "sensitivity": 0.0001207331796357297,
+        "sensitivity_error": 1.2099359611669019e-06,
+        "fraction_of_total": 0.6763347371281075
+      },
+      "septal_penetration": {
+        "count": 3272,
+        "sensitivity": 3.9674496712675256e-05,
+        "sensitivity_error": 6.935931235003827e-07,
+        "fraction_of_total": 0.22225241135715257
+      },
+      "collimator_scatter": {
+        "count": 1493,
+        "sensitivity": 1.8103307943772664e-05,
+        "sensitivity_error": 4.6851989266613476e-07,
+        "fraction_of_total": 0.10141285151473985
+      }
+    },
+    "sensitivity_direct": {
+      "emitted_count": 2500000,
+      "solid_angle_fraction": 0.030313643576310556,
+      "total": {
+        "count": 14560,
+        "sensitivity": 0.00017654666018843268,
+        "sensitivity_error": 1.4631161992870101e-06,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 9881,
+        "sensitivity": 0.00011981164487100984,
+        "sensitivity_error": 1.2053095036398394e-06,
+        "fraction_of_total": 0.6786401098901099
+      },
+      "septal_penetration": {
+        "count": 3232,
+        "sensitivity": 3.9189478415454287e-05,
+        "sensitivity_error": 6.893405198093601e-07,
+        "fraction_of_total": 0.22197802197802197
+      },
+      "collimator_scatter": {
+        "count": 1447,
+        "sensitivity": 1.754553690196855e-05,
+        "sensitivity_error": 4.6124577049606806e-07,
+        "fraction_of_total": 0.09938186813186813
+      }
+    },
+    "anisotropy_contrast_parametric": 0.7296511627906976,
+    "anisotropy_contrast_direct": 0.7805255023183926,
+    "harmonic6_ratio_parametric": 0.6185197313542996,
+    "harmonic6_ratio_direct": 0.6431973218550655,
+    "azimuthal_profile_correlation": 0.9498717572830798,
+    "passed": true
+  }
+]
