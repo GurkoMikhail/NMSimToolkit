@@ -25,6 +25,10 @@ from verification.collimators.exp05_speed_benchmark import (
     SpeedBenchmarkRecord,
     run_exp05_speed_benchmark,
 )
+from verification.collimators.exp06_nema_detector_head import (
+    NemaDetectorHeadComparisonResult,
+    run_exp06_nema_detector_head,
+)
 
 
 def _write_collimators_master_summary(
@@ -34,23 +38,22 @@ def _write_collimators_master_summary(
     exp03_result: AngerCurveExperimentResult | None,
     exp04_results: list[SeptalStarCaseResult] | None,
     exp05_results: list[SpeedBenchmarkRecord] | None,
+    exp06_results: list[NemaDetectorHeadComparisonResult] | None,
     total_wall_time: float,
 ) -> Path:
     """Формирует сводный аналитический отчет SUMMARY_REPORT.md по всем выполненным экспериментам."""
     summary_path = output_dir / "SUMMARY_REPORT.md"
     lines: list[str] = [
-        "# Сводный отчет верификации параллельных коллиматоров: `Parametric` vs `Direct`",
+        "# Сводный отчет верификации параллельных коллиматоров и детекторной головки GE Discovery: `Parametric` vs `Direct` vs Паспорт NEMA NU-1",
         "",
         f"Общее время выполнения пакета верификации: **{total_wall_time:.2f} с**.",
         "",
-        "## Обзор архитектуры эксперимента",
+        "## Обзор архитектуры верификационного стенда",
         "- **Эталонная модель (`ParametricParallelCollimator`):** дельта-трекинг Вудкока с вызовом JIT `@cfunc` на каждом виртуальном шаге в мажорантной среде (`Pb`).",
         "- **Тестируемая модель (`DirectParallelCollimator`):** аналитический RayCasting (`_hex_prism_intersect` по ячейкам Вороного `PeriodicHexPrism`) в составе однопроходного алгоритма художника (`_trace_single_ray`).",
-        "- **Чистая регистрация на выходном торце:** частицы фиксируются непосредственно в плоскости выходного торца коллиматора без сцинтилляционного кристалла и без обратного рассеяния.",
-        "- **Точная декомпозиция на 3 физические компоненты:**",
-        "  1. `GEOMETRIC` — прямой пролет внутри одного гексагонального канала ($N_{\\text{scatter}} = 0$, индексы входной и выходной ячейки совпадают);",
-        "  2. `SEPTAL_PENETRATION` — прямой пролет сквозь свинцовые септы между разными каналами ($N_{\\text{scatter}} = 0$, ячейки различаются или луч вошел/вышел через торец септы);",
-        "  3. `COLLIMATOR_SCATTER` — фотоны, испытавшие $\\ge 1$ акт комптоновского или рэлеевского рассеяния в свинце коллиматора (`Pb`).",
+        "- **Два независимых уровня верификации:**",
+        "  1. **Изолированный коллиматор (Эксперименты 1–5):** регистрация на выходном торце коллиматора в вакууме без детектора, строгая декомпозиция на 3 физические компоненты (`GEOMETRIC`, `SEPTAL_PENETRATION`, `COLLIMATOR_SCATTER`) и сверка с аналитической теорией Хола Ангера;",
+        "  2. **Сквозная детекторная головка GE Discovery NM/CT 670 (Эксперимент 6):** полный Монте-Карло транспорт через свинцовый кожух (`Pb`), коллиматор, кристалл $\\text{NaI(Tl)}$ толщиной $3/8''$ ($9.5\\text{ мм}$, `Sodium Iodide`) и боросиликатный световод толщиной $76\\text{ мм}$ (`Glass, Borosilicate (Pyrex)`) с моделированием энергетического и пространственного отклика ФЭУ Ангера и прямой сверкой с официальным паспортом GE Healthcare по стандарту **NEMA NU-1**.",
         "",
     ]
 
@@ -77,7 +80,9 @@ def _write_collimators_master_summary(
         lines.extend(
             [
                 "---",
-                "## Эксперимент 2: Покомпонентная верификация PSF на серии коллиматоров GE ($Z = 100\\text{ мм}$)",
+                "## Эксперимент 2: Покомпонентная верификация PSF и сверка с теорией Ангера ($Z = 100\\text{ мм}$)",
+                "",
+                "### 2.1. Сводное согласие `Parametric` и `Direct` по 3 компонентам коллиматора",
                 "",
                 "| Коллиматор (Нуклид) | FWHM Ангера, мм | FWHM `Param` / `Direct`, мм | Sens `Param` / `Direct` ($\\times 10^{-4}$) | Geom `Param` / `Direct`, % | Septal `Param` / `Direct`, % | Scatter `Param` / `Direct`, % | $Z$-score (`Geom` / `Septal` / `Scat`) | $\\chi^2/\\text{ndf}$ | Статус |",
                 "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
@@ -96,6 +101,53 @@ def _write_collimators_master_summary(
                 f"{sens_param.septal_penetration.fraction_of_total * 100:.2f} / {sens_direct.septal_penetration.fraction_of_total * 100:.2f} | "
                 f"{sens_param.collimator_scatter.fraction_of_total * 100:.2f} / {sens_direct.collimator_scatter.fraction_of_total * 100:.2f} | "
                 f"{z_comp_str} | {stat_comp.reduced_chi2_radial:.2f} | **{'PASS' if psf_item.passed else 'FAIL'}** |"
+            )
+
+        lines.extend(
+            [
+                "",
+                "### 2.2. Детальная радиальная морфология и кратность рассеяний по каждой компоненте PSF",
+                "",
+                "| Коллиматор | Компонента | $R_{50}$ `Param` / `Direct`, мм | $R_{90}$ `Param` / `Direct`, мм | $R_{\\text{RMS}}$ `Param` / `Direct`, мм | $\\langle E \\rangle$ `Direct`, кэВ | Кратность Комптон / Рэлей | Однокр. / Многокр. рас., % | KS $p$-val |",
+                "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+            ]
+        )
+        for psf_item in exp02_results:
+            for comp_entry in psf_item.component_comparisons:
+                param_comp = comp_entry.parametric
+                direct_comp = comp_entry.direct
+                lines.append(
+                    f"| **{psf_item.collimator_code}** | `{comp_entry.component_name}` | "
+                    f"{param_comp.radial_r50:.2f} / {direct_comp.radial_r50:.2f} | "
+                    f"{param_comp.radial_r90:.2f} / {direct_comp.radial_r90:.2f} | "
+                    f"{param_comp.radial_rms:.2f} / {direct_comp.radial_rms:.2f} | "
+                    f"{direct_comp.mean_energy * 1000.0:.1f} | "
+                    f"{direct_comp.mean_compton_orders:.2f} / {direct_comp.mean_coherent_orders:.2f} | "
+                    f"{direct_comp.single_scatter_fraction * 100.0:.1f}% / {direct_comp.multi_scatter_fraction * 100.0:.1f}% | "
+                    f"{comp_entry.ks_pvalue_radial:.3f} |"
+                )
+
+        lines.extend(
+            [
+                "",
+                "### 2.3. Сверка с аналитической теорией Хола Ангера и аналитический пересчет в паспорт GE NEMA NU-1",
+                "",
+                "| Коллиматор | FWHM Ангера ($R_g$), мм | Geom FWHM `Direct`, мм ($\\Delta\\%$) | Sens Ангера ($\\times 10^{-4}$) | Geom Sens `Direct` ($\\times 10^{-4}$, $\\Delta\\%$) | Паспорт GE $\\text{FWHM}_{\\text{sys}}$, мм | Пересчет $\\text{FWHM}_{\\text{sys}}$ `Direct`, мм ($\\Delta\\%$) | Паспорт GE $S_{\\text{sys}}$, имп./с/МБк | Пересчет $S_{\\text{sys}}$ `Direct`, имп./с/МБк ($\\Delta\\%$) |",
+                "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+            ]
+        )
+        for psf_item in exp02_results:
+            val_summary = psf_item.passport_validation
+            geom_sens_val = psf_item.sensitivity_direct.geometric.sensitivity
+            lines.append(
+                f"| **{psf_item.collimator_code}** | {val_summary.anger_geometric_fwhm:.2f} | "
+                f"{val_summary.geom_fwhm_direct:.2f} (`{val_summary.geom_fwhm_rel_error_direct * 100.0:+.2f}%`) | "
+                f"{val_summary.anger_geometric_sensitivity * 1e4:.3f} | "
+                f"{geom_sens_val * 1e4:.3f} (`{val_summary.geom_sens_rel_error_direct * 100.0:+.2f}%`) | "
+                f"**{val_summary.passport_system_fwhm:.2f}** | "
+                f"**{val_summary.reconstructed_system_fwhm_direct:.2f}** (`{val_summary.system_fwhm_rel_error_direct * 100.0:+.2f}%`) | "
+                f"**{val_summary.passport_activity_sensitivity:.1f}** | "
+                f"**{val_summary.reconstructed_activity_sensitivity_direct:.1f}** (`{val_summary.system_sensitivity_rel_error_direct * 100.0:+.2f}%`) |"
             )
         lines.append("")
 
@@ -159,13 +211,39 @@ def _write_collimators_master_summary(
                 "- В штатных клинических режимах низких и средних энергий (`LEHR / Tc-99m`, `LEUHR / Tc-99m`, `MEGP / In-111`), "
                 "где линейный коэффициент ослабления свинца $\\mu_{\\text{Pb}}(E)$ велик, дельта-трекинг Вудкока (`Parametric`) вынужден "
                 "совершать множество мелких фиктивных шагов внутри пустых каналов. Аналитический RayCasting (`Direct`) пролетает вакуумные каналы "
-                "за один шаг и дает ускорение **1.23x–1.58x**.",
+                "за один шаг и дает ускорение **1.21x–1.57x** в полной полусфере $2\\pi$ и до **2.68x** в целевом рабочем конусе.",
                 "- В нештатном режиме высокоэнергетического пробоя тонких септ (`LEHR / I-131`), где длина свободного пробега в свинце велика "
                 "($\\sim 3.3\\text{ мм}$), косые лучи пересекают десятки границ ячеек Вороного без поглощения: в этом режиме дельта-трекинг Вудкока "
                 "проходит сквозь решетку за меньшее число шагов, чем пограничная трассировка ячеек.",
                 "",
             ]
         )
+
+    if exp06_results is not None:
+        lines.extend(
+            [
+                "---",
+                "## Эксперимент 6: Сквозная (End-to-End) Монте-Карло верификация полной детекторной головки GE Discovery NM/CT 670 по стандарту NEMA NU-1",
+                "",
+                "| Коллиматор (Нуклид) | Паспорт GE $\\text{FWHM}_{\\text{sys}}$, мм | MC $\\text{FWHM}_{\\text{sys}}$ `Param` / `Direct`, мм ($\\Delta\\%$) | Паспорт GE $\\text{FWTM}_{\\text{sys}}$, мм | MC $\\text{FWTM}_{\\text{sys}}$ `Param` / `Direct`, мм | Паспорт GE $S_{\\text{sys}}$, имп./с/МБк | MC $S_{\\text{sys}}$ `Param` / `Direct`, имп./с/МБк ($\\Delta\\%$) | Доля фотопика в $\\text{NaI}$, % | Средний DOI, мм | Обратное рас. Pyrex, % | Статус |",
+                "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+            ]
+        )
+        for head_item in exp06_results:
+            param_head = head_item.parametric
+            direct_head = head_item.direct
+            lines.append(
+                f"| **{head_item.collimator_code}** ({head_item.nuclide_name}) | **{head_item.passport_system_fwhm:.2f}** | "
+                f"{param_head.system_fwhm:.2f} / **{direct_head.system_fwhm:.2f}** (`{head_item.fwhm_rel_error_vs_passport_direct * 100.0:+.2f}%`) | "
+                f"**{head_item.passport_system_fwtm:.2f}** | {param_head.system_fwtm:.2f} / {direct_head.system_fwtm:.2f} | "
+                f"**{head_item.passport_activity_sensitivity:.1f}** | "
+                f"{param_head.system_activity_sensitivity:.1f} / **{direct_head.system_activity_sensitivity:.1f}** (`{head_item.sensitivity_rel_error_vs_passport_direct * 100.0:+.2f}%`) | "
+                f"{direct_head.photopeak_fraction_in_crystal * 100.0:.1f}% | "
+                f"{direct_head.mean_interaction_depth:.2f} | "
+                f"{direct_head.pyrex_backscatter_fraction_in_crystal * 100.0:.2f}% | "
+                f"**{'PASS' if head_item.passed else 'FAIL'}** |"
+            )
+        lines.append("")
 
     summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return summary_path
@@ -187,7 +265,7 @@ def main() -> None:
         "--experiments",
         nargs="+",
         default=["all"],
-        choices=["all", "exp01", "exp02", "exp03", "exp04", "exp05"],
+        choices=["all", "exp01", "exp02", "exp03", "exp04", "exp05", "exp06"],
         help="Список экспериментов для запуска (по умолчанию: all).",
     )
     parser.add_argument(
@@ -216,32 +294,38 @@ def main() -> None:
     exp03_res: AngerCurveExperimentResult | None = None
     exp04_res: list[SeptalStarCaseResult] | None = None
     exp05_res: list[SpeedBenchmarkRecord] | None = None
+    exp06_res: list[NemaDetectorHeadComparisonResult] | None = None
 
     if run_all or "exp01" in selected:
-        print("[1/5] Запуск Эксперимента 1: Детерминированный аудит геометрии и оптической толщины...")
+        print("[1/6] Запуск Эксперимента 1: Детерминированный аудит геометрии и оптической толщины...")
         exp01_res = run_exp01_ray_optical_depth(output_dir=output_dir)
 
     if run_all or "exp02" in selected:
         particles_exp02 = 600_000 if args.quick else 5_000_000
-        print(f"[2/5] Запуск Эксперимента 2: Покомпонентная PSF на серии GE ({particles_exp02:,} историй)...")
+        print(f"[2/6] Запуск Эксперимента 2: Покомпонентная PSF на серии GE ({particles_exp02:,} историй)...")
         exp02_res = run_exp02_psf_ge_series(output_dir=output_dir, num_particles=particles_exp02)
 
     if run_all or "exp03" in selected:
         particles_exp03 = 300_000 if args.quick else 1_500_000
-        print(f"[3/5] Запуск Эксперимента 3: Кривые разрешения и чувствительности Ангера от Z ({particles_exp03:,} историй)...")
+        print(f"[3/6] Запуск Эксперимента 3: Кривые разрешения и чувствительности Ангера от Z ({particles_exp03:,} историй)...")
         exp03_res = run_exp03_anger_distance_curve(
             output_dir=output_dir, num_particles_per_point=particles_exp03
         )
 
     if run_all or "exp04" in selected:
         particles_exp04 = 350_000 if args.quick else 2_500_000
-        print(f"[4/5] Запуск Эксперимента 4: Стресс-тест септального пробоя I-131 ({particles_exp04:,} историй)...")
+        print(f"[4/6] Запуск Эксперимента 4: Стресс-тест септального пробоя I-131 ({particles_exp04:,} историй)...")
         exp04_res = run_exp04_septal_star_stress(output_dir=output_dir, num_particles=particles_exp04)
 
     if run_all or "exp05" in selected:
         particles_exp05 = 300_000 if args.quick else 1_000_000
-        print(f"[5/5] Запуск Эксперимента 5: Бенчмарк производительности Parametric vs Direct ({particles_exp05:,} историй)...")
+        print(f"[5/6] Запуск Эксперимента 5: Бенчмарк производительности Parametric vs Direct ({particles_exp05:,} историй)...")
         exp05_res = run_exp05_speed_benchmark(output_dir=output_dir, num_particles=particles_exp05)
+
+    if run_all or "exp06" in selected:
+        particles_exp06 = 500_000 if args.quick else 2_500_000
+        print(f"[6/6] Запуск Эксперимента 6: Сквозная NEMA NU-1 верификация детекторной головки GE ({particles_exp06:,} историй)...")
+        exp06_res = run_exp06_nema_detector_head(output_dir=output_dir, num_particles=particles_exp06)
 
     total_wall = time.perf_counter() - start_wall
     summary_file = _write_collimators_master_summary(
@@ -251,6 +335,7 @@ def main() -> None:
         exp03_result=exp03_res,
         exp04_results=exp04_res,
         exp05_results=exp05_res,
+        exp06_results=exp06_res,
         total_wall_time=total_wall,
     )
     print(f"Верификация успешно завершена за {total_wall:.2f} с. Сводный отчет: {summary_file}")

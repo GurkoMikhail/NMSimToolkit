@@ -553,11 +553,302 @@ def plot_speed_benchmark(
     plt.close(figure)
 
 
+def plot_passport_validation_summary(
+    collimator_labels: list[str],
+    anger_fwhm_values: list[float],
+    geom_fwhm_parametric: list[float],
+    geom_fwhm_direct: list[float],
+    passport_sys_fwhm: list[float],
+    recon_sys_fwhm_parametric: list[float],
+    recon_sys_fwhm_direct: list[float],
+    passport_sys_sensitivity: list[float],
+    recon_sys_sens_parametric: list[float],
+    recon_sys_sens_direct: list[float],
+    output_path: Path,
+) -> None:
+    """Строит сводный график верификации коллиматоров относительно теории Ангера и паспорта GE NEMA NU-1.
+
+    Args:
+        collimator_labels: Подписи моделей коллиматоров ('LEHR', 'LEUHR', 'MEGP', 'HEGP').
+        anger_fwhm_values: Аналитическое геометрическое разрешение по формуле Ангера [мм].
+        geom_fwhm_parametric: Измеренное геометрическое разрешение Parametric [мм].
+        geom_fwhm_direct: Измеренное геометрическое разрешение Direct [мм].
+        passport_sys_fwhm: Паспортное системное разрешение GE NEMA NU-1 [мм].
+        recon_sys_fwhm_parametric: Системное разрешение NEMA из Parametric [мм].
+        recon_sys_fwhm_direct: Системное разрешение NEMA из Direct [мм].
+        passport_sys_sensitivity: Паспортная системная чувствительность GE NEMA NU-1 [имп./с/МБк].
+        recon_sys_sens_parametric: Системная чувствительность NEMA из Parametric [имп./с/МБк].
+        recon_sys_sens_direct: Системная чувствительность NEMA из Direct [имп./с/МБк].
+        output_path: Путь сохранения PNG-файла.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure, axes = plt.subplots(1, 3, figsize=(17.5, 5.4), constrained_layout=True)
+    indices = np.arange(len(collimator_labels), dtype=np.float64)
+    bar_width = 0.25
+
+    ax_geom = axes[0]
+    ax_geom.bar(
+        indices - bar_width,
+        anger_fwhm_values,
+        width=bar_width,
+        color="#2ca02c",
+        label="Теория Ангера ($R_g$)",
+    )
+    ax_geom.bar(
+        indices,
+        geom_fwhm_parametric,
+        width=bar_width,
+        color="#1f77b4",
+        label="Parametric (Geom)",
+    )
+    ax_geom.bar(
+        indices + bar_width,
+        geom_fwhm_direct,
+        width=bar_width,
+        color="#ff7f0e",
+        label="Direct (Geom)",
+    )
+    ax_geom.set_title("Чисто геометрическое разрешение коллиматора ($Z = 100$ мм)")
+    ax_geom.set_ylabel("Геометрическое FWHM, мм")
+    ax_geom.set_xticks(indices)
+    ax_geom.set_xticklabels(collimator_labels)
+    ax_geom.grid(True, axis="y", alpha=0.3)
+    ax_geom.legend(fontsize=8.5)
+
+    ax_sys_res = axes[1]
+    ax_sys_res.bar(
+        indices - bar_width,
+        passport_sys_fwhm,
+        width=bar_width,
+        color="#9467bd",
+        label="Паспорт GE NEMA NU-1",
+    )
+    ax_sys_res.bar(
+        indices,
+        recon_sys_fwhm_parametric,
+        width=bar_width,
+        color="#1f77b4",
+        label="Parametric (NEMA Sys)",
+    )
+    ax_sys_res.bar(
+        indices + bar_width,
+        recon_sys_fwhm_direct,
+        width=bar_width,
+        color="#ff7f0e",
+        label="Direct (NEMA Sys)",
+    )
+    ax_sys_res.set_title("Системное пространственное разрешение NEMA NU-1 ($Z = 100$ мм)")
+    ax_sys_res.set_ylabel("Системное FWHM, мм")
+    ax_sys_res.set_xticks(indices)
+    ax_sys_res.set_xticklabels(collimator_labels)
+    ax_sys_res.grid(True, axis="y", alpha=0.3)
+    ax_sys_res.legend(fontsize=8.5)
+
+    ax_sys_sens = axes[2]
+    ax_sys_sens.bar(
+        indices - bar_width,
+        passport_sys_sensitivity,
+        width=bar_width,
+        color="#9467bd",
+        label="Паспорт GE NEMA NU-1",
+    )
+    ax_sys_sens.bar(
+        indices,
+        recon_sys_sens_parametric,
+        width=bar_width,
+        color="#1f77b4",
+        label="Parametric (NEMA Sys)",
+    )
+    ax_sys_sens.bar(
+        indices + bar_width,
+        recon_sys_sens_direct,
+        width=bar_width,
+        color="#ff7f0e",
+        label="Direct (NEMA Sys)",
+    )
+    ax_sys_sens.set_title("Системная чувствительность NEMA NU-1 (кристалл NaI 3/8\")")
+    ax_sys_sens.set_ylabel("Чувствительность, имп./с/МБк")
+    ax_sys_sens.set_xticks(indices)
+    ax_sys_sens.set_xticklabels(collimator_labels)
+    ax_sys_sens.grid(True, axis="y", alpha=0.3)
+    ax_sys_sens.legend(fontsize=8.5)
+
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+
+
+def plot_nema_detector_head_panel(
+    collimator_labels: list[str],
+    passport_fwhm_list: list[float],
+    measured_fwhm_parametric: list[float],
+    measured_fwhm_direct: list[float],
+    passport_sens_list: list[float],
+    measured_sens_parametric: list[float],
+    measured_sens_direct: list[float],
+    energy_bins_centers: NDArray[np.float64],
+    energy_hist_parametric: NDArray[np.float64],
+    energy_hist_direct: NDArray[np.float64],
+    profile_bins_centers: NDArray[np.float64],
+    profile_hist_parametric: NDArray[np.float64],
+    profile_hist_direct: NDArray[np.float64],
+    showcase_label: str,
+    photopeak_window_bounds: tuple[float, float],
+    output_path: Path,
+) -> None:
+    """Строит 4-панельный отчет сквозной симуляции полной детекторной головки GE Discovery (Эксперимент 6).
+
+    Args:
+        collimator_labels: Подписи моделей ('LEHR (Tc-99m)', и т.д.).
+        passport_fwhm_list: Паспортные значения системного FWHM GE NEMA NU-1 [мм].
+        measured_fwhm_parametric: Сквозные значения системного FWHM в кристалле для Parametric [мм].
+        measured_fwhm_direct: Сквозные значения системного FWHM в кристалле для Direct [мм].
+        passport_sens_list: Паспортная системная чувствительность GE NEMA NU-1 [имп./с/МБк].
+        measured_sens_parametric: Сквозная системная чувствительность в кристалле для Parametric [имп./с/МБк].
+        measured_sens_direct: Сквозная системная чувствительность в кристалле для Direct [имп./с/МБк].
+        energy_bins_centers: Центры энергетических бинов спектра энерговыделений в кристалле [МэВ].
+        energy_hist_parametric: Амплитудный спектр энерговыделений в кристалле (Parametric).
+        energy_hist_direct: Амплитудный спектр энерговыделений в кристалле (Direct).
+        profile_bins_centers: Центры координатных бинов системного профиля PSF [мм].
+        profile_hist_parametric: Профиль системной PSF в кристалле (Parametric).
+        profile_hist_direct: Профиль системной PSF в кристалле (Direct).
+        showcase_label: Название демонстрационного сценария на панелях спектра и профиля.
+        photopeak_window_bounds: Границы энергетического окна фотопика (lower, upper) [МэВ].
+        output_path: Путь сохранения PNG-файла.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure, axes = plt.subplots(2, 2, figsize=(15.0, 11.0), constrained_layout=True)
+
+    # Панель A: Спектр энерговыделений в кристалле NaI(Tl) с обратным рассеянием от Pyrex
+    ax_spec = axes[0, 0]
+    display_energy_axis = energy_bins_centers * 1000.0
+    window_low_display = photopeak_window_bounds[0] * 1000.0
+    window_high_display = photopeak_window_bounds[1] * 1000.0
+    ax_spec.plot(
+        display_energy_axis,
+        energy_hist_parametric,
+        color="#1f77b4",
+        linewidth=2.0,
+        label="Parametric (Full Head)",
+    )
+    ax_spec.plot(
+        display_energy_axis,
+        energy_hist_direct,
+        color="#ff7f0e",
+        linestyle="--",
+        linewidth=1.8,
+        label="Direct (Full Head)",
+    )
+    ax_spec.axvspan(
+        window_low_display,
+        window_high_display,
+        color="#2ca02c",
+        alpha=0.18,
+        label="Окно фотопика NEMA ($\\pm 10\\%$)",
+    )
+    ax_spec.set_title(f"{showcase_label}: Спектр энерговыделений в кристалле NaI(Tl) 9.5 мм")
+    ax_spec.set_xlabel("Измеренная энергия сцинтилляции, кэВ")
+    ax_spec.set_ylabel("Отсчеты на бин")
+    ax_spec.grid(True, alpha=0.3)
+    ax_spec.legend()
+
+    # Панель B: Системный профиль PSF в кристалле NaI(Tl) с учетом R_int и DOI
+    ax_prof = axes[0, 1]
+    ax_prof.semilogy(
+        profile_bins_centers,
+        np.maximum(profile_hist_parametric, 0.5),
+        color="#1f77b4",
+        linewidth=2.0,
+        label="Parametric (NaI + Pyrex + PMT)",
+    )
+    ax_prof.semilogy(
+        profile_bins_centers,
+        np.maximum(profile_hist_direct, 0.5),
+        color="#ff7f0e",
+        linestyle="none",
+        marker="o",
+        markersize=4.0,
+        label="Direct (NaI + Pyrex + PMT)",
+    )
+    ax_prof.set_title(f"{showcase_label}: Системный профиль PSF детекторной головки")
+    ax_prof.set_xlabel("Координата X в кристалле, мм")
+    ax_prof.set_ylabel("Отсчеты в окне фотопика (лог. шкала)")
+    ax_prof.grid(True, which="both", alpha=0.3)
+    ax_prof.legend()
+
+    indices = np.arange(len(collimator_labels), dtype=np.float64)
+    bar_width = 0.25
+
+    # Панель C: Сравнение сквозного системного разрешения FWHM с паспортом GE
+    ax_fwhm = axes[1, 0]
+    ax_fwhm.bar(
+        indices - bar_width,
+        passport_fwhm_list,
+        width=bar_width,
+        color="#9467bd",
+        label="Паспорт GE NEMA NU-1",
+    )
+    ax_fwhm.bar(
+        indices,
+        measured_fwhm_parametric,
+        width=bar_width,
+        color="#1f77b4",
+        label="Parametric (Full Head MC)",
+    )
+    ax_fwhm.bar(
+        indices + bar_width,
+        measured_fwhm_direct,
+        width=bar_width,
+        color="#ff7f0e",
+        label="Direct (Full Head MC)",
+    )
+    ax_fwhm.set_title("Сквозное системное разрешение FWHM ($Z = 100$ мм)")
+    ax_fwhm.set_ylabel("Системное FWHM, мм")
+    ax_fwhm.set_xticks(indices)
+    ax_fwhm.set_xticklabels(collimator_labels)
+    ax_fwhm.grid(True, axis="y", alpha=0.3)
+    ax_fwhm.legend()
+
+    # Панель D: Сравнение сквозной системной чувствительности с паспортом GE
+    ax_sens = axes[1, 1]
+    ax_sens.bar(
+        indices - bar_width,
+        passport_sens_list,
+        width=bar_width,
+        color="#9467bd",
+        label="Паспорт GE NEMA NU-1",
+    )
+    ax_sens.bar(
+        indices,
+        measured_sens_parametric,
+        width=bar_width,
+        color="#1f77b4",
+        label="Parametric (Full Head MC)",
+    )
+    ax_sens.bar(
+        indices + bar_width,
+        measured_sens_direct,
+        width=bar_width,
+        color="#ff7f0e",
+        label="Direct (Full Head MC)",
+    )
+    ax_sens.set_title("Сквозная системная чувствительность NEMA NU-1 (имп./с/МБк)")
+    ax_sens.set_ylabel("Системная чувствительность, имп./с/МБк")
+    ax_sens.set_xticks(indices)
+    ax_sens.set_xticklabels(collimator_labels)
+    ax_sens.grid(True, axis="y", alpha=0.3)
+    ax_sens.legend()
+
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+
+
 __all__ = [
     "plot_optical_depth_comparison",
     "plot_psf_comparison_panel",
     "plot_anger_distance_curves",
     "plot_septal_star_analysis",
     "plot_speed_benchmark",
+    "plot_passport_validation_summary",
+    "plot_nema_detector_head_panel",
 ]
 

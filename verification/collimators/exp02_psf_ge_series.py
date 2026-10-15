@@ -16,21 +16,30 @@ from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 
+from verification.common.history_classifier import PhotonComponent
 from verification.common.metrics import (
     CollimatorSensitivityBreakdown,
+    ComponentComparisonMetrics,
+    PassportValidationSummary,
     ProfileResolutionMetrics,
     StatisticalComparisonResult,
     compare_collimator_outputs,
+    compute_component_comparison_table,
     compute_psf_resolution_metrics,
     compute_sensitivity_breakdown,
     filter_energy_window,
 )
-from verification.common.plotting import plot_psf_comparison_panel
+from verification.common.plotting import (
+    plot_passport_validation_summary,
+    plot_psf_comparison_panel,
+)
 from verification.common.presets import (
     GE_COLLIMATOR_PRESETS,
     RADIONUCLIDE_PRESETS,
     compute_anger_geometric_fwhm,
     compute_anger_geometric_sensitivity,
+    compute_nema_activity_sensitivity,
+    compute_nema_system_fwhm,
 )
 from verification.common.scene_builders import run_collimator_simulation
 
@@ -52,9 +61,11 @@ class CollimatorPsfExperimentResult:
         resolution_parametric: Пространственное разрешение FWHM/FWTM для Parametric.
         resolution_direct: Пространственное разрешение FWHM/FWTM для Direct.
         statistical_comparison: Статистические критерии согласия (KS-тест, хи-квадрат, Z-score).
+        component_comparisons: Детальные метрики и KS-тесты для каждой из 3 компонент PSF.
+        passport_validation: Сопоставление с теорией Ангера и официальным паспортом GE NEMA NU-1.
         elapsed_time_parametric: Время расчета Parametric [с].
         elapsed_time_direct: Время расчета Direct [с].
-        passed: Признак статистического согласия двух моделей.
+        passed: Признак статистического согласия двух моделей и паспортной валидации.
     """
 
     collimator_code: str
@@ -69,6 +80,8 @@ class CollimatorPsfExperimentResult:
     resolution_parametric: ProfileResolutionMetrics
     resolution_direct: ProfileResolutionMetrics
     statistical_comparison: StatisticalComparisonResult
+    component_comparisons: list[ComponentComparisonMetrics]
+    passport_validation: PassportValidationSummary
     elapsed_time_parametric: float
     elapsed_time_direct: float
     passed: bool
@@ -163,6 +176,22 @@ def run_single_psf_comparison(
         num_bins=121,
     )
 
+    # Чисто геометрическое разрешение (только для фотонов GEOMETRIC компоненты)
+    geom_mask_param = mask_param & (photons_param.component == int(PhotonComponent.GEOMETRIC))
+    geom_mask_direct = mask_direct & (photons_direct.component == int(PhotonComponent.GEOMETRIC))
+    res_geom_param = compute_psf_resolution_metrics(
+        coord_x=photons_param.relative_x[geom_mask_param],
+        coord_y=photons_param.relative_y[geom_mask_param],
+        spatial_extent=spatial_extent,
+        num_bins=121,
+    )
+    res_geom_direct = compute_psf_resolution_metrics(
+        coord_x=photons_direct.relative_x[geom_mask_direct],
+        coord_y=photons_direct.relative_y[geom_mask_direct],
+        spatial_extent=spatial_extent,
+        num_bins=121,
+    )
+
     stat_comp = compare_collimator_outputs(
         photons_reference=photons_param,
         photons_candidate=photons_direct,
@@ -172,6 +201,16 @@ def run_single_psf_comparison(
         spatial_extent=spatial_extent,
         num_bins_2d=80,
         num_bins_radial=60,
+        energy_mask_reference=mask_param,
+        energy_mask_candidate=mask_direct,
+    )
+
+    comp_table = compute_component_comparison_table(
+        photons_reference=photons_param,
+        photons_candidate=photons_direct,
+        emitted_reference=outcome_parametric.particles_emitted,
+        emitted_candidate=outcome_direct.particles_emitted,
+        solid_angle_fraction=float(photons_param.solid_angle_fraction),
         energy_mask_reference=mask_param,
         energy_mask_candidate=mask_direct,
     )
@@ -187,11 +226,61 @@ def run_single_psf_comparison(
         output_path=output_dir / f"exp02_psf_{preset.code.lower()}_{nuclide_key.lower()}.png",
     )
 
-    anger_fwhm = float(compute_anger_geometric_fwhm(preset, source_distance, nuclide.primary_energy))
-    anger_sens = float(compute_anger_geometric_sensitivity(preset, nuclide.primary_energy))
+    anger_fwhm = float(
+        compute_anger_geometric_fwhm(preset, source_distance, nuclide.primary_energy, use_effective_length=True)
+    )
+    anger_pure_geom_fwhm = float(
+        compute_anger_geometric_fwhm(preset, source_distance, nuclide.primary_energy, use_effective_length=False)
+    )
+    anger_pure_geom_sens = float(
+        compute_anger_geometric_sensitivity(preset, nuclide.primary_energy, use_effective_length=False)
+    )
+
+    recon_sys_fwhm_param = float(
+        compute_nema_system_fwhm(res_param.fwhm_mean, preset, source_distance, nuclide.primary_energy)
+    )
+    recon_sys_fwhm_direct = float(
+        compute_nema_system_fwhm(res_direct.fwhm_mean, preset, source_distance, nuclide.primary_energy)
+    )
+    recon_sys_sens_param = float(
+        compute_nema_activity_sensitivity(sens_param.total.sensitivity, preset, nuclide)
+    )
+    recon_sys_sens_direct = float(
+        compute_nema_activity_sensitivity(sens_direct.total.sensitivity, preset, nuclide)
+    )
+
+    passport_fwhm = float(preset.nema_passport.system_fwhm)
+    passport_fwtm = float(preset.nema_passport.system_fwtm)
+    passport_sens = float(preset.nema_passport.system_activity_sensitivity)
+
+    geom_fwhm_rel_err = (res_geom_direct.fwhm_mean - anger_pure_geom_fwhm) / max(anger_pure_geom_fwhm, 1e-9)
+    geom_sens_rel_err = (sens_direct.geometric.sensitivity - anger_pure_geom_sens) / max(
+        anger_pure_geom_sens, 1e-12
+    )
+    sys_fwhm_rel_err = (recon_sys_fwhm_direct - passport_fwhm) / max(passport_fwhm, 1e-9)
+    sys_sens_rel_err = (recon_sys_sens_direct - passport_sens) / max(passport_sens, 1e-9)
+
+    passport_summary = PassportValidationSummary(
+        anger_geometric_fwhm=anger_pure_geom_fwhm,
+        anger_geometric_sensitivity=anger_pure_geom_sens,
+        geom_fwhm_parametric=res_geom_param.fwhm_mean,
+        geom_fwhm_direct=res_geom_direct.fwhm_mean,
+        geom_fwhm_rel_error_direct=geom_fwhm_rel_err,
+        geom_sens_rel_error_direct=geom_sens_rel_err,
+        passport_system_fwhm=passport_fwhm,
+        passport_system_fwtm=passport_fwtm,
+        passport_activity_sensitivity=passport_sens,
+        reconstructed_system_fwhm_parametric=recon_sys_fwhm_param,
+        reconstructed_system_fwhm_direct=recon_sys_fwhm_direct,
+        reconstructed_activity_sensitivity_parametric=recon_sys_sens_param,
+        reconstructed_activity_sensitivity_direct=recon_sys_sens_direct,
+        system_fwhm_rel_error_direct=sys_fwhm_rel_err,
+        system_sensitivity_rel_error_direct=sys_sens_rel_err,
+    )
 
     # Критерий согласия: Z-score полной и покомпонентной чувствительности <= 3.5,
-    # приведенный хи-квадрат <= 2.0, доля бинов 2D-карты в пределах +-3 sigma >= 98%
+    # приведенный хи-квадрат <= 2.0, доля бинов 2D-карты в пределах +-3 sigma >= 98%,
+    # согласие с теорией Ангера и паспортом GE в пределах 5%
     passed = (
         abs(stat_comp.sensitivity_z_score) <= 3.5
         and abs(stat_comp.geometric_z_score) <= 3.5
@@ -199,6 +288,9 @@ def run_single_psf_comparison(
         and abs(stat_comp.scatter_z_score) <= 3.5
         and stat_comp.reduced_chi2_radial <= 2.0
         and stat_comp.fraction_within_3sigma_2d >= 0.98
+        and abs(geom_fwhm_rel_err) <= 0.05
+        and abs(geom_sens_rel_err) <= 0.05
+        and abs(sys_fwhm_rel_err) <= 0.05
     )
 
     return CollimatorPsfExperimentResult(
@@ -208,12 +300,14 @@ def run_single_psf_comparison(
         source_distance=source_distance,
         num_particles=num_particles,
         anger_theoretical_fwhm=anger_fwhm,
-        anger_theoretical_sensitivity=anger_sens,
+        anger_theoretical_sensitivity=anger_pure_geom_sens,
         sensitivity_parametric=sens_param,
         sensitivity_direct=sens_direct,
         resolution_parametric=res_param,
         resolution_direct=res_direct,
         statistical_comparison=stat_comp,
+        component_comparisons=comp_table,
+        passport_validation=passport_summary,
         elapsed_time_parametric=float(outcome_parametric.elapsed_time),
         elapsed_time_direct=float(outcome_direct.elapsed_time),
         passed=passed,
@@ -248,16 +342,32 @@ def run_exp02_psf_ge_series(
         )
         results.append(res)
 
+    plot_passport_validation_summary(
+        collimator_labels=[f"{item.collimator_code}\n({item.nuclide_name.split()[0]})" for item in results],
+        anger_fwhm_values=[item.passport_validation.anger_geometric_fwhm for item in results],
+        geom_fwhm_parametric=[item.passport_validation.geom_fwhm_parametric for item in results],
+        geom_fwhm_direct=[item.passport_validation.geom_fwhm_direct for item in results],
+        passport_sys_fwhm=[item.passport_validation.passport_system_fwhm for item in results],
+        recon_sys_fwhm_parametric=[item.passport_validation.reconstructed_system_fwhm_parametric for item in results],
+        recon_sys_fwhm_direct=[item.passport_validation.reconstructed_system_fwhm_direct for item in results],
+        passport_sys_sensitivity=[item.passport_validation.passport_activity_sensitivity for item in results],
+        recon_sys_sens_parametric=[
+            item.passport_validation.reconstructed_activity_sensitivity_parametric for item in results
+        ],
+        recon_sys_sens_direct=[item.passport_validation.reconstructed_activity_sensitivity_direct for item in results],
+        output_path=output_dir / "exp02_ge_passport_validation.png",
+    )
+
     json_path = output_dir / "exp02_psf_ge_series.json"
     with json_path.open("w", encoding="utf-8") as json_file:
         json.dump([asdict(item) for item in results], json_file, indent=2, ensure_ascii=False)
 
     md_lines = [
-        "# Эксперимент 2: Покомпонентная верификация PSF на серии коллиматоров GE Healthcare",
+        "# Эксперимент 2: Покомпонентная верификация PSF и сверка с паспортом GE Healthcare",
         "",
         f"Статистика: **{num_particles:,}** историй в конусе ($\\theta_{{\\max}} = 0.18\\text{{ рад}}$) на каждый прогон.",
         "",
-        "## 1. Сравнение пространственного разрешения и полной чувствительности ($Z = 100\\text{ мм}$)",
+        "## 1. Сравнение пространственного разрешения и полной чувствительности на торце коллиматора ($Z = 100\\text{ мм}$)",
         "",
         "| Коллиматор (Нуклид) | FWHM Теория Ангера, мм | FWHM `Parametric`, мм | FWHM `Direct`, мм | FWTM `Parametric`, мм | FWTM `Direct`, мм | Sens `Parametric` ($\\times 10^{-4}$) | Sens `Direct` ($\\times 10^{-4}$) | $\\chi^2/\\text{ndf}$ | KS $p$-val | Статус |",
         "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
@@ -308,6 +418,55 @@ def run_exp02_psf_ge_series(
             f"{sens_direct.septal_penetration.count:,} ({sens_direct.septal_penetration.fraction_of_total * 100.0:.2f}%) | "
             f"{sens_direct.collimator_scatter.count:,} ({sens_direct.collimator_scatter.fraction_of_total * 100.0:.2f}%) | "
             f"{z_str} | {item.elapsed_time_direct:.2f} |"
+        )
+
+    md_lines.extend(
+        [
+            "",
+            "## 3. Подробная паспортизация радиальной морфологии и кратности рассеяний по каждой компоненте",
+            "",
+            "| Коллиматор | Компонента | $R_{50}$ `Param` / `Direct`, мм | $R_{90}$ `Param` / `Direct`, мм | $R_{\\text{RMS}}$ `Param` / `Direct`, мм | $\\langle E \\rangle$ `Direct`, кэВ | Кратность Комптон / Рэлей (`Direct`) | Однократное / Многократное рас., % | Покомпонентный KS $p$-val |",
+            "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+        ]
+    )
+
+    for item in results:
+        for comp_entry in item.component_comparisons:
+            p_det = comp_entry.parametric
+            d_det = comp_entry.direct
+            md_lines.append(
+                f"| **{item.collimator_code}** | `{comp_entry.component_name}` | "
+                f"{p_det.radial_r50:.2f} / {d_det.radial_r50:.2f} | "
+                f"{p_det.radial_r90:.2f} / {d_det.radial_r90:.2f} | "
+                f"{p_det.radial_rms:.2f} / {d_det.radial_rms:.2f} | "
+                f"{d_det.mean_energy * 1000.0:.1f} | "
+                f"{d_det.mean_compton_orders:.2f} / {d_det.mean_coherent_orders:.2f} | "
+                f"{d_det.single_scatter_fraction * 100.0:.1f}% / {d_det.multi_scatter_fraction * 100.0:.1f}% | "
+                f"{comp_entry.ks_pvalue_radial:.3f} |"
+            )
+
+    md_lines.extend(
+        [
+            "",
+            "## 4. Сопоставление с аналитической теорией Хола Ангера и официальным паспортом GE Discovery NM/CT 670 (NEMA NU-1)",
+            "",
+            "| Коллиматор | FWHM Ангера ($R_g$), мм | Geom FWHM `Direct`, мм ($\\Delta\\%$) | Sens Ангера ($\\times 10^{-4}$) | Geom Sens `Direct` ($\\times 10^{-4}$, $\\Delta\\%$) | Паспорт GE $\\text{FWHM}_{\\text{sys}}$, мм | Расчет $\\text{FWHM}_{\\text{sys}}$ `Param` / `Direct`, мм | Паспорт GE $S_{\\text{sys}}$, имп./с/МБк | Расчет $S_{\\text{sys}}$ `Param` / `Direct`, имп./с/МБк |",
+            "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+        ]
+    )
+
+    for item in results:
+        pv = item.passport_validation
+        geom_sens_d = item.sensitivity_direct.geometric.sensitivity
+        md_lines.append(
+            f"| **{item.collimator_code}** | {pv.anger_geometric_fwhm:.2f} | "
+            f"{pv.geom_fwhm_direct:.2f} (`{pv.geom_fwhm_rel_error_direct * 100.0:+.2f}%`) | "
+            f"{pv.anger_geometric_sensitivity * 1e4:.3f} | "
+            f"{geom_sens_d * 1e4:.3f} (`{pv.geom_sens_rel_error_direct * 100.0:+.2f}%`) | "
+            f"**{pv.passport_system_fwhm:.2f}** | "
+            f"{pv.reconstructed_system_fwhm_parametric:.2f} / **{pv.reconstructed_system_fwhm_direct:.2f}** (`{pv.system_fwhm_rel_error_direct * 100.0:+.2f}%`) | "
+            f"**{pv.passport_activity_sensitivity:.1f}** | "
+            f"{pv.reconstructed_activity_sensitivity_parametric:.1f} / **{pv.reconstructed_activity_sensitivity_direct:.1f}** (`{pv.system_sensitivity_rel_error_direct * 100.0:+.2f}%`) |"
         )
 
     md_path = output_dir / "exp02_psf_ge_series.md"

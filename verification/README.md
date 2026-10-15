@@ -21,13 +21,14 @@ verification/
 │   ├── scene_builders.py              # Сборщики верификационных сцен без искажений детектора
 │   ├── metrics.py                     # FWHM/FWTM, чувствительность, KS-тест, хи-квадрат, Z-score
 │   └── plotting.py                    # Отрисовка 2D/1D PSF, кривых Ангера и бенчмарков (Agg)
-├── collimators/                       # Домен 1: Параллельные коллиматоры (Parametric vs Direct)
+├── collimators/                       # Домен 1: Параллельные коллиматоры и головка гамма-камеры
 │   ├── __init__.py
 │   ├── exp01_ray_optical_depth.py     # Детерминированный аудит геометрии и оптического пути в свинце
-│   ├── exp02_psf_ge_series.py         # Покомпонентная 2D/1D PSF на серии GE (LEHR, LEUHR, MEGP, HEGP)
+│   ├── exp02_psf_ge_series.py         # Покомпонентная 2D/1D PSF на серии GE и сверка с теорией Ангера
 │   ├── exp03_anger_distance_curve.py  # Кривые разрешения FWHM(Z) и инвариантности S(Z) по Ангеру
 │   ├── exp04_septal_star_stress.py    # Стресс-тест септального пробоя I-131 («эффект 6-лучевой звезды»)
-│   └── exp05_speed_benchmark.py       # Бенчмарк скорости счета Parametric vs Direct
+│   ├── exp05_speed_benchmark.py       # Бенчмарк скорости счета Parametric vs Direct
+│   └── exp06_nema_detector_head.py    # Сквозная NEMA NU-1 верификация полной головки GE Discovery (NaI + Pyrex)
 └── reports/                           # Автогенерируемые отчеты, JSON-метрики и PNG-графики
     └── collimators/
 ```
@@ -42,7 +43,7 @@ verification/
 
 ## 2. Запуск экспериментов
 
-Полный прогон всех 5 экспериментов верификации коллиматоров:
+Полный прогон всех 6 экспериментов верификации коллиматоров и детекторной головки:
 ```powershell
 .venv\Scripts\python.exe -m verification.run_verification --domain collimators --experiments all
 ```
@@ -54,5 +55,5 @@ verification/
 
 Запуск отдельных экспериментов:
 ```powershell
-.venv\Scripts\python.exe -m verification.run_verification --experiments exp01 exp05
+.venv\Scripts\python.exe -m verification.run_verification --experiments exp02 exp06
 ```

@@ -629,12 +629,252 @@ def compute_azimuthal_star_metrics(
     )
 
 
+@dataclass(frozen=True)
+class SingleComponentDetailedMetrics:
+    """Детальные пространственные, энергетические и столкновительные метрики одной компоненты PSF.
+
+    Attributes:
+        component_name: Имя компоненты ('GEOMETRIC', 'SEPTAL_PENETRATION', 'COLLIMATOR_SCATTER').
+        count: Число зарегистрированных фотонов данной компоненты в энергетическом окне.
+        sensitivity: Абсолютная чувствительность компоненты в пересчете на 4*pi.
+        sensitivity_error: Пуассоновская стандартная ошибка чувствительности.
+        fraction_of_total: Доля компоненты от всех зарегистрированных фотонов в окне [0..1].
+        radial_r50: Медианный радиус пятна данной компоненты R50 [мм].
+        radial_r90: 90-процентный радиус пятна данной компоненты R90 [мм].
+        radial_rms: Среднеквадратичный радиус пятна компоненты sqrt(<R^2>) [мм].
+        mean_energy: Средняя энергия фотонов компоненты на выходе из коллиматора [МэВ].
+        mean_compton_orders: Средняя кратность комптоновского рассеяния на один фотон компоненты.
+        mean_coherent_orders: Средняя кратность когерентного (рэлеевского) рассеяния на один фотон.
+        single_scatter_fraction: Доля фотонов компоненты с ровно одним актом рассеяния.
+        multi_scatter_fraction: Доля фотонов компоненты с двумя и более актами рассеяния.
+    """
+
+    component_name: str
+    count: int
+    sensitivity: float
+    sensitivity_error: float
+    fraction_of_total: float
+    radial_r50: float
+    radial_r90: float
+    radial_rms: float
+    mean_energy: float
+    mean_compton_orders: float
+    mean_coherent_orders: float
+    single_scatter_fraction: float
+    multi_scatter_fraction: float
+
+
+@dataclass(frozen=True)
+class ComponentComparisonMetrics:
+    """Попарное статистическое сравнение одной физической компоненты PSF между Parametric и Direct.
+
+    Attributes:
+        component_name: Имя физической компоненты ('GEOMETRIC', 'SEPTAL_PENETRATION', 'COLLIMATOR_SCATTER').
+        parametric: Детальные метрики компоненты для эталонного метода Parametric.
+        direct: Детальные метрики компоненты для тестируемого метода Direct.
+        sensitivity_z_score: Нормированная пуассоновская невязка чувствительности компоненты.
+        ks_statistic_radial: Двухвыборочная статистика Колмогорова-Смирнова по радиусу R компоненты.
+        ks_pvalue_radial: P-значение критерия Колмогорова-Смирнова по радиусу R компоненты.
+    """
+
+    component_name: str
+    parametric: SingleComponentDetailedMetrics
+    direct: SingleComponentDetailedMetrics
+    sensitivity_z_score: float
+    ks_statistic_radial: float
+    ks_pvalue_radial: float
+
+
+@dataclass(frozen=True)
+class PassportValidationSummary:
+    """Сводка сопоставления результатов моделирования с аналитической теорией Ангера и паспортом GE NEMA NU-1.
+
+    Attributes:
+        anger_geometric_fwhm: Аналитическое геометрическое разрешение по формуле Ангера [мм].
+        anger_geometric_sensitivity: Аналитическая геометрическая чувствительность по формуле Ангера.
+        geom_fwhm_parametric: Чисто геометрическое разрешение FWHM для Parametric [мм].
+        geom_fwhm_direct: Чисто геометрическое разрешение FWHM для Direct [мм].
+        geom_fwhm_rel_error_direct: Относительное отклонение геометрического FWHM Direct от теории Ангера.
+        geom_sens_rel_error_direct: Относительное отклонение геометрической чувствительности Direct от теории Ангера.
+        passport_system_fwhm: Паспортное системное разрешение GE NEMA NU-1 на 100 мм [мм].
+        passport_system_fwtm: Паспортное системное разрешение FWTM GE NEMA NU-1 на 100 мм [мм].
+        passport_activity_sensitivity: Паспортная системная чувствительность GE NEMA NU-1 [имп./с/МБк].
+        reconstructed_system_fwhm_parametric: Системное разрешение NEMA, пересчитанное из Parametric [мм].
+        reconstructed_system_fwhm_direct: Системное разрешение NEMA, пересчитанное из Direct [мм].
+        reconstructed_activity_sensitivity_parametric: Системная чувствительность NEMA из Parametric [имп./с/МБк].
+        reconstructed_activity_sensitivity_direct: Системная чувствительность NEMA из Direct [имп./с/МБк].
+        system_fwhm_rel_error_direct: Относительное отклонение пересчитанного системного FWHM Direct от паспорта GE.
+        system_sensitivity_rel_error_direct: Относительное отклонение системной чувствительности Direct от паспорта GE.
+    """
+
+    anger_geometric_fwhm: float
+    anger_geometric_sensitivity: float
+    geom_fwhm_parametric: float
+    geom_fwhm_direct: float
+    geom_fwhm_rel_error_direct: float
+    geom_sens_rel_error_direct: float
+    passport_system_fwhm: float
+    passport_system_fwtm: float
+    passport_activity_sensitivity: float
+    reconstructed_system_fwhm_parametric: float
+    reconstructed_system_fwhm_direct: float
+    reconstructed_activity_sensitivity_parametric: float
+    reconstructed_activity_sensitivity_direct: float
+    system_fwhm_rel_error_direct: float
+    system_sensitivity_rel_error_direct: float
+
+
+def compute_single_component_detailed_metrics(
+    photons: ClassifiedExitPhotons,
+    component_kind: PhotonComponent,
+    emitted_count: int,
+    solid_angle_fraction: float,
+    energy_mask: NDArray[np.bool_] | None = None,
+) -> SingleComponentDetailedMetrics:
+    """Вычисляет подробные пространственные, энергетические и столкновительные метрики одной компоненты PSF."""
+    if energy_mask is not None:
+        active_window_mask = energy_mask
+    else:
+        active_window_mask = np.ones(photons.component.shape[0], dtype=np.bool_)
+
+    total_in_window = int(np.sum(active_window_mask))
+    comp_mask = active_window_mask & (photons.component == int(component_kind))
+    comp_count = int(np.sum(comp_mask))
+
+    norm_factor = solid_angle_fraction / float(max(emitted_count, 1))
+    sens_val = float(comp_count) * norm_factor
+    sens_err = math.sqrt(float(comp_count)) * norm_factor if comp_count > 0 else 0.0
+    frac_total = float(comp_count) / float(total_in_window) if total_in_window > 0 else 0.0
+
+    if comp_count == 0:
+        return SingleComponentDetailedMetrics(
+            component_name=component_kind.name,
+            count=0,
+            sensitivity=0.0,
+            sensitivity_error=0.0,
+            fraction_of_total=0.0,
+            radial_r50=0.0,
+            radial_r90=0.0,
+            radial_rms=0.0,
+            mean_energy=0.0,
+            mean_compton_orders=0.0,
+            mean_coherent_orders=0.0,
+            single_scatter_fraction=0.0,
+            multi_scatter_fraction=0.0,
+        )
+
+    radii = photons.radial_distance[comp_mask].astype(np.float64)
+    energies = photons.final_energy[comp_mask].astype(np.float64)
+    compton_orders = photons.compton_count[comp_mask].astype(np.int32)
+    coherent_orders = photons.coherent_count[comp_mask].astype(np.int32)
+    total_scatter_orders = compton_orders + coherent_orders
+
+    radial_r50 = float(np.percentile(radii, 50.0))
+    radial_r90 = float(np.percentile(radii, 90.0))
+    radial_rms = float(math.sqrt(float(np.mean(radii * radii))))
+    mean_energy_val = float(np.mean(energies))
+    mean_compton_val = float(np.mean(compton_orders))
+    mean_coherent_val = float(np.mean(coherent_orders))
+    single_scat_frac = float(np.mean(total_scatter_orders == 1))
+    multi_scat_frac = float(np.mean(total_scatter_orders >= 2))
+
+    return SingleComponentDetailedMetrics(
+        component_name=component_kind.name,
+        count=comp_count,
+        sensitivity=sens_val,
+        sensitivity_error=sens_err,
+        fraction_of_total=frac_total,
+        radial_r50=radial_r50,
+        radial_r90=radial_r90,
+        radial_rms=radial_rms,
+        mean_energy=mean_energy_val,
+        mean_compton_orders=mean_compton_val,
+        mean_coherent_orders=mean_coherent_val,
+        single_scatter_fraction=single_scat_frac,
+        multi_scatter_fraction=multi_scat_frac,
+    )
+
+
+def compute_component_comparison_table(
+    photons_reference: ClassifiedExitPhotons,
+    photons_candidate: ClassifiedExitPhotons,
+    emitted_reference: int,
+    emitted_candidate: int,
+    solid_angle_fraction: float,
+    energy_mask_reference: NDArray[np.bool_] | None = None,
+    energy_mask_candidate: NDArray[np.bool_] | None = None,
+) -> list[ComponentComparisonMetrics]:
+    """Строит таблицу детального попарного сравнения всех 3 компонент PSF между Parametric и Direct."""
+    comparisons: list[ComponentComparisonMetrics] = []
+    mask_ref_base = (
+        energy_mask_reference
+        if energy_mask_reference is not None
+        else np.ones(photons_reference.component.shape[0], dtype=np.bool_)
+    )
+    mask_cand_base = (
+        energy_mask_candidate
+        if energy_mask_candidate is not None
+        else np.ones(photons_candidate.component.shape[0], dtype=np.bool_)
+    )
+
+    for comp_kind in (
+        PhotonComponent.GEOMETRIC,
+        PhotonComponent.SEPTAL_PENETRATION,
+        PhotonComponent.COLLIMATOR_SCATTER,
+    ):
+        metrics_ref = compute_single_component_detailed_metrics(
+            photons=photons_reference,
+            component_kind=comp_kind,
+            emitted_count=emitted_reference,
+            solid_angle_fraction=solid_angle_fraction,
+            energy_mask=mask_ref_base,
+        )
+        metrics_cand = compute_single_component_detailed_metrics(
+            photons=photons_candidate,
+            component_kind=comp_kind,
+            emitted_count=emitted_candidate,
+            solid_angle_fraction=solid_angle_fraction,
+            energy_mask=mask_cand_base,
+        )
+
+        err_combined = math.hypot(metrics_ref.sensitivity_error, metrics_cand.sensitivity_error)
+        z_val = (
+            (metrics_cand.sensitivity - metrics_ref.sensitivity) / err_combined
+            if err_combined > 0.0
+            else 0.0
+        )
+
+        radii_ref = photons_reference.radial_distance[
+            mask_ref_base & (photons_reference.component == int(comp_kind))
+        ].astype(np.float64)
+        radii_cand = photons_candidate.radial_distance[
+            mask_cand_base & (photons_candidate.component == int(comp_kind))
+        ].astype(np.float64)
+
+        ks_stat, ks_pval = _compute_two_sample_ks(radii_ref, radii_cand)
+        comparisons.append(
+            ComponentComparisonMetrics(
+                component_name=comp_kind.name,
+                parametric=metrics_ref,
+                direct=metrics_cand,
+                sensitivity_z_score=z_val,
+                ks_statistic_radial=ks_stat,
+                ks_pvalue_radial=ks_pval,
+            )
+        )
+
+    return comparisons
+
+
 __all__ = [
     "ComponentSensitivity",
     "CollimatorSensitivityBreakdown",
     "ProfileResolutionMetrics",
     "StatisticalComparisonResult",
     "AzimuthalStarMetrics",
+    "SingleComponentDetailedMetrics",
+    "ComponentComparisonMetrics",
+    "PassportValidationSummary",
     "filter_energy_window",
     "compute_sensitivity_breakdown",
     "compute_width_at_fraction",
@@ -642,5 +882,7 @@ __all__ = [
     "compute_2d_poisson_z_score_map",
     "compare_collimator_outputs",
     "compute_azimuthal_star_metrics",
+    "compute_single_component_detailed_metrics",
+    "compute_component_comparison_table",
 ]
 

@@ -28,6 +28,37 @@ import settings.database_setting as database_setting
 
 
 @dataclass(frozen=True)
+class NemaPassportSpecification:
+    """
+    Официальная паспортная спецификация детекторной системы гамма-камеры GE Discovery NM/CT 670 / Infinia
+    по стандарту NEMA NU-1 на расстоянии Z = 100 мм от входного торца коллиматора (кристалл NaI(Tl) 3/8 дюйма = 9.5 мм).
+
+    Attributes:
+        reference_nuclide_code: Код эталонного радионуклида паспортного теста ('Tc99m', 'In111', 'I131').
+        system_fwhm: Паспортное системное пространственное разрешение FWHM на 100 мм [мм].
+        system_fwtm: Паспортное системное пространственное разрешение FWTM на 100 мм [мм].
+        system_activity_sensitivity: Паспортная системная чувствительность NEMA NU-1 [имп./с/МБк].
+        intrinsic_crystal_fwhm: Собственное пространственное разрешение кристалла и ФЭУ R_int (FWHM) [мм].
+        crystal_thickness: Толщина сцинтилляционного кристалла NaI(Tl) [мм].
+        detector_gap: Технологический зазор между выходным торцом коллиматора и кристаллом [мм].
+        effective_doi_offset: Эффективное смещение глубины взаимодействия в кристалле (зазор + средняя глубина DOI) [мм].
+        energy_resolution_fraction: Энергетическое разрешение тракта ФЭУ (FWHM / E) на линии 140.5 кэВ.
+        nominal_photopeak_efficiency: Эффективная вероятность регистрации в окне фотопика +-10% кристалла 9.5 мм.
+    """
+
+    reference_nuclide_code: str
+    system_fwhm: Float
+    system_fwtm: Float
+    system_activity_sensitivity: Float
+    intrinsic_crystal_fwhm: Float
+    crystal_thickness: Float = Float(9.5 * units.mm)
+    detector_gap: Float = Float(2.0 * units.mm)
+    effective_doi_offset: Float = Float(3.5 * units.mm)
+    energy_resolution_fraction: Float = Float(0.098)
+    nominal_photopeak_efficiency: Float = Float(0.865)
+
+
+@dataclass(frozen=True)
 class CollimatorPreset:
     """
     Паспортная спецификация параллельного коллиматора гамма-камеры.
@@ -42,6 +73,7 @@ class CollimatorPreset:
     hole_diameter: Float
     septa: Float
     hole_shape: CollimatorHoleShape
+    nema_passport: NemaPassportSpecification
     material_name: str = "Pb"
     hole_material_name: str = "Vacuum"
 
@@ -67,6 +99,7 @@ class RadionuclidePreset:
     Паспортная спецификация радионуклида для верификационных экспериментов.
 
     Энергии задаются в базовых единицах (МэВ), период полураспада — в нс.
+    Поле gamma_yield_per_decay задает абсолютный квантовый выход основной линии на один распад.
     Поле spectrum содержит пары (энергия, относительный выход).
     """
 
@@ -74,6 +107,7 @@ class RadionuclidePreset:
     title: str
     primary_energy: Float
     half_life: Float
+    gamma_yield_per_decay: Float
     spectrum: Tuple[Tuple[Float, Float], ...]
 
 
@@ -91,6 +125,18 @@ GE_COLLIMATOR_PRESETS: Dict[str, CollimatorPreset] = {
         hole_diameter=Float(1.50 * units.mm),
         septa=Float(0.20 * units.mm),
         hole_shape=CollimatorHoleShape.HEXAGONAL,
+        nema_passport=NemaPassportSpecification(
+            reference_nuclide_code="Tc99m",
+            system_fwhm=Float(7.4 * units.mm),
+            system_fwtm=Float(13.4 * units.mm),
+            system_activity_sensitivity=Float(74.0),
+            intrinsic_crystal_fwhm=Float(3.9 * units.mm),
+            crystal_thickness=Float(9.5 * units.mm),
+            detector_gap=Float(2.0 * units.mm),
+            effective_doi_offset=Float(3.5 * units.mm),
+            energy_resolution_fraction=Float(0.098),
+            nominal_photopeak_efficiency=Float(0.865),
+        ),
     ),
     "LEUHR": CollimatorPreset(
         code="LEUHR",
@@ -100,6 +146,18 @@ GE_COLLIMATOR_PRESETS: Dict[str, CollimatorPreset] = {
         hole_diameter=Float(1.22 * units.mm),
         septa=Float(0.15 * units.mm),
         hole_shape=CollimatorHoleShape.HEXAGONAL,
+        nema_passport=NemaPassportSpecification(
+            reference_nuclide_code="Tc99m",
+            system_fwhm=Float(6.0 * units.mm),
+            system_fwtm=Float(11.0 * units.mm),
+            system_activity_sensitivity=Float(37.0),
+            intrinsic_crystal_fwhm=Float(3.9 * units.mm),
+            crystal_thickness=Float(9.5 * units.mm),
+            detector_gap=Float(2.0 * units.mm),
+            effective_doi_offset=Float(3.5 * units.mm),
+            energy_resolution_fraction=Float(0.098),
+            nominal_photopeak_efficiency=Float(0.865),
+        ),
     ),
     "MEGP": CollimatorPreset(
         code="MEGP",
@@ -109,6 +167,18 @@ GE_COLLIMATOR_PRESETS: Dict[str, CollimatorPreset] = {
         hole_diameter=Float(3.00 * units.mm),
         septa=Float(1.05 * units.mm),
         hole_shape=CollimatorHoleShape.HEXAGONAL,
+        nema_passport=NemaPassportSpecification(
+            reference_nuclide_code="In111",
+            system_fwhm=Float(9.4 * units.mm),
+            system_fwtm=Float(17.2 * units.mm),
+            system_activity_sensitivity=Float(46.0),
+            intrinsic_crystal_fwhm=Float(3.4 * units.mm),
+            crystal_thickness=Float(9.5 * units.mm),
+            detector_gap=Float(2.0 * units.mm),
+            effective_doi_offset=Float(4.5 * units.mm),
+            energy_resolution_fraction=Float(0.098),
+            nominal_photopeak_efficiency=Float(0.425),
+        ),
     ),
     "HEGP": CollimatorPreset(
         code="HEGP",
@@ -118,6 +188,18 @@ GE_COLLIMATOR_PRESETS: Dict[str, CollimatorPreset] = {
         hole_diameter=Float(4.00 * units.mm),
         septa=Float(1.80 * units.mm),
         hole_shape=CollimatorHoleShape.HEXAGONAL,
+        nema_passport=NemaPassportSpecification(
+            reference_nuclide_code="I131",
+            system_fwhm=Float(12.0 * units.mm),
+            system_fwtm=Float(22.5 * units.mm),
+            system_activity_sensitivity=Float(28.0),
+            intrinsic_crystal_fwhm=Float(3.2 * units.mm),
+            crystal_thickness=Float(9.5 * units.mm),
+            detector_gap=Float(2.0 * units.mm),
+            effective_doi_offset=Float(5.0 * units.mm),
+            energy_resolution_fraction=Float(0.098),
+            nominal_photopeak_efficiency=Float(0.185),
+        ),
     ),
 }
 
@@ -128,6 +210,7 @@ RADIONUCLIDE_PRESETS: Dict[str, RadionuclidePreset] = {
         title="99mTc (140.5 кэВ)",
         primary_energy=Float(140.5 * units.keV),
         half_life=Float(6.0067 * units.hour),
+        gamma_yield_per_decay=Float(0.8906),
         spectrum=((Float(140.5 * units.keV), Float(1.0)),),
     ),
     "I123": RadionuclidePreset(
@@ -135,6 +218,7 @@ RADIONUCLIDE_PRESETS: Dict[str, RadionuclidePreset] = {
         title="123I (159.0 кэВ)",
         primary_energy=Float(159.0 * units.keV),
         half_life=Float(13.223 * units.hour),
+        gamma_yield_per_decay=Float(0.8330),
         spectrum=((Float(159.0 * units.keV), Float(1.0)),),
     ),
     "Lu177": RadionuclidePreset(
@@ -142,6 +226,7 @@ RADIONUCLIDE_PRESETS: Dict[str, RadionuclidePreset] = {
         title="177Lu (208.0 кэВ)",
         primary_energy=Float(208.0 * units.keV),
         half_life=Float(6.647 * units.day),
+        gamma_yield_per_decay=Float(0.1038),
         spectrum=(
             (Float(208.0 * units.keV), Float(0.1038)),
             (Float(112.95 * units.keV), Float(0.0620)),
@@ -152,6 +237,7 @@ RADIONUCLIDE_PRESETS: Dict[str, RadionuclidePreset] = {
         title="111In (245.4 кэВ)",
         primary_energy=Float(245.4 * units.keV),
         half_life=Float(2.8047 * units.day),
+        gamma_yield_per_decay=Float(0.9410),
         spectrum=(
             (Float(171.3 * units.keV), Float(0.906)),
             (Float(245.4 * units.keV), Float(0.941)),
@@ -162,6 +248,7 @@ RADIONUCLIDE_PRESETS: Dict[str, RadionuclidePreset] = {
         title="131I (364.5 кэВ)",
         primary_energy=Float(364.5 * units.keV),
         half_life=Float(8.0252 * units.day),
+        gamma_yield_per_decay=Float(0.8150),
         spectrum=((Float(364.5 * units.keV), Float(1.0)),),
     ),
     "Tb161": RadionuclidePreset(
@@ -169,6 +256,7 @@ RADIONUCLIDE_PRESETS: Dict[str, RadionuclidePreset] = {
         title="161Tb (Полный спектр ICRP 107)",
         primary_energy=Float(74.57 * units.keV),
         half_life=Float(6.89 * units.day),
+        gamma_yield_per_decay=Float(0.1030),
         spectrum=(
             (Float(74.57 * units.keV), Float(10.3)),
             (Float(48.9 * units.keV), Float(17.0)),
@@ -288,7 +376,54 @@ def compute_anger_geometric_sensitivity(
     return Float(factor * ratio * ratio)
 
 
+def compute_nema_system_fwhm(
+    collimator_fwhm: Float | float,
+    preset: CollimatorPreset,
+    source_distance: Float | float,
+    energy: Float | float,
+) -> Float:
+    """
+    Пересчитывает пространственное разрешение на выходном торце коллиматора в системное разрешение
+    гамма-камеры по стандарту NEMA NU-1 с учетом эффективной глубины взаимодействия в кристалле NaI(Tl)
+    и собственного разрешения детектора Ангера R_int:
+    R_coll_det = collimator_fwhm * (L_eff + Z + delta_Z_doi) / (L_eff + Z),
+    FWHM_sys = sqrt(R_coll_det^2 + R_int^2).
+    """
+    effective_len = compute_anger_effective_length(preset, energy)
+    base_span = Float(effective_len + Float(source_distance))
+    projected_span = Float(base_span + preset.nema_passport.effective_doi_offset)
+    projected_collimator_fwhm = Float(Float(collimator_fwhm) * (projected_span / max(base_span, Float(1e-6))))
+    intrinsic_fwhm = preset.nema_passport.intrinsic_crystal_fwhm
+    return Float(np.hypot(projected_collimator_fwhm, intrinsic_fwhm))
+
+
+def compute_nema_activity_sensitivity(
+    collimator_sensitivity: Float | float,
+    preset: CollimatorPreset,
+    nuclide: RadionuclidePreset,
+) -> Float:
+    """
+    Пересчитывает безразмерную чувствительность коллиматора (долю фотонов в 4*pi на 1 испущенный гамма-квант)
+    в паспортную системную чувствительность гамма-камеры по стандарту NEMA NU-1 [имп./с/МБк]
+    с учетом пропускания входного герметизирующего алюминиевого окна кристалла (Al) и фотопиковой эффективности NaI(Tl):
+    S_sys = 10^6 * S_coll * I_gamma * exp(-mu_Al(E) * d_window) * epsilon_photopeak.
+    """
+    decays_per_unit_activity = Float(1.0e6)
+    aluminum_mat = database_setting.material_database["Al"]
+    mu_aluminum = compute_total_linear_attenuation(aluminum_mat, nuclide.primary_energy)
+    window_transmission = Float(np.exp(-float(mu_aluminum) * float(preset.nema_passport.detector_gap)))
+    photopeak_efficiency = preset.nema_passport.nominal_photopeak_efficiency
+    return Float(
+        decays_per_unit_activity
+        * Float(collimator_sensitivity)
+        * nuclide.gamma_yield_per_decay
+        * window_transmission
+        * photopeak_efficiency
+    )
+
+
 __all__ = [
+    "NemaPassportSpecification",
     "CollimatorPreset",
     "RadionuclidePreset",
     "GE_FIELD_SIZE_X",
@@ -299,4 +434,6 @@ __all__ = [
     "compute_anger_effective_length",
     "compute_anger_geometric_fwhm",
     "compute_anger_geometric_sensitivity",
+    "compute_nema_system_fwhm",
+    "compute_nema_activity_sensitivity",
 ]
