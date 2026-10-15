@@ -24,7 +24,7 @@ from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.direct_collimators import DirectParallelCollimator, CollimatorHoleShape
 from core.materials.materials import Material, MaterialArray
 from core.other.typing_definitions import Float
-from core.source.sources import Source
+from core.source.sources import Source, PointSource
 from core.scene.nodes import SpatialNode, CompositeNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.scene.gantry_node import GantryNode
@@ -172,14 +172,18 @@ class SceneBuilder:
         elif isinstance(dist_config, RawDistributionConfig):
             file_path = Path(resolved_path)
             data: np.ndarray
+            element_dtype = np.dtype(dist_config.dtype)
             if dist_config.encoding == 'binary':
                 file_size = file_path.stat().st_size
-                expected_size = int(np.prod(dist_config.shape) * 4)
+                expected_size = int(np.prod(dist_config.shape) * element_dtype.itemsize)
                 if file_size != expected_size:
-                    raise ValueError(f"Размер бинарного файла {resolved_path} ({file_size} байт) не совпадает с ожидаемым ({expected_size} байт для float32)")
-                data = np.fromfile(resolved_path, dtype=np.float32)
+                    raise ValueError(
+                        f"Размер бинарного файла {resolved_path} ({file_size} байт) "
+                        f"не совпадает с ожидаемым ({expected_size} байт для {element_dtype.name})"
+                    )
+                data = np.fromfile(resolved_path, dtype=element_dtype)
             else:
-                data = np.loadtxt(resolved_path)
+                data = np.loadtxt(resolved_path, dtype=element_dtype)
 
             expected_elements = int(np.prod(dist_config.shape))
             if data.size != expected_elements:
@@ -268,20 +272,11 @@ class SceneBuilder:
 
     def _build_source(self, config: SourceConfig) -> Source:
         dist_config = config.distribution
-        raw_distribution = self._load_raw_distribution(dist_config)
-
-        distribution = np.array(raw_distribution, dtype=float, copy=True)
-
-        if dist_config.fill_value is not None:
-            distribution.fill(float(dist_config.fill_value))
-
-        if dist_config.mapping is not None:
-            for map_val, act_val in dist_config.mapping.items():
-                mask = np.isclose(raw_distribution, map_val)
-                distribution[mask] = float(act_val)
-
         activity = Float(self._to_float(config.activity, check_positive=True)) if config.activity is not None else None
-        voxel_size = Float(self._to_float(config.voxel_size, check_positive=True))
+        raw_voxel_size = self._to_float(config.voxel_size, check_positive=False)
+        if raw_voxel_size < 0.0:
+            raise ValueError(f"Значение voxel_size ({raw_voxel_size}) не может быть отрицательным")
+        voxel_size = Float(raw_voxel_size)
         if isinstance(config.energy, list):
             energy_validator = unit_validator_factory('MeV', float(units.MeV))
             energy: Any = [
@@ -290,19 +285,46 @@ class SceneBuilder:
             ]
         else:
             energy = Float(self._to_float(config.energy, check_positive=True))
-        half_life = Float(self._to_float(config.half_life, check_positive=True))
+        half_life_raw = self._to_float(config.half_life, check_positive=False)
+        if half_life_raw < 0.0:
+            raise ValueError(f"Значение half_life ({half_life_raw}) не может быть отрицательным")
+        half_life = Float(half_life_raw) if half_life_raw > 0.0 else Float(np.inf)
 
-        node = Source(
-            distribution=distribution,
-            activity=activity,
-            voxel_size=voxel_size,
-            radiation_type=config.radiation_type,
-            energy=energy,
-            half_life=half_life,
-        )
+        if dist_config is None:
+            effective_activity = activity if activity is not None else Float(1.0 * units.MBq)
+            node: Source = PointSource(
+                activity=effective_activity,
+                energy=energy,
+                size=voxel_size,
+                half_life=half_life,
+            )
+            node.radiation_type = config.radiation_type
+        else:
+            if voxel_size <= 0.0:
+                raise ValueError(f"Значение {voxel_size} должно быть строго больше 0")
+            raw_distribution = self._load_raw_distribution(dist_config)
+            distribution = np.array(raw_distribution, dtype=float, copy=True)
+
+            if dist_config.fill_value is not None:
+                distribution.fill(float(dist_config.fill_value))
+
+            if dist_config.mapping is not None:
+                for map_val, act_val in dist_config.mapping.items():
+                    mask = np.isclose(raw_distribution, map_val)
+                    distribution[mask] = float(act_val)
+
+            node = Source(
+                distribution=distribution,
+                activity=activity,
+                voxel_size=voxel_size,
+                radiation_type=config.radiation_type,
+                energy=energy,
+                half_life=half_life,
+            )
+            self.distribution_registry[node] = dist_config
+
         if config.name is not None:
             node.name = config.name
-        self.distribution_registry[node] = dist_config
         if config.radionuclide is not None or config.phantom_type is not None:
             source_meta = SourceMetadataConfig(
                 radionuclide=config.radionuclide,

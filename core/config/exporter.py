@@ -54,7 +54,7 @@ from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.scene.gantry_node import GantryNode
-from core.source.sources import Source
+from core.source.sources import Source, PointSource
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +314,12 @@ class SceneExporter:
             dist_cfg = None
             if distribution_registry is not None:
                 dist_cfg = distribution_registry.get(node)
-            if dist_cfg is None:
+            is_point = (
+                isinstance(node, PointSource)
+                and v_sz == 0.0
+                and tuple(node.distribution.shape) == (1, 1, 1)
+            )
+            if dist_cfg is None and not is_point:
                 dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'source_dist'}.npy")
             children_cfgs = [
                 cls.export_node(
@@ -325,7 +330,7 @@ class SceneExporter:
                 )
                 for child_node in node.childs
             ]
-            half_life = float(node.half_life)
+            half_life = 0.0 if np.isinf(node.half_life) else float(node.half_life)
             rad_type = node.radiation_type
             source_meta: Optional[SourceMetadataConfig] = None
             if source_metadata_registry is not None:
@@ -492,6 +497,102 @@ class SceneExporter:
         )
 
     @classmethod
+    def prepare_distribution_registry_for_yaml(
+        cls,
+        root_node: SpatialNode,
+        base_dir: Path,
+        distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
+    ) -> Dict[SpatialNode, AnyDistributionConfig]:
+        """
+        Подготавливает реестр распределений перед сохранением в YAML:
+        1. Приводит пути существующих файлов распределений к относительным относительно base_dir.
+        2. Для воксельных узлов (WoodcockVoxelVolume, Source), созданных в памяти без внешнего файла
+           на диске, автоматически сохраняет 3D-массив в .npy-файл в каталоге base_dir.
+        """
+        base_dir.mkdir(parents=True, exist_ok=True)
+        adjusted_registry: Dict[SpatialNode, AnyDistributionConfig] = {}
+
+        if distribution_registry is not None:
+            for reg_node, orig_dist_cfg in distribution_registry.items():
+                if orig_dist_cfg is not None and isinstance(orig_dist_cfg, (NumpyDistributionConfig, RawDistributionConfig)):
+                    orig_path_str = str(orig_dist_cfg.path)
+                    try:
+                        resolved_file_path = Path(orig_path_str)
+                        if not resolved_file_path.is_absolute():
+                            resolved_file_path = (base_dir / resolved_file_path).resolve()
+                        relative_path_str = os.path.relpath(resolved_file_path, base_dir)
+                        normalized_path = relative_path_str.replace('\\', '/')
+                    except (ValueError, OSError):
+                        normalized_path = orig_path_str.replace('\\', '/')
+                    adjusted_registry[reg_node] = orig_dist_cfg.model_copy(
+                        update={'path': normalized_path}
+                    )
+                elif orig_dist_cfg is not None:
+                    adjusted_registry[reg_node] = orig_dist_cfg
+
+        def _ensure_node_distribution_saved(curr_node: SpatialNode) -> None:
+            existing_orig = distribution_registry.get(curr_node) if distribution_registry is not None else None
+            file_exists = False
+            if existing_orig is not None and existing_orig.path:
+                cand_path = Path(existing_orig.path)
+                if cand_path.is_file() or (base_dir / cand_path).is_file():
+                    file_exists = True
+
+            if not file_exists:
+                if isinstance(curr_node, WoodcockVoxelVolume) and curr_node.material_distribution is not None:
+                    raw_name = (
+                        Path(existing_orig.path).name
+                        if (existing_orig is not None and existing_orig.path)
+                        else f"{curr_node.name or 'phantom'}.npy"
+                    )
+                    if not raw_name.lower().endswith('.npy'):
+                        raw_name = f"{Path(raw_name).stem}.npy"
+                    target_npy = base_dir / raw_name
+                    raw_indices = np.asarray(curr_node.material_distribution.view(np.ndarray), dtype=float)
+                    np.save(target_npy, raw_indices)
+                    actual_mapping: Optional[Dict[float, Union[float, str]]] = (
+                        dict(existing_orig.mapping)
+                        if (existing_orig is not None and existing_orig.mapping is not None)
+                        else {
+                            float(element_idx): material_item.name
+                            for element_idx, material_item in enumerate(curr_node.material_distribution.element_list)
+                        }
+                    )
+                    adjusted_registry[curr_node] = NumpyDistributionConfig(
+                        path=raw_name,
+                        mapping=actual_mapping if actual_mapping else {0.0: 'Vacuum'},
+                    )
+                elif isinstance(curr_node, Source):
+                    v_sz = (
+                        float(np.mean(curr_node.voxel_size))
+                        if isinstance(curr_node.voxel_size, (list, tuple, np.ndarray, Sequence))
+                        else float(curr_node.voxel_size)
+                    )
+                    is_point = (
+                        isinstance(curr_node, PointSource)
+                        and v_sz == 0.0
+                        and tuple(curr_node.distribution.shape) == (1, 1, 1)
+                    )
+                    if not is_point and curr_node.distribution.size > 0:
+                        raw_name = (
+                            Path(existing_orig.path).name
+                            if (existing_orig is not None and existing_orig.path)
+                            else f"{curr_node.name or 'source_dist'}.npy"
+                        )
+                        if not raw_name.lower().endswith('.npy'):
+                            raw_name = f"{Path(raw_name).stem}.npy"
+                        target_npy = base_dir / raw_name
+                        np.save(target_npy, np.asarray(curr_node.distribution, dtype=float))
+                        adjusted_registry[curr_node] = NumpyDistributionConfig(path=raw_name)
+
+            if isinstance(curr_node, CompositeNode):
+                for child_item in curr_node.childs:
+                    _ensure_node_distribution_saved(child_item)
+
+        _ensure_node_distribution_saved(root_node)
+        return adjusted_registry
+
+    @classmethod
     def export_to_yaml(
         cls,
         root_node: SpatialNode,
@@ -511,26 +612,11 @@ class SceneExporter:
         """
         target_path = Path(filepath).resolve()
         base_dir = target_path.parent
-
-        adjusted_distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None
-        if distribution_registry is not None:
-            adjusted_distribution_registry = {}
-            for reg_node, orig_dist_cfg in distribution_registry.items():
-                if orig_dist_cfg is not None and isinstance(orig_dist_cfg, (NumpyDistributionConfig, RawDistributionConfig)):
-                    orig_path_str = str(orig_dist_cfg.path)
-                    try:
-                        resolved_file_path = Path(orig_path_str)
-                        if not resolved_file_path.is_absolute():
-                            resolved_file_path = (base_dir / resolved_file_path).resolve()
-                        relative_path_str = os.path.relpath(resolved_file_path, base_dir)
-                        normalized_path = relative_path_str.replace('\\', '/')
-                    except (ValueError, OSError):
-                        normalized_path = orig_path_str.replace('\\', '/')
-                    adjusted_distribution_registry[reg_node] = orig_dist_cfg.model_copy(
-                        update={'path': normalized_path}
-                    )
-                else:
-                    adjusted_distribution_registry[reg_node] = orig_dist_cfg
+        adjusted_distribution_registry = cls.prepare_distribution_registry_for_yaml(
+            root_node=root_node,
+            base_dir=base_dir,
+            distribution_registry=distribution_registry,
+        )
 
         config = cls.export_to_config(
             root_node=root_node,

@@ -102,7 +102,7 @@ class SourceInspectorSection(BaseInspectorSection):
         form_layout.addRow("Период полураспада (ч):", self.spin_source_half_life)
 
         self.spin_source_voxel_size = QDoubleSpinBox()
-        self.spin_source_voxel_size.setRange(0.01, 100.0)
+        self.spin_source_voxel_size.setRange(0.0, 100.0)
         self.spin_source_voxel_size.setSingleStep(0.5)
         self.spin_source_voxel_size.setValue(4.0)
         self.spin_source_voxel_size.setSuffix(" мм")
@@ -384,7 +384,13 @@ class SourceInspectorSection(BaseInspectorSection):
                     self._is_updating_ui = False
 
                 if self._scene_vm is not None:
-                    self._scene_vm.update_distribution_path(self._current_vm.core_node, file_path_str)
+                    self._scene_vm.update_distribution_path(
+                        self._current_vm.core_node,
+                        file_path_str,
+                        order=params.order,
+                        encoding=params.encoding,
+                        dtype=params.dtype,
+                    )
 
 
 __all__ = ["SourceInspectorSection"]

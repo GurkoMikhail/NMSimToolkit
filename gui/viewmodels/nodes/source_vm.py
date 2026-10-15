@@ -152,7 +152,9 @@ class SourceViewModel(NodeViewModel):
 
     @property
     def is_point_source(self) -> bool:
-        return isinstance(self.core_node, PointSource)
+        if isinstance(self.core_node, PointSource):
+            return float(self.core_node.voxel_size) == 0.0 and self.dimensions == (1, 1, 1)
+        return False
 
     @property
     def dimensions(self) -> Tuple[int, ...]:

@@ -1023,14 +1023,26 @@ class MainWindow(QMainWindow):
         filename, _ = QFileDialog.getSaveFileName(self, "Сохранить конфигурацию", "simulation_config.yaml", "YAML files (*.yaml *.yml)")
         if filename and self.scene_vm.root_vm is not None:
             try:
-                data_mgr = None
-                if self.data_manager_vm is not None and self.data_manager_vm.handlers:
-                    data_mgr = self.data_manager_vm.to_config()
+                data_mgr = self.data_manager_vm.to_config() if self.data_manager_vm is not None else None
+                prev_sim_mgr = (
+                    self.current_config.simulation_manager
+                    if self.current_config is not None
+                    else None
+                )
+                start_time_val = (
+                    float(prev_sim_mgr.start_time)
+                    if prev_sim_mgr is not None and isinstance(prev_sim_mgr.start_time, (int, float))
+                    else 0.0 * units.ns
+                )
                 sim_mgr = SimulationManagerConfig(
+                    start_time=start_time_val,
                     particles_number=int(self.sim_settings.particles_number),
                     min_energy=float(self.sim_settings.min_energy) * units.keV,
                     stop_time=float(self.orchestrator_session.stop_time) * units.s,
+                    physics_list=prev_sim_mgr.physics_list if prev_sim_mgr is not None else None,
+                    seed=prev_sim_mgr.seed if prev_sim_mgr is not None else None,
                 )
+                logging_cfg = self.current_config.logging if self.current_config is not None else None
                 protocol_cfg = self.procedure_vm.to_config() if self.procedure_vm is not None else None
                 active_bindings = (
                     self.procedure_vm.bindings_registry
@@ -1049,6 +1061,7 @@ class MainWindow(QMainWindow):
                         distribution_registry=self.scene_vm.distribution_registry,
                         slots_registry=self.scene_vm.slots_registry,
                         source_metadata_registry=self.source_metadata_registry,
+                        logging_cfg=logging_cfg,
                     )
                 else:
                     SceneExporter.export_to_yaml(
@@ -1061,6 +1074,7 @@ class MainWindow(QMainWindow):
                         distribution_registry=self.scene_vm.distribution_registry,
                         slots_registry=self.scene_vm.slots_registry,
                         source_metadata_registry=self.source_metadata_registry,
+                        logging_cfg=logging_cfg,
                     )
                 QMessageBox.information(self, "Успех", f"Конфигурация сохранена в:\n{filename}")
             except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:

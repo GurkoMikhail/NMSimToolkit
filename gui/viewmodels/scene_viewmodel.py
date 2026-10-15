@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
 import numpy as np
 
 from PySide6.QtCore import QObject, Signal
@@ -113,6 +113,10 @@ class SceneViewModel(QObject):
         core_node: SpatialNode,
         file_path: str,
         mapping: Optional[Dict[float, Union[float, str]]] = None,
+        order: Optional[str] = None,
+        encoding: Optional[str] = None,
+        dtype: Optional[Any] = None,
+        fill_value: Optional[Union[float, str]] = None,
     ) -> None:
         """
         Регистрирует или обновляет путь к файлу распределения в distribution_registry.
@@ -121,40 +125,70 @@ class SceneViewModel(QObject):
         path_obj = Path(file_path)
         file_suffix = path_obj.suffix.lower()
         needs_numpy = (file_suffix == '.npy')
-        needs_raw = (file_suffix in ('.raw', '.dat'))
+        needs_raw = (file_suffix in ('.raw', '.dat', '.bin', '.txt', '.csv'))
 
         existing_cfg = self.distribution_registry.get(core_node)
         effective_mapping = dict(mapping) if mapping is not None else None
         if existing_cfg is not None and effective_mapping is None and existing_cfg.mapping is not None:
             effective_mapping = dict(existing_cfg.mapping)
+        effective_fill = fill_value if fill_value is not None else (existing_cfg.fill_value if existing_cfg is not None else None)
+
+        shape: Tuple[int, int, int] = (1, 1, 1)
+        if isinstance(core_node, WoodcockVoxelVolume) and core_node.material_distribution is not None:
+            raw_shape = tuple(core_node.material_distribution.shape)
+            if len(raw_shape) == 3:
+                shape = (int(raw_shape[0]), int(raw_shape[1]), int(raw_shape[2]))
+        elif isinstance(core_node, Source) and core_node.distribution is not None:
+            raw_shape = tuple(core_node.distribution.shape)
+            if len(raw_shape) == 3:
+                shape = (int(raw_shape[0]), int(raw_shape[1]), int(raw_shape[2]))
+
+        normalized_order: Literal['C', 'F'] = 'F' if order == 'F' else ('C' if order == 'C' else 'C')
+        normalized_encoding: Literal['text', 'binary'] = (
+            'binary'
+            if encoding == 'binary' or (encoding is None and file_suffix in ('.raw', '.bin'))
+            else 'text'
+        )
+        normalized_dtype: str = np.dtype(dtype).name if dtype is not None else 'float32'
 
         if existing_cfg is not None:
             if needs_numpy and isinstance(existing_cfg, NumpyDistributionConfig):
                 existing_cfg.path = str(file_path)
                 if effective_mapping is not None:
                     existing_cfg.mapping = effective_mapping
+                if effective_fill is not None:
+                    existing_cfg.fill_value = effective_fill
                 return
             elif needs_raw and isinstance(existing_cfg, RawDistributionConfig):
                 existing_cfg.path = str(file_path)
+                existing_cfg.shape = shape
+                if order in ('C', 'F'):
+                    existing_cfg.order = normalized_order
+                if encoding in ('text', 'binary'):
+                    existing_cfg.encoding = normalized_encoding
+                if dtype is not None:
+                    existing_cfg.dtype = normalized_dtype
                 if effective_mapping is not None:
                     existing_cfg.mapping = effective_mapping
+                if effective_fill is not None:
+                    existing_cfg.fill_value = effective_fill
                 return
 
         if needs_raw:
-            shape = (1, 1, 1)
-            if isinstance(core_node, WoodcockVoxelVolume) and core_node.material_distribution is not None:
-                shape = tuple(core_node.material_distribution.shape)
-            elif isinstance(core_node, Source) and core_node.distribution is not None:
-                shape = tuple(core_node.distribution.shape)
             self.distribution_registry[core_node] = RawDistributionConfig(
                 path=str(file_path),
                 shape=shape,
+                order=normalized_order,
+                encoding=normalized_encoding,
+                dtype=normalized_dtype,
                 mapping=effective_mapping,
+                fill_value=effective_fill,
             )
         else:
             self.distribution_registry[core_node] = NumpyDistributionConfig(
                 path=str(file_path),
                 mapping=effective_mapping,
+                fill_value=effective_fill,
             )
 
     def update_distribution_mapping(

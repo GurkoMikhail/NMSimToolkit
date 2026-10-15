@@ -14,6 +14,7 @@ from core.config.models import (
     SimulationConfig,
     SimulationManagerConfig,
     DataManagerConfig,
+    LoggingConfig,
     AnyProtocolConfig,
     AnyDistributionConfig,
     GammaCameraSlotsConfig,
@@ -404,11 +405,20 @@ class ConfigTemplateBinder:
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
         source_metadata_registry: Optional[Dict[SpatialNode, Any]] = None,
+        logging_cfg: Optional[LoggingConfig] = None,
     ) -> None:
         """
         Экспортирует сцену и конфигурацию в YAML с наложением шаблонных макросов ${variable}.
         Сохраняет архитектурную чистоту ядра, изолируя подстановку шаблонов от SceneExporter.
         """
+        target_path = Path(filepath).resolve()
+        base_dir = target_path.parent
+        adjusted_distribution_registry = SceneExporter.prepare_distribution_registry_for_yaml(
+            root_node=root_node,
+            base_dir=base_dir,
+            distribution_registry=distribution_registry,
+        )
+
         # 1. Чистый экспорт ядра
         config = SceneExporter.export_to_config(
             root_node,
@@ -416,9 +426,10 @@ class ConfigTemplateBinder:
             data_manager_cfg=data_manager_cfg,
             pool_size=pool_size,
             protocol=protocol,
-            distribution_registry=distribution_registry,
+            distribution_registry=adjusted_distribution_registry,
             slots_registry=slots_registry,
             source_metadata_registry=source_metadata_registry,
+            logging_cfg=logging_cfg,
         )
 
         # 2. Сериализация в raw dict
@@ -429,8 +440,6 @@ class ConfigTemplateBinder:
             cls.apply_bindings(raw_dict, bindings_registry)
 
         # 4. Дамп в YAML через канонический дамппер с поддержкой якорей материалов
-        target_path = Path(filepath)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
         dump_simulation_config(raw_dict, target_path)
 
 

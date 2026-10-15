@@ -339,6 +339,10 @@ class VoxelVolumeInspectorSection(BaseInspectorSection):
                         self._current_vm.core_node,
                         file_path_str,
                         mapping=mapping_for_scene,
+                        order=params.order,
+                        encoding=params.encoding,
+                        dtype=params.dtype,
+                        fill_value=params.fill_value,
                     )
                 self._update_material_mapping_table()
 

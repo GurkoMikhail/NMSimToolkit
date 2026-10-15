@@ -288,3 +288,66 @@ class TestVoxelPhantomMappingAndSaving(unittest.TestCase):
         self.assertAlmostEqual(updated_box_bounds[1], updated_bounds[1], places=4)
 
         inspector_widget.close()
+
+    def test_update_distribution_path_with_bin_order_encoding_dtype_roundtrip(self) -> None:
+        """
+        Проверка сохранения и загрузки через YAML бинарного .bin распределения
+        с явно заданными order='F', encoding='binary', dtype='uint8' и fill_value.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bin_path = Path(temp_dir) / "phantom_u8.bin"
+            raw_data = np.zeros((2, 3, 4), dtype=np.uint8, order="F")
+            raw_data[1, 2, 3] = 1
+            raw_data.ravel(order="F").tofile(bin_path)
+
+            mat_arr = MaterialArray((2, 3, 4))
+            core_node = WoodcockVoxelVolume(voxel_size=2.0, material_distribution=mat_arr, name="BinPhantom")
+            scene_vm = SceneViewModel(core_node)
+            voxel_vm = scene_vm.root_vm
+            assert isinstance(voxel_vm, VoxelVolumeViewModel)
+
+            ok = voxel_vm.reload_distribution(
+                path=str(bin_path),
+                shape=(2, 3, 4),
+                order="F",
+                dtype=np.uint8,
+                encoding="binary",
+                voxel_size=2.0,
+                mapping={0.0: "Air, Dry (near sea level)", 1.0: "Water, Liquid"},
+                fill_value="Air, Dry (near sea level)",
+            )
+            self.assertTrue(ok)
+
+            scene_vm.update_distribution_path(
+                core_node,
+                str(bin_path),
+                mapping={0.0: "Air, Dry (near sea level)", 1.0: "Water, Liquid"},
+                order="F",
+                encoding="binary",
+                dtype=np.uint8,
+                fill_value="Air, Dry (near sea level)",
+            )
+
+            dist_cfg = scene_vm.distribution_registry.get(core_node)
+            self.assertIsInstance(dist_cfg, RawDistributionConfig)
+            assert isinstance(dist_cfg, RawDistributionConfig)
+            self.assertEqual(dist_cfg.order, "F")
+            self.assertEqual(dist_cfg.encoding, "binary")
+            self.assertEqual(dist_cfg.dtype, "uint8")
+
+            yaml_out = Path(temp_dir) / "bin_scene.yaml"
+            SceneExporter.export_to_yaml(
+                root_node=core_node,
+                filepath=yaml_out,
+                distribution_registry=scene_vm.distribution_registry,
+            )
+
+            loaded_cfg = load_simulation_config(yaml_out)
+            builder = SceneBuilder(base_dir=Path(temp_dir))
+            rebuilt_node = builder.build_scene(loaded_cfg.scene)
+            self.assertIsInstance(rebuilt_node, WoodcockVoxelVolume)
+            assert isinstance(rebuilt_node, WoodcockVoxelVolume)
+            self.assertEqual(rebuilt_node.material_distribution.shape, (2, 3, 4))
+            water_mat = builder._get_material("Water, Liquid")
+            self.assertEqual(rebuilt_node.material_distribution.ID[1, 2, 3], water_mat.ID)
+

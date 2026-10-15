@@ -86,6 +86,7 @@ class RawDistributionConfig(BaseDistributionConfig):
     shape: Tuple[int, int, int]
     order: Literal['C', 'F'] = 'C'
     encoding: Literal['text', 'binary'] = 'text'
+    dtype: str = 'float32'
 
 AnyDistributionConfig = Annotated[
     Union[
@@ -135,7 +136,7 @@ class SourceMetadataConfig(BaseModel):
 class SourceConfig(CompositeNodeConfig):
     type: Literal['Source'] = 'Source'
     activity: Optional[ActivityConfig] = None
-    distribution: AnyDistributionConfig
+    distribution: Optional[AnyDistributionConfig] = None
     voxel_size: LengthConfig = 4.0 * units.mm
     radiation_type: str = 'Gamma'
     energy: Union[EnergyConfig, List[List[Any]], List[Tuple[Any, float]]] = 140.5 * units.keV
