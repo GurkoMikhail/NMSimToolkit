@@ -201,7 +201,9 @@ class TestOrchestrator(unittest.TestCase):
                 self.assertIn("completion_time", tasks_group["task_0"].attrs)
                 self.assertAlmostEqual(tasks_group["task_0/context"].attrs["gantry_angle"], 0.0)
                 self.assertAlmostEqual(tasks_group["task_1/context"].attrs["gantry_angle"], np.pi / 2)
-                self.assertIn("acquisition", tasks_group["task_0"])
+                self.assertNotIn("acquisition", tasks_group["task_0"])
+                self.assertIn("protocol", tasks_group["task_0"])
+                self.assertIn("kinematics", tasks_group["task_0"])
             output_hdf_path.unlink(missing_ok=True)
 
 if __name__ == '__main__':

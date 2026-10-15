@@ -24,6 +24,7 @@ import numpy as np
 
 from core.config.models import (
     BoxConfig,
+    CustomSweepProtocolConfig,
     DataManagerConfig,
     DirectParallelCollimatorConfig,
     GammaCameraConfig,
@@ -56,11 +57,13 @@ from core.physics.processes import (
     get_process_mapping,
     get_species_mapping,
 )
+from core.config.simulation_worker import simulation_worker_task
 from core.scene.dose_grid_node import DoseGridNode
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.scene.gantry_node import GantryNode
 from core.scene.nodes import CompositeNode
-from core.source.sources import Source
+from core.source.sources import PointSource, Source
+from core.transport.simulation_managers import SimulationManager
 
 
 class TestHdf5StorageAndMetadata(unittest.TestCase):
@@ -72,10 +75,8 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
         self.lead = Material(name="Pb", density=11.34)
 
     def tearDown(self) -> None:
-        try:
+        if os.path.exists(self.temp_dir.name):
             self.temp_dir.cleanup()
-        except (OSError, RuntimeError):
-            pass
 
     def test_process_map_completely_eliminated_and_dynamic_mapping(self) -> None:
         """
@@ -374,15 +375,15 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             self.assertIn("gantry", meta)
             gantry_grp = meta["gantry"]
             self.assertAlmostEqual(float(gantry_grp["gantry_angle"][()]), np.pi / 3.0)
-            self.assertAlmostEqual(float(gantry_grp["gantry_angle_deg"][()]), 60.0)
             self.assertEqual(gantry_grp["gantry_angle"].attrs["units"], "rad")
             self.assertAlmostEqual(float(gantry_grp["orbit_radius"][()]), 250.0)
             self.assertEqual(gantry_grp["orbit_radius"].attrs["units"], "mm")
             self.assertEqual(gantry_grp.attrs["rotation_direction"], "CCW")
             self.assertAlmostEqual(float(gantry_grp["frame_duration"][()]), 15.0)
-            self.assertIn("pose_matrix_Detector_1", gantry_grp)
             self.assertIn("pose_matrix_detector_1", gantry_grp)
-            self.assertEqual(gantry_grp["pose_matrix_Detector_1"].shape, (4, 4))
+            self.assertNotIn("pose_matrix_Detector_1", gantry_grp)
+            self.assertEqual(gantry_grp.attrs["detector_1_name"], "Detector_1")
+            self.assertEqual(gantry_grp["pose_matrix_detector_1"].shape, (4, 4))
 
             # 2. Группа geometry
             self.assertIn("geometry", meta)
@@ -399,6 +400,17 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             self.assertAlmostEqual(float(geom_grp["collimator_septa_thickness"][()]), 0.2)
             self.assertEqual(geom_grp.attrs["collimator_hole_shape"], "hexagonal")
             self.assertEqual(geom_grp.attrs["collimator_material"], "Pb")
+            self.assertNotIn("crystal_dimensions_Detector_1", geom_grp)
+            self.assertIn("volumes", geom_grp)
+            self.assertIn("Crystal_1", geom_grp["volumes"])
+
+            # 2b. Группа protocol
+            self.assertIn("protocol", meta)
+            proto_grp = meta["protocol"]
+            self.assertAlmostEqual(float(proto_grp["exposure_time"][()]), 15.0)
+            self.assertEqual(proto_grp["exposure_time"].attrs["units"], "s")
+            self.assertAlmostEqual(float(proto_grp["orbit_radius"][()]), 250.0)
+            self.assertEqual(proto_grp["orbit_radius"].attrs["units"], "mm")
 
             # 3. Группа source
             self.assertIn("source", meta)
@@ -421,19 +433,22 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             self.assertEqual(sim_grp.attrs["precision_mode"], "single")
             self.assertEqual(sim_grp.attrs["status"], "completed")
 
-            # 5. Обратная совместимость с задачами tasks/task_5
+            # 5. Запись задачи tasks/task_5 без дублирования корневых секций
             self.assertIn("tasks", meta)
             self.assertIn("task_5", meta["tasks"])
-            t_grp = meta["tasks/task_5"]
-            self.assertEqual(t_grp.attrs["task_id"], 5)
-            self.assertEqual(t_grp.attrs["status"], "completed")
-            self.assertIn("start_time", t_grp.attrs)
-            self.assertIn("completion_time", t_grp.attrs)
-            self.assertIn("acquisition", t_grp)
-            self.assertIn("protocol", t_grp["acquisition"])
-            self.assertIn("kinematics", t_grp["acquisition"])
-            self.assertIn("detectors", t_grp["acquisition"])
-            self.assertIn("geometry", t_grp["acquisition"])
+            task_5_group = meta["tasks/task_5"]
+            self.assertEqual(task_5_group.attrs["task_id"], 5)
+            self.assertEqual(task_5_group.attrs["status"], "completed")
+            self.assertIn("start_time", task_5_group.attrs)
+            self.assertIn("completion_time", task_5_group.attrs)
+            self.assertNotIn("acquisition", task_5_group)
+            self.assertNotIn("gantry", task_5_group)
+            self.assertNotIn("geometry", task_5_group)
+            self.assertNotIn("source", task_5_group)
+            self.assertNotIn("simulation", task_5_group)
+            self.assertIn("protocol", task_5_group)
+            self.assertIn("kinematics", task_5_group)
+            self.assertIn("detectors", task_5_group)
 
     def test_direct_stream_handler_raw_chunk_formatting(self) -> None:
         """
@@ -646,7 +661,348 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
         finally:
             dose_handler.close()
 
+    def test_metadata_specialization_feedback_remarks_in_hdf5(self) -> None:
+        """
+        Сквозная проверка всех 5 замечаний из docs/plans/metadata_feedback.md в HDF5-файле:
+        1-3. Отсутствие нулевых orbit_radius, angular_step, frame_duration при CustomSweep,
+             и точные значения при StepAndShoot;
+        4. Отсутствие дубликатов pose_matrix_GammaCamera_N и crystal_dimensions_GammaCamera_N;
+        5. Точное округление half_life = 595296.0 с для 161Tb (6.89 сут).
+        """
+        world = CompositeNode(name="World")
+        gantry = GantryNode(name="Gantry")
+        world.add_child(gantry)
+
+        for idx in (1, 2):
+            camera = GammaCameraNode(
+                name=f"GammaCamera_{idx}",
+                slots={"crystal": f"Crystal_{idx}", "collimator": f"Collimator_{idx}"},
+            )
+            crystal = Volume(
+                name=f"Crystal_{idx}",
+                geometry=Box(x=540.0, y=400.0, z=9.5),
+                material=self.nai,
+            )
+            collimator = ParametricParallelCollimator(
+                size=[540.0, 400.0, 35.0],
+                hole_diameter=1.5,
+                septa=0.2,
+                material=self.lead,
+                hole_shape=CollimatorHoleShape.HEXAGONAL,
+                name=f"Collimator_{idx}",
+            )
+            camera.add_child(crystal)
+            camera.add_child(collimator)
+            gantry.add_child(camera)
+
+        tb_source = Source(
+            distribution=np.ones((2, 2, 2)),
+            activity=100.0 * units.MBq,
+            half_life=6.89 * units.day,
+        )
+        world.add_child(tb_source)
+
+        collector = ProcedureMetadataCollector()
+
+        # А. Протокол CustomSweep без заданного времени экспозиции -> нулевые поля НЕ создаются
+        sweep_protocol = CustomSweepProtocolConfig(
+            zipped_variables={"gantry_angle": [0.0, float(np.deg2rad(3.0))]}
+        )
+        sweep_meta = collector.collect(
+            root_scene=world,
+            protocol=sweep_protocol,
+            context={"gantry_angle": 0.0, "view_index": 0},
+            task_id=0,
+        )
+        sweep_h5_path = os.path.join(self.temp_dir.name, "sweep_spec.h5")
+        dm_sweep = DataManager(filename=sweep_h5_path, handlers=[], metadata=sweep_meta, task_id=0)
+        dm_sweep.initialize_metadata()
+
+        with h5py.File(sweep_h5_path, "r") as h5_file:
+            gantry_grp = h5_file["metadata/gantry"]
+            proto_grp = h5_file["metadata/protocol"]
+            geom_grp = h5_file["metadata/geometry"]
+            src_grp = h5_file["metadata/source"]
+
+            self.assertNotIn("orbit_radius", gantry_grp)
+            self.assertNotIn("orbit_radius", gantry_grp.attrs)
+            self.assertNotIn("angular_step", gantry_grp)
+            self.assertNotIn("rotation_direction", gantry_grp.attrs)
+            self.assertNotIn("frame_duration", gantry_grp)
+            self.assertNotIn("exposure_time", proto_grp)
+            self.assertNotIn("orbit_radius", proto_grp)
+
+            self.assertIn("pose_matrix_detector_1", gantry_grp)
+            self.assertIn("pose_matrix_detector_2", gantry_grp)
+            self.assertNotIn("pose_matrix_GammaCamera_1", gantry_grp)
+            self.assertNotIn("pose_matrix_GammaCamera_2", gantry_grp)
+
+            self.assertIn("crystal_dimensions", geom_grp)
+            self.assertNotIn("crystal_dimensions_GammaCamera_1", geom_grp)
+            self.assertNotIn("crystal_dimensions_GammaCamera_2", geom_grp)
+            self.assertNotIn("collimator_hole_diameter_GammaCamera_1", geom_grp)
+
+            self.assertEqual(float(src_grp["half_life"][()]), 595296.0)
+            self.assertEqual(float(src_grp.attrs["half_life"]), 595296.0)
+
+    def test_simulation_manager_unified_rng(self) -> None:
+        """
+        Проверка единства генератора случайных чисел (self.rng) в SimulationManager:
+        пропагатор, все физические процессы и все активные источники используют один и тот же
+        экземпляр генератора, а initial_particle_id и rng_state корректно инициализируют состояние.
+        """
+        world = Volume(
+            geometry=Box(200.0, 200.0, 200.0),
+            material=Material(name="Air, Dry (near sea level)", density=0.0012),
+            name="World",
+        )
+        src1 = PointSource(activity=5000.0 * units.Bq, energy=140.5 * units.keV)
+        src2 = PointSource(activity=3000.0 * units.Bq, energy=140.5 * units.keV)
+        world.add_child(src1)
+        world.add_child(src2)
+
+        ref_rng = np.random.default_rng(777)
+        _ = ref_rng.random(10)
+        saved_state = ref_rng.bit_generator.state
+        expected_next_values = ref_rng.random(5)
+
+        mgr = SimulationManager(
+            scene=world,
+            stop_time=0.01 * units.s,
+            particles_number=50,
+            seed=123,
+            initial_particle_id=420,
+            rng_state=saved_state,
+        )
+
+        self.assertIs(mgr.propagator.rng, mgr.rng)
+        for proc in mgr.propagator.processes:
+            self.assertIs(proc.rng, mgr.rng)
+        for active_src in mgr.active_sources:
+            self.assertIs(active_src.rng, mgr.rng)
+
+        self.assertEqual(mgr.bank.count, 420)
+        np.testing.assert_array_equal(mgr.rng.random(5), expected_next_values)
+
+    @staticmethod
+    def _build_resume_test_task_dict(h5_filename: str, stop_time_str: str) -> dict:
+        """Формирует конфигурацию задачи симуляции для проверки бесшовного досчёта."""
+        return {
+            "protocol": {
+                "type": "CustomSweep",
+                "zipped_variables": {"gantry_angle": [0.0]},
+            },
+            "simulation_manager": {
+                "start_time": "0.0 s",
+                "stop_time": stop_time_str,
+                "particles_number": 50,
+                "min_energy": "1.0 keV",
+            },
+            "data_manager": {
+                "filename": h5_filename,
+                "floating_point_precision": "float64",
+                "handlers": [
+                    {"type": "DirectStreamHandler"},
+                    {"type": "SensitiveVolumeHandler", "sensitive_volumes": ["Crystal"]},
+                ],
+            },
+            "scene": {
+                "type": "Volume",
+                "name": "World",
+                "geometry": {"type": "Box", "x": "200.0 mm", "y": "200.0 mm", "z": "200.0 mm"},
+                "material": "Air, Dry (near sea level)",
+                "children": [
+                    {
+                        "type": "Volume",
+                        "name": "Crystal",
+                        "geometry": {"type": "Box", "x": "120.0 mm", "y": "120.0 mm", "z": "25.0 mm"},
+                        "material": "Sodium Iodide",
+                        "transformations": [{"type": "translate", "x": 0.0, "y": 0.0, "z": "30.0 mm"}],
+                    },
+                    {
+                        "type": "Source",
+                        "name": "PointSrc",
+                        "activity": "10000 Bq",
+                        "energy": "140.5 keV",
+                        "half_life": "6.0 h",
+                    },
+                ],
+            },
+        }
+
+    def test_stateful_resume_bitwise_identity(self) -> None:
+        """
+        Проверка бесшовного двухэтапного досчёта симуляции (Stateful Resume):
+        1. Побитовое совпадение первого этапа с непрерывным эталонным расчётом;
+        2. Сквозная непрерывность particle_ID и actual_start_time == actual_stop_time;
+        3. Корректная кумулятивная агрегация frame_duration и simulated_histories;
+        4. 100% побитовая воспроизводимость (np.array_equal) двухэтапного досчёта.
+        """
+        ref_h5 = os.path.join(self.temp_dir.name, "ref.h5")
+        resumed_h5 = os.path.join(self.temp_dir.name, "resumed.h5")
+        resumed_repro_h5 = os.path.join(self.temp_dir.name, "resumed_repro.h5")
+        fixed_seed = 12345
+
+        # 1. Эталонный непрерывный прогон [0.0, 0.02 s] -> ref.h5
+        ref_task = self._build_resume_test_task_dict(ref_h5, "0.02 s")
+        simulation_worker_task((ref_task, fixed_seed, None, None, None, None, (), 0))
+
+        # 2. Двухэтапный прогон: сначала [0.0, 0.01 s], затем досчёт до [0.0, 0.02 s] -> resumed.h5
+        stage1_task = self._build_resume_test_task_dict(resumed_h5, "0.01 s")
+        simulation_worker_task((stage1_task, fixed_seed, None, None, None, None, (), 0))
+
+        stage2_task = self._build_resume_test_task_dict(resumed_h5, "0.02 s")
+        simulation_worker_task((stage2_task, 99999, None, None, None, None, (), 0))
+
+        # 3. Независимый повтор двухэтапного прогона для проверки 100% побитовой детерминированности
+        repro_stage1 = self._build_resume_test_task_dict(resumed_repro_h5, "0.01 s")
+        simulation_worker_task((repro_stage1, fixed_seed, None, None, None, None, (), 0))
+
+        repro_stage2 = self._build_resume_test_task_dict(resumed_repro_h5, "0.02 s")
+        simulation_worker_task((repro_stage2, 77777, None, None, None, None, (), 0))
+
+        with (
+            h5py.File(ref_h5, "r") as ref_file,
+            h5py.File(resumed_h5, "r") as res_file,
+            h5py.File(resumed_repro_h5, "r") as repro_file,
+        ):
+            # Проверка паспортов задач в resumed.h5
+            self.assertIn("task_0", res_file["metadata/tasks"])
+            self.assertIn("task_1", res_file["metadata/tasks"])
+            task_0_group = res_file["metadata/tasks/task_0"]
+            task_1_group = res_file["metadata/tasks/task_1"]
+            self.assertEqual(task_0_group.attrs["status"], "completed")
+            self.assertEqual(task_1_group.attrs["status"], "completed")
+            self.assertEqual(int(task_0_group.attrs["seed"]), fixed_seed)
+            self.assertEqual(int(task_1_group.attrs["seed"]), fixed_seed)
+            self.assertEqual(float(task_1_group.attrs["actual_start_time"]), float(task_0_group.attrs["actual_stop_time"]))
+            self.assertEqual(int(task_1_group.attrs["particle_id_start"]), int(task_0_group.attrs["particle_id_end"]))
+
+            stage1_particles = int(task_0_group.attrs["particle_id_end"])
+            total_resumed_particles = int(task_1_group.attrs["particle_id_end"])
+            self.assertGreater(stage1_particles, 0)
+            self.assertGreater(total_resumed_particles, stage1_particles)
+
+            # Проверка сквозной нумерации particle_ID взаимодействовавших частиц без коллизий между task_0 и task_1
+            res_particle_ids = res_file["initial_states/particle_ID"][:]
+            self.assertEqual(len(np.unique(res_particle_ids)), len(res_particle_ids))
+            self.assertTrue(np.any(res_particle_ids < stage1_particles))
+            self.assertTrue(np.any(res_particle_ids >= stage1_particles))
+            self.assertTrue(np.all(res_particle_ids < total_resumed_particles))
+
+            # Проверка кумулятивных метаданных в resumed.h5
+            expected_total_histories = (
+                int(task_0_group.attrs["simulated_histories"]) + int(task_1_group.attrs["simulated_histories"])
+            )
+            self.assertEqual(expected_total_histories, total_resumed_particles)
+            self.assertEqual(int(res_file["metadata/simulation/simulated_histories"][()]), total_resumed_particles)
+            self.assertEqual(int(res_file["metadata/simulation"].attrs["simulated_histories"]), total_resumed_particles)
+
+            expected_total_duration = round(
+                float(task_0_group.attrs["frame_duration"]) + float(task_1_group.attrs["frame_duration"]), 6
+            )
+            self.assertAlmostEqual(float(res_file["metadata/gantry/frame_duration"][()]), expected_total_duration, places=6)
+            self.assertAlmostEqual(float(res_file["metadata/gantry"].attrs["frame_duration"]), expected_total_duration, places=6)
+
+            # Побитовое совпадение начальных состояний частиц до дренажа последнего батча этапа 1 с эталоном ref.h5
+            completed_before_drain_id = max(1, stage1_particles - 50)
+            ref_mask_prefix = ref_file["initial_states/particle_ID"][:] < completed_before_drain_id
+            res_mask_prefix = res_file["initial_states/particle_ID"][:] < completed_before_drain_id
+            self.assertGreater(int(np.count_nonzero(res_mask_prefix)), 0)
+            for dset_name in ref_file["initial_states"].keys():
+                arr_ref_prefix = ref_file["initial_states"][dset_name][:][ref_mask_prefix]
+                arr_res_prefix = res_file["initial_states"][dset_name][:][res_mask_prefix]
+                self.assertTrue(
+                    np.array_equal(arr_ref_prefix, arr_res_prefix),
+                    f"Префикс первого этапа initial_states/{dset_name} не совпал побитово с ref.h5!",
+                )
+
+            # 100% побитовое совпадение всех массивов initial_states/* и interactions/* при повторном досчёте
+            for dset_name in res_file["initial_states"].keys():
+                self.assertTrue(
+                    np.array_equal(res_file["initial_states"][dset_name][:], repro_file["initial_states"][dset_name][:]),
+                    f"Массив initial_states/{dset_name} не совпал побитово при повторном досчёте!",
+                )
+
+            for vol_name in res_file["interactions"].keys():
+                grp_res = res_file["interactions"][vol_name]
+                grp_repro = repro_file["interactions"][vol_name]
+                self.assertGreater(len(grp_res["particle_ID"]), 0)
+                for dset_name in grp_res.keys():
+                    self.assertTrue(
+                        np.array_equal(grp_res[dset_name][:], grp_repro[dset_name][:]),
+                        f"Массив interactions/{vol_name}/{dset_name} не совпал побитово при повторном досчёте!",
+                    )
+
+    def test_skip_already_completed_time_range(self) -> None:
+        """
+        Проверка мгновенного пропуска задачи, если целевой интервал времени stop_time
+        уже полностью рассчитан в HDF5-файле.
+        """
+        resumed_h5 = os.path.join(self.temp_dir.name, "skip_test.h5")
+        task_cfg = self._build_resume_test_task_dict(resumed_h5, "0.01 s")
+        simulation_worker_task((task_cfg, 12345, None, None, None, None, (), 0))
+
+        with h5py.File(resumed_h5, "r") as h5_before:
+            histories_before = int(h5_before["metadata/simulation/simulated_histories"][()])
+            init_count_before = len(h5_before["initial_states/particle_ID"])
+            tasks_count_before = len(h5_before["metadata/tasks"])
+
+        # Повторный запуск с тем же stop_time = 0.01 s должен быть пропущен
+        simulation_worker_task((task_cfg, 12345, None, None, None, None, (), 0))
+
+        with h5py.File(resumed_h5, "r") as h5_after:
+            self.assertEqual(int(h5_after["metadata/simulation/simulated_histories"][()]), histories_before)
+            self.assertEqual(len(h5_after["initial_states/particle_ID"]), init_count_before)
+            self.assertEqual(len(h5_after["metadata/tasks"]), tasks_count_before)
+
+    def test_multi_step_protocol_shared_hdf5_resume_and_no_collision(self) -> None:
+        """
+        Проверка многошагового протокола в одном общем HDF5-файле:
+        1. Второй ракурс (view_index=1) НЕ пропускается после завершения первого (view_index=0)
+           и начинает нумерацию particle_ID с max_particle_id_end первого ракурса без коллизий;
+        2. При увеличении stop_time каждый ракурс досчитывается строго со своего чекпоинта по context.
+        """
+        shared_h5 = os.path.join(self.temp_dir.name, "multi_step_shared.h5")
+
+        view0_stage1 = self._build_resume_test_task_dict(shared_h5, "0.01 s")
+        view0_stage1["_context"] = {"view_index": 0, "gantry_angle": 0.0}
+        simulation_worker_task((view0_stage1, 11111, None, None, None, None, (), 0))
+
+        view1_stage1 = self._build_resume_test_task_dict(shared_h5, "0.01 s")
+        view1_stage1["_context"] = {"view_index": 1, "gantry_angle": 1.5707963}
+        simulation_worker_task((view1_stage1, 22222, None, None, None, None, (), 1))
+
+        with h5py.File(shared_h5, "r") as h5_stage1:
+            self.assertIn("task_0", h5_stage1["metadata/tasks"])
+            self.assertIn("task_1", h5_stage1["metadata/tasks"])
+            task_0_group = h5_stage1["metadata/tasks/task_0"]
+            task_1_group = h5_stage1["metadata/tasks/task_1"]
+            self.assertEqual(float(task_0_group.attrs["actual_start_time"]), 0.0)
+            self.assertEqual(float(task_1_group.attrs["actual_start_time"]), 0.0)
+            self.assertEqual(int(task_0_group.attrs["particle_id_start"]), 0)
+            self.assertEqual(int(task_1_group.attrs["particle_id_start"]), int(task_0_group.attrs["particle_id_end"]))
+            stage1_pids = h5_stage1["initial_states/particle_ID"][:]
+            self.assertEqual(len(np.unique(stage1_pids)), len(stage1_pids))
+
+        # Досчёт первого ракурса (view_index=0) до 0.02 s
+        view0_stage2 = self._build_resume_test_task_dict(shared_h5, "0.02 s")
+        view0_stage2["_context"] = {"view_index": 0, "gantry_angle": 0.0}
+        simulation_worker_task((view0_stage2, 99999, None, None, None, None, (), 0))
+
+        with h5py.File(shared_h5, "r") as h5_stage2:
+            self.assertIn("task_2", h5_stage2["metadata/tasks"])
+            task_0_group = h5_stage2["metadata/tasks/task_0"]
+            task_1_group = h5_stage2["metadata/tasks/task_1"]
+            task_2_group = h5_stage2["metadata/tasks/task_2"]
+            self.assertEqual(int(task_2_group.attrs["seed"]), 11111)
+            self.assertEqual(float(task_2_group.attrs["actual_start_time"]), float(task_0_group.attrs["actual_stop_time"]))
+            self.assertEqual(int(task_2_group.attrs["particle_id_start"]), int(task_1_group.attrs["particle_id_end"]))
+            stage2_pids = h5_stage2["initial_states/particle_ID"][:]
+            self.assertEqual(len(np.unique(stage2_pids)), len(stage2_pids))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

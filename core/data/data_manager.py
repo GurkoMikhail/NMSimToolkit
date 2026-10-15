@@ -5,6 +5,7 @@
 и финализацию жизненного цикла симуляции.
 """
 
+import json
 import logging
 import threading
 import time
@@ -13,6 +14,7 @@ from types import MappingProxyType
 from typing import Any, Dict, List, Optional, Union
 
 import h5py
+import hepunits as units
 import numpy as np
 
 from core.data.data_handlers import BaseDataHandler
@@ -65,8 +67,6 @@ class DataManager(threading.Thread):
 
         self.handlers: List[BaseDataHandler] = []
         for handler_instance in handlers:
-            if not isinstance(handler_instance, BaseDataHandler):
-                raise TypeError(f"Handler {handler_instance} must be an instance of BaseDataHandler.")
             handler_instance.set_writer_callback(self._write_with_retry)
             self.handlers.append(handler_instance)
 
@@ -79,6 +79,163 @@ class DataManager(threading.Thread):
         self._completion_time_str: Optional[str] = None
         self._elapsed_real_time: Optional[float] = None
         self._error_message: Optional[str] = None
+        self._runtime_summary: Optional[Dict[str, Any]] = None
+
+    @staticmethod
+    def _contexts_match(saved_context: Dict[str, Any], target_context: Optional[Dict[str, Any]]) -> bool:
+        """
+        Проверяет эквивалентность сохраненного в HDF5 контекста задачи и целевого контекста
+        с поддержкой сравнения чисел с плавающей точкой через np.isclose.
+        """
+        if target_context is None:
+            return True
+        if set(saved_context.keys()) != set(target_context.keys()):
+            return False
+        for context_key, target_val in target_context.items():
+            saved_val = saved_context[context_key]
+            if isinstance(saved_val, (bytes, np.bytes_)):
+                saved_val = saved_val.decode("utf-8")
+            if (
+                isinstance(saved_val, (int, float, np.number))
+                and not isinstance(saved_val, bool)
+                and isinstance(target_val, (int, float, np.number))
+                and not isinstance(target_val, bool)
+            ):
+                if not bool(np.isclose(float(saved_val), float(target_val), rtol=1e-7, atol=1e-9)):
+                    return False
+            elif saved_val != target_val:
+                return False
+        return True
+
+    @classmethod
+    def inspect_resume_state(
+        cls,
+        filename: Union[str, Path],
+        lock: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Инспектирует существующий HDF5-файл перед запуском задачи симуляции.
+        Если в группе /metadata/tasks присутствуют завершенные задачи с сохраненным
+        состоянием чекпоинта (actual_stop_time, final_rng_state), возвращает словарь
+        параметров для бесшовного досчёта с учетом контекста задачи (context) и
+        сквозного счетчика particle_ID по всему файлу.
+        """
+        filepath_obj = Path(filename)
+        if filepath_obj.is_absolute():
+            resolved_path = filepath_obj
+        else:
+            candidate_path = Path(f"output data/{filename}")
+            resolved_path = candidate_path if candidate_path.exists() else filepath_obj
+
+        if not resolved_path.exists():
+            return None
+
+        def _read_checkpoint() -> Optional[Dict[str, Any]]:
+            retries_count = 20
+            for retry_index in range(retries_count):
+                try:
+                    with h5py.File(resolved_path, "r") as h5_file:
+                        if "metadata" not in h5_file:
+                            return None
+                        meta_group = h5_file["metadata"]
+                        if not isinstance(meta_group, h5py.Group) or "tasks" not in meta_group:
+                            return None
+                        tasks_group = meta_group["tasks"]
+                        if not isinstance(tasks_group, h5py.Group):
+                            return None
+
+                        has_completed_tasks = False
+                        max_particle_id_end = 0
+                        max_task_index = -1
+
+                        best_key: Optional[tuple[float, int]] = None
+                        best_stop_time: Optional[float] = None
+                        best_seed: Optional[int] = None
+                        best_rng_state: Optional[Dict[str, Any]] = None
+
+                        for task_group_key, task_item in tasks_group.items():
+                            if not isinstance(task_item, h5py.Group):
+                                continue
+                            if str(task_item.attrs.get("status", "")) != "completed":
+                                continue
+                            if (
+                                "actual_stop_time" not in task_item.attrs
+                                or "final_rng_state" not in task_item.attrs
+                            ):
+                                continue
+
+                            stop_time_val = float(task_item.attrs["actual_stop_time"])
+                            start_time_val = float(task_item.attrs.get("actual_start_time", 0.0))
+                            if stop_time_val <= start_time_val:
+                                continue
+
+                            has_completed_tasks = True
+                            particle_end_val = int(
+                                task_item.attrs.get(
+                                    "particle_id_end",
+                                    task_item.attrs.get("simulated_histories", 0),
+                                )
+                            )
+                            max_particle_id_end = max(max_particle_id_end, particle_end_val)
+
+                            raw_task_id = task_item.attrs.get("task_id")
+                            if isinstance(raw_task_id, (int, np.integer)):
+                                max_task_index = max(max_task_index, int(raw_task_id))
+                            elif str(task_group_key).startswith("task_"):
+                                suffix_str = str(task_group_key)[len("task_"):]
+                                if suffix_str.isdigit():
+                                    max_task_index = max(max_task_index, int(suffix_str))
+
+                            saved_context: Dict[str, Any] = {}
+                            if "context" in task_item and isinstance(task_item["context"], h5py.Group):
+                                saved_context = dict(task_item["context"].attrs)
+
+                            if not cls._contexts_match(saved_context, context):
+                                continue
+
+                            raw_rng = task_item.attrs["final_rng_state"]
+                            rng_json_str = (
+                                raw_rng.decode("utf-8")
+                                if isinstance(raw_rng, (bytes, np.bytes_))
+                                else str(raw_rng)
+                            )
+                            rng_state_dict = json.loads(rng_json_str)
+                            seed_val = int(task_item.attrs.get("seed", 0))
+
+                            candidate_key = (stop_time_val, particle_end_val)
+                            if best_key is None or candidate_key > best_key:
+                                best_key = candidate_key
+                                best_stop_time = stop_time_val
+                                best_seed = seed_val
+                                best_rng_state = rng_state_dict
+
+                        if not has_completed_tasks:
+                            return None
+
+                        next_task_id = max_task_index + 1
+                        while f"task_{next_task_id}" in tasks_group:
+                            next_task_id += 1
+
+                        return {
+                            "seed": best_seed,
+                            "actual_stop_time": best_stop_time,
+                            "next_particle_id": max_particle_id_end,
+                            "rng_state": best_rng_state,
+                            "next_task_id": next_task_id,
+                        }
+                except (OSError, BlockingIOError):
+                    if retry_index == retries_count - 1:
+                        return None
+                    time.sleep(0.05)
+                except (ValueError, KeyError, TypeError):
+                    return None
+            return None
+
+        if lock is not None:
+            with lock:
+                return _read_checkpoint()
+        return _read_checkpoint()
 
     @property
     def task_group_name(self) -> str:
@@ -101,15 +258,10 @@ class DataManager(threading.Thread):
                 nested_group = target_group.require_group(str(item_key))
                 DataManager._write_dict_recursive(nested_group, item_value)
             elif item_value is not None:
-                try:
+                if isinstance(item_value, (int, float, bool, str, bytes, np.number, np.ndarray)):
                     target_group.attrs[str(item_key)] = item_value
-                except (TypeError, ValueError, RuntimeError, OSError):
-                    try:
-                        target_group.attrs[str(item_key)] = str(item_value)
-                    except (TypeError, ValueError, RuntimeError, OSError) as attribute_error:
-                        _logger.debug(
-                            f"Не удалось записать атрибут {item_key} со значением {item_value}: {attribute_error}"
-                        )
+                else:
+                    target_group.attrs[str(item_key)] = str(item_value)
 
     @staticmethod
     def _write_canonical_section(target_group: h5py.Group, data_dict: Dict[str, Any]) -> None:
@@ -119,11 +271,11 @@ class DataManager(threading.Thread):
         """
         units_map: Dict[str, str] = {
             "gantry_angle": "rad",
-            "gantry_angle_deg": "deg",
             "angular_step": "deg",
-            "angular_step_rad": "rad",
             "orbit_radius": "mm",
             "frame_duration": "s",
+            "exposure_time": "s",
+            "elapsed_real_time": "s",
             "crystal_dimensions": "mm",
             "collimator_hole_diameter": "mm",
             "collimator_hole_length": "mm",
@@ -145,19 +297,13 @@ class DataManager(threading.Thread):
                 continue
 
             # Запись атрибута в группу
-            try:
+            if isinstance(item_value, (int, float, bool, str, bytes, np.number, np.ndarray)):
                 target_group.attrs[str(item_key)] = item_value
-            except (TypeError, ValueError, RuntimeError, OSError):
-                try:
-                    target_group.attrs[str(item_key)] = str(item_value)
-                except (TypeError, ValueError, RuntimeError, OSError) as attr_err:
-                    _logger.debug(f"Не удалось записать атрибут {item_key}: {attr_err}")
+            else:
+                target_group.attrs[str(item_key)] = str(item_value)
 
             if unit is not None:
-                try:
-                    target_group.attrs[f"{item_key}_units"] = unit
-                except (TypeError, ValueError, RuntimeError, OSError):
-                    pass
+                target_group.attrs[f"{item_key}_units"] = unit
 
             # Создание датасета для массивов или числовых параметров
             if isinstance(item_value, np.ndarray):
@@ -191,7 +337,7 @@ class DataManager(threading.Thread):
     def initialize_metadata(self) -> None:
         """
         Выполняет раннюю фиксацию метаданных задачи моделирования ДО фактического старта симуляции.
-        Создает канонические группы /metadata/{gantry, geometry, source, simulation},
+        Создает канонические группы /metadata/{gantry, geometry, source, simulation, protocol},
         а также изолированную подгруппу /metadata/tasks/task_{task_id} со статусом 'in_progress',
         отметкой времени старта и параметрами протокола/детекторов для обратной совместимости.
         """
@@ -208,14 +354,24 @@ class DataManager(threading.Thread):
             if "created_time" not in metadata_group.attrs:
                 metadata_group.attrs["created_time"] = self._start_time_str
 
-            # 1. Запись в канонические корневые разделы /metadata/{gantry, geometry, source, simulation}
-            for section_name in ("gantry", "geometry", "source", "simulation"):
+            # 1. Запись в канонические корневые разделы /metadata/{gantry, geometry, source, simulation, protocol}
+            for section_name in ("gantry", "geometry", "source", "simulation", "protocol"):
                 if section_name in self.metadata and isinstance(self.metadata[section_name], dict):
                     section_group = metadata_group.require_group(section_name)
                     self._write_canonical_section(section_group, self.metadata[section_name])
 
-            # 2. Изолированная запись для текущей задачи в /metadata/tasks/task_{task_id} (обратная совместимость)
+            # 2. Изолированная запись для текущей задачи в /metadata/tasks/task_{task_id}
             tasks_group = metadata_group.require_group("tasks")
+            if (
+                self.task_group_name in tasks_group
+                and str(tasks_group[self.task_group_name].attrs.get("status", "")) == "completed"
+            ):
+                candidate_idx = 0
+                while f"task_{candidate_idx}" in tasks_group:
+                    candidate_idx += 1
+                self.task_id = candidate_idx
+                self.metadata["task_id"] = candidate_idx
+
             task_group = tasks_group.require_group(self.task_group_name)
 
             task_group.attrs["task_id"] = self.task_id
@@ -223,20 +379,33 @@ class DataManager(threading.Thread):
             task_group.attrs["start_time"] = self._start_time_str
 
             if self.metadata:
-                self._write_dict_recursive(task_group, self.metadata)
+                task_specific_metadata = {
+                    meta_key: meta_val
+                    for meta_key, meta_val in self.metadata.items()
+                    if meta_key not in ("gantry", "geometry", "source", "simulation")
+                }
+                self._write_dict_recursive(task_group, task_specific_metadata)
 
         try:
             self._write_with_retry(do_write_initial_metadata)
         except (OSError, RuntimeError, KeyError, ValueError) as write_error:
             _logger.error(f"Ошибка ранней записи метаданных: {write_error}", exc_info=True)
 
-    def finalize_metadata(self, status: str = "completed", error: Optional[str] = None) -> None:
+    def finalize_metadata(
+        self,
+        status: str = "completed",
+        error: Optional[str] = None,
+        runtime_summary: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
-        Обновляет статус выполнения задачи ('completed' / 'failed'), фиксирует время завершения
-        и реальное затраченное время выполнения в секундах.
+        Обновляет статус выполнения задачи ('completed' / 'failed'), фиксирует время завершения,
+        реальное затраченное время выполнения, чекпоинт ГСЧ и кумулятивные метрики файла.
         """
         if self._is_finalized and self._status == "failed" and status == "completed":
             return
+
+        if runtime_summary is not None:
+            self._runtime_summary = dict(runtime_summary)
 
         self._status = status
         self._is_finalized = True
@@ -256,13 +425,57 @@ class DataManager(threading.Thread):
 
             task_group.attrs["status"] = self._status
             task_group.attrs["completion_time"] = self._completion_time_str
-            task_group.attrs["elapsed_real_time_seconds"] = self._elapsed_real_time
+            task_group.attrs["elapsed_real_time"] = self._elapsed_real_time
+            task_group.attrs["elapsed_real_time_units"] = "s"
             if self._error_message is not None:
                 task_group.attrs["error"] = self._error_message
+
+            if self._runtime_summary is not None:
+                self._write_dict_recursive(task_group, self._runtime_summary)
 
             # Обновление статуса в канонической группе simulation
             if "simulation" in metadata_group:
                 metadata_group["simulation"].attrs["status"] = self._status
+
+            # Кумулятивный пересчет длительности экспозиции и числа историй по всем завершенным задачам
+            has_runtime_durations = False
+            total_duration = 0.0
+            has_runtime_histories = False
+            max_particle_id_end = 0
+            sum_simulated_histories = 0
+
+            for _, candidate_task in tasks_group.items():
+                if not isinstance(candidate_task, h5py.Group):
+                    continue
+                if str(candidate_task.attrs.get("status", "")) != "completed":
+                    continue
+
+                if "actual_stop_time" in candidate_task.attrs and "actual_start_time" in candidate_task.attrs:
+                    has_runtime_durations = True
+                    total_duration += (
+                        float(candidate_task.attrs["actual_stop_time"])
+                        - float(candidate_task.attrs["actual_start_time"])
+                    ) / float(units.s)
+                elif "frame_duration" in candidate_task.attrs:
+                    has_runtime_durations = True
+                    total_duration += float(candidate_task.attrs["frame_duration"])
+
+                if "particle_id_end" in candidate_task.attrs:
+                    has_runtime_histories = True
+                    max_particle_id_end = max(max_particle_id_end, int(candidate_task.attrs["particle_id_end"]))
+                if "simulated_histories" in candidate_task.attrs:
+                    has_runtime_histories = True
+                    sum_simulated_histories += int(candidate_task.attrs["simulated_histories"])
+
+            if has_runtime_durations:
+                cumulative_frame_duration = round(total_duration, 6)
+                gantry_group = metadata_group.require_group("gantry")
+                self._write_canonical_section(gantry_group, {"frame_duration": cumulative_frame_duration})
+
+            if has_runtime_histories:
+                cumulative_histories = max(max_particle_id_end, sum_simulated_histories)
+                sim_group = metadata_group.require_group("simulation")
+                self._write_canonical_section(sim_group, {"simulated_histories": int(cumulative_histories)})
 
         try:
             self._write_with_retry(do_write_final_metadata)
@@ -317,8 +530,8 @@ class DataManager(threading.Thread):
         if self.queue is not None:
             try:
                 self.queue.put("stop")
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as queue_error:
+                _logger.debug(f"Не удалось отправить сигнал остановки в очередь DataManager: {queue_error}")
         if self.is_alive():
             self.join(timeout=timeout)
 
@@ -351,14 +564,16 @@ class DataManager(threading.Thread):
         def do_write() -> None:
             for retry_index in range(retries_count):
                 try:
-                    with h5py.File(self.filename, "a", libver="latest") as h5_file:
-                        if self.swmr:
+                    with h5py.File(self.filename, "a", libver="latest") as file_handle:
+                        if self.swmr and not file_handle.swmr_mode:
                             try:
-                                h5_file.swmr_mode = True
-                            except (OSError, RuntimeError):
-                                pass
-                        write_func(h5_file)
-                        h5_file.flush()
+                                file_handle.swmr_mode = True
+                            except (OSError, RuntimeError) as swmr_error:
+                                _logger.debug(
+                                    f"Не удалось активировать режим SWMR для файла {self.filename}: {swmr_error}"
+                                )
+                        write_func(file_handle)
+                        file_handle.flush()
                     return
                 except (OSError, BlockingIOError):
                     if retry_index == retries_count - 1:

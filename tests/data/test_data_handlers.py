@@ -27,10 +27,8 @@ class TestDataHandlers(unittest.TestCase):
         self.h5_path = os.path.join(self.temp_dir.name, "test_output.h5")
 
     def tearDown(self) -> None:
-        try:
+        if os.path.exists(self.temp_dir.name):
             self.temp_dir.cleanup()
-        except (OSError, RuntimeError):
-            pass
 
     def test_sensitive_volume_handler_nested_geometry(self) -> None:
         """
@@ -230,7 +228,8 @@ class TestDataHandlers(unittest.TestCase):
             self.assertEqual(task_subgroup.attrs["status"], "completed")
             self.assertIn("start_time", task_subgroup.attrs)
             self.assertIn("completion_time", task_subgroup.attrs)
-            self.assertIn("elapsed_real_time_seconds", task_subgroup.attrs)
+            self.assertIn("elapsed_real_time", task_subgroup.attrs)
+            self.assertEqual(task_subgroup.attrs["elapsed_real_time_units"], "s")
             self.assertIn("context", task_subgroup)
             self.assertAlmostEqual(task_subgroup["context"].attrs["gantry_angle"], 45.0)
             self.assertAlmostEqual(task_subgroup["context"].attrs["scan_time"], 60.0)
@@ -272,7 +271,7 @@ class TestDataHandlers(unittest.TestCase):
             task_group = meta_group["tasks/task_42"]
             self.assertEqual(task_group.attrs["status"], "completed")
             self.assertIn("completion_time", task_group.attrs)
-            self.assertIn("elapsed_real_time_seconds", task_group.attrs)
+            self.assertIn("elapsed_real_time", task_group.attrs)
 
     def test_simulation_failure_metadata_recording(self) -> None:
         """

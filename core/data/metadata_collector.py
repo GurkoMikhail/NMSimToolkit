@@ -75,6 +75,23 @@ def _find_source_config(current_config: Any) -> Optional[SourceConfig]:
     return None
 
 
+def _are_head_specs_equal(first_spec: Dict[str, Any], second_spec: Dict[str, Any]) -> bool:
+    """
+    Проверяет эквивалентность словарей характеристик двух детекторных головок
+    с учетом сравнения массивов numpy.
+    """
+    if set(first_spec.keys()) != set(second_spec.keys()):
+        return False
+    for spec_key, first_val in first_spec.items():
+        second_val = second_spec[spec_key]
+        if isinstance(first_val, np.ndarray) and isinstance(second_val, np.ndarray):
+            if not np.array_equal(first_val, second_val):
+                return False
+        elif first_val != second_val:
+            return False
+    return True
+
+
 class ProtocolMetadataProvider:
     """
     Провайдер метаданных протокола сканирования.
@@ -88,22 +105,23 @@ class ProtocolMetadataProvider:
         task_id: int,
     ) -> Dict[str, Any]:
         """
-        Формирует словарь метаданных протокола сканирования.
+        Формирует словарь метаданных протокола сканирования без фиктивных нулевых значений.
         """
         view_index: int = int(context.get("view_index", task_id))
 
         if isinstance(protocol, StepAndShootProtocolConfig):
-            if isinstance(protocol.radius, list):
-                orbit_radius_value = float(protocol.radius[view_index % len(protocol.radius)]) if protocol.radius else 0.0
-            else:
-                orbit_radius_value = float(protocol.radius) if protocol.radius is not None else 0.0
-            return {
+            result: Dict[str, Any] = {
                 "modality": "StepAndShoot",
                 "view_index": view_index,
                 "views_total": int(protocol.steps),
-                "exposure_time": float(protocol.time_per_step),
-                "orbit_radius": orbit_radius_value,
+                "exposure_time": round(float(protocol.time_per_step) / float(units.s), 6),
             }
+            if isinstance(protocol.radius, list):
+                if protocol.radius:
+                    result["orbit_radius"] = float(protocol.radius[view_index % len(protocol.radius)]) / float(units.mm)
+            elif protocol.radius is not None:
+                result["orbit_radius"] = float(protocol.radius) / float(units.mm)
+            return result
 
         if isinstance(protocol, CustomSweepProtocolConfig):
             views_count: int = 1
@@ -114,16 +132,12 @@ class ProtocolMetadataProvider:
                 "modality": "CustomSweep",
                 "view_index": view_index,
                 "views_total": views_count,
-                "exposure_time": 0.0,
-                "orbit_radius": 0.0,
             }
 
         return {
-            "modality": "CustomSweep" if protocol is None else protocol.__class__.__name__,
+            "modality": "Static" if protocol is None else protocol.__class__.__name__,
             "view_index": view_index,
             "views_total": 1,
-            "exposure_time": 0.0,
-            "orbit_radius": 0.0,
         }
 
 
@@ -139,6 +153,7 @@ class KinematicsMetadataProvider:
     ) -> Dict[str, Any]:
         """
         Инспектирует станину томографа в графе сцены и возвращает ее кинематические параметры.
+        Если узел GantryNode отсутствует и угол не задан в контексте, возвращает пустой словарь.
         """
         gantry_nodes: List[GantryNode] = _find_nodes_recursive(root_scene, GantryNode)
 
@@ -155,16 +170,13 @@ class KinematicsMetadataProvider:
                 }
             return kinematics_data
 
-        context_gantry_angle = 0.0
-        if context is not None and "gantry_angle" in context:
-            context_gantry_angle = float(context["gantry_angle"])
-        elif context is not None and "current_angle" in context:
-            context_gantry_angle = float(context["current_angle"])
+        if context is not None:
+            if "gantry_angle" in context:
+                return {"gantry_angle": float(context["gantry_angle"])}
+            if "current_angle" in context:
+                return {"gantry_angle": float(context["current_angle"])}
 
-        return {
-            "gantry_name": "None",
-            "gantry_angle": context_gantry_angle,
-        }
+        return {}
 
 
 class DetectorMetadataProvider:
@@ -228,104 +240,84 @@ class GantryMetadataProvider:
     ) -> Dict[str, Any]:
         context_dict: Dict[str, Any] = context if context is not None else {}
         gantry_nodes: List[GantryNode] = _find_nodes_recursive(root_scene, GantryNode)
+        gantry_data: Dict[str, Any] = {}
 
+        # 1. Угол гантри (только если узел GantryNode присутствует или угол явно задан)
+        gantry_angle: Optional[float] = None
         if gantry_nodes:
             gantry_angle = float(gantry_nodes[0].gantry_angle)
         elif "gantry_angle" in context_dict:
             gantry_angle = float(context_dict["gantry_angle"])
         elif "current_angle" in context_dict:
             gantry_angle = float(context_dict["current_angle"])
-        else:
-            gantry_angle = 0.0
+        elif isinstance(protocol, StepAndShootProtocolConfig):
+            gantry_angle = float(protocol.start_angle)
 
-        converted_gantry_angle = float(np.rad2deg(gantry_angle))
+        if gantry_angle is not None:
+            gantry_data["gantry_angle"] = gantry_angle
 
+        # 2. Специфичные параметры круговой томографии StepAndShoot
         view_index = int(context_dict.get("view_index", task_id))
-        orbit_radius_val = 0.0
-        rotation_direction_val = "CW"
-        frame_duration_val = 0.0
-        angular_step = 0.0
-        converted_angular_step = 0.0
-
         if isinstance(protocol, StepAndShootProtocolConfig):
-            rotation_direction_val = str(protocol.rotation_direction)
-            frame_duration_val = float(protocol.time_per_step) / float(units.s)
+            gantry_data["rotation_direction"] = str(protocol.rotation_direction)
             if isinstance(protocol.radius, list):
-                orbit_radius_val = float(protocol.radius[view_index % len(protocol.radius)])
+                if protocol.radius:
+                    gantry_data["orbit_radius"] = (
+                        float(protocol.radius[view_index % len(protocol.radius)]) / float(units.mm)
+                    )
             elif protocol.radius is not None:
-                orbit_radius_val = float(protocol.radius)
+                gantry_data["orbit_radius"] = float(protocol.radius) / float(units.mm)
 
             steps_count = int(protocol.steps)
             if steps_count > 1:
                 denominator = (steps_count - 1) if protocol.endpoint else steps_count
                 angular_step = abs(float(protocol.end_angle) - float(protocol.start_angle)) / float(denominator)
-                converted_angular_step = float(np.rad2deg(angular_step))
-        else:
-            if isinstance(protocol, CustomSweepProtocolConfig):
-                angle_values = protocol.zipped_variables.get("gantry_angle") or protocol.grid_variables.get("gantry_angle")
-            if isinstance(protocol, CustomSweepProtocolConfig) and angle_values and len(angle_values) > 1:
-                angular_step = abs(float(angle_values[1]) - float(angle_values[0]))
-                converted_angular_step = float(np.rad2deg(angular_step))
-            if "radius" in context_dict:
-                orbit_radius_val = float(context_dict["radius"])
-            if "step_time" in context_dict:
-                frame_duration_val = float(context_dict["step_time"]) / float(units.s)
-            elif "current_time" in context_dict:
-                frame_duration_val = float(context_dict["current_time"]) / float(units.s)
+                gantry_data["angular_step"] = float(np.rad2deg(angular_step))
 
-        if frame_duration_val == 0.0 and sim_config is not None:
-            if not isinstance(sim_config.stop_time, str) and not isinstance(sim_config.start_time, str):
-                frame_duration_val = (
-                    float(sim_config.stop_time) - float(sim_config.start_time)
-                ) / float(units.s)
+        # 3. Время экспозиции кадра (frame_duration) в секундах (записывается только если > 0.0)
+        frame_duration_val: Optional[float] = None
+        if isinstance(protocol, StepAndShootProtocolConfig):
+            frame_duration_val = round(float(protocol.time_per_step) / float(units.s), 6)
+        elif "step_time" in context_dict:
+            frame_duration_val = round(float(context_dict["step_time"]) / float(units.s), 6)
+        elif "current_time" in context_dict:
+            frame_duration_val = round(float(context_dict["current_time"]) / float(units.s), 6)
+        elif "stop_time" in context_dict:
+            frame_duration_val = round(
+                (float(context_dict["stop_time"]) - float(context_dict.get("start_time", 0.0))) / float(units.s),
+                6,
+            )
+        elif (
+            sim_config is not None
+            and isinstance(sim_config.stop_time, (int, float))
+            and isinstance(sim_config.start_time, (int, float))
+        ):
+            frame_duration_val = round(
+                (float(sim_config.stop_time) - float(sim_config.start_time)) / float(units.s),
+                6,
+            )
 
+        if frame_duration_val is not None and frame_duration_val > 0.0:
+            gantry_data["frame_duration"] = frame_duration_val
+
+        # 4. Матрицы поз детекторов под каноническими ключами pose_matrix_detector_{i}
         camera_nodes: List[GammaCameraNode] = _find_nodes_recursive(root_scene, GammaCameraNode)
-        if orbit_radius_val == 0.0 and camera_nodes:
-            primary_camera = camera_nodes[0]
-            cam_local_pos = primary_camera.local_matrix[:3, 3]
-            computed_radius = float(np.hypot(cam_local_pos[0], cam_local_pos[1]))
-            if computed_radius == 0.0:
-                cam_global_pos = primary_camera.global_matrix[:3, 3]
-                computed_radius = float(np.hypot(cam_global_pos[0], cam_global_pos[1]))
-            if computed_radius == 0.0:
-                crystal_slot_name = primary_camera.slots.get("crystal")
-                if crystal_slot_name is not None:
-                    crystal_target = (
-                        _find_node_by_name(primary_camera, crystal_slot_name)
-                        or _find_node_by_name(root_scene, crystal_slot_name)
-                    )
-                    if crystal_target is not None:
-                        crystal_global_pos = crystal_target.global_matrix[:3, 3]
-                        computed_radius = float(np.hypot(crystal_global_pos[0], crystal_global_pos[1]))
-            orbit_radius_val = computed_radius
-
-        gantry_data: Dict[str, Any] = {
-            "gantry_angle": gantry_angle,
-            "gantry_angle_deg": converted_gantry_angle,
-            "orbit_radius": orbit_radius_val,
-            "rotation_direction": rotation_direction_val,
-            "frame_duration": frame_duration_val,
-            "angular_step": converted_angular_step,
-            "angular_step_rad": angular_step,
-        }
-
-        # Матрицы поз детекторов
         for cam_index, camera_node in enumerate(camera_nodes):
             crystal_name = camera_node.slots.get("crystal")
             crystal_node = None
             if crystal_name is not None:
-                crystal_node = _find_node_by_name(camera_node, crystal_name) or _find_node_by_name(root_scene, crystal_name)
+                crystal_node = _find_node_by_name(camera_node, crystal_name) or _find_node_by_name(
+                    root_scene, crystal_name
+                )
 
             if crystal_node is not None:
                 pose_matrix = np.array(crystal_node.global_matrix, dtype=np.float64)
             else:
                 pose_matrix = np.array(camera_node.global_matrix, dtype=np.float64)
 
-            cam_name = camera_node.name if camera_node.name else f"detector_{cam_index + 1}"
-            gantry_data[f"pose_matrix_{cam_name}"] = pose_matrix
-            default_detector_name = f"detector_{cam_index + 1}"
-            if cam_name.lower() == default_detector_name and cam_name != default_detector_name:
-                gantry_data[f"pose_matrix_{default_detector_name}"] = pose_matrix
+            gantry_data[f"pose_matrix_detector_{cam_index + 1}"] = pose_matrix
+            if camera_node.name:
+                gantry_data[f"detector_{cam_index + 1}_name"] = str(camera_node.name)
 
         return gantry_data
 
@@ -344,94 +336,81 @@ class GeometryMetadataProvider:
             "detector_heads_count": heads_count,
         }
 
-        if not camera_nodes:
-            geometry_data["crystal_dimensions"] = np.zeros(3, dtype=np.float64)
-            geometry_data["collimator_type"] = "None"
-            geometry_data["collimator_hole_diameter"] = 0.0
-            geometry_data["collimator_hole_length"] = 0.0
-            geometry_data["collimator_septa_thickness"] = 0.0
-            geometry_data["collimator_hole_shape"] = "None"
-            geometry_data["collimator_material"] = "None"
-        else:
-            for cam_index, camera_node in enumerate(camera_nodes):
-                cam_name = camera_node.name or f"Detector_{cam_index + 1}"
+        if camera_nodes:
+            head_specs: List[Dict[str, Any]] = []
+            for camera_node in camera_nodes:
+                head_dict: Dict[str, Any] = {}
 
                 # Разрешение кристалла
                 crystal_name = camera_node.slots.get("crystal")
                 crystal_node = None
                 if crystal_name is not None:
-                    crystal_node = _find_node_by_name(camera_node, crystal_name) or _find_node_by_name(root_scene, crystal_name)
+                    crystal_node = _find_node_by_name(camera_node, crystal_name) or _find_node_by_name(
+                        root_scene, crystal_name
+                    )
 
                 if isinstance(crystal_node, Volume) and isinstance(crystal_node.geometry, Box):
-                    crystal_dims = np.array([float(dim) for dim in crystal_node.geometry.size], dtype=np.float64)
-                else:
-                    crystal_dims = np.zeros(3, dtype=np.float64)
+                    head_dict["crystal_dimensions"] = np.array(
+                        [float(dim) / float(units.mm) for dim in crystal_node.geometry.size],
+                        dtype=np.float64,
+                    )
 
                 # Разрешение коллиматора
                 collimator_name = camera_node.slots.get("collimator")
                 collimator_node = None
                 if collimator_name is not None:
-                    collimator_node = _find_node_by_name(camera_node, collimator_name) or _find_node_by_name(root_scene, collimator_name)
-
-                coll_type = "None"
-                coll_hole_diam = 0.0
-                coll_hole_len = 0.0
-                coll_septa = 0.0
-                coll_shape = "None"
-                coll_mat = "None"
+                    collimator_node = _find_node_by_name(camera_node, collimator_name) or _find_node_by_name(
+                        root_scene, collimator_name
+                    )
 
                 if isinstance(collimator_node, ParametricParallelCollimator):
-                    coll_type = "Parallel Hole"
-                    coll_hole_diam = float(collimator_node.hole_diameter) / float(units.mm)
-                    coll_hole_len = float(collimator_node.geometry.size[2]) / float(units.mm)
-                    coll_septa = float(collimator_node.septa) / float(units.mm)
-                    coll_shape = str(collimator_node.hole_shape.value)
-                    coll_mat = str(collimator_node.material.name)
+                    head_dict["collimator_type"] = "Parallel Hole"
+                    head_dict["collimator_hole_diameter"] = float(collimator_node.hole_diameter) / float(units.mm)
+                    head_dict["collimator_hole_length"] = float(collimator_node.geometry.size[2]) / float(units.mm)
+                    head_dict["collimator_septa_thickness"] = float(collimator_node.septa) / float(units.mm)
+                    head_dict["collimator_hole_shape"] = str(collimator_node.hole_shape.value)
+                    head_dict["collimator_material"] = str(collimator_node.material.name)
                 elif isinstance(collimator_node, DirectParallelCollimator):
-                    coll_type = "Parallel Hole"
-                    coll_hole_diam = float(collimator_node.hole_diameter) / float(units.mm)
-                    coll_hole_len = float(collimator_node.size[2]) / float(units.mm)
-                    coll_septa = float(collimator_node.septa) / float(units.mm)
-                    coll_shape = str(collimator_node.hole_shape.value)
-                    coll_mat = str(collimator_node.material.name)
+                    head_dict["collimator_type"] = "Parallel Hole"
+                    head_dict["collimator_hole_diameter"] = float(collimator_node.hole_diameter) / float(units.mm)
+                    head_dict["collimator_hole_length"] = float(collimator_node.size[2]) / float(units.mm)
+                    head_dict["collimator_septa_thickness"] = float(collimator_node.septa) / float(units.mm)
+                    head_dict["collimator_hole_shape"] = str(collimator_node.hole_shape.value)
+                    head_dict["collimator_material"] = str(collimator_node.material.name)
                 elif isinstance(collimator_node, Volume):
-                    coll_type = collimator_node.geometry.__class__.__name__
-                    coll_mat = str(collimator_node.material.name)
+                    head_dict["collimator_type"] = collimator_node.geometry.__class__.__name__
+                    head_dict["collimator_material"] = str(collimator_node.material.name)
                     if isinstance(collimator_node.geometry, Box):
-                        coll_hole_len = float(collimator_node.geometry.size[2]) / float(units.mm)
+                        head_dict["collimator_hole_length"] = float(collimator_node.geometry.size[2]) / float(units.mm)
 
-                if cam_index == 0:
-                    geometry_data["crystal_dimensions"] = crystal_dims
-                    geometry_data["collimator_type"] = coll_type
-                    geometry_data["collimator_hole_diameter"] = coll_hole_diam
-                    geometry_data["collimator_hole_length"] = coll_hole_len
-                    geometry_data["collimator_septa_thickness"] = coll_septa
-                    geometry_data["collimator_hole_shape"] = coll_shape
-                    geometry_data["collimator_material"] = coll_mat
+                head_specs.append(head_dict)
 
-                geometry_data[f"crystal_dimensions_{cam_name}"] = crystal_dims
-                geometry_data[f"collimator_type_{cam_name}"] = coll_type
-                geometry_data[f"collimator_hole_diameter_{cam_name}"] = coll_hole_diam
-                geometry_data[f"collimator_hole_length_{cam_name}"] = coll_hole_len
-                geometry_data[f"collimator_septa_thickness_{cam_name}"] = coll_septa
-                geometry_data[f"collimator_hole_shape_{cam_name}"] = coll_shape
-                geometry_data[f"collimator_material_{cam_name}"] = coll_mat
+            all_identical = all(_are_head_specs_equal(head_specs[0], spec) for spec in head_specs[1:])
+            if all_identical:
+                geometry_data.update(head_specs[0])
+            else:
+                geometry_data.update(head_specs[0])
+                for cam_index, spec in enumerate(head_specs):
+                    geometry_data[f"detector_{cam_index + 1}"] = dict(spec)
 
-        # Сбор параметров всех физических объемов сцены для сохранения обратной совместимости
+        # Изоляция физических объемов сцены во вложенном словаре volumes
         volume_nodes: List[Volume] = _find_nodes_recursive(root_scene, Volume)
-        for volume_node in volume_nodes:
-            record: Dict[str, Any] = {
-                "name": volume_node.name,
-                "material": volume_node.material.name,
-                "geometry_type": volume_node.geometry.__class__.__name__,
-                "global_matrix": np.array(volume_node.global_matrix, dtype=np.float64),
-            }
-            if volume_node.tags:
-                record["tags"] = np.array(
-                    [tag_item.encode("utf-8") for tag_item in volume_node.tags],
-                    dtype="S50",
-                )
-            geometry_data[volume_node.name] = record
+        if volume_nodes:
+            volumes_dict: Dict[str, Any] = {}
+            for volume_node in volume_nodes:
+                record: Dict[str, Any] = {
+                    "name": volume_node.name,
+                    "material": volume_node.material.name,
+                    "geometry_type": volume_node.geometry.__class__.__name__,
+                    "global_matrix": np.array(volume_node.global_matrix, dtype=np.float64),
+                }
+                if volume_node.tags:
+                    record["tags"] = np.array(
+                        [tag_item.encode("utf-8") for tag_item in volume_node.tags],
+                        dtype="S50",
+                    )
+                volumes_dict[volume_node.name] = record
+            geometry_data["volumes"] = volumes_dict
 
         return geometry_data
 
@@ -447,22 +426,22 @@ class SourceMetadataProvider:
         scene_config: Optional[Union[AnyNodeConfig, CompositeNodeConfig]] = None,
     ) -> Dict[str, Any]:
         sources: List[Source] = _find_nodes_recursive(root_scene, Source)
-        radionuclide_name = "Custom / Unspecified"
-        phantom_model_name = "Custom / Unspecified"
+        if not sources:
+            return {}
 
-        if sources:
-            primary_source = sources[0]
-            half_life_val = float(primary_source.half_life) / float(units.s)
-            simulated_activity_val = float(primary_source.initial_activity) / float(units.Bq)
-            registered_meta = SceneExporter.get_source_metadata(primary_source)
-            if registered_meta is not None:
-                if registered_meta.radionuclide:
-                    radionuclide_name = registered_meta.radionuclide
-                if registered_meta.phantom_type:
-                    phantom_model_name = registered_meta.phantom_type
-        else:
-            half_life_val = 0.0
-            simulated_activity_val = 0.0
+        primary_source = sources[0]
+        half_life_val = round(float(primary_source.half_life) / float(units.s), 6)
+        simulated_activity_val = round(float(primary_source.initial_activity) / float(units.Bq), 6)
+
+        radionuclide_name: Optional[str] = None
+        phantom_model_name: Optional[str] = None
+
+        registered_meta = SceneExporter.get_source_metadata(primary_source)
+        if registered_meta is not None:
+            if registered_meta.radionuclide:
+                radionuclide_name = registered_meta.radionuclide
+            if registered_meta.phantom_type:
+                phantom_model_name = registered_meta.phantom_type
 
         if scene_config is not None:
             source_cfg = _find_source_config(scene_config)
@@ -472,12 +451,16 @@ class SourceMetadataProvider:
                 if source_cfg.phantom_type:
                     phantom_model_name = source_cfg.phantom_type
 
-        return {
-            "radionuclide": radionuclide_name,
+        source_data: Dict[str, Any] = {
             "half_life": half_life_val,
             "simulated_activity": simulated_activity_val,
-            "phantom_type": phantom_model_name,
         }
+        if radionuclide_name:
+            source_data["radionuclide"] = radionuclide_name
+        if phantom_model_name:
+            source_data["phantom_type"] = phantom_model_name
+
+        return source_data
 
 
 class SimulationMetadataProvider:
@@ -578,16 +561,9 @@ class ProcedureMetadataCollector:
             "geometry": geometry_meta,
             "source": source_meta,
             "simulation": simulation_meta,
-            # Сохранение ключей верхнего уровня для обратной совместимости с тестами
             "protocol": protocol_meta,
             "kinematics": kinematics_meta,
             "detectors": detectors_meta,
-            "acquisition": {
-                "protocol": protocol_meta,
-                "kinematics": kinematics_meta,
-                "detectors": detectors_meta,
-                "geometry": geometry_meta,
-            },
         }
 
 

@@ -249,7 +249,7 @@ class TestStage1Core(unittest.TestCase):
         ipc_event = threading.Event()
         ipc_event.set()
 
-        bridge = IpcPauseBridge(manager=manager, ipc_event=ipc_event, poll_interval_seconds=0.01)
+        bridge = IpcPauseBridge(manager=manager, ipc_event=ipc_event, poll_interval=0.01)
         bridge.start()
 
         try:

@@ -19,12 +19,12 @@ class IpcPauseBridge(threading.Thread):
         self,
         manager: SimulationManager,
         ipc_event: Any,
-        poll_interval_seconds: float = 0.02,
+        poll_interval: float = 0.02,
     ) -> None:
         super().__init__(name="IpcPauseBridge", daemon=True)
         self.manager = manager
         self.ipc_event = ipc_event
-        self.poll_interval_seconds = poll_interval_seconds
+        self.poll_interval = poll_interval
         self._stop_event = threading.Event()
         self._last_state_was_set: bool = bool(ipc_event.is_set())
 
@@ -46,7 +46,7 @@ class IpcPauseBridge(threading.Thread):
                 else:
                     self.manager.pause()
 
-            self._stop_event.wait(timeout=self.poll_interval_seconds)
+            self._stop_event.wait(timeout=self.poll_interval)
 
 
 __all__ = ["IpcPauseBridge"]

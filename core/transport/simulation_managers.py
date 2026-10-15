@@ -8,7 +8,7 @@ import logging
 import queue
 from signal import SIGINT, signal
 import threading
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import hepunits as units
 import numpy as np
@@ -52,7 +52,9 @@ class SimulationManager(Thread):
     active_sources: List[Source]
     scene: CompositeNode
     propagator: ParticlePropagator
+    start_time: Float
     stop_time: Float
+    initial_particle_id: int
     particles_number: int
     min_energy: Float
     queue: Queue[Any]
@@ -60,6 +62,7 @@ class SimulationManager(Thread):
     data_buffer: SimulationDataBuffer
     geometry_buffer: NDArray[Any]
     physics_buffer: PhysicsBuffer
+    rng: np.random.Generator
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
     global_timer: Float
@@ -78,6 +81,8 @@ class SimulationManager(Thread):
         buffer_capacity: Optional[int] = None,
         name: Optional[str] = None,
         seed: Optional[int] = None,
+        initial_particle_id: int = 0,
+        rng_state: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
         if name is not None:
@@ -88,7 +93,9 @@ class SimulationManager(Thread):
 
         self.geometry_buffer = GeometryCompiler().compile_scene(scene)
         self.physics_buffer = PhysicsCompiler().compile_scene(scene, self.propagator.processes)
+        self.start_time = Float(start_time)
         self.stop_time = Float(stop_time)
+        self.initial_particle_id = int(initial_particle_id)
         self.particles_number = int(particles_number)
         effective_capacity = (
             self.particles_number if buffer_capacity is None else max(int(buffer_capacity), self.particles_number)
@@ -99,17 +106,19 @@ class SimulationManager(Thread):
         self.daemon = True
 
         self.bank = ParticleBank.allocate(self.particles_number)
+        self.bank.count_array[0] = Index(self.initial_particle_id)
         self.data_buffer = SimulationDataBuffer.allocate(effective_capacity, effective_capacity, effective_capacity)
 
-        base_rng = np.random.default_rng(seed) if seed is not None else self.propagator.rng
-        spawned_rngs = base_rng.spawn(1 + len(self.active_sources))
-        self.propagator.rng = spawned_rngs[0]
+        self.rng = np.random.default_rng(seed) if seed is not None else self.propagator.rng
+        if rng_state is not None:
+            self.rng.bit_generator.state = rng_state
+        self.propagator.rng = self.rng
         for process in self.propagator.processes:
-            process.rng = self.propagator.rng
-        for source_node, source_rng in zip(self.active_sources, spawned_rngs[1:]):
-            source_node.rng = source_rng
+            process.rng = self.rng
+        for source_node in self.active_sources:
+            source_node.rng = self.rng
 
-        self.rng_ctx = RNGContext.from_numpy_rng(self.propagator.rng)
+        self.rng_ctx = RNGContext.from_numpy_rng(self.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
         self.global_timer = Float(start_time)
 
@@ -117,10 +126,8 @@ class SimulationManager(Thread):
         self._run_event = threading.Event()
         self._run_event.set()
 
-        try:
+        if threading.current_thread() is threading.main_thread():
             signal(SIGINT, self.sigint_handler)
-        except (ValueError, AttributeError):
-            pass
 
 
     @property
@@ -294,16 +301,16 @@ class SimulationManager(Thread):
                 break
 
         delta_time = max(delta_time, self.MIN_TIME_STEP)
-
-        # Ограничение delta_time, чтобы не превысить время завершения симуляции stop_time
-        return min(delta_time, Float(self.stop_time - self.global_timer))
+        return delta_time
 
     def _distribute_quotas(self, target_time: Float, num_to_inject: int) -> None:
         expected = np.array(
             [source_node.get_expected_particles(self.global_timer, target_time) for source_node in self.active_sources],
             dtype=Float,
         )
-        target_total = min(num_to_inject, int(np.round(np.sum(expected))))
+        if np.sum(expected) <= 0.0:
+            return
+        target_total = num_to_inject
 
         quotas = np.floor(expected).astype(int)
         remainders = expected - quotas
