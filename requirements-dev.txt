@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=7.4.0
+pytest-qt>=4.2.0
+mypy>=1.5.0
+ruff>=0.1.0

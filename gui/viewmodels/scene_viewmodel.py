@@ -1,0 +1,462 @@
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
+import numpy as np
+
+from PySide6.QtCore import QObject, Signal
+
+from core.geometry.volumes import Volume
+from core.geometry.voxel_volumes import WoodcockVoxelVolume
+from core.scene.gamma_camera_node import GammaCameraNode
+from core.scene.nodes import SpatialNode, CompositeNode
+from core.source.sources import Source
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
+from gui.viewmodels.nodes.source_vm import SourceViewModel
+from gui.viewmodels.nodes.factory import create_node_viewmodel
+from gui.viewport_3d.kinematic_constraints import RootVolumeKinematicConstraint
+from core.config.models import (
+    SimulationConfig,
+    SensitiveVolumeHandlerConfig,
+    HistoryAssemblerHandlerConfig,
+    NumpyDistributionConfig,
+    RawDistributionConfig,
+    AnyDistributionConfig,
+)
+
+
+class SceneViewModel(QObject):
+    """
+    Главная модель представления сцены (MVVM).
+    Управляет иерархией NodeViewModel, выбранным узлом, реестром чувствительных объемов
+    и транслирует изменения между UI, инспектором свойств и чистым графом сцены ядра.
+    """
+
+    scene_loaded = Signal(object)
+    node_selected = Signal(object)
+    node_added = Signal(object)
+    node_removed = Signal(object)
+    node_renamed = Signal(str, str)
+
+    def __init__(
+        self,
+        root_core_node: Optional[SpatialNode] = None,
+        base_dir: Optional[Union[str, Path]] = None,
+    ) -> None:
+        super().__init__()
+        self.root_vm: Optional[NodeViewModel] = None
+        self.selected_node: Optional[NodeViewModel] = None
+        self._node_map: Dict[int, NodeViewModel] = {}
+        self.distribution_registry: Dict[Any, Any] = {}
+        self.slots_registry: Dict[Any, Any] = {}
+        self.bindings_registry: Dict[Any, Dict[str, str]] = {}
+
+        if root_core_node is not None:
+            self.load_scene(root_core_node, base_dir=base_dir)
+
+    def load_scene(
+        self,
+        root_core_node: SpatialNode,
+        distribution_registry: Optional[Dict[Any, Any]] = None,
+        slots_registry: Optional[Dict[Any, Any]] = None,
+        bindings_registry: Optional[Dict[Any, Dict[str, str]]] = None,
+        base_dir: Optional[Union[str, Path]] = None,
+    ) -> NodeViewModel:
+        """
+        Загружает граф сцены из ядра и строит иерархию ViewModel.
+        """
+        self._node_map.clear()
+        self.distribution_registry = dict(distribution_registry) if distribution_registry is not None else {}
+        self.slots_registry = dict(slots_registry) if slots_registry is not None else {}
+        self.bindings_registry = dict(bindings_registry) if bindings_registry is not None else {}
+        self.root_vm = create_node_viewmodel(root_core_node)
+        self._register_node_recursive(self.root_vm)
+
+        for node_vm in self.all_nodes():
+            if node_vm.core_node in self.bindings_registry:
+                node_vm.bindings = dict(self.bindings_registry[node_vm.core_node])
+            elif node_vm.name in self.bindings_registry:
+                node_vm.bindings = dict(self.bindings_registry[node_vm.name])
+                self.bindings_registry[node_vm.core_node] = node_vm.bindings
+
+        root_volume_node_vm = self.root_volume_vm
+        if root_volume_node_vm is not None:
+            root_volume_node_vm.set_self_kinematic_constraint(RootVolumeKinematicConstraint())
+
+        base_dir_path = Path(base_dir) if base_dir is not None else None
+        for node_vm in self.all_nodes():
+            if isinstance(node_vm, (VoxelVolumeViewModel, SourceViewModel)):
+                dist_cfg = self.distribution_registry.get(node_vm.core_node)
+                if dist_cfg is not None and isinstance(dist_cfg, (NumpyDistributionConfig, RawDistributionConfig)):
+                    if dist_cfg.path:
+                        raw_path = str(dist_cfg.path)
+                        candidate_path = Path(raw_path)
+                        if candidate_path.is_absolute() and candidate_path.is_file():
+                            node_vm.file_path = str(candidate_path)
+                        elif base_dir_path is not None and (base_dir_path / candidate_path).is_file():
+                            node_vm.file_path = str((base_dir_path / candidate_path).resolve())
+                        elif candidate_path.is_file():
+                            node_vm.file_path = str(candidate_path.resolve())
+                        else:
+                            node_vm.file_path = raw_path
+
+                        if Path(node_vm.file_path).is_file():
+                            dist_cfg.path = node_vm.file_path
+
+        self.select_node(self.root_vm)
+        self.scene_loaded.emit(self.root_vm)
+        return self.root_vm
+
+    def update_distribution_path(
+        self,
+        core_node: SpatialNode,
+        file_path: str,
+        mapping: Optional[Dict[float, Union[float, str]]] = None,
+        order: Optional[str] = None,
+        encoding: Optional[str] = None,
+        dtype: Optional[Any] = None,
+        fill_value: Optional[Union[float, str]] = None,
+    ) -> None:
+        """
+        Регистрирует или обновляет путь к файлу распределения в distribution_registry.
+        Адаптирует тип конфигурации (NumpyDistributionConfig / RawDistributionConfig) под расширение файла.
+        """
+        path_obj = Path(file_path)
+        file_suffix = path_obj.suffix.lower()
+        needs_numpy = (file_suffix == '.npy')
+        needs_raw = (file_suffix in ('.raw', '.dat', '.bin', '.txt', '.csv'))
+
+        existing_cfg = self.distribution_registry.get(core_node)
+        effective_mapping = dict(mapping) if mapping is not None else None
+        if existing_cfg is not None and effective_mapping is None and existing_cfg.mapping is not None:
+            effective_mapping = dict(existing_cfg.mapping)
+        effective_fill = fill_value if fill_value is not None else (existing_cfg.fill_value if existing_cfg is not None else None)
+
+        shape: Tuple[int, int, int] = (1, 1, 1)
+        if isinstance(core_node, WoodcockVoxelVolume) and core_node.material_distribution is not None:
+            raw_shape = tuple(core_node.material_distribution.shape)
+            if len(raw_shape) == 3:
+                shape = (int(raw_shape[0]), int(raw_shape[1]), int(raw_shape[2]))
+        elif isinstance(core_node, Source) and core_node.distribution is not None:
+            raw_shape = tuple(core_node.distribution.shape)
+            if len(raw_shape) == 3:
+                shape = (int(raw_shape[0]), int(raw_shape[1]), int(raw_shape[2]))
+
+        normalized_order: Literal['C', 'F'] = 'F' if order == 'F' else ('C' if order == 'C' else 'C')
+        normalized_encoding: Literal['text', 'binary'] = (
+            'binary'
+            if encoding == 'binary' or (encoding is None and file_suffix in ('.raw', '.bin'))
+            else 'text'
+        )
+        normalized_dtype: str = np.dtype(dtype).name if dtype is not None else 'float32'
+
+        if existing_cfg is not None:
+            if needs_numpy and isinstance(existing_cfg, NumpyDistributionConfig):
+                existing_cfg.path = str(file_path)
+                if effective_mapping is not None:
+                    existing_cfg.mapping = effective_mapping
+                if effective_fill is not None:
+                    existing_cfg.fill_value = effective_fill
+                return
+            elif needs_raw and isinstance(existing_cfg, RawDistributionConfig):
+                existing_cfg.path = str(file_path)
+                existing_cfg.shape = shape
+                if order in ('C', 'F'):
+                    existing_cfg.order = normalized_order
+                if encoding in ('text', 'binary'):
+                    existing_cfg.encoding = normalized_encoding
+                if dtype is not None:
+                    existing_cfg.dtype = normalized_dtype
+                if effective_mapping is not None:
+                    existing_cfg.mapping = effective_mapping
+                if effective_fill is not None:
+                    existing_cfg.fill_value = effective_fill
+                return
+
+        if needs_raw:
+            self.distribution_registry[core_node] = RawDistributionConfig(
+                path=str(file_path),
+                shape=shape,
+                order=normalized_order,
+                encoding=normalized_encoding,
+                dtype=normalized_dtype,
+                mapping=effective_mapping,
+                fill_value=effective_fill,
+            )
+        else:
+            self.distribution_registry[core_node] = NumpyDistributionConfig(
+                path=str(file_path),
+                mapping=effective_mapping,
+                fill_value=effective_fill,
+            )
+
+    def update_distribution_mapping(
+        self,
+        core_node: SpatialNode,
+        mapping: Dict[float, Union[float, str]],
+    ) -> None:
+        """
+        Актуализирует словарь соответствия ID -> Material для узла распределения.
+        """
+        dist_cfg = self.distribution_registry.get(core_node)
+        if dist_cfg is not None and isinstance(dist_cfg, (NumpyDistributionConfig, RawDistributionConfig)):
+            dist_cfg.mapping = dict(mapping)
+        else:
+            node_name = core_node.name or 'distribution'
+            self.distribution_registry[core_node] = NumpyDistributionConfig(
+                path=f"{node_name}.npy",
+                mapping=dict(mapping),
+            )
+
+    def rename_node(self, vm: NodeViewModel, new_name: str) -> None:
+        """
+        Переименовывает узел сцены и оповещает подписчиков сигналом node_renamed(old_name, new_name).
+        """
+        old_name = vm.name
+        new_name_clean = str(new_name).strip()
+        if not new_name_clean or old_name == new_name_clean:
+            return
+        vm.name = new_name_clean
+        self.node_renamed.emit(old_name, new_name_clean)
+
+    def apply_simulation_config(self, config: SimulationConfig) -> None:
+        """
+        Применяет параметры конфигурации SimulationConfig к иерархии сцены.
+        """
+        pass
+
+    def _register_node_recursive(self, vm: NodeViewModel) -> None:
+        self._node_map[id(vm.core_node)] = vm
+        for child in vm.children:
+            self._register_node_recursive(child)
+
+    def select_node(self, vm: Optional[NodeViewModel]) -> None:
+        """
+        Выбор активного узла в сцене для инспекции и манипуляций.
+        """
+        if self.selected_node is not vm:
+            self.selected_node = vm
+            self.node_selected.emit(vm)
+
+    def add_node(self, parent_vm: NodeViewModel, new_vm: NodeViewModel) -> None:
+        """
+        Добавляет новый узел в иерархию ViewModel и соответствующий узел ядра.
+        """
+        parent_vm.add_child(new_vm)
+        self._register_node_recursive(new_vm)
+        self.selected_node = new_vm
+        self.node_added.emit(new_vm)
+        self.node_selected.emit(new_vm)
+
+    def remove_node(self, vm: NodeViewModel) -> None:
+        """
+        Удаляет узел из иерархии сцены.
+        """
+        if vm.parent_vm is not None:
+            parent = vm.parent_vm
+            parent.remove_child(vm)
+            self._unregister_node_recursive(vm)
+            if self.selected_node is vm:
+                self.select_node(parent)
+            self.node_removed.emit(vm)
+
+    def replace_node(self, target_vm: NodeViewModel, new_vm: NodeViewModel) -> None:
+        """
+        Замещает узел target_vm новым узлом new_vm в дереве сцены с сохранением:
+        - родительского узла и исходной позиции в иерархии;
+        - локальной матрицы трансформации;
+        - привязок слотов гамма-камеры (casing, detector_box, collimator, crystal, glass_backend).
+        """
+        if target_vm is None or new_vm is None:
+            raise ValueError("target_vm и new_vm не могут быть None")
+        if target_vm is new_vm:
+            return
+
+        parent_vm = target_vm.parent_vm
+        if parent_vm is None:
+            raise ValueError("Замена корневого узла без родителя не поддерживается")
+
+        # 1. Сохранение локальной матрицы трансформации
+        new_vm.local_matrix = np.copy(target_vm.local_matrix)
+
+        old_name = target_vm.name
+        new_name = new_vm.name
+        if old_name != new_name:
+            self.node_renamed.emit(old_name, new_name)
+
+        for node_vm in self.all_nodes():
+            if isinstance(node_vm, GammaCameraViewModel):
+                slots_config = node_vm.slots
+                camera_node = node_vm.core_node
+                if slots_config.casing == old_name:
+                    slots_config.casing = new_name
+                    if isinstance(camera_node, GammaCameraNode):
+                        camera_node.slots['casing'] = new_name
+                if slots_config.detector_box == old_name:
+                    slots_config.detector_box = new_name
+                    if isinstance(camera_node, GammaCameraNode):
+                        camera_node.slots['detector_box'] = new_name
+                if slots_config.collimator == old_name:
+                    slots_config.collimator = new_name
+                    if isinstance(camera_node, GammaCameraNode):
+                        camera_node.slots['collimator'] = new_name
+                if slots_config.crystal == old_name:
+                    slots_config.crystal = new_name
+                    if isinstance(camera_node, GammaCameraNode):
+                        camera_node.slots['crystal'] = new_name
+                if slots_config.glass_backend == old_name:
+                    slots_config.glass_backend = new_name
+                    if isinstance(camera_node, GammaCameraNode):
+                        camera_node.slots['glass_backend'] = new_name
+
+        for camera_core_node, slots_config in self.slots_registry.items():
+            if slots_config.casing == old_name:
+                slots_config.casing = new_name
+            if slots_config.detector_box == old_name:
+                slots_config.detector_box = new_name
+            if slots_config.collimator == old_name:
+                slots_config.collimator = new_name
+            if slots_config.crystal == old_name:
+                slots_config.crystal = new_name
+            if slots_config.glass_backend == old_name:
+                slots_config.glass_backend = new_name
+
+        # 3. Определение индексов вставки в родительском узле
+        child_index = parent_vm.children.index(target_vm) if target_vm in parent_vm.children else len(parent_vm.children)
+        if isinstance(parent_vm.core_node, CompositeNode):
+            core_index = (
+                parent_vm.core_node.childs.index(target_vm.core_node)
+                if target_vm.core_node in parent_vm.core_node.childs
+                else len(parent_vm.core_node.childs)
+            )
+        else:
+            core_index = 0
+
+        # 4. Удаление старого узла target_vm
+        parent_vm.remove_child(target_vm)
+        self._unregister_node_recursive(target_vm)
+        self.node_removed.emit(target_vm)
+
+        # 5. Вставка нового узла new_vm на то же место
+        if isinstance(parent_vm.core_node, CompositeNode):
+            new_vm.core_node.parent = parent_vm.core_node
+            parent_vm.core_node.childs.insert(core_index, new_vm.core_node)
+        new_vm.parent_vm = parent_vm
+        parent_vm.children.insert(child_index, new_vm)
+        self._register_node_recursive(new_vm)
+
+        new_vm._notify_transform_changed()
+        parent_vm.child_added.emit(new_vm)
+        self.node_added.emit(new_vm)
+        self.select_node(new_vm)
+
+        # 6. Если узел находится внутри GammaCameraViewModel, синхронизируем размеры и кинематику
+        current_ancestor: Optional[NodeViewModel] = parent_vm
+        while current_ancestor is not None:
+            if isinstance(current_ancestor, GammaCameraViewModel):
+                current_ancestor._apply_fixed_constraints_to_subcomponents()
+                current_ancestor._rebuild_geometry()
+                break
+            current_ancestor = current_ancestor.parent_vm
+
+    def move_node(self, node_vm: NodeViewModel, new_parent_vm: NodeViewModel, new_index: Optional[int] = None) -> bool:
+        """
+        Перемещает узел в нового родителя с валидацией циклических зависимостей.
+        """
+        if node_vm is self.root_vm or node_vm is new_parent_vm:
+            return False
+
+        # Проверка на циклы: новый родитель не должен быть потомком перемещаемого узла
+        curr: Optional[NodeViewModel] = new_parent_vm
+        while curr is not None:
+            if curr is node_vm:
+                return False
+            curr = curr.parent_vm
+
+        try:
+            new_parent_vm.add_child(node_vm)
+            self._register_node_recursive(node_vm)
+            self.selected_node = node_vm
+            self.node_added.emit(node_vm)
+            self.node_selected.emit(node_vm)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    def _unregister_node_recursive(self, vm: NodeViewModel) -> None:
+        core_id = id(vm.core_node)
+        if core_id in self._node_map:
+            del self._node_map[core_id]
+        for child in vm.children:
+            self._unregister_node_recursive(child)
+
+    def find_by_name(self, name: str) -> Optional[NodeViewModel]:
+        """
+        Поиск узла по имени во всей иерархии сцены.
+        """
+        if self.root_vm is None:
+            return None
+
+        stack = [self.root_vm]
+        while stack:
+            curr = stack.pop()
+            if curr.name == name:
+                return curr
+            stack.extend(curr.children)
+        return None
+
+    def find_by_core_node(self, core_node: SpatialNode) -> Optional[NodeViewModel]:
+        """
+        Быстрый поиск ViewModel по ссылке на объект ядра.
+        """
+        return self._node_map.get(id(core_node))
+
+    def all_nodes(self) -> List[NodeViewModel]:
+        """
+        Возвращает плоский список всех узлов сцены в прямом порядке обхода (pre-order DFS).
+        """
+        if self.root_vm is None:
+            return []
+        nodes = []
+        stack = [self.root_vm]
+        while stack:
+            curr = stack.pop()
+            nodes.append(curr)
+            stack.extend(reversed(curr.children))
+        return nodes
+
+    @property
+    def root_volume_vm(self) -> Optional[VolumeViewModel]:
+        """
+        Возвращает корневой геометрический объем (VolumeViewModel) сцены.
+        Ищет наивысший VolumeViewModel в графе сцены.
+        """
+        if self.root_vm is None:
+            return None
+        if isinstance(self.root_vm, VolumeViewModel):
+            return self.root_vm
+        search_queue = [self.root_vm]
+        while search_queue:
+            current_node_vm = search_queue.pop(0)
+            if isinstance(current_node_vm, VolumeViewModel):
+                return current_node_vm
+            search_queue.extend(current_node_vm.children)
+        return None
+
+    def is_root_volume(self, node_view_model: Optional[NodeViewModel]) -> bool:
+        """
+        Проверяет, является ли переданный узел корневым геометрическим объемом сцены.
+        """
+        if node_view_model is None or not isinstance(node_view_model, VolumeViewModel):
+            return False
+        root_volume_node_vm = self.root_volume_vm
+        if root_volume_node_vm is not None:
+            return node_view_model is root_volume_node_vm
+        return node_view_model.is_root_volume
+
+
+__all__ = [
+    "SceneViewModel",
+]
+

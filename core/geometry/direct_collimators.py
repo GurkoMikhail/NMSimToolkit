@@ -1,0 +1,285 @@
+"""
+Модуль альтернативного параметрического коллиматора с параллельными шестиугольными каналами
+на основе детерминированного RayCasting-а (аналитического пересечения с периодической решеткой).
+"""
+
+from enum import Enum
+from typing import List, Optional, Sequence, Union
+
+import numpy as np
+
+import settings.database_setting as settings
+from core.geometry.geometries import Box, Geometry, PeriodicHexPrism
+from core.geometry.volumes import Volume
+from core.materials.materials import Material
+from core.other.typing_definitions import Float, Length, Vector3D
+from core.scene.nodes import CompositeNode
+
+
+class CollimatorHoleShape(str, Enum):
+    """
+    Форма поперечного сечения каналов коллиматора.
+    """
+    HEXAGONAL = "hexagonal"
+    SQUARE = "square"
+    ROUND = "round"
+
+
+class DirectParallelCollimator(CompositeNode):
+    """
+    Альтернативный параметрический коллиматор с параллельными шестиугольными каналами
+    на базе детерминированного аналитического RayCasting'а.
+
+    Является семантическим составным узлом (CompositeNode), инкапсулирующим иерархию физических объемов:
+    - Свинцовый корпус коллиматора (Volume с геометрией Box)
+    - Решетка каналов (дочерний Volume с геометрией PeriodicHexPrism и материалом Vacuum/Air)
+    """
+
+    lead_body: Volume
+    channels: Volume
+    _hole_diameter: Float
+    _septa: Float
+    _size: Vector3D
+    _hole_shape: CollimatorHoleShape
+    _explicit_hole_material: Optional[Material]
+    _channels_initialized: bool
+
+    def __init__(
+        self,
+        size: Sequence[Length] | Vector3D,
+        hole_diameter: Float,
+        septa: Float,
+        material: Optional[Material] = None,
+        hole_material: Optional[Material] = None,
+        hole_shape: CollimatorHoleShape = CollimatorHoleShape.HEXAGONAL,
+        name: Optional[str] = None
+    ) -> None:
+        collimator_name = name if name is not None else "DirectParallelCollimator"
+        super().__init__(name=collimator_name)
+
+        if not isinstance(hole_shape, CollimatorHoleShape):
+            raise TypeError(f"hole_shape должен быть строго CollimatorHoleShape, получено {type(hole_shape).__name__}")
+
+        self._channels_initialized = False
+        self._explicit_hole_material = hole_material
+        self._hole_diameter = Float(hole_diameter)
+        self._septa = Float(septa)
+        self._size = np.asarray(size, dtype=Float)
+        if self._size.shape != (3,):
+            raise ValueError(f"Габаритные размеры коллиматора должны иметь форму (3,), получено {self._size.shape}")
+        self._hole_shape = hole_shape
+
+        if self._hole_shape != CollimatorHoleShape.HEXAGONAL:
+            raise NotImplementedError(
+                f"Форма каналов '{self._hole_shape.value}' еще не реализована в расчетном ядре."
+            )
+
+        if any(dimension <= 0.0 for dimension in self._size):
+            raise ValueError(f"Габаритные размеры коллиматора должны быть строго положительными (> 0), получено {size}")
+        if self._hole_diameter <= 0.0:
+            raise ValueError(f"Диаметр отверстия должен быть строго положительным (> 0), получено {hole_diameter}")
+        if self._septa <= 0.0:
+            raise ValueError(f"Толщина септы должна быть строго положительной (> 0), получено {septa}")
+
+        lead_material = settings.material_database['Pb'] if material is None else material
+        resolved_hole_material = self._resolve_hole_material()
+
+        self.lead_body = Volume(
+            geometry=Box(*self._size),
+            material=lead_material,
+            name=f"{collimator_name}_body"
+        )
+
+        channel_geometry = self._create_channel_geometry(
+            shape=self._hole_shape,
+            size=self._size,
+            hole_diameter=self._hole_diameter,
+            septa=self._septa
+        )
+
+        self.channels = Volume(
+            geometry=channel_geometry,
+            material=resolved_hole_material,
+            name=f"{collimator_name}_channels"
+        )
+        self._channels_initialized = True
+
+        self.lead_body.add_child(self.channels)
+        self.add_child(self.lead_body)
+
+    def _create_channel_geometry(
+        self,
+        shape: CollimatorHoleShape,
+        size: Vector3D,
+        hole_diameter: Float,
+        septa: Float
+    ) -> Geometry:
+        """
+        Фабричный метод создания геометрического примитива каналов по заданной форме.
+        """
+        if shape == CollimatorHoleShape.HEXAGONAL:
+            return PeriodicHexPrism(
+                size=size,
+                hole_diameter=hole_diameter,
+                septa=septa
+            )
+        raise NotImplementedError(
+            f"Геометрия каналов для формы '{shape.value}' еще не реализована в расчетном ядре."
+        )
+
+    @property
+    def hole_diameter(self) -> Float:
+        """Диаметр гексагонального канала между параллельными гранями."""
+        return self._hole_diameter
+
+    @hole_diameter.setter
+    def hole_diameter(self, value: Float) -> None:
+        float_value = Float(value)
+        if float_value <= 0.0:
+            raise ValueError(f"Диаметр отверстия должен быть строго положительным (> 0), получено {value}")
+        self._hole_diameter = float_value
+        prism_geometry: PeriodicHexPrism = self.channels.geometry  # type: ignore
+        prism_geometry.hole_diameter = self._hole_diameter
+        self.invalidate_geometry()
+
+    @property
+    def septa(self) -> Float:
+        """Толщина перегородки (септы) между каналами."""
+        return self._septa
+
+    @septa.setter
+    def septa(self, value: Float) -> None:
+        float_value = Float(value)
+        if float_value <= 0.0:
+            raise ValueError(f"Толщина септы должна быть строго положительной (> 0), получено {value}")
+        self._septa = float_value
+        prism_geometry: PeriodicHexPrism = self.channels.geometry  # type: ignore
+        prism_geometry.septa = self._septa
+        self.invalidate_geometry()
+
+    @property
+    def size(self) -> Vector3D:
+        """Габаритные размеры коллиматора [Lx, Ly, Lz]."""
+        return self._size
+
+    @size.setter
+    def size(self, value: Union[Sequence[Length], Vector3D]) -> None:
+        parsed_size = np.array(value, dtype=Float)
+        if any(dimension <= 0.0 for dimension in parsed_size):
+            raise ValueError(f"Габаритные размеры коллиматора должны быть строго положительными (> 0), получено {value}")
+        self._size = parsed_size
+        self.lead_body.size = self._size
+        self.channels.size = self._size
+        self.invalidate_geometry()
+
+    @property
+    def parent(self) -> Optional[CompositeNode]:
+        return self._parent
+
+    @parent.setter
+    def parent(self, value: Optional[CompositeNode]) -> None:
+        self._parent = value
+        self.invalidate_matrix_cache()
+        self._sync_hole_material()
+
+    def set_parent(self, parent: CompositeNode) -> None:
+        """Устанавливает родительский узел и актуализирует унаследованный материал каналов."""
+        parent.add_child(self)
+        self._sync_hole_material()
+
+    def _resolve_hole_material(self) -> Material:
+        """
+        Определяет материал наполнения каналов коллиматора:
+        - если материал задан явно (explicit_hole_material), возвращает его;
+        - если None, динамически ищет материал в родительских объемах Volume вверх по иерархии сцены;
+        - при отсутствии родительского Volume с материалом возвращает Vacuum из БД материалов.
+        """
+        if self._explicit_hole_material is not None:
+            return self._explicit_hole_material
+        current_node = self.parent
+        while current_node is not None:
+            if isinstance(current_node, Volume) and current_node.material is not None:
+                return current_node.material
+            current_node = current_node.parent
+        if "Vacuum" in settings.material_database:
+            vacuum_mat: Material = settings.material_database["Vacuum"]
+            return vacuum_mat
+        return Material(name="Vacuum")
+
+    def _sync_hole_material(self) -> None:
+        """
+        Актуализирует материал каналов в соответствии с текущим режимом и родителем.
+        """
+        if self._channels_initialized:
+            self.channels.material = self._resolve_hole_material()
+
+    @property
+    def material(self) -> Material:
+        """Основной материал корпуса коллиматора (Pb)."""
+        return self.lead_body.material
+
+    @material.setter
+    def material(self, value: Material) -> None:
+        self.lead_body.material = value
+
+    @property
+    def explicit_hole_material(self) -> Optional[Material]:
+        """Явно назначенный материал каналов (None, если материал наследуется от родителя)."""
+        return self._explicit_hole_material
+
+    @property
+    def hole_material(self) -> Material:
+        """Материал внутри каналов (Vacuum, Air или унаследованный от родителя)."""
+        return self.channels.material
+
+    @hole_material.setter
+    def hole_material(self, value: Optional[Material]) -> None:
+        """
+        Устанавливает материал каналов.
+        При передаче None сбрасывает в режим наследования от родителя и синхронизирует материал channels.
+        """
+        self._explicit_hole_material = value
+        self._sync_hole_material()
+
+    @property
+    def material_list(self) -> List[Material]:
+        """Список материалов, используемых в коллиматоре."""
+        return [self.lead_body.material, self.channels.material]
+
+    @property
+    def hole_shape(self) -> CollimatorHoleShape:
+        """Форма поперечного сечения каналов коллиматора."""
+        return self._hole_shape
+
+    @hole_shape.setter
+    def hole_shape(self, value: CollimatorHoleShape) -> None:
+        if not isinstance(value, CollimatorHoleShape):
+            raise TypeError(
+                f"hole_shape должен быть строго CollimatorHoleShape, получено: {type(value).__name__}"
+            )
+
+        if value != CollimatorHoleShape.HEXAGONAL:
+            raise NotImplementedError(
+                f"Форма каналов '{value.value}' еще не реализована в расчетном ядре."
+            )
+
+        if self._hole_shape != value:
+            self._hole_shape = value
+            self.channels.geometry = self._create_channel_geometry(
+                shape=self._hole_shape,
+                size=self._size,
+                hole_diameter=self._hole_diameter,
+                septa=self._septa
+            )
+            self.invalidate_geometry()
+
+    def invalidate_geometry(self) -> None:
+        """Сбрасывает кэш геометрии дочерних физических объемов."""
+        self.lead_body.invalidate_geometry()
+        self.channels.invalidate_geometry()
+
+
+__all__ = [
+    "CollimatorHoleShape",
+    "DirectParallelCollimator",
+]

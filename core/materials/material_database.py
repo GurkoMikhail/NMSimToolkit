@@ -1,52 +1,72 @@
+"""
+Модуль загрузки и хранения базы данных материалов из HDF5-таблиц NIST.
+"""
+
 from collections import namedtuple
 from itertools import count
-import numpy as np
+from typing import Dict
+
 from h5py import File
+import numpy as np
+
 from core.materials.atomic_properties import element_symbol
 from core.materials.materials import Material
 from core.other.typing_definitions import Float
-import hepunits as units
 
 
-class MaterialDataBase(dict):
-    """ Класс базы данных материалов """
+class MaterialDataBase(Dict[str, Material]):
+    """Словарь-база данных материалов, загружаемых из HDF5-файла."""
 
     counter = count(1)
+    _base_name: str
 
-    def __init__(self, base_name = 'NIST Materials'):
+    def __init__(self, base_name: str = 'NIST Materials') -> None:
+        super().__init__()
         self._base_name = base_name
-        material = Material()
-        self.update({material.name: material})
+        vacuum_material = Material()
+        self.update({vacuum_material.name: vacuum_material})
         self._load_materials()
-        
+
     @property
-    def base_name(self):
+    def base_name(self) -> str:
+        """Имя используемого файла базы данных материалов."""
         return self._base_name
-    
+
     @base_name.setter
-    def base_name(self, value):
+    def base_name(self, value: str) -> None:
         self._base_name = value
         self._load_materials()
 
-    def _load_materials(self):
-        file = File(f'tables/{self._base_name}.h5', 'r')
-        for group_name, material_type_group in file.items():
-            for material_name, material_group in material_type_group.items():
-                type = group_name
-                density = Float(np.copy(material_group['Density']))
-                composition_dict = {}
-                if group_name == 'Elemental media':
-                    Z = int(np.copy(material_group['Z']))
-                    composition_dict.update({element_symbol[Z]: 1.})
-                else:
-                    for element, weight in material_group['Composition'].items():
-                        composition_dict.update({element: Float(np.copy(weight))})
-                if 'Z\\A' in material_group:
-                    ZtoA_ratio = Float(np.copy(material_group['Z\\A']))
-                else:
-                    ZtoA_ratio = 0.5
-                ID = next(self.counter)
-                composition_dict = namedtuple('composition', composition_dict)(**composition_dict)
-                material = Material(material_name, type, density, composition_dict, ZtoA_ratio, ID)
-                self.update({material_name: material})
+    def _load_materials(self) -> None:
+        with File(f'tables/{self._base_name}.h5', 'r') as file:
+            for group_name, material_type_group in file.items():
+                for material_name, material_group in material_type_group.items():
+                    material_type = str(group_name)
+                    density = Float(np.copy(material_group['Density']))
+                    composition_dict: Dict[str, Float] = {}
+                    if group_name == 'Elemental media':
+                        atomic_z = int(np.copy(material_group['Z']))
+                        composition_dict.update({element_symbol[atomic_z]: Float(1.0)})
+                    else:
+                        for element, weight in material_group['Composition'].items():
+                            composition_dict.update({str(element): Float(np.copy(weight))})
+                    if 'Z\\A' in material_group:
+                        z_to_a_ratio = Float(np.copy(material_group['Z\\A']))
+                    else:
+                        z_to_a_ratio = Float(0.5)
+                    mat_id = next(self.counter)
+                    composition_tuple = namedtuple('composition', list(composition_dict.keys()))(**composition_dict)
+                    material = Material(
+                        str(material_name),
+                        material_type,
+                        density,
+                        composition_tuple,
+                        z_to_a_ratio,
+                        mat_id,
+                    )
+                    self.update({str(material_name): material})
+
+
+__all__ = ["MaterialDataBase"]
+
 

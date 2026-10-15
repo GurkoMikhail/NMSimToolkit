@@ -4,18 +4,21 @@ from typing import Optional, Dict, Any
 import yaml
 
 from core.config.models import SimulationConfig
-from core.config.orchestrator import Orchestrator
+from core.config.sweep_compiler import SweepCompiler
 
 
-def load_raw_config(filepath: str | Path) -> dict:
-    """Loads a YAML file and returns the raw dictionary, stripping YAML anchors."""
-    with open(filepath, 'r', encoding='utf-8') as f:
-        config_dict = yaml.safe_load(f)
+def load_raw_config(filepath: str | Path) -> Dict[str, Any]:
+    """Загружает YAML-файл и возвращает сырой словарь конфигурации без секции YAML-якорей Materials."""
+    with open(filepath, 'r', encoding='utf-8') as yaml_file:
+        config_dict = yaml.safe_load(yaml_file)
+
+    if not isinstance(config_dict, dict):
+        raise ValueError(f"Некорректный формат YAML-конфигурации в '{filepath}': ожидался словарь.")
 
     if 'Materials' in config_dict:
         del config_dict['Materials']
-        
-    return config_dict
+
+    return dict(config_dict)
 
 
 def load_simulation_config(
@@ -33,12 +36,16 @@ def load_simulation_config(
     if resolve_protocol:
         has_protocol = bool(config_dict.get('protocol'))
         if context is not None:
-            orch = Orchestrator(config_dict)
-            config_dict = orch.inject_variables(deepcopy(config_dict), context)
+            config_dict = SweepCompiler.inject_variables(deepcopy(config_dict), context)
         elif has_protocol:
-            orch = Orchestrator(config_dict)
-            tasks = orch.generate_tasks()
-            if tasks:
-                config_dict = orch.inject_variables(deepcopy(config_dict), tasks[0])
+            protocol_obj = SimulationConfig.model_validate(config_dict).protocol
+            if protocol_obj is not None:
+                sweep_proto = SweepCompiler.compile_protocol(protocol_obj)
+                tasks = SweepCompiler.generate_job_matrix(sweep_proto)
+                if tasks:
+                    config_dict = SweepCompiler.inject_variables(deepcopy(config_dict), tasks[0])
 
     return SimulationConfig.model_validate(config_dict)
+
+
+__all__ = ["load_raw_config", "load_simulation_config"]

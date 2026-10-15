@@ -1,61 +1,88 @@
-from core.geometry.geometry_kernels import cast_path_kernel
+"""
+Модуль пошагового пропагатора частиц (ParticlePropagator), оркеструющего геометрический
+рейкастинг, дельта-трекинг ВудКока и диспетчеризацию физических процессов.
+"""
+
+from typing import Any, List, Optional, Sequence
+
 import numpy as np
-from typing import List, Optional, Any
 from numpy.typing import NDArray
 
-import settings.processes_settings as processes_settings
-import settings.database_setting as database_setting
-from core.physics.processes import Process
+from core.geometry.geometry_kernels import cast_path_kernel
+from core.other.typing_definitions import Index
 from core.particles.particles import ParticleBank
 from core.physics.interaction_buffers import RNGContext, SimulationDataBuffer
 from core.physics.physics_buffer import PhysicsBuffer
-from core.other.typing_definitions import Index
-from core.transport.transport_kernels import make_transport_kernel, _push_to_initial_state_kernel
+from core.physics.processes import Process
 from core.transport.transport_buffer import TransportBuffer
+from core.transport.transport_kernels import (
+    _push_to_initial_state_kernel,
+    make_transport_kernel,
+)
+import settings.database_setting as database_setting
+import settings.processes_settings as processes_settings
 
 
 class ParticlePropagator:
-    """ Python class for managing particle propagation per-step (DOD style). """
+    """Оркестратор пошагового переноса частиц и применения физических процессов в стиле DOD/SoA."""
+
     processes: List[Process]
     process_ids: NDArray[Index]
     rng: np.random.Generator
+    transport_buffer: TransportBuffer
+    _transport_kernel: Any
 
-    _flags_buffer: NDArray[Index]
-
-    def __init__(self, processes_list: Optional[List[type]] = None, attenuation_database: Optional[Any] = None, rng: Optional[np.random.Generator] = None) -> None:
-        processes_list = processes_settings.processes_list if processes_list is None else processes_list
-        attenuation_database = database_setting.attenuation_database if attenuation_database is None else attenuation_database
+    def __init__(
+        self,
+        processes_list: Optional[Sequence[type[Process]]] = None,
+        attenuation_database: Optional[Any] = None,
+        rng: Optional[np.random.Generator] = None,
+    ) -> None:
+        resolved_processes: Sequence[type[Process]] = (
+            processes_settings.processes_list if processes_list is None else processes_list
+        )
+        resolved_database = (
+            database_setting.attenuation_database if attenuation_database is None else attenuation_database
+        )
         self.rng = np.random.default_rng() if rng is None else rng
 
-        self.processes = [process(attenuation_database, rng) for process in processes_list]
-        self.process_ids = np.array([p.process_id for p in self.processes], dtype=Index)
-
+        self.processes = [process_cls(resolved_database, self.rng) for process_cls in resolved_processes]
+        self.process_ids = np.array(
+            [proc.process_id if proc.process_id is not None else -1 for proc in self.processes],
+            dtype=Index,
+        )
 
         self._transport_kernel = make_transport_kernel(self.process_ids)
-        self.transport_buffer = TransportBuffer.allocate(0)
+        self.transport_buffer = TransportBuffer.allocate(0, len(self.processes))
 
-    def step(self, bank: ParticleBank, data_buffer: SimulationDataBuffer, geometry_buffer: NDArray, physics_buffer: PhysicsBuffer, rng_ctx: RNGContext) -> None:
+    def step(
+        self,
+        bank: ParticleBank,
+        data_buffer: SimulationDataBuffer,
+        geometry_buffer: NDArray[Any],
+        physics_buffer: PhysicsBuffer,
+        rng_ctx: RNGContext,
+    ) -> None:
         """
-        Executes a single physics step for all active particles.
+        Выполняет один полный шаг переноса и взаимодействий для всех активных частиц в банке.
         """
         active_indices = bank.active_indices
         if active_indices.size == 0:
             return
 
-        # Ensure flags buffer capacity
         if self.transport_buffer.process_ids.size < bank.capacity:
-            self.transport_buffer = TransportBuffer.allocate(bank.capacity)
+            self.transport_buffer = TransportBuffer.allocate(bank.capacity, len(self.processes))
 
-        # 1. Raycast for invalidated particles
+        # 1. Геометрический рейкастинг для частиц с невалидным состоянием навигации
         cast_path_kernel(
             bank.state.position,
             bank.state.direction,
             active_indices,
             geometry_buffer,
-            bank.navigation_state
+            bank.navigation_state,
         )
 
-        # 2. Delta Tracking
+        # 2. Дельта-трекинг ВудКока
         self._transport_kernel(
             bank.state,
             bank.navigation_state,
@@ -63,12 +90,11 @@ class ParticlePropagator:
             physics_buffer,
             self.transport_buffer,
             geometry_buffer,
-            rng_ctx
+            rng_ctx,
         )
 
-        # 3. Push to initial state buffer for interacting particles
+        # 3. Запись начального состояния для частиц, провзаимодействовавших впервые
         interacting_mask = self.transport_buffer.process_ids[active_indices] != -1
-        # Also filter out those that have already interacted
         interacting_mask &= ~bank.initial_state.has_interacted[active_indices]
 
         interacting_indices = active_indices[interacting_mask]
@@ -76,11 +102,21 @@ class ParticlePropagator:
         if interacting_indices.size > 0:
             _push_to_initial_state_kernel(bank.initial_state, interacting_indices, data_buffer.initial_states)
 
-        # 4. Stream Compaction & Dispatch to Process kernels
+        # 4. Уплотнение потока (Stream Compaction) и диспетчеризация по ядрам процессов
         for process in self.processes:
-            # Find which active particles underwent this process
             mask = self.transport_buffer.process_ids[active_indices] == process.process_id
             target_indices = active_indices[mask]
 
             if target_indices.size > 0:
-                process.apply(bank, target_indices, data_buffer.interactions, physics_buffer, self.transport_buffer.material_ids, rng_ctx)
+                process.apply(
+                    bank,
+                    target_indices,
+                    data_buffer.interactions,
+                    physics_buffer,
+                    self.transport_buffer.material_ids,
+                    rng_ctx,
+                )
+
+
+__all__ = ["ParticlePropagator"]
+

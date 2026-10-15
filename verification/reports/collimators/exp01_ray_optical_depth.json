@@ -1,0 +1,54 @@
+[
+  {
+    "collimator_code": "LEHR",
+    "point_parity_samples": 100000,
+    "point_parity_mismatches": 0,
+    "num_rays_tested": 1600,
+    "max_abs_lead_path_error": 2.19999999213627e-05,
+    "mean_abs_lead_path_error": 8.74074995616439e-06,
+    "rms_lead_path_error": 1.0248454709777642e-05,
+    "max_transmission_error_tc99m": 1.574287865624413e-06,
+    "max_transmission_error_i131": 1.3194629670532088e-06,
+    "mean_navigation_steps_direct": 13.6125,
+    "passed": true
+  },
+  {
+    "collimator_code": "LEUHR",
+    "point_parity_samples": 100000,
+    "point_parity_mismatches": 0,
+    "num_rays_tested": 1600,
+    "max_abs_lead_path_error": 2.999999999708791e-05,
+    "mean_abs_lead_path_error": 1.2332749940786036e-05,
+    "rms_lead_path_error": 1.4454496199297536e-05,
+    "max_transmission_error_tc99m": 9.305449740620864e-08,
+    "max_transmission_error_i131": 1.7108423316369858e-06,
+    "mean_navigation_steps_direct": 18.84,
+    "passed": true
+  },
+  {
+    "collimator_code": "MEGP",
+    "point_parity_samples": 100000,
+    "point_parity_mismatches": 0,
+    "num_rays_tested": 1600,
+    "max_abs_lead_path_error": 1.399999998596968e-05,
+    "mean_abs_lead_path_error": 5.829187466588198e-06,
+    "rms_lead_path_error": 6.8045926210639114e-06,
+    "max_transmission_error_tc99m": 1.4072156198086105e-06,
+    "max_transmission_error_i131": 2.893977629758737e-07,
+    "mean_navigation_steps_direct": 9.30375,
+    "passed": true
+  },
+  {
+    "collimator_code": "HEGP",
+    "point_parity_samples": 100000,
+    "point_parity_mismatches": 0,
+    "num_rays_tested": 1600,
+    "max_abs_lead_path_error": 9.999999974752427e-06,
+    "mean_abs_lead_path_error": 4.495562468599962e-06,
+    "rms_lead_path_error": 5.182692917303487e-06,
+    "max_transmission_error_tc99m": 4.282955702039626e-07,
+    "max_transmission_error_i131": 2.5209049980823295e-07,
+    "mean_navigation_steps_direct": 7.385,
+    "passed": true
+  }
+]

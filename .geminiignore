@@ -1,0 +1,48 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# Git internals
+.git/
+
+# Package & build artifacts
+build/
+dist/
+*.egg-info/
+develop-eggs/
+eggs/
+.eggs/
+
+# Test & linter caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage*
+.cache/
+
+# Simulation output data, heavy datasets, logs & statistics
+output data/
+/output data/*
+stats/
+logs/
+*.log
+*.h5
+*.hdf5
+*.npy
+*.npz
+
+# IDE & OS caches
+.idea/
+.vscode/
+Thumbs.db
+ehthumbs.db
+.DS_Store

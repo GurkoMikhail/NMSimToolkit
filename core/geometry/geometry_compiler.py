@@ -1,26 +1,46 @@
+"""
+Модуль компилятора геометрии сцены (GeometryCompiler) в структурированный массив NumPy (AoS).
+"""
+from __future__ import annotations
+
 from collections import defaultdict
+from typing import TYPE_CHECKING, Dict, List, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
-import core.geometry.flattened_scene as flattened_scene_mod
-from core.geometry.volumes import GeometryBufferDType
+from core.geometry.geometries import ShapeDataDType
+from core.other.transform import TransformDType
+from core.other.typing_definitions import Float, Index
 from core.scene.nodes import CompositeNode
+
+GeometryBufferDType = np.dtype([
+    ('shape_data', ShapeDataDType),
+    ('transform', TransformDType),
+    ('miss_index', Index),
+    ('parent_index', Index),
+    ('volume_index', Index),
+])
+
+import core.geometry.flattened_scene as flattened_scene_mod
+
+if TYPE_CHECKING:
+    from core.geometry.volumes import Volume
 
 
 class GeometryCompiler:
     """
-    Compiles an OOP Scene Graph into an Array of Structures (AoS) numpy structured array
-    optimized for fast Numba raycasting.
+    Компилирует ООП-граф сцены в структурированный NumPy массив Array of Structures (AoS),
+    оптимизированный для быстрого вычисления пересечений лучей в кернелах Numba.
     """
 
     def compile_scene(self, root_node: CompositeNode) -> NDArray[np.void]:
         """
-        Main entry point for scene compilation.
-        Converts the OOP hierarchy into a flat numpy AoS structure.
+        Главная точка входа компиляции геометрии сцены.
+        Преобразует иерархию узлов в плоскую AoS-структуру NumPy.
         """
         flat_list = flattened_scene_mod.FlattenedScene(root_node).flat_list
         capacity = len(flat_list)
-        buffer = np.zeros(capacity, dtype=GeometryBufferDType)
+        buffer: NDArray[np.void] = np.zeros(capacity, dtype=GeometryBufferDType)
 
         if capacity > 0:
             self._compute_miss_indices(flat_list, buffer)
@@ -28,21 +48,25 @@ class GeometryCompiler:
 
         return buffer
 
-    def _compute_miss_indices(self, flat_list: list, buffer: NDArray[np.void]) -> None:
+    def _compute_miss_indices(
+        self,
+        flat_list: List[Tuple[Volume, NDArray[Float], Index]],
+        buffer: NDArray[np.void],
+    ) -> None:
         """
-        Calculates and assigns `miss_index` for Frustum Culling.
-        The miss_index points to the node directly after the current node's subtree.
+        Вычисляет и назначает miss_index для отсечения непересекаемых ветвей (Frustum Culling).
+        miss_index указывает на индекс узла, следующего непосредственно за поддеревом текущего узла.
         """
         capacity = len(flat_list)
         if capacity == 0:
             return
 
         # Шаг 1: O(N) построение списка смежности
-        children_map = defaultdict(list)
+        children_map: Dict[int, List[int]] = defaultdict(list)
         for i in range(capacity):
-            _, _, p_idx = flat_list[i]
-            if p_idx != -1:
-                children_map[p_idx].append(i)
+            _, _, parent_idx = flat_list[i]
+            if int(parent_idx) != -1:
+                children_map[int(parent_idx)].append(i)
 
         # Шаг 2: O(N) вычисление размера поддерева через DFS
         def subtree_size(node_idx: int) -> int:
@@ -53,38 +77,43 @@ class GeometryCompiler:
             return count
 
         # Вызываем DFS для корней леса (узлов с parent_index == -1)
-        # Обычно это только нулевой индекс
         for i in range(capacity):
-            _, _, p_idx = flat_list[i]
-            if p_idx == -1:
+            _, _, parent_idx = flat_list[i]
+            if int(parent_idx) == -1:
                 subtree_size(i)
 
-    def _populate_buffer(self, flat_list: list, buffer: NDArray[np.void]) -> None:
+    def _populate_buffer(
+        self,
+        flat_list: List[Tuple[Volume, NDArray[Float], Index]],
+        buffer: NDArray[np.void],
+    ) -> None:
         """
-        Populates the structured array buffer with shapes, parameters, indices, and transforms.
+        Заполняет буфер структурированного массива геометрическими формами, параметрами, индексами и трансформациями.
         """
-        for i, (vol, mat, p_idx) in enumerate(flat_list):
-            # Polymorphic delegation to shape-specific data writing
+        for i, (vol, inv_matrix, parent_idx) in enumerate(flat_list):
             vol.geometry.write_shape_data(buffer['shape_data'], i)
 
             buffer[i]['volume_index'] = i
-            buffer[i]['parent_index'] = p_idx
+            buffer[i]['parent_index'] = parent_idx
 
-            # Matrix: World -> Local (Unrolled explicitly)
             rotation = buffer[i]['transform']['rotation']
-            rotation['m00'] = mat[0, 0]
-            rotation['m01'] = mat[0, 1]
-            rotation['m02'] = mat[0, 2]
+            rotation['m00'] = inv_matrix[0, 0]
+            rotation['m01'] = inv_matrix[0, 1]
+            rotation['m02'] = inv_matrix[0, 2]
 
-            rotation['m10'] = mat[1, 0]
-            rotation['m11'] = mat[1, 1]
-            rotation['m12'] = mat[1, 2]
+            rotation['m10'] = inv_matrix[1, 0]
+            rotation['m11'] = inv_matrix[1, 1]
+            rotation['m12'] = inv_matrix[1, 2]
 
-            rotation['m20'] = mat[2, 0]
-            rotation['m21'] = mat[2, 1]
-            rotation['m22'] = mat[2, 2]
+            rotation['m20'] = inv_matrix[2, 0]
+            rotation['m21'] = inv_matrix[2, 1]
+            rotation['m22'] = inv_matrix[2, 2]
 
             translation = buffer[i]['transform']['translation']
-            translation['x'] = mat[0, 3]
-            translation['y'] = mat[1, 3]
-            translation['z'] = mat[2, 3]
+            translation['x'] = inv_matrix[0, 3]
+            translation['y'] = inv_matrix[1, 3]
+            translation['z'] = inv_matrix[2, 3]
+
+
+__all__ = ["GeometryCompiler", "GeometryBufferDType"]
+

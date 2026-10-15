@@ -1,9 +1,16 @@
+"""
+Модуль диспетчера данных моделирования (DataManager).
+Управляет сохранением чанков взаимодействия частиц в файл HDF5,
+а также обеспечивает раннюю инициализацию, изоляцию метаданных задач
+и финализацию жизненного цикла симуляции.
+"""
+
 import logging
 import threading
 import time
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import h5py
 import numpy as np
@@ -11,74 +18,297 @@ import numpy as np
 from core.data.data_handlers import BaseDataHandler
 
 _logger = logging.getLogger(__name__)
-_logger.setLevel(logging.DEBUG)
 
 
 class DataManager(threading.Thread):
     """
     Поток-потребитель для сохранения чанков InteractionBuffer из SoA-движка
     в файл HDF5 с использованием делегированных обработчиков BaseDataHandler.
+    Обеспечивает раннюю запись метаданных и изолированное сохранение метаданных задач.
     """
 
-    def __init__(self, filename: str, handlers: List[BaseDataHandler], queue: Any = None, lock: Optional[Any] = None, swmr: bool = True) -> None:
+    def __init__(
+        self,
+        filename: Union[str, Path],
+        handlers: List[BaseDataHandler],
+        queue: Any = None,
+        lock: Optional[Any] = None,
+        swmr: bool = True,
+        metadata: Optional[Dict[str, Any]] = None,
+        task_id: Optional[Any] = None,
+    ) -> None:
         super().__init__()
-        fn_path = Path(filename)
-        if fn_path.is_absolute():
-            self.filename = fn_path
+        filepath_obj = Path(filename)
+        if filepath_obj.is_absolute():
+            self.filename = filepath_obj
         else:
-            self.filename = Path(f'output data/{filename}')
+            self.filename = Path(f"output data/{filename}")
         self.filename.parent.mkdir(parents=True, exist_ok=True)
 
         self.queue = queue
         self.lock = lock
+        self.metadata: Dict[str, Any] = dict(metadata) if metadata is not None else {}
+
+        # Разрешение task_id
+        if task_id is not None:
+            self.task_id: Any = task_id
+        elif "task_id" in self.metadata:
+            self.task_id = self.metadata["task_id"]
+        else:
+            self.task_id = 0
+        self.metadata["task_id"] = self.task_id
+
         # Режим SWMR (Single Writer Multiple Reader) несовместим со сценарием
         # нескольких процессов-писателей (наличие внешнего файлового мьютекса lock)
         self.swmr = swmr and (lock is None)
         self.daemon = True
 
-        self.handlers = []
-        for h in handlers:
-            if not isinstance(h, BaseDataHandler):
-                raise TypeError(f"Handler {h} must be an instance of BaseDataHandler.")
-            h.set_writer_callback(self._write_with_retry)
-            self.handlers.append(h)
+        self.handlers: List[BaseDataHandler] = []
+        for handler_instance in handlers:
+            if not isinstance(handler_instance, BaseDataHandler):
+                raise TypeError(f"Handler {handler_instance} must be an instance of BaseDataHandler.")
+            handler_instance.set_writer_callback(self._write_with_retry)
+            self.handlers.append(handler_instance)
 
-    def run(self):
+        # Состояние жизненного цикла метаданных
+        self._status: str = "pending"
+        self._is_initialized: bool = False
+        self._is_finalized: bool = False
+        self._start_perf_time: Optional[float] = None
+        self._start_time_str: Optional[str] = None
+        self._completion_time_str: Optional[str] = None
+        self._elapsed_real_time: Optional[float] = None
+        self._error_message: Optional[str] = None
+
+    @property
+    def task_group_name(self) -> str:
+        """
+        Формирует имя изолированной группы задачи в HDF5 (например, task_0, task_view_3).
+        """
+        string_identifier = str(self.task_id)
+        if string_identifier.startswith("task_"):
+            return string_identifier
+        return f"task_{string_identifier}"
+
+    @staticmethod
+    def _write_dict_recursive(target_group: h5py.Group, data_dict: Dict[str, Any]) -> None:
+        """
+        Рекурсивно записывает словарь в группу HDF5 (вложенные словари в подгруппы,
+        скаляры и массивы в HDF5 attrs).
+        """
+        for item_key, item_value in data_dict.items():
+            if isinstance(item_value, dict):
+                nested_group = target_group.require_group(str(item_key))
+                DataManager._write_dict_recursive(nested_group, item_value)
+            elif item_value is not None:
+                try:
+                    target_group.attrs[str(item_key)] = item_value
+                except (TypeError, ValueError, RuntimeError, OSError):
+                    try:
+                        target_group.attrs[str(item_key)] = str(item_value)
+                    except (TypeError, ValueError, RuntimeError, OSError) as attribute_error:
+                        _logger.debug(
+                            f"Не удалось записать атрибут {item_key} со значением {item_value}: {attribute_error}"
+                        )
+
+    @staticmethod
+    def _write_canonical_section(target_group: h5py.Group, data_dict: Dict[str, Any]) -> None:
+        """
+        Записывает структурированные параметры канонической группы метаданных
+        (/metadata/gantry, geometry, source, simulation) как атрибуты и датасеты с единицами hepunits.
+        """
+        units_map: Dict[str, str] = {
+            "gantry_angle": "rad",
+            "gantry_angle_deg": "deg",
+            "angular_step": "deg",
+            "angular_step_rad": "rad",
+            "orbit_radius": "mm",
+            "frame_duration": "s",
+            "crystal_dimensions": "mm",
+            "collimator_hole_diameter": "mm",
+            "collimator_hole_length": "mm",
+            "collimator_septa_thickness": "mm",
+            "half_life": "s",
+            "simulated_activity": "Bq",
+        }
+
+        for item_key, item_value in data_dict.items():
+            if item_value is None:
+                continue
+
+            unit = units_map.get(str(item_key))
+
+            # Если значение - словарь (например, запись объема), рекурсивно создаем подгруппу
+            if isinstance(item_value, dict):
+                sub_group = target_group.require_group(str(item_key))
+                DataManager._write_canonical_section(sub_group, item_value)
+                continue
+
+            # Запись атрибута в группу
+            try:
+                target_group.attrs[str(item_key)] = item_value
+            except (TypeError, ValueError, RuntimeError, OSError):
+                try:
+                    target_group.attrs[str(item_key)] = str(item_value)
+                except (TypeError, ValueError, RuntimeError, OSError) as attr_err:
+                    _logger.debug(f"Не удалось записать атрибут {item_key}: {attr_err}")
+
+            if unit is not None:
+                try:
+                    target_group.attrs[f"{item_key}_units"] = unit
+                except (TypeError, ValueError, RuntimeError, OSError):
+                    pass
+
+            # Создание датасета для массивов или числовых параметров
+            if isinstance(item_value, np.ndarray):
+                if str(item_key) not in target_group:
+                    dset = target_group.create_dataset(str(item_key), data=item_value)
+                    if unit is not None:
+                        dset.attrs["units"] = unit
+                else:
+                    target_group[str(item_key)][...] = item_value
+            elif isinstance(item_value, (list, tuple)):
+                array_value = np.array(item_value)
+                if str(item_key) not in target_group:
+                    dset = target_group.create_dataset(str(item_key), data=array_value)
+                    if unit is not None:
+                        dset.attrs["units"] = unit
+                else:
+                    target_group[str(item_key)][...] = array_value
+            elif isinstance(item_value, (int, float, np.integer, np.floating)):
+                if str(item_key) not in target_group:
+                    dset = target_group.create_dataset(str(item_key), data=item_value)
+                    if unit is not None:
+                        dset.attrs["units"] = unit
+                else:
+                    target_group[str(item_key)][()] = item_value
+            elif isinstance(item_value, str):
+                if str(item_key) not in target_group:
+                    target_group.create_dataset(str(item_key), data=np.bytes_(item_value.encode("utf-8")))
+                else:
+                    target_group[str(item_key)][()] = np.bytes_(item_value.encode("utf-8"))
+
+    def initialize_metadata(self) -> None:
+        """
+        Выполняет раннюю фиксацию метаданных задачи моделирования ДО фактического старта симуляции.
+        Создает канонические группы /metadata/{gantry, geometry, source, simulation},
+        а также изолированную подгруппу /metadata/tasks/task_{task_id} со статусом 'in_progress',
+        отметкой времени старта и параметрами протокола/детекторов для обратной совместимости.
+        """
+        if self._is_initialized:
+            return
+
+        self._start_perf_time = time.perf_counter()
+        self._start_time_str = str(time.strftime("%Y-%m-%d %H:%M:%S"))
+        self._status = "in_progress"
+        self._is_initialized = True
+
+        def do_write_initial_metadata(file_handle: h5py.File) -> None:
+            metadata_group = file_handle.require_group("metadata")
+            if "created_time" not in metadata_group.attrs:
+                metadata_group.attrs["created_time"] = self._start_time_str
+
+            # 1. Запись в канонические корневые разделы /metadata/{gantry, geometry, source, simulation}
+            for section_name in ("gantry", "geometry", "source", "simulation"):
+                if section_name in self.metadata and isinstance(self.metadata[section_name], dict):
+                    section_group = metadata_group.require_group(section_name)
+                    self._write_canonical_section(section_group, self.metadata[section_name])
+
+            # 2. Изолированная запись для текущей задачи в /metadata/tasks/task_{task_id} (обратная совместимость)
+            tasks_group = metadata_group.require_group("tasks")
+            task_group = tasks_group.require_group(self.task_group_name)
+
+            task_group.attrs["task_id"] = self.task_id
+            task_group.attrs["status"] = self._status
+            task_group.attrs["start_time"] = self._start_time_str
+
+            if self.metadata:
+                self._write_dict_recursive(task_group, self.metadata)
+
+        try:
+            self._write_with_retry(do_write_initial_metadata)
+        except (OSError, RuntimeError, KeyError, ValueError) as write_error:
+            _logger.error(f"Ошибка ранней записи метаданных: {write_error}", exc_info=True)
+
+    def finalize_metadata(self, status: str = "completed", error: Optional[str] = None) -> None:
+        """
+        Обновляет статус выполнения задачи ('completed' / 'failed'), фиксирует время завершения
+        и реальное затраченное время выполнения в секундах.
+        """
+        if self._is_finalized and self._status == "failed" and status == "completed":
+            return
+
+        self._status = status
+        self._is_finalized = True
+        self._completion_time_str = str(time.strftime("%Y-%m-%d %H:%M:%S"))
+        if self._start_perf_time is not None:
+            self._elapsed_real_time = float(time.perf_counter() - self._start_perf_time)
+        else:
+            self._elapsed_real_time = 0.0
+
+        if error is not None:
+            self._error_message = str(error)
+
+        def do_write_final_metadata(file_handle: h5py.File) -> None:
+            metadata_group = file_handle.require_group("metadata")
+            tasks_group = metadata_group.require_group("tasks")
+            task_group = tasks_group.require_group(self.task_group_name)
+
+            task_group.attrs["status"] = self._status
+            task_group.attrs["completion_time"] = self._completion_time_str
+            task_group.attrs["elapsed_real_time_seconds"] = self._elapsed_real_time
+            if self._error_message is not None:
+                task_group.attrs["error"] = self._error_message
+
+            # Обновление статуса в канонической группе simulation
+            if "simulation" in metadata_group:
+                metadata_group["simulation"].attrs["status"] = self._status
+
+        try:
+            self._write_with_retry(do_write_final_metadata)
+        except (OSError, RuntimeError, KeyError, ValueError) as write_error:
+            _logger.error(f"Ошибка финализации метаданных: {write_error}", exc_info=True)
+
+    def run(self) -> None:
         """
         Извлекает чанки из очереди до получения сигнала 'stop'.
         """
         if self.queue is None:
             return
 
+        if not self._is_initialized:
+            self.initialize_metadata()
+
         while True:
             chunk = self.queue.get()
-            if isinstance(chunk, str) and chunk == 'stop':
+            if isinstance(chunk, str) and chunk == "stop":
                 break
             elif isinstance(chunk, dict):
                 frozen_chunk = self._freeze_chunk(chunk)
-                for h in self.handlers:
+                for handler_instance in self.handlers:
                     try:
-                        h.process_chunk(frozen_chunk)
-                    except Exception as e:
-                        _logger.error(f"Ошибка обработки чанка обработчиком {h}: {e}", exc_info=True)
+                        handler_instance.process_chunk(frozen_chunk)
+                    except (OSError, RuntimeError, ValueError, KeyError, TypeError, IndexError) as handler_error:
+                        _logger.error(
+                            f"Ошибка обработки чанка обработчиком {handler_instance}: {handler_error}",
+                            exc_info=True,
+                        )
+                        self._error_message = str(handler_error)
 
-        for h in self.handlers:
+        for handler_instance in self.handlers:
             try:
-                h.finalize()
-            except Exception as e:
-                _logger.error(f"Ошибка финализации обработчика {h}: {e}", exc_info=True)
+                handler_instance.finalize()
+            except (OSError, RuntimeError, ValueError, KeyError, TypeError, IndexError) as finalize_error:
+                _logger.error(
+                    f"Ошибка финализации обработчика {handler_instance}: {finalize_error}",
+                    exc_info=True,
+                )
+                if self._error_message is None:
+                    self._error_message = str(finalize_error)
 
-        def write_metadata(f: h5py.File) -> None:
-            if 'metadata' not in f:
-                meta = f.create_group('metadata')
-            else:
-                meta = f['metadata']
-            meta.attrs['completion_time'] = str(time.strftime('%Y-%m-%d %H:%M:%S'))
-
-        try:
-            self._write_with_retry(write_metadata)
-        except (OSError, RuntimeError, KeyError, ValueError) as e:
-            _logger.debug(f"Запись метаданных пропущена: {e}")
+        if not self._is_finalized:
+            completion_status = "failed" if self._error_message is not None else "completed"
+            self.finalize_metadata(status=completion_status)
 
     def stop(self, timeout: Optional[float] = 1.0) -> None:
         """
@@ -86,7 +316,7 @@ class DataManager(threading.Thread):
         """
         if self.queue is not None:
             try:
-                self.queue.put('stop')
+                self.queue.put("stop")
             except (OSError, ValueError):
                 pass
         if self.is_alive():
@@ -99,15 +329,14 @@ class DataManager(threading.Thread):
         для предотвращения случайной модификации при широковещательной рассылке обработчикам.
         Возвращает защищенную копию словаря данных для защиты ключей.
         """
-        data = chunk.get('data')
+        data = chunk.get("data")
         if isinstance(data, dict):
             frozen_data = {}
-            for k, v in data.items():
-                if isinstance(v, np.ndarray):
-                    v.flags.writeable = False
-                frozen_data[k] = v
-            # Return MappingProxyType to prevent adding/removing keys
-            chunk['data'] = MappingProxyType(frozen_data)
+            for field_name, field_array in data.items():
+                if isinstance(field_array, np.ndarray):
+                    field_array.flags.writeable = False
+                frozen_data[field_name] = field_array
+            chunk["data"] = MappingProxyType(frozen_data)
         elif isinstance(data, np.ndarray):
             data.flags.writeable = False
 
@@ -117,22 +346,22 @@ class DataManager(threading.Thread):
         """
         Выполняет функцию записи HDF5 с логикой повторных попыток и опциональной файловой блокировкой.
         """
-        retries = 100
+        retries_count = 100
 
-        def do_write():
-            for i in range(retries):
+        def do_write() -> None:
+            for retry_index in range(retries_count):
                 try:
-                    with h5py.File(self.filename, 'a', libver='latest') as f:
+                    with h5py.File(self.filename, "a", libver="latest") as h5_file:
                         if self.swmr:
                             try:
-                                f.swmr_mode = True
+                                h5_file.swmr_mode = True
                             except (OSError, RuntimeError):
                                 pass
-                        write_func(f)
-                        f.flush()
+                        write_func(h5_file)
+                        h5_file.flush()
                     return
                 except (OSError, BlockingIOError):
-                    if i == retries - 1:
+                    if retry_index == retries_count - 1:
                         raise
                     time.sleep(0.1)
 
@@ -141,3 +370,6 @@ class DataManager(threading.Thread):
                 do_write()
         else:
             do_write()
+
+
+__all__ = ["DataManager"]

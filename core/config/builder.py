@@ -1,45 +1,61 @@
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, Callable, Optional
+from typing import Dict, Any, Callable, Optional, List, Tuple
 import re
 
 import settings.database_setting as database_setting
+import hepunits as units
+from core.config.units import unit_validator_factory
 from core.config.models import (
-    AnyNodeConfig, VolumeConfig, GammaCameraConfig, WoodcockVoxelVolumeConfig,
-    ParametricParallelCollimatorConfig, ParametricParallelSquareCollimatorConfig,
-    SourceConfig, BoxConfig, SimulationConfig, TranslateConfig, RotateConfig,
-    NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig
+    AnyNodeConfig, VolumeConfig, GammaCameraConfig, GammaCameraSlotsConfig, WoodcockVoxelVolumeConfig,
+    ParametricParallelCollimatorConfig,
+    DirectParallelCollimatorConfig,
+    SourceMetadataConfig, SourceConfig, BoxConfig, GeometryConfig, SimulationConfig, TranslateConfig, RotateConfig,
+    MatrixTransformConfig,
+    NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig,
+    DoseGridNodeConfig, GantryConfig, CompositeNodeConfig, BaseSpatialNodeConfig, BaseCompositeNodeConfig
 )
-from core.geometry.geometries import Box
+from core.config.exporter import SceneExporter
+from core.geometry.geometries import Box, Geometry
 from core.geometry.volumes import Volume
-from core.geometry.gamma_cameras import GammaCamera
+from core.scene.gamma_camera_node import GammaCameraNode
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
-from core.geometry.parametric_collimators import ParametricParallelCollimator, ParametricParallelSquareCollimator
-from core.materials.materials import MaterialArray
-from core.source.sources import Source
+from core.geometry.parametric_collimators import ParametricParallelCollimator
+from core.geometry.direct_collimators import DirectParallelCollimator, CollimatorHoleShape
+from core.materials.materials import Material, MaterialArray
+from core.other.typing_definitions import Float
+from core.source.sources import Source, PointSource
 from core.scene.nodes import SpatialNode, CompositeNode
+from core.scene.dose_grid_node import DoseGridNode
+from core.scene.gantry_node import GantryNode
 
 class SceneBuilder:
-    def __init__(self, base_dir: Optional[Any] = None):
+    def __init__(self, base_dir: Optional[Any] = None) -> None:
         self.base_dir = Path(base_dir) if base_dir else None
-        self.factory_map: Dict[str, Callable[[AnyNodeConfig], SpatialNode]] = {
+        self.distribution_registry: Dict[SpatialNode, AnyDistributionConfig] = {}
+        self.slots_registry: Dict[SpatialNode, GammaCameraSlotsConfig] = {}
+        self.source_metadata_registry: Dict[SpatialNode, SourceMetadataConfig] = {}
+        self.factory_map: Dict[str, Callable[[Any], SpatialNode]] = {
             'SpatialNode': self._build_spatial_node,
             'CompositeNode': self._build_composite_node,
             'Volume': self._build_volume,
             'GammaCamera': self._build_gamma_camera,
             'WoodcockVoxelVolume': self._build_woodcock_voxel_volume,
             'ParametricParallelCollimator': self._build_parametric_parallel_collimator,
-            'ParametricParallelSquareCollimator': self._build_parametric_parallel_square_collimator,
-            'Source': self._build_source
+            'DirectParallelCollimator': self._build_direct_parallel_collimator,
+            'Source': self._build_source,
+            'DoseGridNode': self._build_dose_grid_node,
+            'Gantry': self._build_gantry,
+            'GantryNode': self._build_gantry,
         }
         self.node_cache: Dict[str, SpatialNode] = {}
 
-    def _build_spatial_node(self, config) -> SpatialNode:
-        node = SpatialNode()
+    def _build_spatial_node(self, config: BaseSpatialNodeConfig) -> SpatialNode:
+        node = SpatialNode(name=config.name)
         return node
 
-    def _build_composite_node(self, config) -> SpatialNode:
-        node = CompositeNode()
+    def _build_composite_node(self, config: BaseCompositeNodeConfig) -> SpatialNode:
+        node = CompositeNode(name=config.name)
         return node
 
     def build_scene(self, config: AnyNodeConfig) -> SpatialNode:
@@ -74,40 +90,51 @@ class SceneBuilder:
             raise ValueError(f"Unknown node type: {node_type}")
 
         node = self.factory_map[node_type](config)
+        if config.tags:
+            node.tags = list(config.tags)
 
         # Применение трансформаций
         for transform in config.transformations:
             if isinstance(transform, TranslateConfig):
-                x = self._to_float(transform.x)
-                y = self._to_float(transform.y)
-                z = self._to_float(transform.z)
-                node.translate(x, y, z, transform.in_local)
+                trans_x = self._to_float(transform.x)
+                trans_y = self._to_float(transform.y)
+                trans_z = self._to_float(transform.z)
+                node.translate(trans_x, trans_y, trans_z, transform.in_local)
             elif isinstance(transform, RotateConfig):
                 alpha = self._to_float(transform.alpha)
                 beta = self._to_float(transform.beta)
                 gamma = self._to_float(transform.gamma)
-                rot_center = tuple(self._to_float(c) for c in transform.rotation_center)
+                rot_center = tuple(self._to_float(coord_val) for coord_val in transform.rotation_center)
                 node.rotate(alpha, beta, gamma, rot_center, transform.in_local)
+            elif isinstance(transform, MatrixTransformConfig):
+                mat = np.array(transform.matrix, dtype=float)
+                if transform.in_local:
+                    node.local_matrix = node.local_matrix @ mat
+                else:
+                    node.local_matrix = mat @ node.local_matrix
+                node.invalidate_matrix_cache()
+
 
         # Build children
-        for child_config in config.children:
-            child_node = self._build_node(child_config)
-            node.add_child(child_node)
+        if isinstance(config, CompositeNodeConfig) and isinstance(node, CompositeNode):
+            for child_config in config.children:
+                child_node = self._build_node(child_config)
+                node.add_child(child_node)
 
         return node
 
-    def _get_material(self, name: str):
+    def _get_material(self, name: str) -> Material:
         """Получение объекта материала из базы данных по каноническому имени."""
         if name not in database_setting.material_database:
             raise ValueError(f"Материал '{name}' не найден в базе данных.")
         return database_setting.material_database[name]
 
-    def _build_geometry(self, config):
+    def _build_geometry(self, config: GeometryConfig) -> Geometry:
         if isinstance(config, BoxConfig):
-            x = self._to_float(config.x, check_positive=True)
-            y = self._to_float(config.y, check_positive=True)
-            z = self._to_float(config.z, check_positive=True)
-            return Box(x, y, z)
+            size_x = Float(self._to_float(config.x, check_positive=True))
+            size_y = Float(self._to_float(config.y, check_positive=True))
+            size_z = Float(self._to_float(config.z, check_positive=True))
+            return Box(size_x, size_y, size_z)
         raise ValueError(f"Unknown geometry type: {config.type}")
 
     def _build_volume(self, config: VolumeConfig) -> Volume:
@@ -117,17 +144,17 @@ class SceneBuilder:
 
     def _resolve_dist_path(self, path_str: str) -> str:
         # Разрешение путей распределения данных (с поддержкой относительных путей)
-        p = Path(path_str)
-        if p.is_absolute():
-            if p.is_file():
-                return str(p)
-            raise FileNotFoundError(f"Файл распределения не найден: {p}")
+        file_path = Path(path_str)
+        if file_path.is_absolute():
+            if file_path.is_file():
+                return str(file_path)
+            raise FileNotFoundError(f"Файл распределения не найден: {file_path}")
         if self.base_dir:
-            cand = self.base_dir / p
-            if cand.is_file():
-                return str(cand)
-        if p.is_file():
-            return str(p)
+            candidate_path = self.base_dir / file_path
+            if candidate_path.is_file():
+                return str(candidate_path)
+        if file_path.is_file():
+            return str(file_path)
         raise FileNotFoundError(f"Файл распределения не найден: {path_str}")
 
     def _load_raw_distribution(self, dist_config: AnyDistributionConfig) -> np.ndarray:
@@ -135,21 +162,28 @@ class SceneBuilder:
         if isinstance(dist_config, NumpyDistributionConfig):
             file_path = Path(resolved_path)
             if file_path.suffix.lower() in ('.txt', '.dat'):
-                return np.loadtxt(resolved_path)
+                loaded_txt: np.ndarray = np.loadtxt(resolved_path)
+                return loaded_txt
             elif file_path.suffix.lower() == '.npy':
-                return np.load(resolved_path, allow_pickle=True)
+                loaded_npy: np.ndarray = np.load(resolved_path, allow_pickle=True)
+                return loaded_npy
             else:
                 raise ValueError(f"Неподдерживаемое расширение для NumpyDistributionConfig: {file_path.suffix}")
         elif isinstance(dist_config, RawDistributionConfig):
             file_path = Path(resolved_path)
+            data: np.ndarray
+            element_dtype = np.dtype(dist_config.dtype)
             if dist_config.encoding == 'binary':
                 file_size = file_path.stat().st_size
-                expected_size = int(np.prod(dist_config.shape) * 4)
+                expected_size = int(np.prod(dist_config.shape) * element_dtype.itemsize)
                 if file_size != expected_size:
-                    raise ValueError(f"Размер бинарного файла {resolved_path} ({file_size} байт) не совпадает с ожидаемым ({expected_size} байт для float32)")
-                data = np.fromfile(resolved_path, dtype=np.float32)
+                    raise ValueError(
+                        f"Размер бинарного файла {resolved_path} ({file_size} байт) "
+                        f"не совпадает с ожидаемым ({expected_size} байт для {element_dtype.name})"
+                    )
+                data = np.fromfile(resolved_path, dtype=element_dtype)
             else:
-                data = np.loadtxt(resolved_path)
+                data = np.loadtxt(resolved_path, dtype=element_dtype)
 
             expected_elements = int(np.prod(dist_config.shape))
             if data.size != expected_elements:
@@ -180,87 +214,155 @@ class SceneBuilder:
             raise ValueError("WoodcockVoxelVolumeConfig mapping requires an explicit mapping, raw IDs are not currently supported by MaterialArray.")
 
         v_size_raw = config.voxel_size if config.voxel_size is not None else 1.0
-        voxel_size = self._to_float(v_size_raw, check_positive=True)
+        voxel_size = Float(self._to_float(v_size_raw, check_positive=True))
         node = WoodcockVoxelVolume(voxel_size=voxel_size, material_distribution=mat_arr, name=config.name)
-        node.distribution_config = dist_config
-        if dist_config.path is not None:
-            node.distribution_path = str(self._resolve_dist_path(dist_config.path))
+        self.distribution_registry[node] = dist_config
         return node
 
-    def _build_gamma_camera(self, config: GammaCameraConfig) -> GammaCamera:
-        collimator = self._build_node(config.collimator)
-        detector = self._build_node(config.detector)
-        gap_raw = config.gap if config.gap is not None else 1.0
-        gap = self._to_float(gap_raw, check_positive=True)
-        shielding_raw = config.shielding_thickness if config.shielding_thickness is not None else 20.0
-        shielding = self._to_float(shielding_raw, check_positive=True)
-        glass_raw = config.glass_backend_thickness if config.glass_backend_thickness is not None else 50.0
-        glass = self._to_float(glass_raw, check_positive=True)
-        return GammaCamera(
-            collimator=collimator,
-            detector=detector,
-            gap=gap,
-            shielding_thickness=shielding,
-            glass_backend_thickness=glass,
-            name=config.name
-        )
+    def _build_gamma_camera(self, config: GammaCameraConfig) -> GammaCameraNode:
+        slots_dict = {
+            slot_name: slot_value
+            for slot_name, slot_value in config.slots.model_dump().items()
+            if slot_value is not None
+        }
+        camera_node = GammaCameraNode(name=config.name, slots=slots_dict)
+        self.slots_registry[camera_node] = config.slots
+        return camera_node
+
 
     def _build_parametric_parallel_collimator(self, config: ParametricParallelCollimatorConfig) -> ParametricParallelCollimator:
         material = self._get_material(config.material)
-        size = [self._to_float(s, check_positive=True) for s in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
-        hole_diameter = self._to_float(config.hole_diameter, check_positive=True)
-        septa = self._to_float(config.septa_thickness, check_positive=True)
+        size = (
+            [Float(self._to_float(dimension_value, check_positive=True)) for dimension_value in config.size]
+            if isinstance(config.size, (list, tuple))
+            else [Float(self._to_float(config.size, check_positive=True))] * 3
+        )
+        hole_diameter = Float(self._to_float(config.hole_diameter, check_positive=True))
+        septa = Float(self._to_float(config.septa, check_positive=True))
+        hole_shape = CollimatorHoleShape(config.hole_shape.lower())
         return ParametricParallelCollimator(
             size=size,
             hole_diameter=hole_diameter,
             septa=septa,
             material=material,
+            hole_shape=hole_shape,
             name=config.name
         )
 
-    def _build_parametric_parallel_square_collimator(self, config: ParametricParallelSquareCollimatorConfig) -> ParametricParallelSquareCollimator:
+    def _build_direct_parallel_collimator(self, config: DirectParallelCollimatorConfig) -> DirectParallelCollimator:
         material = self._get_material(config.material)
-        size = [self._to_float(s, check_positive=True) for s in config.size] if isinstance(config.size, (list, tuple)) else self._to_float(config.size, check_positive=True)
-        hole_size = [self._to_float(s, check_positive=True) for s in config.hole_size] if isinstance(config.hole_size, (list, tuple)) else self._to_float(config.hole_size, check_positive=True)
-        septa = [self._to_float(s, check_positive=True) for s in config.septa_thickness] if isinstance(config.septa_thickness, (list, tuple)) else self._to_float(config.septa_thickness, check_positive=True)
-        return ParametricParallelSquareCollimator(
+        hole_material = self._get_material(config.hole_material) if config.hole_material is not None else None
+        size = (
+            [Float(self._to_float(dimension_value, check_positive=True)) for dimension_value in config.size]
+            if isinstance(config.size, (list, tuple))
+            else [Float(self._to_float(config.size, check_positive=True))] * 3
+        )
+        hole_diameter = Float(self._to_float(config.hole_diameter, check_positive=True))
+        septa = Float(self._to_float(config.septa, check_positive=True))
+        hole_shape = CollimatorHoleShape(config.hole_shape.lower())
+        return DirectParallelCollimator(
             size=size,
-            hole_width=hole_size,
+            hole_diameter=hole_diameter,
             septa=septa,
             material=material,
-            name=config.name
+            hole_material=hole_material,
+            hole_shape=hole_shape,
+            name=config.name,
         )
 
     def _build_source(self, config: SourceConfig) -> Source:
         dist_config = config.distribution
-        raw_distribution = self._load_raw_distribution(dist_config)
+        activity = Float(self._to_float(config.activity, check_positive=True)) if config.activity is not None else None
+        raw_voxel_size = self._to_float(config.voxel_size, check_positive=False)
+        if raw_voxel_size < 0.0:
+            raise ValueError(f"Значение voxel_size ({raw_voxel_size}) не может быть отрицательным")
+        voxel_size = Float(raw_voxel_size)
+        if isinstance(config.energy, list):
+            energy_validator = unit_validator_factory('MeV', float(units.MeV))
+            energy: Any = [
+                [float(energy_validator(item[0])), float(item[1])]
+                for item in config.energy
+            ]
+        else:
+            energy = Float(self._to_float(config.energy, check_positive=True))
+        half_life_raw = self._to_float(config.half_life, check_positive=False)
+        if half_life_raw < 0.0:
+            raise ValueError(f"Значение half_life ({half_life_raw}) не может быть отрицательным")
+        half_life = Float(half_life_raw) if half_life_raw > 0.0 else Float(np.inf)
 
-        distribution = np.array(raw_distribution, dtype=float, copy=True)
+        if dist_config is None:
+            effective_activity = activity if activity is not None else Float(1.0 * units.MBq)
+            node: Source = PointSource(
+                activity=effective_activity,
+                energy=energy,
+                size=voxel_size,
+                half_life=half_life,
+            )
+            node.radiation_type = config.radiation_type
+        else:
+            if voxel_size <= 0.0:
+                raise ValueError(f"Значение {voxel_size} должно быть строго больше 0")
+            raw_distribution = self._load_raw_distribution(dist_config)
+            distribution = np.array(raw_distribution, dtype=float, copy=True)
 
-        if dist_config.fill_value is not None:
-            distribution.fill(float(dist_config.fill_value))
+            if dist_config.fill_value is not None:
+                distribution.fill(float(dist_config.fill_value))
 
-        if dist_config.mapping is not None:
-            for map_val, act_val in dist_config.mapping.items():
-                mask = np.isclose(raw_distribution, map_val)
-                distribution[mask] = float(act_val)
+            if dist_config.mapping is not None:
+                for map_val, act_val in dist_config.mapping.items():
+                    mask = np.isclose(raw_distribution, map_val)
+                    distribution[mask] = float(act_val)
 
-        activity = self._to_float(config.activity, check_positive=True) if config.activity is not None else None
-        voxel_size = self._to_float(config.voxel_size, check_positive=True)
-        energy = self._to_float(config.energy, check_positive=True)
-        half_life = self._to_float(config.half_life, check_positive=True)
+            node = Source(
+                distribution=distribution,
+                activity=activity,
+                voxel_size=voxel_size,
+                radiation_type=config.radiation_type,
+                energy=energy,
+                half_life=half_life,
+            )
+            self.distribution_registry[node] = dist_config
 
-        node = Source(
-            distribution=distribution,
-            activity=activity,
-            voxel_size=voxel_size,
-            radiation_type=config.radiation_type,
-            energy=energy,
-            half_life=half_life
-        )
-        node.distribution_config = dist_config
         if config.name is not None:
             node.name = config.name
-        if dist_config.path is not None:
-            node.distribution_path = str(self._resolve_dist_path(dist_config.path))
+        if config.radionuclide is not None or config.phantom_type is not None:
+            source_meta = SourceMetadataConfig(
+                radionuclide=config.radionuclide,
+                phantom_type=config.phantom_type,
+            )
+            self.source_metadata_registry[node] = source_meta
+            SceneExporter.register_source_metadata(node, source_meta)
         return node
+
+    def get_distribution_path(self, node: SpatialNode) -> Optional[str]:
+        """
+        Возвращает абсолютный путь к файлу распределения для указанного узла из реестра сборок.
+        """
+        dist_config = self.distribution_registry.get(node)
+        if dist_config is not None and isinstance(dist_config, (NumpyDistributionConfig, RawDistributionConfig)):
+            if dist_config.path is not None:
+                return str(self._resolve_dist_path(dist_config.path))
+        return None
+
+    def _build_dose_grid_node(self, config: DoseGridNodeConfig) -> DoseGridNode:
+        size = [
+            self._to_float(config.size[0], check_positive=True),
+            self._to_float(config.size[1], check_positive=True),
+            self._to_float(config.size[2], check_positive=True),
+        ]
+        dose_voxel_size = self._to_float(config.dose_voxel_size, check_positive=True)
+        node = DoseGridNode(
+            name=config.name,
+            size=size,
+            dose_voxel_size=dose_voxel_size,
+            is_active=config.is_active,
+        )
+        return node
+
+    def _build_gantry(self, config: GantryConfig) -> GantryNode:
+        """Сборка поворотной станины томографа GantryNode."""
+        return GantryNode(name=config.name)
+
+
+__all__ = ["SceneBuilder"]
+

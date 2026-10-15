@@ -1,0 +1,400 @@
+import time
+import unittest
+from multiprocessing import Queue, shared_memory
+
+import numpy as np
+from PySide6.QtWidgets import QApplication
+
+from core.geometry.geometries import Box
+from core.geometry.volumes import Volume
+from core.materials.materials import Material
+from core.scene.nodes import CompositeNode, SpatialNode
+from gui.controllers.orchestrator_session import OrchestratorSession
+from gui.viewmodels.decorators import core_field, gui_field
+from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.scene_viewmodel import SceneViewModel
+from gui.viewport_3d.vtk_viewport import VTKViewport
+from gui.views.main_window import MainWindow
+from gui.views.scene_tree_widget import SceneTreeWidget
+from gui.views.property_inspector import PropertyInspector
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
+from gui.viewmodels.nodes.gamma_camera_vm import create_default_gamma_camera_vm
+
+
+class TestGuiRefactoringVerification(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        app = QApplication.instance()
+        if app is None:
+            cls.app = QApplication(["-platform", "offscreen"])
+        else:
+            cls.app = app
+
+    def test_single_source_of_truth_descriptors(self):
+        """
+        Проверка Single Source of Truth: core_field и gui_field
+        не дублируют значение в instance.__dict__, а читают/пишут строго в core_node.
+        """
+        node = SpatialNode(name="OriginalName")
+
+        class SampleViewModel:
+            name = core_field('name')
+            tag = gui_field(default='LocalTag')
+
+            def __init__(self, core):
+                self.core_node = core
+
+        vm = SampleViewModel(node)
+
+        # 1. Чтение из core_node
+        self.assertEqual(vm.name, "OriginalName")
+        self.assertNotIn("name", vm.__dict__, "Имя не должно сохраняться в __dict__ ViewModel!")
+
+        # 2. Запись через ViewModel
+        vm.name = "UpdatedViaVM"
+        self.assertEqual(node.name, "UpdatedViaVM")
+        self.assertNotIn("name", vm.__dict__, "Имя по-прежнему не должно кэшироваться в __dict__!")
+
+        # 3. Изменение напрямую в ядре отражается во ViewModel
+        node.name = "DirectCoreChange"
+        self.assertEqual(vm.name, "DirectCoreChange")
+
+        # 4. Проверка gui_field (локальное хранилище)
+        self.assertEqual(vm.tag, "LocalTag")
+        vm.tag = "NewTag"
+        self.assertEqual(vm.__dict__.get("tag"), "NewTag")
+        self.assertFalse(hasattr(node, "tag"))
+
+    def test_orchestrator_session_lifecycle(self):
+        """
+        Проверка контроллера OrchestratorSession: создание,
+        управление жизненным циклом и детерминированное закрытие ресурсов.
+        """
+        from settings.database_setting import material_database
+        root = CompositeNode(name="SessionTestScene")
+        vol = Volume(geometry=Box(10.0, 10.0, 10.0), material=material_database['Water, Liquid'], name="TargetBox")
+        root.add_child(vol)
+        scene_vm = SceneViewModel(root)
+        session = OrchestratorSession(
+            scene_vm=scene_vm,
+            particles_number=20,
+            stop_time=0.01,
+        )
+
+        started_log = []
+        paused_log = []
+        resumed_log = []
+        stopped_log = []
+
+        session.session_started.connect(lambda: started_log.append(True))
+        session.session_paused.connect(lambda: paused_log.append(True))
+        session.session_resumed.connect(lambda: resumed_log.append(True))
+        session.session_stopped.connect(lambda: stopped_log.append(True))
+
+        self.assertFalse(session.is_running)
+        self.assertFalse(session.is_paused)
+
+        session.pause()
+        self.assertEqual(len(paused_log), 0)
+
+        session.resume()
+        self.assertEqual(len(resumed_log), 0)
+
+        session.stop()
+        self.assertEqual(len(stopped_log), 0)
+
+        session.close()
+        self.assertFalse(session.is_running)
+
+    def test_scene_tree_widget_reverse_map(self):
+        """
+        Проверка O(1) обратного словаря _vm_by_item в SceneTreeWidget.
+        """
+        root = CompositeNode(name="RootNode")
+        c1 = SpatialNode(name="Child1")
+        c2 = SpatialNode(name="Child2")
+        root.add_child(c1)
+        root.add_child(c2)
+
+        scene_vm = SceneViewModel(root)
+        tree_widget = SceneTreeWidget(scene_vm)
+
+        self.assertEqual(len(tree_widget._vm_by_item), 3)  # Root, Child1, Child2
+
+        # Проверка соответствия каждого QTreeWidgetItem его ViewModel
+        for item, vm in tree_widget._vm_by_item.items():
+            self.assertIn(vm.name, ["RootNode", "Child1", "Child2"])
+            self.assertEqual(item.text(0), vm.name)
+
+        # Имитация выбора элемента
+        child1_vm = scene_vm.find_by_name("Child1")
+        child1_item = tree_widget._item_map[id(child1_vm)]
+        tree_widget.tree.setCurrentItem(child1_item)
+        tree_widget._on_tree_selection_changed()
+
+        self.assertIs(scene_vm.selected_node, child1_vm)
+
+    def test_vtk_viewport_update_actor_transform(self):
+        """
+        Проверка инкрементального обновления матрицы трансформации в VTKViewport.
+        """
+        viewport = VTKViewport()
+        import pyvista as pv
+        box = pv.Box()
+        actor = viewport.add_mesh_actor("test_transform_box", box)
+
+        # Несуществующий актор возвращает False
+        self.assertFalse(viewport.update_actor_transform("non_existent_actor", np.eye(4)))
+
+        if actor is not None:
+            # Обновление матрицы
+            mat = np.eye(4, dtype=float)
+            mat[0, 3] = 123.0
+            mat[1, 3] = 456.0
+            mat[2, 3] = 789.0
+            res = viewport.update_actor_transform("test_transform_box", mat)
+            self.assertTrue(res)
+
+            if hasattr(actor, 'user_matrix'):
+                self.assertAlmostEqual(actor.user_matrix[0, 3], 123.0)
+                self.assertAlmostEqual(actor.user_matrix[1, 3], 456.0)
+                self.assertAlmostEqual(actor.user_matrix[2, 3], 789.0)
+
+        viewport.close()
+
+    def test_main_window_incremental_scene_sync(self):
+        """
+        Проверка раздельных обработчиков добавления, удаления и изменения
+        трансформации узлов в MainWindow.
+        """
+        win = MainWindow()
+        root = CompositeNode(name="TestIncrementalRoot")
+        vol1 = Volume(geometry=Box(20.0, 20.0, 20.0), material=Material(name="Water"), name="Vol1")
+        root.add_child(vol1)
+
+        win.scene_vm.load_scene(root)
+        vol1_vm = win.scene_vm.find_by_name("Vol1")
+        self.assertIsNotNone(vol1_vm)
+
+        actor_name = f"mesh_{id(vol1_vm)}"
+        self.assertIn(actor_name, win.viewport._actors)
+
+        # Проверка инкрементального вращения (без сброса всех акторов)
+        vol1_vm.translate(x=50.0, y=50.0, z=50.0)
+        self.assertIn(actor_name, win.viewport._actors)
+
+        # Добавление нового узла
+        vol2 = Volume(geometry=Box(30.0, 30.0, 30.0), material=Material(name="Lead"), name="Vol2")
+        vol2_vm = VolumeViewModel(vol2)
+        win.scene_vm.add_node(win.scene_vm.root_vm, vol2_vm)
+
+        actor2_name = f"mesh_{id(vol2_vm)}"
+        self.assertIn(actor2_name, win.viewport._actors)
+
+        # Точечное удаление узла
+        win.scene_vm.remove_node(vol2_vm)
+        self.assertNotIn(actor2_name, win.viewport._actors)
+        self.assertIn(actor_name, win.viewport._actors)
+
+        win.close()
+
+    def test_orchestrator_session_edge_cases(self):
+        """
+        Тестирование граничных условий OrchestratorSession:
+        - Идемпотентность stop() и close()
+        - Безопасность вызовов pause/resume/step_once при незапущенной сессии
+        - Генерация задач при пустой сцене возвращает пустой список
+        """
+        session = OrchestratorSession(scene_vm=None)
+
+        # Вызовы управления до старта
+        session.pause()
+        session.resume()
+        session.step_once()
+        session.clear_accumulation()
+        self.assertFalse(session.is_running)
+        self.assertFalse(session.is_paused)
+
+        # Генерация задач без сцены
+        jobs = session.generate_jobs()
+        self.assertEqual(len(jobs), 0)
+
+        # Двойной close()
+        session.close()
+        session.close()
+
+    def test_descriptors_edge_cases(self):
+        """
+        Тестирование граничных условий дескрипторов:
+        - Доступ через класс возвращает сам дескриптор
+        - core_field без атрибута ядра вызывает AttributeError при установке
+        """
+        class DummyClass:
+            cf = core_field('non_existent_core_attr')
+            gf = gui_field(default='DefaultVal')
+
+        # Доступ через класс
+        self.assertIsInstance(DummyClass.cf, core_field)
+        self.assertIsInstance(DummyClass.gf, gui_field)
+
+        dummy_inst = DummyClass()
+        dummy_inst.core_node = object()  # нет атрибута non_existent_core_attr
+
+        with self.assertRaises(AttributeError):
+            dummy_inst.cf = "SomeValue"
+
+        # Значение по умолчанию для core_field при отсутствии поля
+        self.assertIsNone(dummy_inst.cf)
+
+    def test_scene_tree_widget_edge_cases(self):
+        """
+        Тестирование граничных условий SceneTreeWidget:
+        - rebuild_tree при None root_vm
+        - удаление корневого узла блокируется
+        """
+        empty_scene_vm = SceneViewModel()
+        tree_widget = SceneTreeWidget(empty_scene_vm)
+        self.assertEqual(tree_widget.tree.topLevelItemCount(), 0)
+
+        # Попытка клика удаления при отсутствии выделения
+        tree_widget._on_remove_clicked()
+        self.assertEqual(tree_widget.tree.topLevelItemCount(), 0)
+
+    def test_gamma_camera_viewmodel_orbit_sync_and_inheritance(self):
+        """
+        Проверка GammaCameraViewModel:
+        - Наследование от VolumeViewModel (наличие size, color).
+        - Наличие геометрических параметров: detector_size, detector_thickness, collimator_thickness, half_thickness.
+        - Корректная связь с полями spect_group в PropertyInspector.
+        """
+        vm = create_default_gamma_camera_vm(
+            name='TestGammaCam',
+            detector_size=(20.0, 20.0),
+            detector_thickness=2.0,
+            collimator_thickness=5.0,
+        )
+        self.assertIsInstance(vm, NodeViewModel)
+        self.assertIsNotNone(vm.size)
+
+        # Проверка начальных геометрических параметров
+        np.testing.assert_allclose(vm.detector_size, [20.0, 20.0])
+        self.assertAlmostEqual(vm.detector_thickness, 2.0)
+        self.assertAlmostEqual(vm.collimator_thickness, 5.0)
+        self.assertGreater(vm.half_thickness, 0.0)
+
+        # Проверка связывания с PropertyInspector
+        inspector = PropertyInspector()
+        inspector.set_target_viewmodel(vm)
+        self.assertAlmostEqual(inspector.spect_section.spin_detector_size_x.value(), 20.0)
+        self.assertAlmostEqual(inspector.spect_section.spin_detector_size_y.value(), 20.0)
+        self.assertAlmostEqual(inspector.spect_section.spin_detector_thickness.value(), 2.0)
+        self.assertAlmostEqual(inspector.spect_section.spin_collimator_thickness.value(), 5.0)
+
+        # Изменение через UI инспектора
+        inspector.spect_section.spin_detector_size_x.setValue(35.0)
+        inspector.spect_section._on_spect_detector_size_changed()
+        np.testing.assert_allclose(vm.detector_size, [35.0, 20.0])
+        self.assertAlmostEqual(inspector.spect_section.spin_detector_size_x.value(), 35.0)
+
+    def test_data_manager_stop_method(self):
+        """
+        Проверка детерминированного завершения потока DataManager.stop()
+        без возникновения AttributeError и утечки фоновых потоков.
+        """
+        import os
+        import queue
+        import tempfile
+        from core.data.data_manager import DataManager
+        from core.data.data_handlers import BaseDataHandler
+
+        class DummyHandler(BaseDataHandler):
+            def process_chunk(self, chunk):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            h5_path = os.path.join(tmp_dir, "test_dm_stop.h5")
+            task_queue = queue.Queue()
+            dm = DataManager(filename=h5_path, handlers=[DummyHandler()], queue=task_queue)
+            dm.start()
+            self.assertTrue(dm.is_alive())
+
+            dm.stop(timeout=1.0)
+            self.assertFalse(dm.is_alive())
+
+    def test_scene_tree_widget_live_rename(self):
+        """
+        Проверка мгновенного обновления текста элемента в SceneTreeWidget
+        при изменении имени во ViewModel (Single Source of Truth + Reactive UI).
+        """
+        root = CompositeNode(name="RootNode")
+        child = SpatialNode(name="OldName")
+        root.add_child(child)
+
+        scene_vm = SceneViewModel(root)
+        tree_widget = SceneTreeWidget(scene_vm)
+
+        child_vm = scene_vm.find_by_name("OldName")
+        self.assertIsNotNone(child_vm)
+        child_item = tree_widget._item_map[id(child_vm)]
+        self.assertEqual(child_item.text(0), "OldName")
+
+        # Переименование через ViewModel
+        child_vm.name = "NewLiveName"
+        self.assertEqual(child_item.text(0), "NewLiveName")
+
+    def test_main_window_spect_manipulator_coupling(self):
+        """
+        Проверка двусторонней связи 3D-манипулятора ОФЭКТ с выбранной GammaCameraViewModel в MainWindow.
+        """
+        root = CompositeNode(name="SPECTScene")
+        cam, _ = create_default_gamma_camera(
+            name='CameraNode',
+            detector_size=(20.0, 20.0),
+            detector_thickness=2.0,
+            collimator_thickness=5.0,
+        )
+        root.add_child(cam)
+
+        scene_vm = SceneViewModel(root)
+        win = MainWindow(scene_vm=scene_vm)
+
+        cam_vm = scene_vm.find_by_name("CameraNode")
+        self.assertIsNotNone(cam_vm)
+        scene_vm.select_node(cam_vm)
+
+        # Симулируем перемещение манипулятора
+        win.viewport_controller.spect_manipulator.orbit_changed.emit(330.0, 45.0, 0.0)
+        world_pos = cam_vm.global_matrix[0:3, 3]
+        cam_r = float(np.hypot(world_pos[0], world_pos[1])) - cam_vm.half_thickness
+        cam_ang = float(np.degrees(np.arctan2(world_pos[1], world_pos[0])) % 360.0)
+        self.assertAlmostEqual(cam_r, 330.0)
+        self.assertAlmostEqual(cam_ang, 45.0)
+
+        win.close()
+
+    def test_main_window_volume_property_changed_sync(self):
+        """
+        Проверка синхронизации изменения размеров объема с актором 3D Viewport.
+        """
+        root = CompositeNode(name="VolSyncScene")
+        vol = Volume(geometry=Box(50.0, 50.0, 50.0), material=Material(name="Water"), name="DynamicBox")
+        root.add_child(vol)
+
+        win = MainWindow(scene_vm=SceneViewModel(root))
+        vol_vm = win.scene_vm.find_by_name("DynamicBox")
+        self.assertIsNotNone(vol_vm)
+
+        actor_name = f"mesh_{id(vol_vm)}"
+        self.assertIn(actor_name, win.viewport._actors)
+
+        # Изменение геометрии
+        vol_vm.size = [120.0, 130.0, 140.0]
+        self.assertIn(actor_name, win.viewport._actors)
+
+        win.close()
+
+
+if __name__ == '__main__':
+    unittest.main()

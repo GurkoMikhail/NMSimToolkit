@@ -1,0 +1,406 @@
+[
+  {
+    "collimator_code": "LEHR",
+    "nuclide_name": "99mTc (140.5 кэВ)",
+    "photon_energy": 0.1405,
+    "source_distance": 100.0,
+    "num_particles": 5000000,
+    "anger_theoretical_fwhm": 5.878766995339704,
+    "anger_theoretical_sensitivity": 0.00010287482630354548,
+    "sensitivity_parametric": {
+      "emitted_count": 5000000,
+      "solid_angle_fraction": 0.008078153605939276,
+      "total": {
+        "count": 64501,
+        "sensitivity": 0.00010420979714733785,
+        "sensitivity_error": 4.103224947769663e-07,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 60584,
+        "sensitivity": 9.788137161244502e-05,
+        "sensitivity_error": 3.9766839327393245e-07,
+        "fraction_of_total": 0.9392722593448164
+      },
+      "septal_penetration": {
+        "count": 2824,
+        "sensitivity": 4.562541156634503e-06,
+        "sensitivity_error": 8.58567508082077e-08,
+        "fraction_of_total": 0.04378226694159781
+      },
+      "collimator_scatter": {
+        "count": 1093,
+        "sensitivity": 1.7658843782583258e-06,
+        "sensitivity_error": 5.341364106274601e-08,
+        "fraction_of_total": 0.016945473713585835
+      }
+    },
+    "sensitivity_direct": {
+      "emitted_count": 5000000,
+      "solid_angle_fraction": 0.008078153605939276,
+      "total": {
+        "count": 64911,
+        "sensitivity": 0.00010487220574302487,
+        "sensitivity_error": 4.1162453449371116e-07,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 61043,
+        "sensitivity": 9.862294611347025e-05,
+        "sensitivity_error": 3.9917196990141595e-07,
+        "fraction_of_total": 0.9404107162114279
+      },
+      "septal_penetration": {
+        "count": 2789,
+        "sensitivity": 4.505994081392928e-06,
+        "sensitivity_error": 8.532304769163525e-08,
+        "fraction_of_total": 0.042966523393569656
+      },
+      "collimator_scatter": {
+        "count": 1079,
+        "sensitivity": 1.7432655481616957e-06,
+        "sensitivity_error": 5.307045670425705e-08,
+        "fraction_of_total": 0.01662276039500239
+      }
+    },
+    "resolution_parametric": {
+      "fwhm_x": 5.790590594043101,
+      "fwtm_x": 10.015403671072983,
+      "fwhm_y": 5.814470753135709,
+      "fwtm_y": 9.877282084240937,
+      "fwhm_mean": 5.8025306735894056,
+      "fwtm_mean": 9.94634287765696,
+      "radial_r50": 2.7963513607539885,
+      "radial_r90": 4.712926406879845
+    },
+    "resolution_direct": {
+      "fwhm_x": 5.667788409707649,
+      "fwtm_x": 9.926258968056239,
+      "fwhm_y": 5.8077692687853215,
+      "fwtm_y": 9.846264089892617,
+      "fwhm_mean": 5.737778839246485,
+      "fwtm_mean": 9.886261528974428,
+      "radial_r50": 2.7907808501932476,
+      "radial_r90": 4.716890726860966
+    },
+    "statistical_comparison": {
+      "ks_statistic_radial": 0.003999329409661301,
+      "ks_pvalue_radial": 0.6780113987544424,
+      "reduced_chi2_radial": 1.3911340963408814,
+      "ndf_radial": 36,
+      "max_abs_z_score_2d": 3.0237157840738176,
+      "fraction_within_3sigma_2d": 0.9954954954954955,
+      "relative_sensitivity_diff": 0.006356490597044974,
+      "sensitivity_z_score": 1.1397158346374279,
+      "geometric_z_score": 1.3161266651563184,
+      "septal_z_score": -0.4671652423074357,
+      "scatter_z_score": -0.3003987527960134
+    },
+    "elapsed_time_parametric": 11.827654500026256,
+    "elapsed_time_direct": 4.422325299936347,
+    "passed": true
+  },
+  {
+    "collimator_code": "LEUHR",
+    "nuclide_name": "99mTc (140.5 кэВ)",
+    "photon_energy": 0.1405,
+    "source_distance": 100.0,
+    "num_particles": 5000000,
+    "anger_theoretical_fwhm": 4.327787859313627,
+    "anger_theoretical_sensitivity": 5.2783966946691566e-05,
+    "sensitivity_parametric": {
+      "emitted_count": 5000000,
+      "solid_angle_fraction": 0.008078153605939276,
+      "total": {
+        "count": 33060,
+        "sensitivity": 5.341275164247049e-05,
+        "sensitivity_error": 2.937605869696485e-07,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 31316,
+        "sensitivity": 5.059509166471887e-05,
+        "sensitivity_error": 2.859073004224191e-07,
+        "fraction_of_total": 0.9472474289171204
+      },
+      "septal_penetration": {
+        "count": 1225,
+        "sensitivity": 1.979147633455123e-06,
+        "sensitivity_error": 5.654707524157493e-08,
+        "fraction_of_total": 0.03705384150030248
+      },
+      "collimator_scatter": {
+        "count": 519,
+        "sensitivity": 8.385123442964969e-07,
+        "sensitivity_error": 3.680660679199684e-08,
+        "fraction_of_total": 0.015698729582577134
+      }
+    },
+    "sensitivity_direct": {
+      "emitted_count": 5000000,
+      "solid_angle_fraction": 0.008078153605939276,
+      "total": {
+        "count": 33260,
+        "sensitivity": 5.3735877786708066e-05,
+        "sensitivity_error": 2.94647815166177e-07,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 31563,
+        "sensitivity": 5.099415245285227e-05,
+        "sensitivity_error": 2.8703261017481123e-07,
+        "fraction_of_total": 0.9489777510523151
+      },
+      "septal_penetration": {
+        "count": 1224,
+        "sensitivity": 1.977532002733935e-06,
+        "sensitivity_error": 5.652399009048362e-08,
+        "fraction_of_total": 0.03680096211665664
+      },
+      "collimator_scatter": {
+        "count": 473,
+        "sensitivity": 7.641933311218555e-07,
+        "sensitivity_error": 3.513764680065176e-08,
+        "fraction_of_total": 0.014221286831028261
+      }
+    },
+    "resolution_parametric": {
+      "fwhm_x": 4.2793212624885335,
+      "fwtm_x": 7.426002341537117,
+      "fwhm_y": 4.309273130497883,
+      "fwtm_y": 7.369934990956182,
+      "fwhm_mean": 4.294297196493208,
+      "fwtm_mean": 7.3979686662466495,
+      "radial_r50": 2.05069017227795,
+      "radial_r90": 3.45725377306123
+    },
+    "resolution_direct": {
+      "fwhm_x": 4.247917697436701,
+      "fwtm_x": 7.446475628659293,
+      "fwhm_y": 4.281865172381979,
+      "fwtm_y": 7.3363535593451195,
+      "fwhm_mean": 4.264891434909339,
+      "fwtm_mean": 7.391414594002207,
+      "radial_r50": 2.055471857134381,
+      "radial_r90": 3.4459498827406785
+    },
+    "statistical_comparison": {
+      "ks_statistic_radial": 0.006043586270921275,
+      "ks_pvalue_radial": 0.5787897257463449,
+      "reduced_chi2_radial": 1.234960493437123,
+      "ndf_radial": 26,
+      "max_abs_z_score_2d": 3.0182794769703003,
+      "fraction_within_3sigma_2d": 0.9916666666666667,
+      "relative_sensitivity_diff": 0.006049606775559684,
+      "sensitivity_z_score": 0.7766185091831181,
+      "geometric_z_score": 0.9850179395779575,
+      "septal_z_score": -0.02020717522524877,
+      "scatter_z_score": -1.4605014605021913
+    },
+    "elapsed_time_parametric": 7.7868472000118345,
+    "elapsed_time_direct": 4.570611799950711,
+    "passed": true
+  },
+  {
+    "collimator_code": "MEGP",
+    "nuclide_name": "111In (245.4 кэВ)",
+    "photon_energy": 0.2454,
+    "source_distance": 100.0,
+    "num_particles": 5000000,
+    "anger_theoretical_fwhm": 8.438050642317323,
+    "anger_theoretical_sensitivity": 0.00011182521093052174,
+    "sensitivity_parametric": {
+      "emitted_count": 5000000,
+      "solid_angle_fraction": 0.008078153605939276,
+      "total": {
+        "count": 71940,
+        "sensitivity": 0.0001162284740822543,
+        "sensitivity_error": 4.333385436400464e-07,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 62470,
+        "sensitivity": 0.00010092845115260531,
+        "sensitivity_error": 4.038107308183587e-07,
+        "fraction_of_total": 0.8683625243258271
+      },
+      "septal_penetration": {
+        "count": 7158,
+        "sensitivity": 1.1564684702262668e-05,
+        "sensitivity_error": 1.3669037963890066e-07,
+        "fraction_of_total": 0.09949958298582152
+      },
+      "collimator_scatter": {
+        "count": 2312,
+        "sensitivity": 3.735338227386321e-06,
+        "sensitivity_error": 7.768479384147664e-08,
+        "fraction_of_total": 0.032137892688351405
+      }
+    },
+    "sensitivity_direct": {
+      "emitted_count": 5000000,
+      "solid_angle_fraction": 0.008078153605939276,
+      "total": {
+        "count": 71462,
+        "sensitivity": 0.00011545620259752651,
+        "sensitivity_error": 4.318965013382869e-07,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 62154,
+        "sensitivity": 0.00010041791184470995,
+        "sensitivity_error": 4.0278811220522285e-07,
+        "fraction_of_total": 0.8697489574878957
+      },
+      "septal_penetration": {
+        "count": 6960,
+        "sensitivity": 1.1244789819467472e-05,
+        "sensitivity_error": 1.3478660128377778e-07,
+        "fraction_of_total": 0.09739441941171531
+      },
+      "collimator_scatter": {
+        "count": 2348,
+        "sensitivity": 3.793500933349084e-06,
+        "sensitivity_error": 7.828727003014975e-08,
+        "fraction_of_total": 0.03285662310038902
+      }
+    },
+    "resolution_parametric": {
+      "fwhm_x": 8.400968653029638,
+      "fwtm_x": 14.595297280677837,
+      "fwhm_y": 8.307620888892467,
+      "fwtm_y": 14.43979495763155,
+      "fwhm_mean": 8.354294770961053,
+      "fwtm_mean": 14.517546119154694,
+      "radial_r50": 4.108978171301094,
+      "radial_r90": 6.954702385255541
+    },
+    "resolution_direct": {
+      "fwhm_x": 8.384210952234227,
+      "fwtm_x": 14.660025998958226,
+      "fwhm_y": 8.376401830931098,
+      "fwtm_y": 14.369655730527668,
+      "fwhm_mean": 8.380306391582662,
+      "fwtm_mean": 14.514840864742947,
+      "radial_r50": 4.1040092344549235,
+      "radial_r90": 6.961284449461794
+    },
+    "statistical_comparison": {
+      "ks_statistic_radial": 0.0024075018684972527,
+      "ks_pvalue_radial": 0.9853861966164746,
+      "reduced_chi2_radial": 0.7946592755513647,
+      "ndf_radial": 41,
+      "max_abs_z_score_2d": 2.752249848224747,
+      "fraction_within_3sigma_2d": 1.0,
+      "relative_sensitivity_diff": -0.006644425910480921,
+      "sensitivity_z_score": -1.2622642795472838,
+      "geometric_z_score": -0.8951302612577269,
+      "septal_z_score": -1.6663974849913663,
+      "scatter_z_score": 0.527362861778144
+    },
+    "elapsed_time_parametric": 6.288292599958368,
+    "elapsed_time_direct": 4.780609600013122,
+    "passed": true
+  },
+  {
+    "collimator_code": "HEGP",
+    "nuclide_name": "131I (364.5 кэВ)",
+    "photon_energy": 0.3645,
+    "source_distance": 100.0,
+    "num_particles": 5000000,
+    "anger_theoretical_fwhm": 10.712616721784197,
+    "anger_theoretical_sensitivity": 0.00014769590835290398,
+    "sensitivity_parametric": {
+      "emitted_count": 5000000,
+      "solid_angle_fraction": 0.008078153605939276,
+      "total": {
+        "count": 103493,
+        "sensitivity": 0.0001672064702278947,
+        "sensitivity_error": 5.197537013639914e-07,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 74720,
+        "sensitivity": 0.00012071992748715654,
+        "sensitivity_error": 4.416320000948984e-07,
+        "fraction_of_total": 0.7219811967959185
+      },
+      "septal_penetration": {
+        "count": 21427,
+        "sensitivity": 3.4618119462892174e-05,
+        "sensitivity_error": 2.3649544882301605e-07,
+        "fraction_of_total": 0.20703815717005014
+      },
+      "collimator_scatter": {
+        "count": 7346,
+        "sensitivity": 1.1868423277845985e-05,
+        "sensitivity_error": 1.384737854604583e-07,
+        "fraction_of_total": 0.07098064603403129
+      }
+    },
+    "sensitivity_direct": {
+      "emitted_count": 5000000,
+      "solid_angle_fraction": 0.008078153605939276,
+      "total": {
+        "count": 103290,
+        "sensitivity": 0.00016687849719149357,
+        "sensitivity_error": 5.192437065273283e-07,
+        "fraction_of_total": 1.0
+      },
+      "geometric": {
+        "count": 74652,
+        "sensitivity": 0.00012061006459811577,
+        "sensitivity_error": 4.4143099760796993e-07,
+        "fraction_of_total": 0.7227417949462678
+      },
+      "septal_penetration": {
+        "count": 21451,
+        "sensitivity": 3.465689460020068e-05,
+        "sensitivity_error": 2.3662785891997946e-07,
+        "fraction_of_total": 0.207677413108723
+      },
+      "collimator_scatter": {
+        "count": 7187,
+        "sensitivity": 1.1611537993177115e-05,
+        "sensitivity_error": 1.3696699420669538e-07,
+        "fraction_of_total": 0.0695807919450092
+      }
+    },
+    "resolution_parametric": {
+      "fwhm_x": 10.892045668621131,
+      "fwtm_x": 19.658975710501803,
+      "fwhm_y": 11.000741601666103,
+      "fwtm_y": 19.081742576876245,
+      "fwhm_mean": 10.946393635143618,
+      "fwtm_mean": 19.370359143689022,
+      "radial_r50": 5.620217316945011,
+      "radial_r90": 10.093128720531261
+    },
+    "resolution_direct": {
+      "fwhm_x": 11.07753891512229,
+      "fwtm_x": 19.533748051590777,
+      "fwhm_y": 11.001239803771895,
+      "fwtm_y": 18.9888571945639,
+      "fwhm_mean": 11.039389359447092,
+      "fwtm_mean": 19.261302623077338,
+      "radial_r50": 5.582624088925751,
+      "radial_r90": 10.075788784215371
+    },
+    "statistical_comparison": {
+      "ks_statistic_radial": 0.0053166246040613485,
+      "ks_pvalue_radial": 0.10724729132751885,
+      "reduced_chi2_radial": 1.0456695951747332,
+      "ndf_radial": 60,
+      "max_abs_z_score_2d": 3.2547227745205967,
+      "fraction_within_3sigma_2d": 0.9978165938864629,
+      "relative_sensitivity_diff": -0.0019614853178475332,
+      "sensitivity_z_score": -0.44641483874002524,
+      "geometric_z_score": -0.17594394065000482,
+      "septal_z_score": 0.11590281438188114,
+      "scatter_z_score": -1.318923139060341
+    },
+    "elapsed_time_parametric": 6.04051459999755,
+    "elapsed_time_direct": 5.582578299916349,
+    "passed": true
+  }
+]

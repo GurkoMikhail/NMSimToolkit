@@ -1,6 +1,10 @@
+"""
+Справочник атомных номеров и химических символов элементов периодической таблицы.
+"""
 
+from typing import Dict, KeysView
 
-atomic_number = {
+atomic_number: Dict[str, int] = {
     'H':    1,
     'He':   2,
     'Li':   3,
@@ -92,9 +96,15 @@ atomic_number = {
     'Ac':   89,
     'Th':   90,
     'Pa':   91,
-    'U':    92
+    'U':    92,
 }
 
-element_symbol = {value: name for name, value in atomic_number.items()}
-elements = atomic_number.keys()
+element_symbol: Dict[int, str] = {value: name for name, value in atomic_number.items()}
+elements: KeysView[str] = atomic_number.keys()
+
+__all__ = [
+    "atomic_number",
+    "element_symbol",
+    "elements",
+]
 
