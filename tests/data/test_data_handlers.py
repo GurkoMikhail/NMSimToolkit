@@ -109,7 +109,7 @@ class TestDataHandlers(unittest.TestCase):
         Проверка HistoryAssemblerHandler: взаимодействия в двух кристаллах и фантоме
         сохраняются в 3 разные группы с соответствующими локальными координатами.
         """
-        yaml_path = "tb161_nema_protocol direct.yaml"
+        yaml_path = "tb161_nema_protocol_direct.yaml"
         cfg = load_simulation_config(yaml_path)
         root_scene = SceneBuilder().build_scene(cfg.scene)
         sensitive_vols = _find_nodes_by_names(root_scene, cfg.data_manager.handlers[0].sensitive_volumes)

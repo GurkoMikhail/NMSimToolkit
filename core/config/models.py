@@ -282,6 +282,8 @@ class StepAndShootProtocolConfig(BaseProtocolConfig):
     endpoint: bool = False
     rotation_direction: Literal['CW', 'CCW'] = 'CW'
     time_per_step: TimeConfig = 1.0 * units.s
+    initial_time: TimeConfig = 0.0 * units.s
+    sequential_time: bool = True
     radius: Optional[Union[LengthConfig, List[LengthConfig]]] = None
     grid_variables: dict[str, List[float]] = Field(default_factory=dict)
     zipped_variables: dict[str, List[float]] = Field(default_factory=dict)
@@ -371,6 +373,15 @@ class SimulationConfig(BaseModel):
                 "logging.per_task_files обязан быть True во избежание конфликтов "
                 "блокировок файлов в ОС Windows."
             )
+        if isinstance(self.protocol, StepAndShootProtocolConfig):
+            sim_fields_set = self.simulation_manager.model_fields_set
+            if "stop_time" not in sim_fields_set:
+                self.simulation_manager.stop_time = "${stop_time}"
+            if (
+                "start_time" not in sim_fields_set
+                and self.simulation_manager.stop_time == "${stop_time}"
+            ):
+                self.simulation_manager.start_time = "${start_time}"
         return self
 
 

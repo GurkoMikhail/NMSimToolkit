@@ -42,6 +42,12 @@ class ConfigTemplateBinder:
         """
         bindings_by_target: Dict[str, Dict[str, str]] = {}
 
+        protocol_val = scene_or_config.get("protocol")
+        is_step_and_shoot = (
+            (isinstance(protocol_val, dict) and protocol_val.get("type") == "StepAndShoot")
+            or isinstance(protocol_val, StepAndShootProtocolConfig)
+        )
+
         # 1. Проверка simulation_manager
         sim_mgr = scene_or_config.get("simulation_manager")
         if isinstance(sim_mgr, dict):
@@ -51,7 +57,13 @@ class ConfigTemplateBinder:
                 if isinstance(val, str):
                     match = re.search(r'\$\{([^}]+)\}', val)
                     if match:
-                        sim_bindings[field_name] = match.group(1)
+                        sim_bindings[field_name] = match.group(1).strip().split()[0]
+            if is_step_and_shoot:
+                if "stop_time" not in sim_mgr or sim_mgr["stop_time"] is None:
+                    sim_bindings["stop_time"] = "stop_time"
+                if "start_time" not in sim_mgr or sim_mgr["start_time"] is None:
+                    if sim_bindings.get("stop_time") == "stop_time":
+                        sim_bindings["start_time"] = "start_time"
             if sim_bindings:
                 bindings_by_target["simulation_manager"] = sim_bindings
 
@@ -63,7 +75,7 @@ class ConfigTemplateBinder:
             if isinstance(filename_val, str):
                 match = re.search(r'\$\{([^}]+)\}', filename_val)
                 if match:
-                    dm_bindings["filename"] = match.group(1)
+                    dm_bindings["filename"] = match.group(1).strip().split()[0]
                     dm_bindings["filename_template"] = filename_val
             if dm_bindings:
                 bindings_by_target["data_manager"] = dm_bindings
@@ -92,7 +104,7 @@ class ConfigTemplateBinder:
                     if isinstance(coord_val, str):
                         match = re.search(r'\$\{([^}]+)\}', coord_val)
                         if match:
-                            variable_name = match.group(1)
+                            variable_name = match.group(1).strip().split()[0]
                             node_bindings[coord_name] = variable_name
                             node_bindings[f"translation.{coord_name}"] = variable_name
                             if coord_name == "y" and is_gantry_or_camera:
@@ -104,7 +116,7 @@ class ConfigTemplateBinder:
                     if isinstance(rot_val, str):
                         match = re.search(r'\$\{([^}]+)\}', rot_val)
                         if match:
-                            variable_name = match.group(1)
+                            variable_name = match.group(1).strip().split()[0]
                             node_bindings[rot_name] = variable_name
                             node_bindings[f"rotation.{rot_name}"] = variable_name
                             if rot_name == "alpha" and is_gantry_or_camera:
@@ -115,20 +127,20 @@ class ConfigTemplateBinder:
             if isinstance(activity_val, str):
                 match = re.search(r'\$\{([^}]+)\}', activity_val)
                 if match:
-                    node_bindings["activity"] = match.group(1)
+                    node_bindings["activity"] = match.group(1).strip().split()[0]
 
             # Энергия источника
             energy_val = node_dict.get("energy")
             if isinstance(energy_val, str):
                 match = re.search(r'\$\{([^}]+)\}', energy_val)
                 if match:
-                    node_bindings["energy"] = match.group(1)
+                    node_bindings["energy"] = match.group(1).strip().split()[0]
             elif isinstance(energy_val, list) and len(energy_val) > 0:
                 first_item = energy_val[0]
                 if isinstance(first_item, (list, tuple)) and len(first_item) >= 1 and isinstance(first_item[0], str):
                     match = re.search(r'\$\{([^}]+)\}', first_item[0])
                     if match:
-                        node_bindings["energy"] = match.group(1)
+                        node_bindings["energy"] = match.group(1).strip().split()[0]
 
             if node_name and node_bindings:
                 bindings_by_target[node_name] = node_bindings
@@ -211,13 +223,17 @@ class ConfigTemplateBinder:
             if "min_energy" in sim_bindings:
                 sim_dict["min_energy"] = f"${{{sim_bindings['min_energy']}}} keV"
             if "start_time" in sim_bindings:
-                start_var = sim_bindings["start_time"]
-                start_unit = "ns" if (is_step_and_shoot and start_var in ("step_time", "current_time")) else "s"
-                sim_dict["start_time"] = f"${{{start_var}}} {start_unit}"
+                start_var = sim_bindings["start_time"].strip().split()[0]
+                if is_step_and_shoot and start_var in ("start_time", "stop_time", "step_time", "current_time"):
+                    sim_dict["start_time"] = f"${{{start_var}}}"
+                else:
+                    sim_dict["start_time"] = f"${{{start_var}}} s"
             if "stop_time" in sim_bindings:
-                stop_var = sim_bindings["stop_time"]
-                stop_unit = "ns" if (is_step_and_shoot and stop_var in ("step_time", "current_time")) else "s"
-                sim_dict["stop_time"] = f"${{{stop_var}}} {stop_unit}"
+                stop_var = sim_bindings["stop_time"].strip().split()[0]
+                if is_step_and_shoot and stop_var in ("start_time", "stop_time", "step_time", "current_time"):
+                    sim_dict["stop_time"] = f"${{{stop_var}}}"
+                else:
+                    sim_dict["stop_time"] = f"${{{stop_var}}} s"
 
         # 2. Привязки data_manager
         if "data_manager" in data_dict and isinstance(data_dict["data_manager"], dict):
@@ -235,10 +251,17 @@ class ConfigTemplateBinder:
                 elif "${" in bound_val:
                     dm_dict["filename"] = bound_val
                 else:
+                    clean_var = bound_val.strip().split()[0]
+                    if is_step_and_shoot and clean_var in ("gantry_angle", "current_angle"):
+                        macro_expr = f"{clean_var} deg"
+                    elif is_step_and_shoot and clean_var in ("start_time", "stop_time", "step_time", "current_time"):
+                        macro_expr = f"{clean_var} s"
+                    else:
+                        macro_expr = clean_var
                     file_path = Path(current_filename) if current_filename else Path("output.h5")
                     suffix = file_path.suffix or ".h5"
                     stem = file_path.stem or "output"
-                    new_name = f"{stem}_${{{bound_val}}}{suffix}"
+                    new_name = f"{stem}_${{{macro_expr}}}{suffix}"
                     dm_dict["filename"] = (
                         str(file_path.with_name(new_name)).replace("\\", "/")
                         if file_path.parent != Path(".")
@@ -249,8 +272,10 @@ class ConfigTemplateBinder:
         scene_dict = data_dict.get("scene", data_dict) if isinstance(data_dict, dict) else data_dict
 
         def _format_angle_macro(var_name: str) -> str:
-            angle_unit = "rad" if (is_step_and_shoot and var_name in ("gantry_angle", "current_angle")) else "deg"
-            return f"${{{var_name}}} {angle_unit}"
+            clean_var = var_name.strip().split()[0]
+            if is_step_and_shoot and clean_var in ("gantry_angle", "current_angle"):
+                return f"${{{clean_var}}}"
+            return f"${{{clean_var}}} deg"
 
         def _traverse(node_dict: Dict[str, Any]) -> None:
             node_name = node_dict.get("name")

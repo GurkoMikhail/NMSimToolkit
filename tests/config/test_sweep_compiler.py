@@ -37,25 +37,51 @@ class TestSweepCompiler(unittest.TestCase):
         self.assertIs(compiled_sweep, existing_sweep)
 
     def test_compile_step_and_shoot_protocol(self) -> None:
-        """Проверка компиляции протокола StepAndShoot."""
+        """Проверка компиляции протокола StepAndShoot (последовательная и независимая временная шкала)."""
         protocol = StepAndShootProtocolConfig(
             steps=4,
             start_angle=0.0 * units.rad,
             end_angle=np.pi * units.rad,
             time_per_step=5.0 * units.s,
+            initial_time=10.0 * units.s,
+            sequential_time=True,
             endpoint=True,
         )
         sweep = SweepCompiler.compile_protocol(protocol)
         self.assertIn("gantry_angle", sweep.zipped_variables)
         self.assertIn("current_angle", sweep.zipped_variables)
+        self.assertIn("start_time", sweep.zipped_variables)
+        self.assertIn("stop_time", sweep.zipped_variables)
+        self.assertIn("step_time", sweep.zipped_variables)
         self.assertIn("current_time", sweep.zipped_variables)
 
         angles = sweep.zipped_variables["gantry_angle"]
         times = sweep.zipped_variables["current_time"]
+        start_times = sweep.zipped_variables["start_time"]
+        stop_times = sweep.zipped_variables["stop_time"]
 
         self.assertEqual(len(angles), 4)
         np.testing.assert_allclose(angles, [0.0, np.pi / 3, 2 * np.pi / 3, np.pi])
         np.testing.assert_allclose(times, [5.0 * units.s] * 4)
+        np.testing.assert_allclose(
+            start_times,
+            [10.0 * units.s, 15.0 * units.s, 20.0 * units.s, 25.0 * units.s],
+        )
+        np.testing.assert_allclose(
+            stop_times,
+            [15.0 * units.s, 20.0 * units.s, 25.0 * units.s, 30.0 * units.s],
+        )
+
+        # Режим sequential_time=False: каждый шаг на одном интервале [initial_time, initial_time + time_per_step]
+        protocol_non_seq = StepAndShootProtocolConfig(
+            steps=3,
+            time_per_step=5.0 * units.s,
+            initial_time=10.0 * units.s,
+            sequential_time=False,
+        )
+        sweep_non_seq = SweepCompiler.compile_protocol(protocol_non_seq)
+        np.testing.assert_allclose(sweep_non_seq.zipped_variables["start_time"], [10.0 * units.s] * 3)
+        np.testing.assert_allclose(sweep_non_seq.zipped_variables["stop_time"], [15.0 * units.s] * 3)
 
     def test_compile_step_and_shoot_cw_vs_ccw(self) -> None:
         """Регрессионный тест: при rotation_direction='CCW' углы убывают, а при 'CW' — возрастают."""
@@ -150,6 +176,36 @@ class TestSweepCompiler(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             SweepCompiler.inject_variables({"param": "prefix_${unknown}"}, context)
+
+    def test_inject_variables_with_unit_conversion(self) -> None:
+        """
+        Проверка конвертации внутренних значений hepunits в целевые единицы
+        при указании размерности внутри макроса (${gantry_angle deg}, ${step_time s}).
+        """
+        context: dict[str, float] = {
+            "gantry_angle": float(3.0 * units.deg),
+            "step_time": float(30.0 * units.s),
+            "radius": float(329.05 * units.mm),
+        }
+        template_data = {
+            "alpha": "${gantry_angle}",
+            "stop_time": "${step_time}",
+            "converted_angle": "${gantry_angle deg}",
+            "converted_time": "${step_time s}",
+            "filename": "output_tb161_dual_cam/${gantry_angle deg}_deg.hdf",
+            "converted_radius": "${radius cm}",
+        }
+        resolved = SweepCompiler.inject_variables(template_data, context)
+
+        self.assertAlmostEqual(resolved["alpha"], float(3.0 * units.deg))
+        self.assertAlmostEqual(resolved["stop_time"], float(30.0 * units.s))
+        self.assertAlmostEqual(resolved["converted_angle"], 3.0)
+        self.assertAlmostEqual(resolved["converted_time"], 30.0)
+        self.assertEqual(resolved["filename"], "output_tb161_dual_cam/3.0_deg.hdf")
+        self.assertAlmostEqual(resolved["converted_radius"], 32.905)
+
+        with self.assertRaises(ValueError):
+            SweepCompiler.inject_variables({"bad": "${gantry_angle invalid_unit}"}, context)
 
     def test_template_binder_matrix_transform_no_duplication(self) -> None:
         """

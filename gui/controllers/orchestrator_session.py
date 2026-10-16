@@ -187,13 +187,20 @@ class OrchestratorSession(QObject):
         elif isinstance(self.procedure_vm, PetProcedureViewModel):
             self.procedure_vm.time_per_frame = validated_time
 
+    def _get_start_time_cfg(self) -> Any:
+        """Вычисляет конфигурацию времени начала для экспортера ядра."""
+        if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
+            return "${start_time}"
+        elif isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
+            all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
+            if "start_time" in all_sweep_vars:
+                return "${start_time} s"
+        return 0.0 * units.ns
+
     def _get_stop_time_cfg(self) -> Any:
         """Вычисляет конфигурацию времени остановки для экспортера ядра."""
         if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
-            all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
-            if "stop_time" in all_sweep_vars:
-                return "${stop_time} s"
-            return float(self.procedure_vm.time_per_step) * units.s
+            return "${stop_time}"
         elif isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
             all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
             if "stop_time" in all_sweep_vars:
@@ -302,12 +309,8 @@ class OrchestratorSession(QObject):
 
             # Сборка базовой конфигурации
             root_core = self.scene_vm.root_vm.core_node
-            start_time_cfg: Any = 0.0 * units.ns
+            start_time_cfg: Any = self._get_start_time_cfg()
             stop_time_cfg: Any = self._get_stop_time_cfg()
-            if isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
-                all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
-                if "start_time" in all_sweep_vars:
-                    start_time_cfg = "${start_time} s"
 
             sim_mgr_cfg = SimulationManagerConfig(
                 particles_number=self.particles_number,
@@ -369,12 +372,8 @@ class OrchestratorSession(QObject):
             self.session_error.emit("Корневой узел сцены отсутствует.")
             return
 
-        start_time_cfg: Any = 0.0 * units.ns
+        start_time_cfg: Any = self._get_start_time_cfg()
         stop_time_cfg: Any = self._get_stop_time_cfg()
-        if isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
-            all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
-            if "start_time" in all_sweep_vars:
-                start_time_cfg = "${start_time} s"
 
         sim_mgr_cfg = SimulationManagerConfig(
             particles_number=self.particles_number,

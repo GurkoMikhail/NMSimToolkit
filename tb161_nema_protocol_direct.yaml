@@ -6,18 +6,17 @@ logging:
   per_task_files: true
   filename_pattern: "task_{task_id}.log"
 protocol:
-  type: CustomSweep
-  grid_variables:
-    # 60 положений гантри для сбора 120 ракурсов при 2 противоположных детекторах (под 180°)
-    # Шаг поворота гантри 3.0° (для 60 суммарных ракурсов шаг 6.0°)
-    gantry_angle: [
-      0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 21.0, 24.0, 27.0,
-      30.0, 33.0, 36.0, 39.0, 42.0, 45.0, 48.0, 51.0, 54.0, 57.0,
-      60.0, 63.0, 66.0, 69.0, 72.0, 75.0, 78.0, 81.0, 84.0, 87.0,
-      90.0, 93.0, 96.0, 99.0, 102.0, 105.0, 108.0, 111.0, 114.0, 117.0,
-      120.0, 123.0, 126.0, 129.0, 132.0, 135.0, 138.0, 141.0, 144.0, 147.0,
-      150.0, 153.0, 156.0, 159.0, 162.0, 165.0, 168.0, 171.0, 174.0, 177.0
-    ]
+  # 60 положений гантри для сбора 120 ракурсов при 2 противоположных детекторах (под 180°)
+  # Шаг поворота гантри 3.0° (от 0.0° до 177.0° включительно при endpoint: false)
+  type: StepAndShoot
+  steps: 60
+  start_angle: 0.0 deg
+  end_angle: 180.0 deg
+  endpoint: false
+  rotation_direction: CW
+  time_per_step: 30.0 s
+  initial_time: 0.0 s
+  sequential_time: true
 
 scene:
   type: Volume
@@ -72,7 +71,7 @@ scene:
       name: Gantry
       transformations:
         - type: rotate
-          alpha: ${gantry_angle} deg
+          alpha: ${gantry_angle}
       children:
         # ---------------- ДЕТЕКТОРНАЯ ГОЛОВКА 1 (0°) ----------------
         - type: GammaCamera
@@ -215,7 +214,7 @@ scene:
                           z: -2.23 cm
 
 data_manager:
-  filename: "output_tb161_dual_cam/${gantry_angle}_deg.hdf"
+  filename: "output_tb161_dual_cam/${gantry_angle deg}_deg.hdf"
   buffer_capacity: 100000
   floating_point_precision: "float32"
   compression: "gzip"
@@ -228,8 +227,6 @@ data_manager:
       save_initial_states: true
 
 simulation_manager:
-  start_time: 0.0 s
-  stop_time: 30.0 s
   particles_number: 10000
   min_energy: 1.0 keV
   physics_list: "emstandard_opt4"

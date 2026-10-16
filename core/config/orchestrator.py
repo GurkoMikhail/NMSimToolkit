@@ -37,9 +37,11 @@ class Orchestrator:
         if isinstance(raw_config_dict, SimulationConfig):
             self.raw_config_dict: Dict[str, Any] = raw_config_dict.model_dump()
             self.parsed_config: SimulationConfig = raw_config_dict
+            SweepCompiler.apply_protocol_defaults(self.raw_config_dict, self.parsed_config.protocol)
         else:
-            self.raw_config_dict = dict(raw_config_dict)
-            self.parsed_config = SimulationConfig.model_validate(raw_config_dict)
+            self.raw_config_dict = deepcopy(dict(raw_config_dict))
+            SweepCompiler.apply_protocol_defaults(self.raw_config_dict)
+            self.parsed_config = SimulationConfig.model_validate(self.raw_config_dict)
 
     def compile_protocol(self) -> CustomSweepProtocolConfig:
         """

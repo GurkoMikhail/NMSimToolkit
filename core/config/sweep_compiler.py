@@ -13,6 +13,7 @@ from core.config.models import (
     CustomSweepProtocolConfig,
     StepAndShootProtocolConfig,
 )
+from core.config.units import convert_from_hepunits
 
 
 class SweepCompiler:
@@ -49,10 +50,25 @@ class SweepCompiler:
                 endpoint=endpoint,
             ).tolist()
             time_per_step_val = float(protocol.time_per_step)
+            initial_time_val = float(protocol.initial_time)
+            if protocol.sequential_time:
+                start_times = [
+                    initial_time_val + step_idx * time_per_step_val
+                    for step_idx in range(steps)
+                ]
+                stop_times = [
+                    initial_time_val + (step_idx + 1) * time_per_step_val
+                    for step_idx in range(steps)
+                ]
+            else:
+                start_times = [initial_time_val] * steps
+                stop_times = [initial_time_val + time_per_step_val] * steps
 
             zipped_variables: Dict[str, List[float]] = {
                 "gantry_angle": angles_list,
                 "current_angle": angles_list,
+                "start_time": start_times,
+                "stop_time": stop_times,
                 "step_time": [time_per_step_val] * steps,
                 "current_time": [time_per_step_val] * steps,
             }
@@ -75,6 +91,36 @@ class SweepCompiler:
             )
 
         raise ValueError(f"Неизвестный тип протокола исследования: {type(protocol)}")
+
+    @classmethod
+    def apply_protocol_defaults(
+        cls,
+        raw_config_dict: Dict[str, Any],
+        protocol: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Автоматически подставляет шаблонные переменные ${start_time} и ${stop_time}
+        в секцию simulation_manager для протокола StepAndShoot, если пользователь
+        не задал их явно в конфигурации.
+        """
+        proto_val = protocol if protocol is not None else raw_config_dict.get("protocol")
+        is_step_and_shoot = (
+            isinstance(proto_val, StepAndShootProtocolConfig)
+            or (isinstance(proto_val, dict) and proto_val.get("type") == "StepAndShoot")
+        )
+        if not is_step_and_shoot:
+            return raw_config_dict
+
+        sim_mgr = raw_config_dict.get("simulation_manager")
+        if isinstance(sim_mgr, dict):
+            if "stop_time" not in sim_mgr or sim_mgr["stop_time"] is None:
+                sim_mgr["stop_time"] = "${stop_time}"
+            if "start_time" not in sim_mgr or sim_mgr["start_time"] is None:
+                stop_val_str = str(sim_mgr.get("stop_time", "")).strip()
+                if stop_val_str == "${stop_time}":
+                    sim_mgr["start_time"] = "${start_time}"
+
+        return raw_config_dict
 
     @staticmethod
     def generate_job_matrix(sweep_config: CustomSweepProtocolConfig) -> List[Dict[str, float]]:
@@ -113,7 +159,7 @@ class SweepCompiler:
     def inject_variables(cls, data: Any, context: Dict[str, float]) -> Any:
         """
         Рекурсивно обходит структуры данных, подставляя строковые плейсхолдеры
-        вида "${variable_name}" реальными значениями из контекста выполнения.
+        вида "${variable_name}" или "${variable_name unit}" реальными значениями из контекста выполнения.
         """
         if isinstance(data, dict):
             resolved_dict = {}
@@ -123,25 +169,36 @@ class SweepCompiler:
         elif isinstance(data, list):
             return [cls.inject_variables(list_element, context) for list_element in data]
         elif isinstance(data, str):
-            # Точное совпадение с одиночным шаблоном "${var}" возвращает типизированное числовое значение
+            # Точное совпадение с одиночным шаблоном "${var}" или "${var unit}"
             exact_match = re.fullmatch(r"\$\{([^{}]+)\}", data.strip())
             if exact_match is not None:
-                variable_name = exact_match.group(1)
+                inner_expression = exact_match.group(1).strip()
+                tokens = inner_expression.split(None, 1)
+                variable_name = tokens[0]
                 if variable_name not in context:
                     raise ValueError(
                         f"Неразрешенная переменная шаблона '${{{variable_name}}}' отсутствует в контексте задач: {list(context.keys())}"
                     )
-                return context[variable_name]
+                if len(tokens) == 1:
+                    return context[variable_name]
+                target_unit = tokens[1].strip()
+                return convert_from_hepunits(float(context[variable_name]), target_unit)
 
             # Составные строковые выражения с шаблонами
             if "${" in data:
                 def replace_pattern(match_object: re.Match[str]) -> str:
-                    variable_name = match_object.group(1)
+                    inner_expression = match_object.group(1).strip()
+                    tokens = inner_expression.split(None, 1)
+                    variable_name = tokens[0]
                     if variable_name not in context:
                         raise ValueError(
                             f"Неразрешенная переменная шаблона '${{{variable_name}}}' в выражении '{data}' отсутствует в контексте задач: {list(context.keys())}"
                         )
-                    return str(context[variable_name])
+                    if len(tokens) == 1:
+                        return str(context[variable_name])
+                    target_unit = tokens[1].strip()
+                    converted_value = convert_from_hepunits(float(context[variable_name]), target_unit)
+                    return str(converted_value)
 
                 return re.sub(r"\$\{([^{}]+)\}", replace_pattern, data)
 

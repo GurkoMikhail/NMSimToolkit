@@ -295,6 +295,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
 
     PROTOCOL_STANDARD_VARIABLES: tuple[str, ...] = (
         "gantry_angle",
+        "start_time",
+        "stop_time",
         "step_time",
         "radius",
         "current_angle",
@@ -302,6 +304,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
     )
     READ_ONLY_STANDARD_VARIABLES: tuple[str, ...] = (
         "gantry_angle",
+        "start_time",
+        "stop_time",
         "step_time",
         "current_angle",
         "current_time",
@@ -326,6 +330,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         gamma_cameras: int = 2,
         radius: Any = 250.0,
         time_per_step: float = 1.0,
+        initial_time: float = 0.0,
+        sequential_time: bool = True,
         start_angle: float = 0.0,
         end_angle: float = 360.0,
         head_mode: str = "Симметричный (360°/N)",
@@ -355,6 +361,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
             self._radius = 250.0
 
         self._time_per_step: float = max(0.001, float(time_per_step))
+        self._initial_time: float = max(0.0, float(initial_time))
+        self._sequential_time: bool = bool(sequential_time)
         self._start_angle: float = float(start_angle)
         self._end_angle: float = float(end_angle)
         self._head_mode: str = head_mode
@@ -373,7 +381,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
     def _update_standard_variables(self, regenerate_angles: bool = True) -> None:
         """
         Автоматическое наполнение и синхронизация стандартных переменных протокола:
-        gantry_angle, current_angle, radius, step_time, current_time.
+        gantry_angle, current_angle, radius, start_time, stop_time, step_time, current_time.
         """
         steps = max(1, int(self._steps))
         endpoint = bool(self._endpoint)
@@ -388,7 +396,16 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         else:
             angles_list = list(existing_angles)
 
-        time_list = [float(self._time_per_step)] * steps
+        step_duration = float(self._time_per_step)
+        initial_offset = float(self._initial_time)
+        time_list = [step_duration] * steps
+        if self._sequential_time:
+            start_time_list = [initial_offset + step_idx * step_duration for step_idx in range(steps)]
+            stop_time_list = [initial_offset + (step_idx + 1) * step_duration for step_idx in range(steps)]
+        else:
+            start_time_list = [initial_offset] * steps
+            stop_time_list = [initial_offset + step_duration] * steps
+
         if isinstance(self._radius, list):
             fallback_radius = float(self._radius[0]) if self._radius else 250.0
             radius_list = [float(radius_element) for radius_element in self._radius[:steps]]
@@ -401,6 +418,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         standard_updates = {
             "gantry_angle": list(angles_list),
             "current_angle": list(angles_list),
+            "start_time": start_time_list,
+            "stop_time": stop_time_list,
             "step_time": time_list,
             "current_time": time_list,
             "radius": list(radius_list),
@@ -605,6 +624,34 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
             self._update_standard_variables(regenerate_angles=False)
             self.changed.emit()
             self.parameter_changed.emit("time_per_step", validated_time)
+
+    @property
+    def initial_time(self) -> float:
+        """Начальное время смещения сканирования (секунды)."""
+        return self._initial_time
+
+    @initial_time.setter
+    def initial_time(self, new_initial_time: float) -> None:
+        validated_initial = max(0.0, float(new_initial_time))
+        if self._initial_time != validated_initial:
+            self._initial_time = validated_initial
+            self._update_standard_variables(regenerate_angles=False)
+            self.changed.emit()
+            self.parameter_changed.emit("initial_time", validated_initial)
+
+    @property
+    def sequential_time(self) -> bool:
+        """Флаг последовательного хронологического отсчета времени по шагам."""
+        return self._sequential_time
+
+    @sequential_time.setter
+    def sequential_time(self, new_sequential_flag: bool) -> None:
+        validated_flag = bool(new_sequential_flag)
+        if self._sequential_time != validated_flag:
+            self._sequential_time = validated_flag
+            self._update_standard_variables(regenerate_angles=False)
+            self.changed.emit()
+            self.parameter_changed.emit("sequential_time", validated_flag)
 
     @property
     def start_angle(self) -> float:
@@ -815,7 +862,15 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
 
         extra_zipped = {
             var_name: var_vals for var_name, var_vals in self._zipped_variables.items()
-            if var_name not in ("gantry_angle", "current_angle", "step_time", "current_time", "radius")
+            if var_name not in (
+                "gantry_angle",
+                "current_angle",
+                "start_time",
+                "stop_time",
+                "step_time",
+                "current_time",
+                "radius",
+            )
         }
 
         return StepAndShootProtocolConfig(
@@ -825,6 +880,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
             end_angle=float(np.radians(self._end_angle)) * units.rad,
             endpoint=self._endpoint,
             time_per_step=float(self._time_per_step) * units.s,
+            initial_time=float(self._initial_time) * units.s,
+            sequential_time=self._sequential_time,
             radius=radius_cfg,
             grid_variables=dict(self._grid_variables),
             zipped_variables=extra_zipped,
@@ -844,6 +901,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
             steps=config.steps,
             radius=radius_val if radius_val is not None else 250.0,
             time_per_step=float(config.time_per_step) / float(units.s),
+            initial_time=float(config.initial_time) / float(units.s),
+            sequential_time=bool(config.sequential_time),
             start_angle=float(np.degrees(config.start_angle)),
             end_angle=float(np.degrees(config.end_angle)),
             endpoint=config.endpoint,

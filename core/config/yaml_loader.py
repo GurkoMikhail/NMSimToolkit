@@ -32,6 +32,7 @@ def load_simulation_config(
     выполняет подстановку шаблонных переменных (${var}) начальными значениями.
     """
     config_dict = load_raw_config(filepath)
+    SweepCompiler.apply_protocol_defaults(config_dict)
 
     if resolve_protocol:
         has_protocol = bool(config_dict.get('protocol'))

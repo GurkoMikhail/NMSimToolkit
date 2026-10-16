@@ -198,11 +198,11 @@ class TestReviewFixesTemplateBinder(unittest.TestCase):
     def test_tb161_protocol_filename_template_preserved_through_full_pipeline(self):
         """
         Регрессионный тест: проверка сохранения полного шаблона пути data_manager.filename
-        для tb161_nema_protocol direct.yaml в цепочке:
+        для tb161_nema_protocol_direct.yaml в цепочке:
         extract_bindings -> apply_bindings -> Orchestrator -> inject_variables -> SimulationConfig.model_validate.
         Гарантирует, что filename для угла 3.0 равен 'output_tb161_dual_cam/3.0_deg.hdf', а не 3.0 (float).
         """
-        yaml_path = Path(__file__).resolve().parents[2] / "tb161_nema_protocol direct.yaml"
+        yaml_path = Path(__file__).resolve().parents[2] / "tb161_nema_protocol_direct.yaml"
         raw_dict = load_raw_config(yaml_path)
         bindings = ConfigTemplateBinder.extract_bindings(raw_dict)
 
@@ -217,7 +217,7 @@ class TestReviewFixesTemplateBinder(unittest.TestCase):
         dm_vm.load_from_config(resolved_cfg.data_manager)
         dm_vm.filename = raw_dict["data_manager"]["filename"]
         roundtripped_dm = dm_vm.to_config()
-        self.assertEqual(roundtripped_dm.filename, "output_tb161_dual_cam/${gantry_angle}_deg.hdf")
+        self.assertEqual(roundtripped_dm.filename, "output_tb161_dual_cam/${gantry_angle deg}_deg.hdf")
         self.assertEqual(roundtripped_dm.buffer_capacity, 100000)
         self.assertEqual(roundtripped_dm.floating_point_precision, "float32")
         self.assertEqual(roundtripped_dm.compression, "gzip")
@@ -233,7 +233,7 @@ class TestReviewFixesTemplateBinder(unittest.TestCase):
         self.assertIsInstance(bound_cfg, SimulationConfig)
         assert isinstance(bound_cfg, SimulationConfig)
         assert bound_cfg.data_manager is not None
-        self.assertEqual(bound_cfg.data_manager.filename, "output_tb161_dual_cam/${gantry_angle}_deg.hdf")
+        self.assertEqual(bound_cfg.data_manager.filename, "output_tb161_dual_cam/${gantry_angle deg}_deg.hdf")
 
         orchestrator = Orchestrator(bound_cfg)
         sweep_cfg = orchestrator.compile_protocol()
@@ -244,7 +244,7 @@ class TestReviewFixesTemplateBinder(unittest.TestCase):
             injected_dict = SweepCompiler.inject_variables(orchestrator.raw_config_dict, job_context)
             validated_cfg = SimulationConfig.model_validate(injected_dict)
             assert validated_cfg.data_manager is not None
-            expected_angle = job_context["gantry_angle"]
+            expected_angle = round(float(job_context["gantry_angle"]) / float(units.deg), 10)
             self.assertIsInstance(validated_cfg.data_manager.filename, str)
             self.assertEqual(
                 validated_cfg.data_manager.filename,

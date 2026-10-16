@@ -298,7 +298,7 @@ class ProcedureInspectorSection(BaseInspectorSection):
                 other = [
                     var_key
                     for var_key in zipped_dict
-                    if var_key not in std_order and var_key not in ("current_angle", "current_time")
+                    if var_key not in std_order and var_key not in ("current_angle", "current_time", "start_time", "stop_time")
                 ]
                 cols = [var_key for var_key in std_order if var_key in zipped_dict] + other
             else:

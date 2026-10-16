@@ -81,10 +81,54 @@ def integer_count_validator(input_value: Any) -> Any:
 
 CountConfig = Annotated[Any, BeforeValidator(integer_count_validator)]
 
+
+def convert_from_hepunits(value: float, target_unit: str) -> float:
+    """
+    Преобразует числовое значение из внутренней когерентной системы единиц HepUnits
+    (мм = 1.0, МэВ = 1.0, нс = 1.0, рад = 1.0, Бк = 1e-9) в указанную целевую единицу измерения.
+    Используется при подстановке шаблонных макросов с явным указанием единицы вида ${var unit}.
+    """
+    cleaned_unit = target_unit.strip()
+    if not cleaned_unit:
+        raise ValueError("Целевая единица измерения в макросе не может быть пустой")
+
+    unit_factor: float
+    if (
+        cleaned_unit in units.__dict__
+        and isinstance(units.__dict__[cleaned_unit], (int, float))
+        and not isinstance(units.__dict__[cleaned_unit], bool)
+    ):
+        unit_factor = float(units.__dict__[cleaned_unit])
+    else:
+        try:
+            quantity = ureg(f"1.0 {cleaned_unit}")
+        except (pint.UndefinedUnitError, pint.PintError, ValueError, TypeError) as err:
+            raise ValueError(f"Неизвестная единица измерения '{cleaned_unit}' в макросе: {err}")
+
+        if quantity.is_compatible_with("mm"):
+            unit_factor = float(quantity.to("mm").magnitude) * float(units.mm)
+        elif quantity.is_compatible_with("ns"):
+            unit_factor = float(quantity.to("ns").magnitude) * float(units.ns)
+        elif quantity.is_compatible_with("MeV"):
+            unit_factor = float(quantity.to("MeV").magnitude) * float(units.MeV)
+        elif quantity.is_compatible_with("Bq"):
+            unit_factor = float(quantity.to("Bq").magnitude) * float(units.Bq)
+        elif quantity.is_compatible_with("rad"):
+            unit_factor = float(quantity.to("rad").magnitude) * float(units.radian)
+        else:
+            raise ValueError(f"Неподдерживаемая размерность единицы '{cleaned_unit}' в макросе")
+
+    converted_value = round(float(value) / unit_factor, 10)
+    if converted_value == 0.0:
+        converted_value = 0.0
+    return converted_value
+
+
 __all__ = [
     "ureg",
     "unit_validator_factory",
     "integer_count_validator",
+    "convert_from_hepunits",
     "LengthConfig",
     "EnergyConfig",
     "TimeConfig",
@@ -92,4 +136,5 @@ __all__ = [
     "AngleConfig",
     "CountConfig",
 ]
+
 
