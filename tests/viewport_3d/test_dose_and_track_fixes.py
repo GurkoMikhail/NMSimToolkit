@@ -17,6 +17,7 @@ app = QApplication.instance() or QApplication(sys.argv)
 import pyvista as pv
 import hepunits as units
 from core.data.dose_map_handler import DoseMapHandler
+from core.physics.interaction_buffers import ChunkType
 from gui.controllers.stream_handlers import GuiStreamDataHandler
 from gui.viewport_3d.vtk_viewport import VTKViewport
 from gui.viewport_3d.dose_volume_renderer import DoseVolumeRenderer
@@ -68,7 +69,7 @@ class TestDoseAndTrackFixes(unittest.TestCase):
             # Точка 3: (50, 50, 50) -> вне границ сетки [0, 40), должна игнорироваться
             # Точка 4: (5, 5, 5) -> edep = 0.0 (без энерговыделения)
             chunk = {
-                'type': 'interactions',
+                'type': ChunkType.INTERACTIONS,
                 'data': {
                     'pos_x': np.array([5.0, 35.0, 50.0, 5.0]),
                     'pos_y': np.array([5.0, 35.0, 50.0, 5.0]),

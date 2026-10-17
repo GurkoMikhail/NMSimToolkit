@@ -7,6 +7,7 @@ from core.scene.dose_grid_node import DoseGridNode
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
 from core.materials.materials import Material
+from core.physics.interaction_buffers import ChunkType
 from core.data.dose_map_handler import DoseMapHandler, DoseGridEntry
 from core.config.exporter import SceneExporter
 from core.config.builder import SceneBuilder
@@ -170,7 +171,7 @@ class TestDoseGridNode(unittest.TestCase):
 
             # Событие взаимодействия в глобальной точке (50, 0, 0) с энерговыделением 100.0 кэВ
             chunk = {
-                'type': 'interactions',
+                'type': ChunkType.INTERACTIONS,
                 'data': {
                     'pos_x': np.array([50.0]),
                     'pos_y': np.array([0.0]),

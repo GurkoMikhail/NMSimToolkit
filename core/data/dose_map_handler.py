@@ -6,12 +6,13 @@
 import logging
 from collections.abc import Mapping
 from multiprocessing import shared_memory
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple, Union
 
 import h5py
 import numpy as np
 
 from core.data.data_handlers import BaseDataHandler
+from core.physics.interaction_buffers import ChunkType
 from core.scene.dose_grid_node import DoseGridNode
 
 _logger = logging.getLogger(__name__)
@@ -147,6 +148,8 @@ class DoseMapHandler(BaseDataHandler):
     через inverse_global_matrix.
     """
 
+    _CONSUMED_CHUNK_TYPES: FrozenSet[ChunkType] = frozenset({ChunkType.INTERACTIONS})
+
     def __init__(
         self,
         grid_nodes: Optional[Sequence[DoseGridNode]] = None,
@@ -177,6 +180,10 @@ class DoseMapHandler(BaseDataHandler):
                 self.entries.append(entry)
                 self._entries_by_name[node_name] = entry
 
+    @property
+    def consumed_chunk_types(self) -> FrozenSet[ChunkType]:
+        return self._CONSUMED_CHUNK_TYPES
+
     def add_grid_node(self, node: DoseGridNode, shm_prefix: Optional[str] = None) -> None:
         """Динамическое добавление узла DoseGridNode в обработчик."""
         node_name = node.name
@@ -201,7 +208,7 @@ class DoseMapHandler(BaseDataHandler):
         Векторизованное накопление энерговыделения из чанка взаимодействий
         для всех зарегистрированных сеток дозы.
         """
-        if chunk.get('type') != 'interactions':
+        if chunk.get('type') != ChunkType.INTERACTIONS:
             return
 
         data = chunk.get('data')

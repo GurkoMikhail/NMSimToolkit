@@ -6,6 +6,7 @@ import hepunits as units
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
 from core.materials.materials import Material
+from core.physics.interaction_buffers import ChunkType
 from settings.database_setting import material_database
 from core.source.sources import PointSource
 from core.scene.nodes import CompositeNode, SpatialNode
@@ -234,7 +235,7 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
 
         try:
             chunk = {
-                'type': 'interactions',
+                'type': ChunkType.INTERACTIONS,
                 'data': {
                     'particle_ID': np.array([1, 2], dtype=np.uint64),
                     'volume_id': np.array([0, 0], dtype=np.uint32),

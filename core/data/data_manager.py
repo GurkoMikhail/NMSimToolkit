@@ -11,13 +11,14 @@ import threading
 import time
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Union
 
 import h5py
 import hepunits as units
 import numpy as np
 
 from core.data.data_handlers import BaseDataHandler
+from core.physics.interaction_buffers import ChunkType
 
 _logger = logging.getLogger(__name__)
 
@@ -70,6 +71,15 @@ class DataManager(threading.Thread):
             handler_instance.set_writer_callback(self._write_with_retry)
             self.handlers.append(handler_instance)
 
+        self._routes: Dict[ChunkType, Tuple[BaseDataHandler, ...]] = {
+            chunk_type: tuple(
+                handler_instance
+                for handler_instance in self.handlers
+                if chunk_type in handler_instance.consumed_chunk_types
+            )
+            for chunk_type in ChunkType
+        }
+
         # Состояние жизненного цикла метаданных
         self._status: str = "pending"
         self._is_initialized: bool = False
@@ -80,6 +90,13 @@ class DataManager(threading.Thread):
         self._elapsed_real_time: Optional[float] = None
         self._error_message: Optional[str] = None
         self._runtime_summary: Optional[Dict[str, Any]] = None
+
+    @property
+    def consumed_chunk_types(self) -> FrozenSet[ChunkType]:
+        """
+        Объединение типов чанков, на которые подписаны все зарегистрированные обработчики.
+        """
+        return frozenset().union(*(handler.consumed_chunk_types for handler in self.handlers))
 
     @staticmethod
     def _contexts_match(saved_context: Dict[str, Any], target_context: Optional[Dict[str, Any]]) -> bool:
@@ -497,8 +514,16 @@ class DataManager(threading.Thread):
             if isinstance(chunk, str) and chunk == "stop":
                 break
             elif isinstance(chunk, dict):
+                chunk_type = chunk.get("type")
+                target_handlers = (
+                    self._routes.get(chunk_type, ())
+                    if isinstance(chunk_type, ChunkType)
+                    else ()
+                )
+                if not target_handlers:
+                    continue
                 frozen_chunk = self._freeze_chunk(chunk)
-                for handler_instance in self.handlers:
+                for handler_instance in target_handlers:
                     try:
                         handler_instance.process_chunk(frozen_chunk)
                     except (OSError, RuntimeError, ValueError, KeyError, TypeError, IndexError) as handler_error:

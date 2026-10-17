@@ -48,6 +48,9 @@ def _push_to_interaction_buffer(
     dir_z: Float,
 ) -> None:
     """Записывает акт взаимодействия частицы напрямую в кольцевой буфер InteractionBuffer."""
+    if inter_buffer.capacity <= 0:
+        return
+
     idx = inter_buffer.cursor[0] % inter_buffer.capacity
 
     inter_buffer.process_id[idx] = process_id

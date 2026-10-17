@@ -315,3 +315,119 @@
 1. **Каноническое именование во всем слое `gui/`:**
    * Полный переход всех свойств `ViewModel` и манипуляторов `viewport_3d` на физические имена без суффиксов единиц (`start_angle`, `end_angle`, `gantry_angle`, `roll_angle`, `exposure_time`) с хранением значений внутри `ViewModel` строго в базовых единицах `hepunits` (`rad == 1.0`, `mm == 1.0`, `ns == 1.0`) и конвертацией в пользовательские единицы исключительно внутри слоя `gui/views/`.
 
+---
+
+## 21. Явное разделение режимов буферизации `DoseMapHandler` (In-Memory vs IPC `SharedMemory`)
+
+### Проблема:
+* В [`DoseMapHandler`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/dose_map_handler.py) и [`DoseGridEntry`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/dose_map_handler.py) булевый флаг `create_shm: bool = True` совмещает две разные обязанности: выбор между выделением буфера в разделяемой памяти ОС (`multiprocessing.shared_memory.SharedMemory`) и ролью процесса (создатель против клиента).
+* При `create_shm=True` (дефолт в headless/CLI-запуске [`simulation_worker_task`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/config/simulation_worker.py), когда `shm_name` не задан) воркер ненужно создает именованные сегменты `SharedMemory` в ядре ОС, хотя никакой процесс GUI их не читает.
+* При `create_shm=False` `DoseGridEntry._init_shared_memory` безусловно пытается подключиться к существующему сегменту `SharedMemory(name=self.shm_name, create=False)`, перехватывает `FileNotFoundError`, спамит предупреждениями `WARNING: SharedMemory '...' для сетки '...' не найден.` и лишь затем откатывается на локальный массив `np.zeros(self.grid_shape, dtype=np.float64)`.
+
+### Согласованное архитектурное решение / План реализации:
+1. **Трехрежимная стратегия хранения буфера дозы (`shm_mode: Literal["none", "create", "attach"]` или `shm_name: Optional[str] = None`):**
+   * Если `shm_name is None` (штатный CLI/headless-режим и автономные тесты без GUI-стриминга), `DoseGridEntry` сразу выделяет локальный массив `np.zeros(self.grid_shape, dtype=np.float64)` без системных вызовов `shared_memory.SharedMemory` и без ложных предупреждений в лог.
+   * Если `shm_name` задан явно, режим `create_shm=True` создает сегмент в родительской сессии GUI (`OrchestratorSession`), а `create_shm=False` подключается к нему из воркера.
+
+---
+
+## 22. Устранение повторной компиляции фабрик замыканий Numba при инстанциации `ParticlePropagator` и `Process`
+
+### Проблема:
+* По результатам профилирования (`cProfile` и 10-фазного `step_profiler`) создание каждого экземпляра [`ParticlePropagator`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/propagator.py) приводит к принудительной перекомпиляции Numba/LLVM (`~3.35 с` на инстанс, включая `1.35 млн` вызовов `copy.deepcopy` в `numba/core/ir.py` и `1.28 с` в `llvmlite/binding/ffi.py`):
+  1. Конструкторы [`PhotoelectricEffect.__init__`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes.py), [`CoherentScattering.__init__`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes.py) и [`ComptonScattering.__init__`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes.py) при каждом создании объекта вызывают фабрики [`make_photoelectric_kernel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py), [`make_coherent_kernel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py) и [`make_compton_kernel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py) (причем `ComptonScattering` через `super().__init__` сначала вызывает `make_coherent_kernel` и тут же перезаписывает `self._kernel`).
+  2. Конструктор [`ParticlePropagator.__init__`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/propagator.py) вызывает фабрику [`make_transport_kernel(self.process_ids)`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/transport_kernels.py).
+  3. Поскольку внутри этих фабрик функции `@njit(cache=True)` создаются заново как локальные замыкания (захватывающие свежие экземпляры `_device_func` и массив `process_ids`), Numba создает новые объекты `CPUDispatcher` и на первом шаге симуляции заново запускает полную компиляцию (`~0.78 с` на `_transport_kernel` и `~2.57 с` на ядра трех процессов).
+
+### Согласованное архитектурное решение / План реализации:
+1. **Декомпозиция ядер процессов на уровень модуля и кэширование фабрик:**
+   * Вынести `@njit(cache=True)`-ядра `_photoelectric_kernel`, `_compton_kernel`, `_coherent_kernel` и их `_device_func` на верхний уровень [`core/physics/processes_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py) (передавая `process_id` аргументом либо кэшируя фабрики через `@functools.lru_cache`).
+   * Исключить лишний вызов `make_coherent_kernel` при инициализации `ComptonScattering`.
+2. **Кэширование `make_transport_kernel` по неизменяемой сигнатуре процессов:**
+   * Кэшировать скомпилированный диспетчер в [`core/transport/transport_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/transport_kernels.py) по ключу `tuple(int(pid) for pid in process_ids)` (либо передавать `process_ids` аргументом в top-level `@njit(cache=True)` ядро).
+
+---
+
+## 23. Алгоритмическая оптимизация и векторизация горячих узлов по результатам микробенчмарков `M1..M5`
+
+### Проблема:
+* Изолированные микробенчмарки (`verification/profiling/micro_benchmarks.py`) выявили 5 алгоритмических узких мест в транспорте, воксельном источнике и обработчиках данных:
+  1. **`M1` (Интерполяция сечений LAC в Вудкоке):** на каждую историю приходится до `17.8` вызовов бинарного поиска `np.searchsorted` (`36.5 нс/запрос`).
+  2. **`M2` (Инициализация `EmissionTable` воксельного фантома):** построение полного 3D `np.meshgrid` + `np.stack` на сетках $128\times 128\times 92$ аллоцирует избыточные плотные массивы даже при заполнении фантома активностью на 10–15%.
+  3. **`M3` (Генерация позиций в `VoxelSource`):** выбор активных вокселей через `rng.choice(origins, size=N, p=probabilities)` тратит `125.3 нс/частицу` из-за бинарного поиска по CDF и сборки временного 2D-массива `(N, 3)`.
+  4. **`M4` (`SensitiveVolumeHandler`):** фильтрация чанка через списковое включение `[vol_map.get(v) for v in chunk.volume_id]` с `dtype=object` тратит `80.3 нс/событие`.
+  5. **`M5` (`HistoryAssemblerHandler`):** фильтрация взаимодействий через `np.intersect1d` и 4 повторных вызова `np.isin` тратит `59.2 нс/событие`.
+
+### Согласованное архитектурное решение / План реализации:
+1. **Единая равномерная логарифмическая сетка энергий $\mathcal{O}(1)$ в `PhysicsBuffer` (`M1`, ускорение `5.31x`):**
+   * Предрасчет таблиц макроскопических сечений на равномерной сетке по $\ln E$, заменяющий бинарный поиск `np.searchsorted` на прямое вычисление индекса `int((log(E) - log_E_min) * inv_dlog_E)`.
+2. **Разреженная инициализация `EmissionTable` и `Vose's Alias Method` в `VoxelSource` (`M2` `4.68x`, `M3` `6.77x`):**
+   * Извлечение только активных вокселей через `np.flatnonzero(activity > 0)` и `np.unravel_index` без построения полных 3D-сеток координат.
+   * Предрасчет таблиц `prob` и `alias` (метод псевдонимов Уокера–Воза) для выборки индекса вокселя за $\mathcal{O}(1)$ и прямой генерации `x, y, z` в SoA-массивы `Vector3D`.
+3. **Векторизованные целочисленные LUT и булевы маски в `DataHandlers` (`M4` `38.12x`, `M5` `23.68x`):**
+   * Замена Python-цикла со строками `dtype=object` в [`SensitiveVolumeHandler`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/sensitive_volume_handler.py) на предрассчитанную целочисленную таблицу отображения `volume_id`.
+   * Замена `np.intersect1d` + `4x np.isin` в [`HistoryAssemblerHandler`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/history_assembler_handler.py) на прямую булеву индексацию по смещению `particle_ID - min_id`.
+
+
+
+---
+
+## 24. Клиппинг времени экспозиции в `SimulationManager._replenish_bank` и разделение семантики емкости батча (`batch_capacity`) и числа историй
+
+### Проблема:
+* В [`SimulationManager.__init__`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_manager.py) аргумент `particles_number: int = 100_000` фактически задает емкость пула [`ParticleBank.allocate(self.particles_number)`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/particle_bank.py) (размер батча одновременно летящих в памяти частиц), тогда как полное число моделируемых историй определяется интегралом активности источника за время `stop_time`.
+* В методе [`SimulationManager._replenish_bank`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_manager.py) при вычислении `num_to_inject = min(free_slots, total_free)` и вызове `source.get_time_step(current_time, num_to_inject)` **отсутствует ограничение целевого времени `target_time <= self.stop_time`**. В результате, если емкость банка `particles_number` превышает ожидаемое за `stop_time` число распадов ($N_{\text{expected}} = \int_0^{t_{\text{stop}}} A(t)\,dt$), на первом же шаге генерируется полный банк `particles_number` частиц, а модельное время мгновенно перешагивает далеко за `stop_time`.
+* Исследование масштабируемости по размеру батча (`verification/profiling/batch_size_benchmark.py`, `batch_size` от `500` до `120,000`) показало, что при малых батчах (`500 – 2,500`) производительность падает в **2.0–3.5 раза** из-за частых итераций цикла `step()`, пересчета CDF в `VoxelSource.inject` и компактизации `ParticleBank.remove_invalid()`, а оптимум пропускной способности и кэш-локальности достигается на плато **`15,000 – 60,000` частиц**.
+
+### Согласованное архитектурное решение / План реализации:
+1. **Клиппинг квоты эмиссии по `stop_time` в `_replenish_bank`:**
+   * При пополнении банка проверять, не превышает ли `current_time + dt` порог `self.stop_time`. Если превышает — ограничивать `target_time = self.stop_time` и вычислять точное число частиц за оставшийся интервал $[t_{\text{current}}, t_{\text{stop}}]$, гарантируя инвариант независимости общего числа сгенерированных историй от выбранного размера батча `ParticleBank`.
+2. **Явная параметризация `batch_capacity`:**
+   * Зафиксировать рекомендуемый диапазон емкости `ParticleBank` в пределах `15,000 – 60,000` частиц (оптимум L2/L3 кэша для SoA-массивов) с автоматическим подбором `min(60_000, max(15_000, expected_particles))` по умолчанию.
+
+---
+
+## 25. Нагрузка на ядро ОС (Page Faults, переключения контекста) и NUMA-локальность при многопроцессном моделировании (`Orchestrator` / `SimulationManager` / `Source` / `WoodcockVoxelVolume`)
+
+### Наблюдение:
+* При боевом запуске 30 воркеров на 32-ядерном мульти-NUMA сервере (`AMD EPYC 7551P`, 4 кристалла / узла NUMA, 8 комплексов CCX по `8 МБ` L3-кэша) общесистемные счетчики Windows зафиксировали: `394,465 Page Faults/sec` (`~1.58 ГБ/с` страниц), `25%–48%` времени ядра (`Kernel Time`), `30,093 Context Switches/sec` (`~1,000/с` на процесс) и `> 4,400` потоков в системе.
+* Атрибуция счетчиков к конкретным участкам кода выполнена по косвенным признакам (системные счетчики, а не стеки вызовов) и требует подтверждения измерением (см. п. 1 плана).
+
+### Верифицированный по коду диагноз:
+1. **Крупные временные массивы на шаге пополнения банка (подтверждено частично):**
+   * В [`Source.generate_position`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py#L252-L260) вызов `self.rng.choice(voxel_origins, count, p=probability)` на каждом шаге строит массив `cdf` длины `K` (число активных вокселей; до `~12 МБ` при `K ≈ 1.5·10⁶`) и булеву маску проверки `p < 0` той же длины.
+   * Это не единственный источник: на батч из `N` частиц `generate_position`, `generate_direction`, `convert_to_global_position` (`(N, 4)` + `matmul`) и `inject` (`astype`) создают около десятка временных массивов размером `N×3–4×8 байт`. Блоки свыше `~1 МБ` куча Windows (UCRT → `HeapAlloc`) выделяет через `VirtualAlloc` и возвращает через `VirtualFree`, поэтому каждое повторное касание порождает demand-zero page fault.
+   * `generate_energy` к проблеме не относится: дискретный спектр содержит единицы линий, аллокации `< 1 КБ`.
+2. **Безусловный поток `escaped_particles` (подтверждено):**
+   * [`SimulationManager._collect_escaped_particles`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L373-L407) на каждом шаге [`next_step`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L342-L371) создает 8 копий массивов (с двойным копированием: fancy indexing + `copy=True`) и выполняет `queue.put`. Это единственный поток телеметрии, отправляемый на каждом шаге — остальные (`initial_states`, `interactions`, `dead_particles`) сбрасываются только при заполнении буферов. Именно он пробуждает поток [`DataManager.run`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/data_manager.py#L485-L524) и провоцирует передачу GIL.
+   * Ни один обработчик ядра (`DirectStreamHandler`, `SensitiveVolumeHandler`, `HistoryAssemblerHandler`, `DoseMapHandler`) не потребляет `'escaped_particles'`; единственный потребитель — [`GuiStreamDataHandler`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/controllers/stream_handlers.py#L110-L125) при `show_escaped_tracks=True`.
+3. **Карта материалов фантома в `int64` (арифметика подтверждена, механизм уточнен):**
+   * В [`WoodcockVoxelVolume._compile_cfunc`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/geometry/voxel_volumes.py#L105-L134) массив `mat_dist_1d` хранится в `int64` (`12.06 МБ` для $128\times 128\times 92$) и захватывается замыканием `@cfunc`, т. е. вшивается константой в LLVM-модуль (раздувая также время и память компиляции).
+   * Промах L3 на Zen 1 обслуживается контроллером памяти своего кристалла; межкристальный трафик по Infinity Fabric возникает только при обращении к удаленной NUMA-памяти (см. п. 4). Полное удержание фантома в L3 недостижимо при любом типе: на одном CCX работают 4+ воркера с собственными копиями фантома, таблиц сечений и SoA-банка частиц.
+   * [`MaterialArray.ID`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/materials/materials.py#L111-L116) содержит **глобальный** идентификатор `material.ID` — порядковый номер `next(self.counter)` в `MaterialDataBase`, а не локальный индекс. Его значение может превышать `127`/`255` при любом числе материалов в фантоме, поэтому прямое приведение к `int8`/`uint8` недопустимо.
+4. **Потоки BLAS и размещение процессов по NUMA (диагноз не подтвержден кодом):**
+   * Лимиты `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS`, `OMP_NUM_THREADS = 1` уже выставляются до импорта `numpy` в [`run_simulation.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/run_simulation.py#L1-L5) и [`gui/app.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/app.py#L13-L16); spawn-воркеры наследуют окружение, OpenBLAS при отсутствии `OPENBLAS_NUM_THREADS` использует `OMP_NUM_THREADS`. Наблюдение `> 4,400` потоков указывает на запуск через иную точку входа (verification-скрипты, `pytest`, Jupyter), в которой лимиты не заданы.
+   * `NUMBA_NUM_THREADS` не влияет на работу: в `core/` отсутствуют `parallel=True` / `prange`.
+   * Утверждение об «упаковке» процессов планировщиком Windows по 2 на физическое ядро не подтверждено измерением; планировщик SMT-осведомлен, а типичная причина подобной картины — парковка ядер (Core Parking) в плане электропитания `Balanced`.
+
+### Согласованное архитектурное решение / План реализации:
+1. **Измерение до оптимизации (обязательный первый этап):**
+   * Расширить `step_profiler` пофазными дельтами `psutil.Process().num_page_faults()` и числом потоков процесса; для подтверждения стеков — трасса `WPR`/`WPA` с профилями `CPU` и `VirtualAllocation`.
+   * Зафиксировать точку входа и окружение боевого запуска; проверить план электропитания (`High Performance`) и режим NUMA в BIOS сервера.
+   * Все последующие пункты сопровождаются A/B-замером на том же стенде.
+2. **[ВЫПОЛНЕНО] Декларативная подписка на `ChunkType(Enum)`, ортогональность SoA-банков и `@njit`-буферизация телеметрии:**
+   * Введено перечисление [`ChunkType`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/interaction_buffers.py#L19-L26) (`INITIAL_STATES`, `INTERACTIONS`, `DEAD_PARTICLES`, `ESCAPED_PARTICLES`). В [`BaseDataHandler`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/data_handlers.py#L24-L78) введено абстрактное свойство `consumed_chunk_types: FrozenSet[ChunkType]`, а [`DataManager`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/data_manager.py#L46-L108) предвычисляет таблицу маршрутизации `Dict[ChunkType, Tuple[BaseDataHandler, ...]]`.
+   * Из [`ParticleBank`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/particles/particles.py#L16-L154) и [`InitialState`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/particles/initial_state.py#L17-L76) удален телеметрический признак `has_interacted`; [`EscapedParticlesBuffer`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/interaction_buffers.py#L297-L357) минимизирован до `(particle_ID, position)`. Факт отсутствия рассеяния определяется на лету через `@njit`-предикат [`_is_uncollided`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/transport_kernels.py#L65-L77) по неизменности энергии и направления относительно начального состояния.
+   * Невостребованные буферы в [`SimulationDataBuffer.allocate`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/interaction_buffers.py#L370-L386) аллоцируются с `capacity = 0` без затрат памяти и записи в `@njit`-ядрах (с полным сохранением потока ГСЧ в `_sample_Z_scalar`). Запись во все буферы выполняется однопроходными безаллокационными `@njit`-ядрами (`_push_first_interacting_to_initial_state_kernel`, `_push_uncollided_to_initial_state_kernel`, `_push_to_dead_particles_kernel`, `_push_to_escaped_particles_kernel`) с пакетным сбросом при переполнении и строгим каузальным порядком сброса (`flush_initial_states` и `flush_interactions` перед `flush_escaped_particles`).
+3. **Устранение крупных временных аллокаций на шаге (реализация пп. 15 и 23.2):**
+   * Выборка вокселя методом `Vose's Alias Method` по таблицам, построенным один раз при инициализации источника: `alias: int32`, `prob: float64` (точность `float32` недопустима по принципу Zero-Compromise Physics).
+   * Генерация позиций, направлений и энергий в предвыделенные SoA-буферы (`out=`-аргументы или `@njit`-инжектор с явным `np.random.Generator`, пишущий напрямую в `ParticleBank`), без промежуточных `(N, 3)` / `(N, 4)` массивов.
+   * Смена потока случайных чисел требует замены побитовых эталонных тестов статистическими (критерий $\chi^2$ частот выборки вокселей).
+4. **Компактная карта материалов в `WoodcockVoxelVolume`:**
+   * Хранить в `mat_dist_1d` локальный индекс материала в `material_list` типа `uint8` и передавать в `@cfunc` малую таблицу отображения `local_to_global: int64[≤256]` (размещается в L1).
+   * При компиляции проверять предусловие `len(material_list) <= 256` с немедленным отказом (Fail-Fast) при нарушении.
+   * Ожидаемый эффект умеренный (снижение промахов кэша и объема вшитой константы `12.06 МБ → 1.50 МБ`); подтверждается A/B-замером.
+5. **Лимит потоков BLAS и опциональная привязка воркеров к ядрам:**
+   * Дополнительно к установке в точках входа (необходимой для собственного процесса и режима `pool_size == 1`, т. к. к моменту вызова оркестратора `numpy` уже импортирован) выставлять `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS` в [`Orchestrator.run`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/config/orchestrator.py#L72-L143) до создания `Pool` (наследуется spawn-воркерами независимо от точки входа) либо применять `threadpoolctl.threadpool_limits(1)` в воркере. Установка переменных окружения в инициализаторе пула неэффективна: на Windows модули с `numpy` импортируются при распаковке задачи до вызова инициализатора.
+   * Привязку воркеров к физическим ядрам равномерно по узлам NUMA реализовать как опцию конфигурации (`cpu_binding: Literal["none", "physical_cores"] = "none"`), выполняемую в начале воркера до построения сцены (NUMA-локальность по first-touch). Соседние SMT-потоки определять по топологии ОС (`GetLogicalProcessorInformationEx` / `os.sched_getaffinity`), а не по формуле `[2*k, 2*k+1]`. По умолчанию выключено, чтобы не лишать GUI процессорного времени на рабочих станциях.
+

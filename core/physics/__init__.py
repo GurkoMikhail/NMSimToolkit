@@ -14,9 +14,11 @@ from core.physics.processes import (
 from core.physics.physics_compiler import PhysicsCompiler
 from core.physics.physics_buffer import ElementCSR, PhysicsBuffer
 from core.physics.interaction_buffers import (
+    ChunkType,
     InteractionBuffer,
     InitialStateBuffer,
     DeadParticlesBuffer,
+    EscapedParticlesBuffer,
     SimulationDataBuffer,
     RNGContext,
 )
@@ -32,10 +34,13 @@ __all__ = [
     'PhysicsCompiler',
     'ElementCSR',
     'PhysicsBuffer',
+    'ChunkType',
     'InteractionBuffer',
     'InitialStateBuffer',
     'DeadParticlesBuffer',
+    'EscapedParticlesBuffer',
     'SimulationDataBuffer',
     'RNGContext',
 ]
+
 

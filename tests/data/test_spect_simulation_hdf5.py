@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication
 from core.data.data_manager import DataManager
 from core.data.dose_map_handler import DoseMapHandler
 from core.data.data_handlers import HistoryAssemblerHandler
+from core.physics.interaction_buffers import ChunkType
 from gui.controllers.viewport_controller import SceneViewportController
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel
@@ -152,7 +153,7 @@ class TestSpectSimulationHDF5(unittest.TestCase):
 
         # Имитируем передачу чанков через process_chunk
         history_handler.process_chunk({
-            'type': 'initial_states',
+            'type': ChunkType.INITIAL_STATES,
             'data': {
                 'particle_ID': np.array([1, 2], dtype=np.uint64),
                 'pos_x': np.array([0.0, 1.0], dtype=np.float32),
@@ -168,7 +169,7 @@ class TestSpectSimulationHDF5(unittest.TestCase):
 
         det_id = history_handler.target_volumes[0]
         history_handler.process_chunk({
-            'type': 'interactions',
+            'type': ChunkType.INTERACTIONS,
             'data': {
                 'particle_ID': np.array([1, 1, 2, 2, 2], dtype=np.uint64),
                 'volume_id': np.array([det_id, det_id, det_id, det_id, det_id], dtype=np.uint32),
@@ -190,7 +191,7 @@ class TestSpectSimulationHDF5(unittest.TestCase):
         })
 
         history_handler.process_chunk({
-            'type': 'dead_particles',
+            'type': ChunkType.DEAD_PARTICLES,
             'data': np.array([1, 2], dtype=np.uint64)
         })
 

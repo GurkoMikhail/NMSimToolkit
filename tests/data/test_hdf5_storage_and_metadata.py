@@ -49,6 +49,7 @@ from core.geometry.geometries import Box
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
+from core.physics.interaction_buffers import ChunkType
 from core.physics.processes import (
     CoherentScattering,
     ComptonScattering,
@@ -125,7 +126,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
 
         test_events_count = 5
         handler.process_chunk({
-            "type": "interactions",
+            "type": ChunkType.INTERACTIONS,
             "data": {
                 "particle_ID": np.arange(100, 100 + test_events_count, dtype=np.uint64),
                 "volume_id": np.full(test_events_count, crystal_id, dtype=np.int64),
@@ -213,7 +214,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
 
         crystal_id = handler.target_volumes[0]
         handler.process_chunk({
-            "type": "interactions",
+            "type": ChunkType.INTERACTIONS,
             "data": {
                 "particle_ID": np.array([1], dtype=np.uint64),
                 "volume_id": np.array([crystal_id], dtype=np.int64),
@@ -261,7 +262,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
         stream_handler.set_writer_callback(lambda op: written_ops.append(op))
 
         stream_handler.process_chunk({
-            "type": "initial_states",
+            "type": ChunkType.INITIAL_STATES,
             "data": {
                 "particle_ID": np.arange(100, dtype=np.uint64),
                 "emission_position": np.zeros((100, 3), dtype=np.float32),
@@ -466,7 +467,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
 
         # 1. Посылаем сырой чанк initial_states с раздельными координатами
         handler.process_chunk({
-            "type": "initial_states",
+            "type": ChunkType.INITIAL_STATES,
             "data": {
                 "particle_ID": np.array([501, 502], dtype=np.uint64),
                 "emission_time": np.array([0.0, 1.0], dtype=np.float64),
@@ -482,7 +483,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
 
         # 2. Посылаем сырой чанк interactions из SoA буфера
         handler.process_chunk({
-            "type": "interactions",
+            "type": ChunkType.INTERACTIONS,
             "data": {
                 "particle_ID": np.array([501, 502], dtype=np.uint64),
                 "volume_id": np.array([10, 20], dtype=np.int64),
@@ -580,7 +581,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
 
         # Посылаем начальное состояние и взаимодействие частицы 777 без чанка dead_particles
         assembler.process_chunk({
-            "type": "initial_states",
+            "type": ChunkType.INITIAL_STATES,
             "data": {
                 "particle_ID": np.array([777, 888], dtype=np.uint64),
                 "emission_time": np.array([0.0, 1.0], dtype=np.float64),
@@ -594,7 +595,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             },
         })
         assembler.process_chunk({
-            "type": "interactions",
+            "type": ChunkType.INTERACTIONS,
             "data": {
                 "particle_ID": np.array([777], dtype=np.uint64),
                 "volume_id": np.array([crystal_id], dtype=np.int64),
@@ -631,7 +632,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
 
         try:
             dose_handler.process_chunk({
-                "type": "interactions",
+                "type": ChunkType.INTERACTIONS,
                 "data": {
                     "pos_x": np.array([5.0], dtype=np.float64),
                     "pos_y": np.array([5.0], dtype=np.float64),

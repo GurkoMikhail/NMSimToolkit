@@ -83,7 +83,6 @@ class ParticleBank(NamedTuple):
 
         self.state.is_active[target_indices] = True
         self.initial_state.ID[target_indices] = new_ids
-        self.initial_state.has_interacted[target_indices] = False
         self.state.species[target_indices] = species
         self.state.energy[target_indices] = energy
         self.initial_state.emission_time[target_indices] = emission_time

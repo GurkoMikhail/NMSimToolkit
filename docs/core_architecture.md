@@ -46,18 +46,17 @@ flowchart LR
         H6["is_active: bool (Флаг активности частицы)"]
     end
 
-    subgraph ColdMetadata ["Холодные метаданные (InitialStateBuffer)"]
+    subgraph ColdMetadata ["Холодные метаданные (InitialState)"]
         direction TB
         C1["ID: int64"]
         C2["emission_position (x, y, z): float64"]
         C3["emission_direction (x, y, z): float64"]
-        C4["initial_energy: float64"]
+        C4["emission_energy: float64"]
         C5["emission_time: float64"]
-        C6["has_interacted: bool"]
     end
 
-    HotState -.->|События взаимодействий| Out["SimulationDataBuffer / DataManager"]
-    ColdMetadata -.->|Запись в HDF5 при первой коллизии| Out
+    HotState -.->|События взаимодействий / вылета| Out["SimulationDataBuffer / DataManager"]
+    ColdMetadata -.->|Запись в InitialStateBuffer по подписке ChunkType| Out
 ```
 
 * **Горячее состояние (`ParticleState` и `NavigationState`):** упаковано в плоские массивы NumPy/Numba, непрерывно располагающиеся в кэш-памяти процессора (L1/L2). Все операции перемещения и рассеяния выполняются строго in-place без аллокаций памяти в цикле.

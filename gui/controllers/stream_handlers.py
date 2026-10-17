@@ -4,14 +4,15 @@ import time
 from multiprocessing import Queue as MpQueue
 from multiprocessing import shared_memory
 from collections.abc import Mapping
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
 
 from core.data.data_handlers import BaseDataHandler
-from core.scene.nodes import SpatialNode, CompositeNode
 from core.geometry.volumes import Volume
+from core.physics.interaction_buffers import ChunkType
 from core.scene.gamma_camera_node import GammaCameraNode
+from core.scene.nodes import CompositeNode, SpatialNode
 
 _logger = logging.getLogger(__name__)
 
@@ -22,6 +23,16 @@ class GuiStreamDataHandler(BaseDataHandler):
     Передает пакеты 3D-треков через multiprocessing.Queue и обновляет
     накопленную 2D-проекцию детектора в multiprocessing.shared_memory.SharedMemory.
     """
+
+    _CONSUMED_WITH_ESCAPED: FrozenSet[ChunkType] = frozenset({
+        ChunkType.INITIAL_STATES,
+        ChunkType.INTERACTIONS,
+        ChunkType.ESCAPED_PARTICLES,
+    })
+    _CONSUMED_WITHOUT_ESCAPED: FrozenSet[ChunkType] = frozenset({
+        ChunkType.INITIAL_STATES,
+        ChunkType.INTERACTIONS,
+    })
 
     def __init__(
         self,
@@ -107,6 +118,10 @@ class GuiStreamDataHandler(BaseDataHandler):
                 if create_shm:
                     self._projection_array.fill(0)
 
+    @property
+    def consumed_chunk_types(self) -> FrozenSet[ChunkType]:
+        return self._CONSUMED_WITH_ESCAPED if self.show_escaped_tracks else self._CONSUMED_WITHOUT_ESCAPED
+
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         """
         Обработка чанка данных моделирования из очереди.
@@ -117,11 +132,11 @@ class GuiStreamDataHandler(BaseDataHandler):
         if not isinstance(data, (dict, Mapping)):
             return
 
-        if chunk_type == 'interactions':
+        if chunk_type == ChunkType.INTERACTIONS:
             self._handle_interactions(data)
-        elif chunk_type == 'initial_states':
+        elif chunk_type == ChunkType.INITIAL_STATES:
             self._handle_initial_states(data)
-        elif chunk_type == 'escaped_particles' and self.show_escaped_tracks:
+        elif chunk_type == ChunkType.ESCAPED_PARTICLES and self.show_escaped_tracks:
             self._handle_escaped_particles(data)
 
     def _handle_initial_states(self, data: Mapping[str, Any]) -> None:
@@ -166,8 +181,9 @@ class GuiStreamDataHandler(BaseDataHandler):
 
     def _handle_escaped_particles(self, data: Mapping[str, Any]) -> None:
         """
-        Обработка вылетевших частиц: отправка начальной точки рождения и граничной точки выхода
-        в очередь треков для построения сквозных лучей вылетевших квантов.
+        Обработка вылетевших частиц: отправка граничной точки выхода
+        в очередь треков для завершения траекторий вылетевших квантов.
+        Точки рождения частиц поступают через поток INITIAL_STATES.
         """
         if self.track_queue is None:
             return
@@ -175,11 +191,7 @@ class GuiStreamDataHandler(BaseDataHandler):
         pos_x = data.get('pos_x')
         pos_y = data.get('pos_y')
         pos_z = data.get('pos_z')
-        birth_x = data.get('birth_x')
-        birth_y = data.get('birth_y')
-        birth_z = data.get('birth_z')
-        particle_id = data.get('particle_id')
-        has_interacted = data.get('has_interacted')
+        particle_id = data.get('particle_ID') if 'particle_ID' in data else data.get('particle_id')
 
         if pos_x is None or len(pos_x) == 0:
             return
@@ -187,33 +199,6 @@ class GuiStreamDataHandler(BaseDataHandler):
         n = len(pos_x)
         limit = min(n, self.max_tracks_per_batch)
         sub = slice(0, limit)
-
-        if birth_x is not None:
-            if has_interacted is not None:
-                uncollided_mask = ~np.asarray(has_interacted)[sub]
-            else:
-                uncollided_mask = np.ones(limit, dtype=bool)
-
-            if np.any(uncollided_mask):
-                bx = np.asarray(birth_x)[sub][uncollided_mask]
-                by = np.asarray(birth_y)[sub][uncollided_mask]
-                bz = np.asarray(birth_z)[sub][uncollided_mask] if birth_z is not None else np.zeros_like(bx)
-                pids = np.asarray(particle_id)[sub][uncollided_mask] if particle_id is not None else None
-
-                birth_payload = {
-                    'type': 'tracks',
-                    'pos_x': np.array(bx, copy=True),
-                    'pos_y': np.array(by, copy=True),
-                    'pos_z': np.array(bz, copy=True),
-                    'process_id': np.full(len(bx), -2, dtype=np.int32),
-                    'particle_id': np.array(pids, copy=True) if pids is not None else None,
-                    'energy_deposit': np.zeros(len(bx), dtype=np.float32),
-                    'detector_energy_deposit': None,
-                }
-                try:
-                    self.track_queue.put_nowait(birth_payload)
-                except queue.Full:
-                    pass
 
         px = np.asarray(pos_x)[sub]
         py = np.asarray(pos_y)[sub]
@@ -465,12 +450,23 @@ def create_gui_stream_handler(
 
         det_node = _find_detector_node(root_scene)
         proj_shape = task_dict.get('_projection_shape', projection_shape)
+        show_escaped = bool(task_dict.get('_show_escaped_tracks', False))
+        dm_dict = task_dict.get('data_manager')
+        if isinstance(dm_dict, Mapping):
+            raw_handlers = dm_dict.get('handlers', ())
+            if isinstance(raw_handlers, Sequence):
+                for handler_cfg in raw_handlers:
+                    if isinstance(handler_cfg, Mapping) and bool(handler_cfg.get('show_escaped_tracks', False)):
+                        show_escaped = True
+                        break
+
         stream_handler = GuiStreamDataHandler(
             track_queue=telemetry_queue,
             shm_name=focused_shm_name,
             projection_shape=proj_shape,
             create_shm=False,
-            detector_volume=det_node
+            show_escaped_tracks=show_escaped,
+            detector_volume=det_node,
         )
         return [stream_handler]
     return []

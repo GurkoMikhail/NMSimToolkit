@@ -211,6 +211,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                 handlers.extend(created_handlers)
 
         # 5. Инициализация пропагатора и менеджера симуляции с единым детерминированным ГСЧ
+        consumed_chunk_types = frozenset().union(*(handler.consumed_chunk_types for handler in handlers))
         propagator = ParticlePropagator(rng=np.random.default_rng(effective_seed))
         manager = SimulationManager(
             scene=root_scene,
@@ -224,6 +225,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
             seed=effective_seed,
             initial_particle_id=initial_particle_id,
             rng_state=rng_state,
+            consumed_chunk_types=consumed_chunk_types,
         )
 
         ipc_pause_event = task_dict.get("_run_event", task_dict.get("_pause_event"))

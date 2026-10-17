@@ -18,7 +18,12 @@ from core.other.typing_definitions import Float, Index
 from core.particles.initial_state import InitialState
 from core.particles.kinematic_state import KinematicState
 from core.particles.particles_kernels import _invalidate_navigation_state, _move_particle
-from core.physics.interaction_buffers import InitialStateBuffer, RNGContext
+from core.physics.interaction_buffers import (
+    DeadParticlesBuffer,
+    EscapedParticlesBuffer,
+    InitialStateBuffer,
+    RNGContext,
+)
 from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.physics_kernels import _get_macroscopic_cross_sections
 from core.transport.transport_buffer import TransportBuffer
@@ -57,33 +62,136 @@ def _generate_free_path(majorant_lac: Float, rng_ctx: RNGContext) -> Float:
     return Float(-np.log(rand_u) / majorant_lac)
 
 
+@njit(cache=True, inline='always')
+def _is_uncollided(
+    initial_state: InitialState,
+    state: KinematicState,
+    p_idx: Index,
+) -> bool:
+    """Проверяет, сохранила ли частица начальную энергию и направление (не испытывала взаимодействий)."""
+    return bool(
+        state.energy[p_idx] == initial_state.emission_energy[p_idx]
+        and state.direction.x[p_idx] == initial_state.emission_direction.x[p_idx]
+        and state.direction.y[p_idx] == initial_state.emission_direction.y[p_idx]
+        and state.direction.z[p_idx] == initial_state.emission_direction.z[p_idx]
+    )
+
+
+@njit(cache=True, inline='always')
+def _write_single_initial_state(
+    initial_state: InitialState,
+    p_idx: Index,
+    initial_state_buffer: InitialStateBuffer,
+) -> None:
+    """Записывает начальное состояние одной частицы по индексу слота банка в InitialStateBuffer."""
+    idx = initial_state_buffer.cursor[0] % initial_state_buffer.capacity
+
+    initial_state_buffer.particle_ID[idx] = initial_state.ID[p_idx]
+    initial_state_buffer.emission_time[idx] = initial_state.emission_time[p_idx]
+    initial_state_buffer.emission_energy[idx] = initial_state.emission_energy[p_idx]
+
+    initial_state_buffer.emission_position.x[idx] = initial_state.emission_position.x[p_idx]
+    initial_state_buffer.emission_position.y[idx] = initial_state.emission_position.y[p_idx]
+    initial_state_buffer.emission_position.z[idx] = initial_state.emission_position.z[p_idx]
+
+    initial_state_buffer.emission_direction.x[idx] = initial_state.emission_direction.x[p_idx]
+    initial_state_buffer.emission_direction.y[idx] = initial_state.emission_direction.y[p_idx]
+    initial_state_buffer.emission_direction.z[idx] = initial_state.emission_direction.z[p_idx]
+
+    initial_state_buffer.cursor[0] += 1
+
+
 @njit(cache=True)
 def _push_to_initial_state_kernel(
     initial_state: InitialState,
     target_indices: NDArray[Index],
     initial_state_buffer: InitialStateBuffer,
 ) -> None:
-    """Записывает начальные состояния впервые провзаимодействовавших частиц в кольцевой буфер."""
+    """Записывает начальные состояния выбранных частиц в кольцевой буфер InitialStateBuffer."""
+    if initial_state_buffer.capacity <= 0:
+        return
+
+    for j in range(target_indices.shape[0]):
+        _write_single_initial_state(initial_state, target_indices[j], initial_state_buffer)
+
+
+@njit(cache=True)
+def _push_first_interacting_to_initial_state_kernel(
+    initial_state: InitialState,
+    state: KinematicState,
+    active_indices: NDArray[Index],
+    process_ids: NDArray[Index],
+    initial_state_buffer: InitialStateBuffer,
+) -> None:
+    """
+    Однопроходная безаллокационная запись в InitialStateBuffer начальных состояний активных частиц,
+    которые на текущем шаге впервые вступают во взаимодействие.
+    """
+    if initial_state_buffer.capacity <= 0:
+        return
+
+    for j in range(active_indices.shape[0]):
+        p_idx = active_indices[j]
+        if process_ids[p_idx] != -1 and _is_uncollided(initial_state, state, p_idx):
+            _write_single_initial_state(initial_state, p_idx, initial_state_buffer)
+
+
+@njit(cache=True)
+def _push_uncollided_to_initial_state_kernel(
+    initial_state: InitialState,
+    state: KinematicState,
+    candidate_indices: NDArray[Index],
+    initial_state_buffer: InitialStateBuffer,
+) -> None:
+    """
+    Однопроходная безаллокационная запись в InitialStateBuffer начальных состояний частиц
+    из массива candidate_indices, ни разу не испытавших взаимодействия.
+    """
+    if initial_state_buffer.capacity <= 0:
+        return
+
+    for j in range(candidate_indices.shape[0]):
+        p_idx = candidate_indices[j]
+        if _is_uncollided(initial_state, state, p_idx):
+            _write_single_initial_state(initial_state, p_idx, initial_state_buffer)
+
+
+@njit(cache=True)
+def _push_to_dead_particles_kernel(
+    initial_state: InitialState,
+    target_indices: NDArray[Index],
+    dead_buffer: DeadParticlesBuffer,
+) -> None:
+    """Записывает идентификаторы завершивших трекинг частиц по индексам слотов в DeadParticlesBuffer."""
+    if dead_buffer.capacity <= 0:
+        return
+
     for j in range(target_indices.shape[0]):
         p_idx = target_indices[j]
+        idx = dead_buffer.cursor[0] % dead_buffer.capacity
+        dead_buffer.particle_ID[idx] = initial_state.ID[p_idx]
+        dead_buffer.cursor[0] += 1
 
-        initial_state.has_interacted[p_idx] = True
 
-        idx = initial_state_buffer.cursor[0] % initial_state_buffer.capacity
+@njit(cache=True)
+def _push_to_escaped_particles_kernel(
+    initial_state: InitialState,
+    state: KinematicState,
+    target_indices: NDArray[Index],
+    escaped_buffer: EscapedParticlesBuffer,
+) -> None:
+    """Записывает идентификаторы и координаты вылетевших за пределы сцены частиц в EscapedParticlesBuffer."""
+    if escaped_buffer.capacity <= 0:
+        return
 
-        initial_state_buffer.particle_ID[idx] = initial_state.ID[p_idx]
-        initial_state_buffer.emission_time[idx] = initial_state.emission_time[p_idx]
-        initial_state_buffer.emission_energy[idx] = initial_state.emission_energy[p_idx]
-
-        initial_state_buffer.emission_position.x[idx] = initial_state.emission_position.x[p_idx]
-        initial_state_buffer.emission_position.y[idx] = initial_state.emission_position.y[p_idx]
-        initial_state_buffer.emission_position.z[idx] = initial_state.emission_position.z[p_idx]
-
-        initial_state_buffer.emission_direction.x[idx] = initial_state.emission_direction.x[p_idx]
-        initial_state_buffer.emission_direction.y[idx] = initial_state.emission_direction.y[p_idx]
-        initial_state_buffer.emission_direction.z[idx] = initial_state.emission_direction.z[p_idx]
-
-        initial_state_buffer.cursor[0] += 1
+    for j in range(target_indices.shape[0]):
+        p_idx = target_indices[j]
+        idx = escaped_buffer.cursor[0] % escaped_buffer.capacity
+        escaped_buffer.particle_ID[idx] = initial_state.ID[p_idx]
+        escaped_buffer.position.x[idx] = state.position.x[p_idx]
+        escaped_buffer.position.y[idx] = state.position.y[p_idx]
+        escaped_buffer.position.z[idx] = state.position.z[p_idx]
+        escaped_buffer.cursor[0] += 1
 
 
 def make_transport_kernel(mapped_process_ids: NDArray[Index]) -> Any:
@@ -186,7 +294,12 @@ __all__ = [
     "call_cfunc_ptr",
     "_get_random_double",
     "_generate_free_path",
+    "_is_uncollided",
     "_push_to_initial_state_kernel",
+    "_push_first_interacting_to_initial_state_kernel",
+    "_push_uncollided_to_initial_state_kernel",
+    "_push_to_dead_particles_kernel",
+    "_push_to_escaped_particles_kernel",
     "make_transport_kernel",
 ]
 

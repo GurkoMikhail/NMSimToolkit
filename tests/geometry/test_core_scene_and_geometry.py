@@ -12,6 +12,7 @@ from core.config.exporter import SceneExporter
 from core.config.models import SimulationConfig
 from core.transport import IpcPauseBridge
 from core.data.data_manager import DataManager
+from core.physics.interaction_buffers import ChunkType
 from gui.controllers.stream_handlers import GuiStreamDataHandler
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
@@ -71,7 +72,7 @@ class TestStage1Core(unittest.TestCase):
 
         try:
             chunk = {
-                'type': 'interactions',
+                'type': ChunkType.INTERACTIONS,
                 'data': {
                     'pos_x': np.array([0.0, 10.0, -10.0], dtype=np.float32),
                     'pos_y': np.array([0.0, 10.0, -10.0], dtype=np.float32),
@@ -104,7 +105,7 @@ class TestStage1Core(unittest.TestCase):
             # Проверка фильтрации FOV: взаимодействие вне поля зрения не должно накапливаться
             prev_sum = float(np.sum(proj))
             out_of_bounds_chunk = {
-                'type': 'interactions',
+                'type': ChunkType.INTERACTIONS,
                 'data': {
                     'pos_x': np.array([500.0], dtype=np.float32),
                     'pos_y': np.array([500.0], dtype=np.float32),
@@ -119,7 +120,7 @@ class TestStage1Core(unittest.TestCase):
 
             # Проверка устойчивости к пустым и некорректным чанкам
             handler.process_chunk({'type': 'invalid', 'data': None})
-            handler.process_chunk({'type': 'interactions', 'data': {}})
+            handler.process_chunk({'type': ChunkType.INTERACTIONS, 'data': {}})
         finally:
             handler.close()
             q.close()
@@ -206,7 +207,8 @@ class TestStage1Core(unittest.TestCase):
         mgr.data_buffer.interactions.direction.z[0] = 1.0
         mgr.data_buffer.interactions.cursor[0] = 1
 
-        mgr.data_buffer.dead_particles.append(np.array([1], dtype=np.int32))
+        mgr.data_buffer.dead_particles.particle_ID[0] = 1
+        mgr.data_buffer.dead_particles.cursor[0] = 1
 
         # Вызов flush_dead_particles должен сначала сбросить initial_states и interactions
         mgr.flush_dead_particles()
@@ -215,7 +217,10 @@ class TestStage1Core(unittest.TestCase):
             received_chunks.append(test_queue.get())
 
         chunk_types = [c['type'] for c in received_chunks if isinstance(c, dict)]
-        self.assertEqual(chunk_types, ['initial_states', 'interactions', 'dead_particles'])
+        self.assertEqual(
+            chunk_types,
+            [ChunkType.INITIAL_STATES, ChunkType.INTERACTIONS, ChunkType.DEAD_PARTICLES],
+        )
 
     def test_flush_all_ordering(self):
         """Проверка причинно-следственного порядка сброса через flush_all: initial_states -> interactions -> dead_particles."""
@@ -231,7 +236,8 @@ class TestStage1Core(unittest.TestCase):
         mgr.data_buffer.interactions.particle_ID[0] = 42
         mgr.data_buffer.interactions.cursor[0] = 1
 
-        mgr.data_buffer.dead_particles.append(np.array([42], dtype=np.int32))
+        mgr.data_buffer.dead_particles.particle_ID[0] = 42
+        mgr.data_buffer.dead_particles.cursor[0] = 1
 
         # Вызов flush_all должен произвести сброс всех трех буферов в правильном порядке
         mgr.flush_all()
@@ -240,7 +246,10 @@ class TestStage1Core(unittest.TestCase):
             received_chunks.append(test_queue.get())
 
         chunk_types = [c['type'] for c in received_chunks if isinstance(c, dict)]
-        self.assertEqual(chunk_types, ['initial_states', 'interactions', 'dead_particles'])
+        self.assertEqual(
+            chunk_types,
+            [ChunkType.INITIAL_STATES, ChunkType.INTERACTIONS, ChunkType.DEAD_PARTICLES],
+        )
 
     def test_ipc_pause_bridge(self):
         """Проверка адаптера межпроцессной паузы IpcPauseBridge."""

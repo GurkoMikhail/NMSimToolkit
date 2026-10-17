@@ -20,7 +20,6 @@ class InitialState(NamedTuple):
     """
 
     ID: NDArray[ID]
-    has_interacted: NDArray[np.bool_]
 
     emission_time: NDArray[Time]
     emission_energy: NDArray[Energy]
@@ -45,7 +44,6 @@ class InitialState(NamedTuple):
 
         tracked_arrays = [
             self.ID,
-            self.has_interacted,
             self.emission_time,
             self.emission_energy,
         ]
@@ -71,7 +69,6 @@ class InitialState(NamedTuple):
         """
         buffer = cls(
             ID=np.empty(capacity, dtype=ID),
-            has_interacted=np.zeros(capacity, dtype=np.bool_),
             emission_time=np.empty(capacity, dtype=Time),
             emission_energy=np.empty(capacity, dtype=Energy),
             emission_position=Vector3DSoA.allocate(capacity, dtype=Length),

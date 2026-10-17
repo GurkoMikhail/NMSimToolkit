@@ -16,7 +16,7 @@ from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.processes import Process
 from core.transport.transport_buffer import TransportBuffer
 from core.transport.transport_kernels import (
-    _push_to_initial_state_kernel,
+    _push_first_interacting_to_initial_state_kernel,
     make_transport_kernel,
 )
 import settings.database_setting as database_setting
@@ -94,13 +94,13 @@ class ParticlePropagator:
         )
 
         # 3. Запись начального состояния для частиц, провзаимодействовавших впервые
-        interacting_mask = self.transport_buffer.process_ids[active_indices] != -1
-        interacting_mask &= ~bank.initial_state.has_interacted[active_indices]
-
-        interacting_indices = active_indices[interacting_mask]
-
-        if interacting_indices.size > 0:
-            _push_to_initial_state_kernel(bank.initial_state, interacting_indices, data_buffer.initial_states)
+        _push_first_interacting_to_initial_state_kernel(
+            bank.initial_state,
+            bank.state,
+            active_indices,
+            self.transport_buffer.process_ids,
+            data_buffer.initial_states,
+        )
 
         # 4. Уплотнение потока (Stream Compaction) и диспетчеризация по ядрам процессов
         for process in self.processes:

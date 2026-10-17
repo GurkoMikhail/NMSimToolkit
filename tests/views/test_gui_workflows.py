@@ -19,6 +19,7 @@ from core.scene.dose_grid_node import DoseGridNode
 from gui.viewmodels.nodes.gamma_camera_vm import create_default_gamma_camera_vm
 from core.geometry.spect_kinematics import compute_orbit_matrix
 from core.other.typing_definitions import Float
+from core.physics.interaction_buffers import ChunkType
 from core.config.builder import SceneBuilder
 from core.config.exporter import SceneExporter
 from core.config.yaml_loader import load_simulation_config
@@ -330,7 +331,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
 
             # Отправка чанка initial_states
             init_chunk = {
-                'type': 'initial_states',
+                'type': ChunkType.INITIAL_STATES,
                 'data': {
                     'pos_x': np.array([0.0, 5.0]),
                     'pos_y': np.array([0.0, 5.0]),
@@ -348,22 +349,28 @@ class TestGUIIntegrationFixes(unittest.TestCase):
 
             # Чанк escaped_particles игнорируется при show_escaped_tracks=False
             esc_chunk = {
-                'type': 'escaped_particles',
+                'type': ChunkType.ESCAPED_PARTICLES,
                 'data': {
-                    'birth_x': np.array([0.0]),
-                    'birth_y': np.array([0.0]),
-                    'birth_z': np.array([0.0]),
                     'pos_x': np.array([200.0]),
                     'pos_y': np.array([200.0]),
                     'pos_z': np.array([200.0]),
-                    'particle_id': np.array([999]),
+                    'particle_ID': np.array([999]),
                 }
             }
             handler.process_chunk(esc_chunk)
             self.assertTrue(q.empty())
 
-            # При включении флага вылетевшие частицы передаются
+            # При включении флага начальное состояние приходит через INITIAL_STATES, а вылет через ESCAPED_PARTICLES
             handler.show_escaped_tracks = True
+            handler.process_chunk({
+                'type': ChunkType.INITIAL_STATES,
+                'data': {
+                    'pos_x': np.array([0.0]),
+                    'pos_y': np.array([0.0]),
+                    'pos_z': np.array([0.0]),
+                    'particle_ID': np.array([999]),
+                }
+            })
             handler.process_chunk(esc_chunk)
             p_birth = q.get(timeout=1.0)
             p_escape = q.get(timeout=1.0)
@@ -454,7 +461,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         try:
             # 1. Начальные состояния (эмиссия из источника)
             init_chunk = {
-                'type': 'initial_states',
+                'type': ChunkType.INITIAL_STATES,
                 'data': {
                     'pos_x': np.array([0.0, 10.0]),
                     'pos_y': np.array([0.0, 10.0]),
@@ -470,7 +477,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
 
             # 2. Взаимодействия (рассеяние частицы 1)
             inter_chunk = {
-                'type': 'interactions',
+                'type': ChunkType.INTERACTIONS,
                 'data': {
                     'pos_x': np.array([5.0]),
                     'pos_y': np.array([5.0]),
@@ -485,26 +492,17 @@ class TestGUIIntegrationFixes(unittest.TestCase):
             self.assertEqual(p_inter['process_id'][0], 1)
             self.assertEqual(p_inter['particle_id'][0], 1)
 
-            # 3. Вылет частиц: частица 1 рассеялась (has_interacted=True), частица 2 не рассеялась (has_interacted=False)
+            # 3. Вылет частиц: начальные состояния обеих частиц уже переданы в п. 1 через INITIAL_STATES
             esc_chunk = {
-                'type': 'escaped_particles',
+                'type': ChunkType.ESCAPED_PARTICLES,
                 'data': {
-                    'birth_x': np.array([0.0, 10.0]),
-                    'birth_y': np.array([0.0, 10.0]),
-                    'birth_z': np.array([0.0, 0.0]),
                     'pos_x': np.array([50.0, 60.0]),
                     'pos_y': np.array([50.0, 60.0]),
                     'pos_z': np.array([0.0, 0.0]),
-                    'particle_id': np.array([1, 2]),
-                    'has_interacted': np.array([True, False]),
+                    'particle_ID': np.array([1, 2]),
                 }
             }
             handler.process_chunk(esc_chunk)
-
-            # Для нерассеянной частицы 2 должна прийти точка рождения
-            p_esc_birth = q.get(timeout=1.0)
-            self.assertEqual(p_esc_birth['process_id'][0], -2)
-            self.assertEqual(p_esc_birth['particle_id'][0], 2)
 
             # Точки выхода для обеих частиц
             p_esc_out = q.get(timeout=1.0)

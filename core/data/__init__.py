@@ -21,8 +21,10 @@ from core.data.metadata_collector import (
     SimulationMetadataProvider,
     ProcedureMetadataCollector,
 )
+from core.physics.interaction_buffers import ChunkType
 
 __all__ = [
+    'ChunkType',
     'BaseDataHandler',
     'DirectStreamHandler',
     'SensitiveVolumeHandler',

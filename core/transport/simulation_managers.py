@@ -8,7 +8,7 @@ import logging
 import queue
 from signal import SIGINT, signal
 import threading
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import AbstractSet, Any, Callable, Dict, FrozenSet, List, Optional, Union
 
 import hepunits as units
 import numpy as np
@@ -17,15 +17,26 @@ from numpy.typing import NDArray
 from core.geometry.geometry_compiler import GeometryCompiler
 from core.other.typing_definitions import Float, Index
 from core.particles.particles import ParticleBank
-from core.physics.interaction_buffers import RNGContext, SimulationDataBuffer
+from core.physics.interaction_buffers import ChunkType, RNGContext, SimulationDataBuffer
 from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.physics_compiler import PhysicsCompiler
 from core.scene.nodes import CompositeNode
 from core.source.source_compiler import SourceCompiler
 from core.source.sources import Source
 from core.transport.propagator import ParticlePropagator
+from core.transport.transport_kernels import (
+    _push_to_dead_particles_kernel,
+    _push_to_escaped_particles_kernel,
+    _push_uncollided_to_initial_state_kernel,
+)
 
 _logger = logging.getLogger(__name__)
+
+DEFAULT_CONSUMED_CHUNK_TYPES: FrozenSet[ChunkType] = frozenset({
+    ChunkType.INITIAL_STATES,
+    ChunkType.INTERACTIONS,
+    ChunkType.DEAD_PARTICLES,
+})
 
 
 class SimulationState(Enum):
@@ -58,6 +69,7 @@ class SimulationManager(Thread):
     particles_number: int
     min_energy: Float
     queue: Queue[Any]
+    consumed_chunk_types: FrozenSet[ChunkType]
     bank: ParticleBank
     data_buffer: SimulationDataBuffer
     geometry_buffer: NDArray[Any]
@@ -83,6 +95,7 @@ class SimulationManager(Thread):
         seed: Optional[int] = None,
         initial_particle_id: int = 0,
         rng_state: Optional[Dict[str, Any]] = None,
+        consumed_chunk_types: Optional[AbstractSet[ChunkType]] = None,
     ) -> None:
         super().__init__()
         if name is not None:
@@ -102,12 +115,22 @@ class SimulationManager(Thread):
         )
         self.min_energy = Float(min_energy)
         self.queue = Queue(maxsize=64) if queue is None else queue
+        self.consumed_chunk_types = (
+            DEFAULT_CONSUMED_CHUNK_TYPES
+            if consumed_chunk_types is None
+            else frozenset(consumed_chunk_types)
+        )
         self.step = 1
         self.daemon = True
 
         self.bank = ParticleBank.allocate(self.particles_number)
         self.bank.count_array[0] = Index(self.initial_particle_id)
-        self.data_buffer = SimulationDataBuffer.allocate(effective_capacity, effective_capacity, effective_capacity)
+        self.data_buffer = SimulationDataBuffer.allocate(
+            interaction_capacity=effective_capacity if ChunkType.INTERACTIONS in self.consumed_chunk_types else 0,
+            initial_state_capacity=effective_capacity if ChunkType.INITIAL_STATES in self.consumed_chunk_types else 0,
+            dead_particles_capacity=effective_capacity if ChunkType.DEAD_PARTICLES in self.consumed_chunk_types else 0,
+            escaped_particles_capacity=effective_capacity if ChunkType.ESCAPED_PARTICLES in self.consumed_chunk_types else 0,
+        )
 
         self.rng = np.random.default_rng(seed) if seed is not None else self.propagator.rng
         if rng_state is not None:
@@ -190,12 +213,38 @@ class SimulationManager(Thread):
         interaction_count = self.data_buffer.interactions.cursor_value
         if interaction_count == 0:
             return
+        if ChunkType.INTERACTIONS not in self.consumed_chunk_types:
+            self.data_buffer.interactions.reset_cursor()
+            return
 
         _logger.debug(f'{self.name} flushing {interaction_count} interactions')
 
         chunk = {
-            'type': 'interactions',
+            'type': ChunkType.INTERACTIONS,
             'data': self.data_buffer.interactions.flush_to_dict(clear=True)
+        }
+        self.send_data(chunk)
+
+    def flush_escaped_particles(self) -> None:
+        """
+        Сбрасывает накопленный буфер вылетевших за пределы сцены частиц в очередь телеметрии.
+        Перед отправкой гарантированно сбрасываются начальные состояния и взаимодействия.
+        """
+        escaped_count = self.data_buffer.escaped_particles.cursor_value
+        if escaped_count == 0:
+            return
+        if ChunkType.ESCAPED_PARTICLES not in self.consumed_chunk_types:
+            self.data_buffer.escaped_particles.reset_cursor()
+            return
+
+        self.flush_initial_states()
+        self.flush_interactions()
+
+        _logger.debug(f'{self.name} flushing {escaped_count} escaped particles')
+
+        chunk = {
+            'type': ChunkType.ESCAPED_PARTICLES,
+            'data': self.data_buffer.escaped_particles.flush_to_dict(clear=True)
         }
         self.send_data(chunk)
 
@@ -203,18 +252,23 @@ class SimulationManager(Thread):
         """
         Сбрасывает накопленные идентификаторы выбывших частиц в очередь телеметрии.
         Для сохранения строгой причинно-следственной связи перед отправкой выбывших частиц
-        гарантированно сбрасываются все предшествующие начальные состояния и взаимодействия.
+        гарантированно сбрасываются все предшествующие начальные состояния, взаимодействия
+        и вылетевшие частицы.
         """
         dead_count = self.data_buffer.dead_particles.cursor_value
         if dead_count == 0:
             return
+        if ChunkType.DEAD_PARTICLES not in self.consumed_chunk_types:
+            self.data_buffer.dead_particles.reset_cursor()
+            return
 
         self.flush_initial_states()
         self.flush_interactions()
+        self.flush_escaped_particles()
 
         _logger.debug(f'{self.name} flushing {dead_count} dead particles')
         chunk = {
-            'type': 'dead_particles',
+            'type': ChunkType.DEAD_PARTICLES,
             'data': self.data_buffer.dead_particles.flush_to_array(clear=True)
         }
         self.send_data(chunk)
@@ -226,11 +280,14 @@ class SimulationManager(Thread):
         initial_count = self.data_buffer.initial_states.cursor_value
         if initial_count == 0:
             return
+        if ChunkType.INITIAL_STATES not in self.consumed_chunk_types:
+            self.data_buffer.initial_states.reset_cursor()
+            return
 
         _logger.debug(f'{self.name} flushing {initial_count} initial states')
 
         chunk = {
-            'type': 'initial_states',
+            'type': ChunkType.INITIAL_STATES,
             'data': self.data_buffer.initial_states.flush_to_dict(clear=True)
         }
         self.send_data(chunk)
@@ -238,10 +295,11 @@ class SimulationManager(Thread):
     def flush_all(self) -> None:
         """
         Выполняет полный сброс всех буферов телеметрии в строгом причинно-следственном порядке:
-        initial_states → interactions → dead_particles.
+        initial_states → interactions → escaped_particles → dead_particles.
         """
         self.flush_initial_states()
         self.flush_interactions()
+        self.flush_escaped_particles()
         self.flush_dead_particles()
 
     def _invalidate_by_energy(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
@@ -370,59 +428,86 @@ class SimulationManager(Thread):
 
         self.step += 1
 
-    def _collect_escaped_particles(self, dead_indices: NDArray[Index]) -> None:
+    def _push_indices_with_flush(
+        self,
+        indices: NDArray[Index],
+        buffer: Any,
+        push_fn: Callable[[NDArray[Index]], None],
+        flush_fn: Callable[[], None],
+        flush_on_full: bool = False,
+    ) -> None:
         """
-        Регистрация вылетевших частиц за границы геометрии сцены и отправка в очередь телеметрии.
+        Записывает массив индексов слотов банка в целевой кольцевой буфер порциями,
+        автоматически выполняя сброс буфера при нехватке свободного места.
         """
-        if self.queue is None:
+        total_count = int(indices.shape[0])
+        if total_count == 0 or buffer.capacity <= 0:
             return
 
-        escaped_mask = (self.bank.navigation_state.current_volume[dead_indices] < 0)
+        buffer_capacity = buffer.capacity
+        if total_count > buffer.remaining_capacity:
+            flush_fn()
+
+        if total_count <= buffer.remaining_capacity:
+            push_fn(indices)
+            if flush_on_full and buffer.remaining_capacity == 0:
+                flush_fn()
+        else:
+            for offset in range(0, total_count, buffer_capacity):
+                chunk_indices = indices[offset:offset + buffer_capacity]
+                if int(chunk_indices.shape[0]) > buffer.remaining_capacity:
+                    flush_fn()
+                push_fn(chunk_indices)
+                if flush_on_full and buffer.remaining_capacity == 0:
+                    flush_fn()
+
+    def _collect_escaped_particles(self, dead_indices: NDArray[Index]) -> None:
+        """
+        Накопление вылетевших за границы геометрии сцены частиц в предвыделенном кольцевом буфере
+        EscapedParticlesBuffer со сбросом в очередь телеметрии по заполнению буфера.
+        При активной подписке на INITIAL_STATES начальные состояния вылетевших без рассеяния
+        частиц предварительно записываются в InitialStateBuffer.
+        """
+        if self.queue is None or self.data_buffer.escaped_particles.capacity <= 0:
+            return
+
+        escaped_mask = self.bank.navigation_state.current_volume[dead_indices] < 0
         if not np.any(escaped_mask):
             return
 
         escaped_indices = dead_indices[escaped_mask]
-        birth_x = self.bank.initial_state.emission_position.x[escaped_indices]
-        birth_y = self.bank.initial_state.emission_position.y[escaped_indices]
-        birth_z = self.bank.initial_state.emission_position.z[escaped_indices]
-        escaped_x = self.bank.state.position.x[escaped_indices]
-        escaped_y = self.bank.state.position.y[escaped_indices]
-        escaped_z = self.bank.state.position.z[escaped_indices]
-        escaped_particle_ids = self.bank.initial_state.ID[escaped_indices]
-        has_interacted = self.bank.initial_state.has_interacted[escaped_indices]
 
-        escaped_chunk = {
-            'type': 'escaped_particles',
-            'data': {
-                'birth_x': np.array(birth_x, copy=True),
-                'birth_y': np.array(birth_y, copy=True),
-                'birth_z': np.array(birth_z, copy=True),
-                'pos_x': np.array(escaped_x, copy=True),
-                'pos_y': np.array(escaped_y, copy=True),
-                'pos_z': np.array(escaped_z, copy=True),
-                'particle_id': np.array(escaped_particle_ids, copy=True),
-                'has_interacted': np.array(has_interacted, copy=True),
-            }
-        }
-        self.send_data(escaped_chunk)
+        self._push_indices_with_flush(
+            indices=escaped_indices,
+            buffer=self.data_buffer.initial_states,
+            push_fn=lambda chunk: _push_uncollided_to_initial_state_kernel(
+                self.bank.initial_state, self.bank.state, chunk, self.data_buffer.initial_states
+            ),
+            flush_fn=self.flush_initial_states,
+        )
+
+        self._push_indices_with_flush(
+            indices=escaped_indices,
+            buffer=self.data_buffer.escaped_particles,
+            push_fn=lambda chunk: _push_to_escaped_particles_kernel(
+                self.bank.initial_state, self.bank.state, chunk, self.data_buffer.escaped_particles
+            ),
+            flush_fn=self.flush_escaped_particles,
+            flush_on_full=True,
+        )
 
     def _handle_dead_particles(self, dead_indices: NDArray[Index]) -> None:
         """
         Запись идентификаторов поглощенных и выбывших частиц в кольцевой буфер завершенных историй.
         """
-        dead_ids = self.bank.initial_state.ID[dead_indices]
-        buffer_capacity = self.data_buffer.dead_particles.capacity
-        if len(dead_ids) > self.data_buffer.dead_particles.remaining_capacity:
-            self.flush_dead_particles()
-
-        if len(dead_ids) <= self.data_buffer.dead_particles.remaining_capacity:
-            self.data_buffer.dead_particles.append(dead_ids)
-        else:
-            for idx in range(0, len(dead_ids), buffer_capacity):
-                chunk_slice = dead_ids[idx:idx + buffer_capacity]
-                if len(chunk_slice) > self.data_buffer.dead_particles.remaining_capacity:
-                    self.flush_dead_particles()
-                self.data_buffer.dead_particles.append(chunk_slice)
+        self._push_indices_with_flush(
+            indices=dead_indices,
+            buffer=self.data_buffer.dead_particles,
+            push_fn=lambda chunk: _push_to_dead_particles_kernel(
+                self.bank.initial_state, chunk, self.data_buffer.dead_particles
+            ),
+            flush_fn=self.flush_dead_particles,
+        )
 
     def run(self) -> None:
         """Запуск цикла симуляции в рабочем потоке."""
@@ -453,6 +538,7 @@ class SimulationManager(Thread):
 
 
 __all__ = [
+    "DEFAULT_CONSUMED_CHUNK_TYPES",
     "SimulationState",
     "SimulationManager",
 ]

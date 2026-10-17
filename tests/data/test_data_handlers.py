@@ -8,6 +8,7 @@ import hepunits as units
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
+from core.physics.interaction_buffers import ChunkType
 from core.scene.nodes import CompositeNode
 from core.data.data_handlers import SensitiveVolumeHandler, HistoryAssemblerHandler
 from core.data.data_manager import DataManager
@@ -58,7 +59,7 @@ class TestDataHandlers(unittest.TestCase):
 
         # Имитируем два события: одно в кристалле, одно вне его (в воздухе мира)
         handler.process_chunk({
-            'type': 'interactions',
+            'type': ChunkType.INTERACTIONS,
             'data': {
                 'particle_ID': np.array([1, 2], dtype=np.uint64),
                 'volume_id': np.array([crystal_id, 0], dtype=np.uint32),
@@ -136,7 +137,7 @@ class TestDataHandlers(unittest.TestCase):
         # Имитируем частицу 101, рассеявшуюся в фантоме (1) и поглощенную в Detector_1 (6)
         # и частицу 102, рассеявшуюся в фантоме (1) и поглощенную в Detector_2 (12)
         handler.process_chunk({
-            'type': 'interactions',
+            'type': ChunkType.INTERACTIONS,
             'data': {
                 'particle_ID': np.array([101, 101, 102, 102], dtype=np.uint64),
                 'volume_id': np.array([1, 6, 1, 12], dtype=np.uint32),
@@ -159,7 +160,7 @@ class TestDataHandlers(unittest.TestCase):
 
         # Завершение треков частиц
         handler.process_chunk({
-            'type': 'dead_particles',
+            'type': ChunkType.DEAD_PARTICLES,
             'data': np.array([101, 102], dtype=np.uint64)
         })
 
@@ -389,7 +390,7 @@ class TestDataHandlers(unittest.TestCase):
 
         # Имитируем взаимодействия в обоих кристаллах
         handler.process_chunk({
-            'type': 'interactions',
+            'type': ChunkType.INTERACTIONS,
             'data': {
                 'particle_ID': np.array([101, 102], dtype=np.uint64),
                 'volume_id': np.array([front_id, back_id], dtype=np.uint32),
@@ -471,7 +472,7 @@ class TestDataHandlers(unittest.TestCase):
 
         # Передаем словарь без pos_x, pos_y, pos_z, dir_x, dir_y, dir_z
         handler.process_chunk({
-            'type': 'interactions',
+            'type': ChunkType.INTERACTIONS,
             'data': {
                 'particle_ID': np.array([77, 88], dtype=np.uint64),
                 'volume_id': np.array([crystal_id, crystal_id], dtype=np.uint32),
@@ -489,6 +490,196 @@ class TestDataHandlers(unittest.TestCase):
             crystal_group = h5_file["interactions/Crystal"]
             self.assertEqual(crystal_group["global_position"].shape, (2, 3))
             self.assertEqual(crystal_group["global_direction"].shape, (2, 3))
+
+    def test_consumed_chunk_types_contract_and_filtering(self) -> None:
+        """
+        Проверка контракта BaseDataHandler.consumed_chunk_types:
+        1. Подкласс без реализации consumed_chunk_types вызывает TypeError при инстанциировании.
+        2. Все обработчики декларируют строгие неизменяемые множества потребляемых типов чанков.
+        3. DataManager агрегирует подписки и не вызывает process_chunk для неподписанных типов.
+        """
+        import queue
+        from core.data.data_handlers import BaseDataHandler, DirectStreamHandler
+        from core.data.dose_map_handler import DoseMapHandler
+        from gui.controllers.stream_handlers import GuiStreamDataHandler
+
+        world = Volume(geometry=Box(100.0, 100.0, 100.0), material=Material(name="Air"), name="World")
+        det_vol = Volume(geometry=Box(50.0, 50.0, 10.0), material=Material(name="NaI"), name="Crystal")
+        world.add_child(det_vol)
+
+        class IncompleteHandler(BaseDataHandler):
+            def process_chunk(self, chunk):
+                pass
+
+        with self.assertRaises(TypeError):
+            IncompleteHandler()  # type: ignore[abstract]
+
+        direct = DirectStreamHandler()
+        self.assertEqual(
+            direct.consumed_chunk_types,
+            frozenset({ChunkType.INITIAL_STATES, ChunkType.INTERACTIONS}),
+        )
+
+        sensitive = SensitiveVolumeHandler(sensitive_volumes=[det_vol])
+        self.assertEqual(sensitive.consumed_chunk_types, frozenset({ChunkType.INTERACTIONS}))
+
+        hist_with_init = HistoryAssemblerHandler(sensitive_volumes=[det_vol], save_initial_states=True)
+        self.assertEqual(
+            hist_with_init.consumed_chunk_types,
+            frozenset({ChunkType.INITIAL_STATES, ChunkType.INTERACTIONS, ChunkType.DEAD_PARTICLES}),
+        )
+
+        hist_no_init = HistoryAssemblerHandler(sensitive_volumes=[det_vol], save_initial_states=False)
+        self.assertEqual(
+            hist_no_init.consumed_chunk_types,
+            frozenset({ChunkType.INTERACTIONS, ChunkType.DEAD_PARTICLES}),
+        )
+
+        dose = DoseMapHandler(grid_nodes=[], create_shm=False)
+        self.assertEqual(dose.consumed_chunk_types, frozenset({ChunkType.INTERACTIONS}))
+
+        gui_no_esc = GuiStreamDataHandler(show_escaped_tracks=False)
+        self.assertEqual(
+            gui_no_esc.consumed_chunk_types,
+            frozenset({ChunkType.INITIAL_STATES, ChunkType.INTERACTIONS}),
+        )
+
+        gui_with_esc = GuiStreamDataHandler(show_escaped_tracks=True)
+        self.assertEqual(
+            gui_with_esc.consumed_chunk_types,
+            frozenset({ChunkType.INITIAL_STATES, ChunkType.INTERACTIONS, ChunkType.ESCAPED_PARTICLES}),
+        )
+
+        received_types = []
+
+        class InteractionsOnlySpyHandler(BaseDataHandler):
+            @property
+            def consumed_chunk_types(self):
+                return frozenset({ChunkType.INTERACTIONS})
+
+            def process_chunk(self, chunk):
+                received_types.append(chunk["type"])
+
+        spy = InteractionsOnlySpyHandler()
+        q: queue.Queue = queue.Queue()
+        dm = DataManager(filename=self.h5_path, handlers=[spy, dose], queue=q, swmr=False)
+        self.assertEqual(dm.consumed_chunk_types, frozenset({ChunkType.INTERACTIONS}))
+
+        q.put({"type": ChunkType.INITIAL_STATES, "data": {"particle_ID": np.array([1], dtype=np.int64)}})
+        q.put({"type": ChunkType.ESCAPED_PARTICLES, "data": {"particle_ID": np.array([1], dtype=np.int64)}})
+        q.put({
+            "type": ChunkType.INTERACTIONS,
+            "data": {"pos_x": np.array([], dtype=np.float64), "energy_deposit": np.array([], dtype=np.float64)},
+        })
+        q.put("stop")
+        dm.run()
+
+        self.assertEqual(received_types, [ChunkType.INTERACTIONS])
+
+    def test_escaped_particles_buffering_and_subscription_gating(self) -> None:
+        """
+        Проверка гейтинга _collect_escaped_particles по подписке и буферизации EscapedParticlesBuffer:
+        1. Без подписки на ChunkType.ESCAPED_PARTICLES емкость буфера равна 0 и чанки не создаются.
+        2. С подпиской на ChunkType.ESCAPED_PARTICLES и ChunkType.INITIAL_STATES для непрореагировавших
+           вылетевших частиц автоматически дозаписываются начальные состояния в initial_states, а точки
+           вылета накапливаются в escaped_particles и сбрасываются по заполнению буфера.
+        """
+        from core.other.typing_definitions import Float, Index
+        from core.particles.particles import ParticleBank
+        from core.physics.interaction_buffers import EscapedParticlesBuffer
+        from core.transport.simulation_managers import SimulationManager
+        from core.transport.transport_kernels import _push_to_escaped_particles_kernel
+
+        world = Volume(geometry=Box(100.0, 100.0, 100.0), material=Material(name="Air"), name="World")
+
+        # 1. Тест записи в EscapedParticlesBuffer через Numba-ядро _push_to_escaped_particles_kernel
+        esc_buf = EscapedParticlesBuffer.allocate(4)
+        esc_buf.validate()
+        test_bank = ParticleBank.allocate(5)
+        test_bank.initial_state.ID[:] = np.array([100, 200, 300, 400, 500], dtype=Index)
+        test_bank.state.position.x[:] = np.array([20.0, 40.0, 60.0, 80.0, 100.0], dtype=Float)
+        test_bank.state.position.y[:] = np.array([21.0, 41.0, 61.0, 81.0, 101.0], dtype=Float)
+        test_bank.state.position.z[:] = np.array([22.0, 42.0, 62.0, 82.0, 102.0], dtype=Float)
+
+        _push_to_escaped_particles_kernel(
+            test_bank.initial_state,
+            test_bank.state,
+            np.array([1, 3], dtype=Index),
+            esc_buf,
+        )
+        self.assertEqual(esc_buf.cursor_value, 2)
+        self.assertEqual(esc_buf.remaining_capacity, 2)
+
+        flushed = esc_buf.flush_to_dict(clear=True)
+        self.assertEqual(esc_buf.cursor_value, 0)
+        np.testing.assert_array_equal(flushed["particle_ID"], np.array([200, 400], dtype=Index))
+        np.testing.assert_array_equal(flushed["pos_x"], np.array([40.0, 80.0], dtype=Float))
+        np.testing.assert_array_equal(flushed["pos_y"], np.array([41.0, 81.0], dtype=Float))
+        np.testing.assert_array_equal(flushed["pos_z"], np.array([42.0, 82.0], dtype=Float))
+        self.assertNotIn("birth_x", flushed)
+        self.assertNotIn("has_interacted", flushed)
+
+        # 2. Проверка нулевой емкости неактивных буферов без подписки на ChunkType.ESCAPED_PARTICLES
+        sim_no_esc = SimulationManager(
+            scene=world,
+            particles_number=4,
+            buffer_capacity=10,
+            stop_time=Float(1.0 * units.s),
+            consumed_chunk_types=frozenset({ChunkType.INTERACTIONS}),
+        )
+        self.assertEqual(sim_no_esc.data_buffer.interactions.capacity, 10)
+        self.assertEqual(sim_no_esc.data_buffer.initial_states.capacity, 0)
+        self.assertEqual(sim_no_esc.data_buffer.dead_particles.capacity, 0)
+        self.assertEqual(sim_no_esc.data_buffer.escaped_particles.capacity, 0)
+
+        sim_no_esc.bank.navigation_state.current_volume[:2] = -1
+        sim_no_esc.bank.state.is_active[:2] = True
+        sim_no_esc.bank.navigation_state.boundary_distance[:2] = 1.0
+
+        dead_idx = sim_no_esc._apply_invalidators(np.array([0, 1], dtype=Index))
+        self.assertEqual(len(dead_idx), 2)
+        self.assertNotIn(ChunkType.ESCAPED_PARTICLES, sim_no_esc.consumed_chunk_types)
+
+        # 3. Проверка буферизации при наличии подписки на ChunkType.ESCAPED_PARTICLES и ChunkType.INITIAL_STATES
+        sim_with_esc = SimulationManager(
+            scene=world,
+            particles_number=4,
+            buffer_capacity=4,
+            stop_time=Float(1.0 * units.s),
+            consumed_chunk_types=frozenset({ChunkType.INITIAL_STATES, ChunkType.ESCAPED_PARTICLES}),
+        )
+        sim_with_esc.bank.navigation_state.current_volume[:4] = -1
+        sim_with_esc.bank.initial_state.ID[:4] = np.array([11, 22, 33, 44], dtype=Index)
+        # Частицы 0 и 2 не взаимодействовали (direction == emission_direction)
+        # Частицы 1 и 3 провзаимодействовали (direction != emission_direction)
+        sim_with_esc.bank.initial_state.emission_energy[:4] = 140.0
+        sim_with_esc.bank.state.energy[:4] = np.array([140.0, 100.0, 140.0, 90.0], dtype=Float)
+        sim_with_esc.bank.initial_state.emission_direction.x[:4] = 0.0
+        sim_with_esc.bank.initial_state.emission_direction.y[:4] = 0.0
+        sim_with_esc.bank.initial_state.emission_direction.z[:4] = 1.0
+        sim_with_esc.bank.state.direction.x[:4] = np.array([0.0, 1.0, 0.0, 0.0], dtype=Float)
+        sim_with_esc.bank.state.direction.y[:4] = np.array([0.0, 0.0, 0.0, 1.0], dtype=Float)
+        sim_with_esc.bank.state.direction.z[:4] = np.array([1.0, 0.0, 1.0, 0.0], dtype=Float)
+
+        # Первая порция из 2 частиц меньше емкости буфера (4) -> накапливается в буфере, очередь пуста
+        sim_with_esc._collect_escaped_particles(np.array([0, 1], dtype=Index))
+        self.assertEqual(sim_with_esc.data_buffer.escaped_particles.cursor_value, 2)
+        # В initial_states записана только непрореагировавшая частица 0 (ID=11)
+        self.assertEqual(sim_with_esc.data_buffer.initial_states.cursor_value, 1)
+        self.assertEqual(int(sim_with_esc.data_buffer.initial_states.particle_ID[0]), 11)
+        self.assertTrue(sim_with_esc.queue.empty())
+
+        # Вторая порция из 2 частиц заполняет буфер escaped_particles до capacity (4) -> автоматический сброс в очередь
+        # Согласно причинно-следственному порядку flush_escaped_particles сначала сбрасывает initial_states, затем escaped_particles
+        sim_with_esc._collect_escaped_particles(np.array([2, 3], dtype=Index))
+        self.assertEqual(sim_with_esc.data_buffer.escaped_particles.cursor_value, 0)
+        self.assertFalse(sim_with_esc.queue.empty())
+        chunk_init = sim_with_esc.queue.get_nowait()
+        self.assertEqual(chunk_init["type"], ChunkType.INITIAL_STATES)
+        np.testing.assert_array_equal(chunk_init["data"]["particle_ID"], np.array([11, 33], dtype=Index))
+        chunk_esc = sim_with_esc.queue.get_nowait()
+        self.assertEqual(chunk_esc["type"], ChunkType.ESCAPED_PARTICLES)
+        np.testing.assert_array_equal(chunk_esc["data"]["particle_ID"], np.array([11, 22, 33, 44], dtype=Index))
 
 
 if __name__ == '__main__':

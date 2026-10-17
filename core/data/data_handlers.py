@@ -7,13 +7,14 @@
 import abc
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Set
 
 import h5py
 import numpy as np
 
 from core.geometry.flattened_scene import FlattenedScene
 from core.geometry.volumes import Volume
+from core.physics.interaction_buffers import ChunkType
 from core.physics.processes import get_process_mapping, get_species_mapping
 from core.scene.nodes import CompositeNode, SpatialNode
 
@@ -36,6 +37,14 @@ class BaseDataHandler(abc.ABC):
         self.floating_point_precision: str = floating_point_precision
         self.compression: Optional[str] = compression
         self.compression_opts: int = compression_opts
+
+    @property
+    @abc.abstractmethod
+    def consumed_chunk_types(self) -> FrozenSet[ChunkType]:
+        """
+        Множество типов чанков данных (ChunkType), потребляемых данным обработчиком.
+        """
+        pass
 
     def set_writer_callback(self, callback: Callable[[Callable[[h5py.File], None]], None]) -> None:
         """
@@ -72,6 +81,11 @@ class DirectStreamHandler(BaseDataHandler):
     Обработчик прямой потоковой записи всех начальных состояний и взаимодействий частиц в HDF5.
     """
 
+    _CONSUMED_CHUNK_TYPES: FrozenSet[ChunkType] = frozenset({
+        ChunkType.INITIAL_STATES,
+        ChunkType.INTERACTIONS,
+    })
+
     def __init__(
         self,
         floating_point_precision: str = "float32",
@@ -83,6 +97,10 @@ class DirectStreamHandler(BaseDataHandler):
             compression=compression,
             compression_opts=compression_opts,
         )
+
+    @property
+    def consumed_chunk_types(self) -> FrozenSet[ChunkType]:
+        return self._CONSUMED_CHUNK_TYPES
 
     def _format_raw_interactions(self, interactions: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
@@ -166,9 +184,9 @@ class DirectStreamHandler(BaseDataHandler):
         if data is None:
             return
 
-        if chunk_type == 'initial_states':
+        if chunk_type == ChunkType.INITIAL_STATES:
             self._write_initial_states(data)
-        elif chunk_type == 'interactions':
+        elif chunk_type == ChunkType.INTERACTIONS:
             formatted_data = self._format_raw_interactions(data)
             self._write_interactions({'All_Volumes': formatted_data})
 
@@ -262,6 +280,8 @@ class SensitiveVolumeHandler(DirectStreamHandler):
     Обработчик записи взаимодействий частиц только в заданных чувствительных объемах (и их поддеревьях).
     """
 
+    _CONSUMED_CHUNK_TYPES: FrozenSet[ChunkType] = frozenset({ChunkType.INTERACTIONS})
+
     def __init__(
         self,
         sensitive_volumes: List[SpatialNode],
@@ -352,7 +372,7 @@ class SensitiveVolumeHandler(DirectStreamHandler):
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')
         data = chunk.get('data')
-        if chunk_type == 'interactions' and data is not None:
+        if chunk_type == ChunkType.INTERACTIONS and data is not None:
             self._process_interactions(data)
 
     def _process_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
@@ -495,6 +515,16 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
     полную историю только для зарегистрированных частиц.
     """
 
+    _CONSUMED_WITH_INITIAL: FrozenSet[ChunkType] = frozenset({
+        ChunkType.INITIAL_STATES,
+        ChunkType.INTERACTIONS,
+        ChunkType.DEAD_PARTICLES,
+    })
+    _CONSUMED_WITHOUT_INITIAL: FrozenSet[ChunkType] = frozenset({
+        ChunkType.INTERACTIONS,
+        ChunkType.DEAD_PARTICLES,
+    })
+
     def __init__(
         self,
         sensitive_volumes: List[SpatialNode],
@@ -515,22 +545,26 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
         self.interactions_chunks: List[Dict[str, np.ndarray]] = []
         self.scored_particles: Set[int] = set()
 
+    @property
+    def consumed_chunk_types(self) -> FrozenSet[ChunkType]:
+        return self._CONSUMED_WITH_INITIAL if self.save_initial_states else self._CONSUMED_WITHOUT_INITIAL
+
     def process_chunk(self, chunk: Dict[str, Any]) -> None:
         chunk_type = chunk.get('type')
         data = chunk.get('data')
         if data is None:
             return
 
-        if chunk_type == 'initial_states':
+        if chunk_type == ChunkType.INITIAL_STATES:
             if self.save_initial_states:
                 self.initial_states_chunks.append({key: np.array(val, copy=False) for key, val in data.items()})
-        elif chunk_type == 'interactions':
+        elif chunk_type == ChunkType.INTERACTIONS:
             vol_ids = data['volume_id']
             scored_mask = np.isin(vol_ids, self.target_volumes)
             if np.any(scored_mask):
                 self.scored_particles.update(data['particle_ID'][scored_mask].tolist())
             self.interactions_chunks.append({key: np.array(val, copy=False) for key, val in data.items()})
-        elif chunk_type == 'dead_particles':
+        elif chunk_type == ChunkType.DEAD_PARTICLES:
             dead_ids = np.asarray(data)
             if len(dead_ids) > 0:
                 self._flush_dead_particles(dead_ids)

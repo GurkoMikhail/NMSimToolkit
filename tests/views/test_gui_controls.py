@@ -17,6 +17,7 @@ from core.source.sources import Source, PointSource
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.other.typing_definitions import Float
+from core.physics.interaction_buffers import ChunkType
 
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
@@ -225,7 +226,7 @@ class TestAll14GUIFixes(unittest.TestCase):
         self.assertEqual(grid_node.dose_voxel_size, 10.0)
         self.assertIn("50 × 50 × 50", inspector.dose_grid_section.lbl_dose_grid_shape.text())
 
-    # 10. Передача треков вылетевших частиц
+    # 10. Передача треков вылетевших частиц (рождение через INITIAL_STATES, вылет через ESCAPED_PARTICLES)
     def test_10_escaped_particles_stream(self):
         q = Queue()
         handler = GuiStreamDataHandler(
@@ -235,19 +236,26 @@ class TestAll14GUIFixes(unittest.TestCase):
             create_shm=True
         )
         try:
-            chunk = {
-                'type': 'escaped_particles',
+            init_chunk = {
+                'type': ChunkType.INITIAL_STATES,
                 'data': {
-                    'birth_x': np.array([0.0]),
-                    'birth_y': np.array([0.0]),
-                    'birth_z': np.array([0.0]),
+                    'pos_x': np.array([0.0]),
+                    'pos_y': np.array([0.0]),
+                    'pos_z': np.array([0.0]),
+                    'particle_ID': np.array([42]),
+                }
+            }
+            esc_chunk = {
+                'type': ChunkType.ESCAPED_PARTICLES,
+                'data': {
                     'pos_x': np.array([150.0]),
                     'pos_y': np.array([200.0]),
                     'pos_z': np.array([50.0]),
-                    'particle_id': np.array([42]),
+                    'particle_ID': np.array([42]),
                 }
             }
-            handler.process_chunk(chunk)
+            handler.process_chunk(init_chunk)
+            handler.process_chunk(esc_chunk)
             
             # В очереди должны быть 2 пакета: рождение и вылет
             p1 = q.get(timeout=1.0)

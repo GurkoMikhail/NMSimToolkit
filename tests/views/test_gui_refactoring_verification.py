@@ -310,6 +310,10 @@ class TestGuiRefactoringVerification(unittest.TestCase):
         from core.data.data_handlers import BaseDataHandler
 
         class DummyHandler(BaseDataHandler):
+            @property
+            def consumed_chunk_types(self):
+                return frozenset()
+
             def process_chunk(self, chunk):
                 pass
 

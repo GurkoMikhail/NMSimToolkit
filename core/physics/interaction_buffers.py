@@ -2,6 +2,7 @@
 Модуль SoA-буферов регистрации взаимодействий, начальных состояний, выбывших частиц и контекста ГСЧ.
 """
 
+from enum import Enum
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -9,6 +10,16 @@ from numpy.typing import NDArray
 
 from core.other.typing_definitions import Charge, Energy, Float, ID, Index, Length, ProcessID, Species, Time
 from core.other.vectors import Vector3DSoA
+
+
+class ChunkType(Enum):
+    """
+    Типизированное перечисление категорий чанков данных моделирования.
+    """
+    INITIAL_STATES = "initial_states"
+    INTERACTIONS = "interactions"
+    DEAD_PARTICLES = "dead_particles"
+    ESCAPED_PARTICLES = "escaped_particles"
 
 
 class RNGContext(NamedTuple):
@@ -67,6 +78,9 @@ class InteractionBuffer(NamedTuple):
         """
         Проверяет согласованность размерностей массивов буфера взаимодействий.
         """
+        if self.capacity < 0:
+            raise ValueError("Емкость InteractionBuffer должна быть неотрицательной.")
+
         self.position.validate()
         self.direction.validate()
 
@@ -151,8 +165,7 @@ class InteractionBuffer(NamedTuple):
 
 class InitialStateBuffer(NamedTuple):
     """
-    SoA-буфер для промежуточной фиксации начальных состояний частиц
-    при их первом взаимодействии в объеме.
+    SoA-буфер для промежуточной фиксации начальных состояний частиц.
     """
     particle_ID: NDArray[ID]
     emission_time: NDArray[Time]
@@ -176,6 +189,9 @@ class InitialStateBuffer(NamedTuple):
         self.cursor[0] = 0
 
     def validate(self) -> None:
+        if self.capacity < 0:
+            raise ValueError("Емкость InitialStateBuffer должна быть неотрицательной.")
+
         self.emission_position.validate()
         self.emission_direction.validate()
 
@@ -213,9 +229,9 @@ class InitialStateBuffer(NamedTuple):
         buffer.validate()
         return buffer
 
-    def flush_to_dict(self, clear: bool = True) -> dict:
+    def flush_to_dict(self, clear: bool = True) -> dict[str, NDArray[Any]]:
         cursor_pos = self.cursor_value
-        chunk = {
+        chunk: dict[str, NDArray[Any]] = {
             'particle_ID': self.particle_ID[:cursor_pos].copy(),
             'emission_time': self.emission_time[:cursor_pos].copy(),
             'emission_energy': self.emission_energy[:cursor_pos].copy(),
@@ -251,6 +267,8 @@ class DeadParticlesBuffer(NamedTuple):
         self.cursor[0] = 0
 
     def validate(self) -> None:
+        if self.capacity < 0:
+            raise ValueError("Емкость DeadParticlesBuffer должна быть неотрицательной.")
         if self.particle_ID.ndim != 1:
             raise ValueError("Массив particle_ID в DeadParticlesBuffer должен быть одномерным.")
         if self.particle_ID.shape[0] != self.capacity:
@@ -268,20 +286,72 @@ class DeadParticlesBuffer(NamedTuple):
         buffer.validate()
         return buffer
 
-    def append(self, particle_ids: NDArray[ID]) -> None:
-        """
-        Добавляет идентификаторы завершивших трекинг частиц в буфер и сдвигает курсор.
-        """
-        particles_count = len(particle_ids)
-        cursor_pos = self.cursor_value
-        if cursor_pos + particles_count > self.capacity:
-            raise ValueError("Недостаточно места в DeadParticlesBuffer.")
-        self.particle_ID[cursor_pos:cursor_pos + particles_count] = particle_ids
-        self.cursor[0] += particles_count
-
     def flush_to_array(self, clear: bool = True) -> NDArray[ID]:
         cursor_pos = self.cursor_value
         chunk = self.particle_ID[:cursor_pos].copy()
+        if clear:
+            self.reset_cursor()
+        return chunk
+
+
+class EscapedParticlesBuffer(NamedTuple):
+    """
+    SoA-буфер для промежуточной фиксации частиц, покинувших границы геометрии сцены.
+    """
+    particle_ID: NDArray[ID]
+    position: Vector3DSoA
+
+    cursor: NDArray[Index]
+    capacity: int
+
+    @property
+    def cursor_value(self) -> int:
+        return int(self.cursor[0])
+
+    @property
+    def remaining_capacity(self) -> int:
+        return self.capacity - self.cursor_value
+
+    def reset_cursor(self) -> None:
+        self.cursor[0] = 0
+
+    def validate(self) -> None:
+        if self.capacity < 0:
+            raise ValueError("Емкость EscapedParticlesBuffer должна быть неотрицательной.")
+
+        self.position.validate()
+
+        if self.particle_ID.ndim != 1:
+            raise ValueError("Все массивы в EscapedParticlesBuffer должны быть одномерными.")
+
+        if self.particle_ID.shape[0] != self.capacity:
+            raise ValueError("Все массивы в EscapedParticlesBuffer должны иметь одинаковую длину (емкость).")
+
+        if self.position.x.shape[0] != self.capacity:
+            raise ValueError("Компоненты векторов в EscapedParticlesBuffer должны иметь ту же длину, что и базовые массивы.")
+
+        if self.cursor.shape != (1,):
+            raise ValueError("Курсор должен быть одномерным массивом длины 1.")
+
+    @classmethod
+    def allocate(cls, capacity: int) -> 'EscapedParticlesBuffer':
+        buffer = cls(
+            particle_ID=np.empty(capacity, dtype=ID),
+            position=Vector3DSoA.allocate(capacity, dtype=Length),
+            cursor=np.zeros(1, dtype=Index),
+            capacity=capacity,
+        )
+        buffer.validate()
+        return buffer
+
+    def flush_to_dict(self, clear: bool = True) -> dict[str, NDArray[Any]]:
+        cursor_pos = self.cursor_value
+        chunk: dict[str, NDArray[Any]] = {
+            'particle_ID': self.particle_ID[:cursor_pos].copy(),
+            'pos_x': self.position.x[:cursor_pos].copy(),
+            'pos_y': self.position.y[:cursor_pos].copy(),
+            'pos_z': self.position.z[:cursor_pos].copy(),
+        }
         if clear:
             self.reset_cursor()
         return chunk
@@ -294,24 +364,37 @@ class SimulationDataBuffer(NamedTuple):
     interactions: InteractionBuffer
     initial_states: InitialStateBuffer
     dead_particles: DeadParticlesBuffer
+    escaped_particles: EscapedParticlesBuffer
 
     @classmethod
-    def allocate(cls, interaction_capacity: int, initial_state_capacity: int, dead_particles_capacity: int) -> 'SimulationDataBuffer':
+    def allocate(
+        cls,
+        interaction_capacity: int,
+        initial_state_capacity: int,
+        dead_particles_capacity: int,
+        escaped_particles_capacity: int,
+    ) -> 'SimulationDataBuffer':
         """
-        Выделяет буферы взаимодействий, начальных состояний и завершивших трекинг частиц заданной емкости.
+        Выделяет буферы взаимодействий, начальных состояний, завершивших трекинг
+        и вылетевших за границы сцены частиц заданной емкости.
         """
         return cls(
             interactions=InteractionBuffer.allocate(interaction_capacity),
             initial_states=InitialStateBuffer.allocate(initial_state_capacity),
-            dead_particles=DeadParticlesBuffer.allocate(dead_particles_capacity)
+            dead_particles=DeadParticlesBuffer.allocate(dead_particles_capacity),
+            escaped_particles=EscapedParticlesBuffer.allocate(escaped_particles_capacity),
         )
 
 
 __all__ = [
+    "ChunkType",
     "RNGContext",
     "InteractionBuffer",
     "InitialStateBuffer",
     "DeadParticlesBuffer",
+    "EscapedParticlesBuffer",
     "SimulationDataBuffer",
 ]
+
+
 

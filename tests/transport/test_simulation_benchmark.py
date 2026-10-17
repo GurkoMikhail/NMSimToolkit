@@ -2,6 +2,7 @@
 Интеграционный бенчмарк полной симуляции переноса излучения в архитектуре SoA.
 """
 
+from pathlib import Path
 import os
 import tempfile
 import time
@@ -20,18 +21,24 @@ from core.geometry.geometries import Box
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import Volume
 from core.other.typing_definitions import Float
-from core.physics.physics_compiler import PhysicsCompiler
-from core.scene.gamma_camera_node import GammaCameraNode
-from core.scene.nodes import CompositeNode
 from core.source.sources import PointSource
 from core.transport.propagator import ParticlePropagator
 from core.transport.simulation_managers import SimulationManager
 from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from settings.database_setting import material_database
+from verification.profiling import (
+    build_point_source_workload,
+    collect_transport_telemetry,
+    run_end_to_end_cprofile,
+    run_single_batch_size_benchmark,
+    run_single_handler_benchmark,
+    run_step_phase_profiler,
+    warmup_propagator_instance,
+)
 
 
 class TestFullBenchmark(unittest.TestCase):
-    """Проверка полного цикла симуляции ОФЭКТ с записью историй во временный HDF5-файл."""
+    """Проверка полного цикла симуляции ОФЭКТ и компонентов профилировочного стенда."""
 
     def test_run_benchmark(self) -> None:
         root_scene = Volume(
@@ -113,6 +120,108 @@ class TestFullBenchmark(unittest.TestCase):
             end_time = time.perf_counter()
 
             print(f"Simulation finished in {end_time - start_time:.4f} seconds.")
+
+    def test_profiling_harness_components(self) -> None:
+        """Смоук-проверка модулей профилировочного стенда (cProfile, DataHandlers, StepProfiler, Telemetry, BatchSize)."""
+        p4_pct_by_collimator = {}
+        for coll_kind in ("parametric", "direct"):
+            workload = build_point_source_workload(
+                coll_kind,
+                particles_number=6_000,
+                bank_capacity=2_000,
+                seed=101,
+            )
+            self.assertEqual(workload.collimator_kind, coll_kind)
+            self.assertEqual(workload.effective_bank_capacity, 2_000)
+
+            step_res = run_step_phase_profiler(workload, buffer_capacity=15_000, seed=101)
+            self.assertGreater(step_res.total_wall_time, 0.0)
+            self.assertGreater(step_res.propagator_cold_compile_time, 0.05)
+            self.assertGreater(step_res.warm_vs_cold_speedup, 2.0)
+            self.assertGreater(step_res.throughput_histories_per_sec, 0.0)
+            self.assertGreater(step_res.full_bank_steps, 1)
+            self.assertGreater(step_res.depletion_steps, 1)
+            self.assertGreater(step_res.full_bank_tracks_per_sec, 0.0)
+            self.assertGreater(step_res.depletion_tracks_per_sec, 0.0)
+            self.assertGreater(step_res.depletion_track_slowdown_factor, 1.0)
+            pcts = step_res.phase_percentages()
+            self.assertAlmostEqual(sum(pcts.values()), 100.0, places=3)
+            # После прогрева замыканий ParticlePropagator фаза P8 больше не раздута компиляцией LLVM (~75%),
+            # а P4_Geometry_Raycast занимает > 5% от суммарного времени JIT-ядер (P4 + P5 + P8)
+            self.assertGreater(pcts["P4_Geometry_Raycast"], 0.25)
+            self.assertLess(pcts["P8_Physics_Processes"], 50.0)
+            jit_sum = (
+                pcts["P4_Geometry_Raycast"]
+                + pcts["P5_Woodcock_Transport"]
+                + pcts["P8_Physics_Processes"]
+            )
+            p4_jit_share = pcts["P4_Geometry_Raycast"] / max(jit_sum, 1e-12)
+            self.assertGreater(p4_jit_share, 0.05)
+            p4_pct_by_collimator[coll_kind] = p4_jit_share
+
+            telem = collect_transport_telemetry(workload, seed=101)
+            self.assertEqual(telem.histories_count, 6_000)
+            self.assertGreater(telem.total_raycast_traces, 0)
+            if coll_kind == "direct":
+                self.assertGreater(telem.total_hex_prism_intersections, 0)
+            else:
+                self.assertEqual(telem.total_hex_prism_intersections, 0)
+
+        # Для DirectParallelCollimator доля геометрического рейкаста выше, чем для Parametric
+        self.assertGreater(p4_pct_by_collimator["direct"], p4_pct_by_collimator["parametric"])
+
+        # Проверка warmup_propagator_instance (повторный вызов на прогретом инстансе в десятки раз быстрее)
+        w_warm = build_point_source_workload("parametric", particles_number=1_500, seed=101)
+        prop_test = ParticlePropagator(rng=np.random.default_rng(101))
+        cold_sec = warmup_propagator_instance(prop_test, w_warm.root_scene)
+        warm_sec = warmup_propagator_instance(prop_test, w_warm.root_scene)
+        self.assertGreater(cold_sec, warm_sec * 10.0)
+
+        # Проверка бенчмарка размера батча (Batch Size Sweep) и разделения Full-Bank / Depletion фаз
+        bs_small = run_single_batch_size_benchmark(
+            workload=build_point_source_workload("parametric", particles_number=3_000, seed=101),
+            batch_size=500,
+            total_particles=3_000,
+            propagator=prop_test,
+        )
+        bs_large = run_single_batch_size_benchmark(
+            workload=build_point_source_workload("parametric", particles_number=3_000, seed=101),
+            batch_size=2_000,
+            total_particles=3_000,
+            propagator=prop_test,
+        )
+        self.assertEqual(bs_small.emitted_particles, 3_000)
+        self.assertEqual(bs_large.emitted_particles, 3_000)
+        self.assertLess(bs_large.steps_count, bs_small.steps_count)
+        self.assertGreater(bs_small.full_bank_steps_count, 2)
+        self.assertGreater(bs_small.depletion_steps_count, 2)
+        self.assertGreater(bs_small.full_bank_histories_per_sec, 0.0)
+        self.assertGreater(bs_small.depletion_track_slowdown_factor, 1.0)
+
+        with tempfile.TemporaryDirectory() as tmp_stats:
+            w_dir = build_point_source_workload("direct", particles_number=1_500, seed=101)
+            cprof_res = run_end_to_end_cprofile(
+                w_dir,
+                stats_dir=Path(tmp_stats),
+                buffer_capacity=5_000,
+                propagator=prop_test,
+            )
+            self.assertTrue(Path(cprof_res.end_to_end_prof_path).is_file())
+            self.assertTrue(Path(cprof_res.dual_thread_metrics.sim_prof_path).is_file())
+            self.assertTrue(Path(cprof_res.dual_thread_metrics.data_prof_path).is_file())
+            self.assertGreater(cprof_res.domain_breakdown.total_profiled_time, 0.0)
+
+            h_rec = run_single_handler_benchmark(
+                workload=w_dir,
+                handler_code="H3_HistoryAssembler_Full_Gzip",
+                handler_label="HistoryAssembler (gzip)",
+                compression="gzip",
+                enable_escaped=True,
+                buffer_capacity=5_000,
+                propagator=prop_test,
+            )
+            self.assertGreater(h_rec.total_sync_time, 0.0)
+            self.assertGreaterEqual(h_rec.chunks_dispatched, 1)
 
 
 if __name__ == "__main__":
