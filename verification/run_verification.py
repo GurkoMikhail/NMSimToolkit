@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 import time
+
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from verification.collimators.exp01_ray_optical_depth import (
     CollimatorRayAuditMetrics,

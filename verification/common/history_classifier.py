@@ -9,12 +9,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, FrozenSet, List, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
 from core.data.data_handlers import BaseDataHandler
 from core.other.typing_definitions import Float, Index
+from core.physics.interaction_buffers import ChunkType
 
 
 class PhotonComponent(IntEnum):
@@ -146,6 +147,16 @@ class CollimatorExitPlaneHandler(BaseDataHandler):
     _scatter_chunks: List[Dict[str, NDArray[Any]]]
     _classified_result: ClassifiedExitPhotons | None
 
+    _CONSUMED_CHUNK_TYPES: FrozenSet[ChunkType] = frozenset({
+        ChunkType.INITIAL_STATES,
+        ChunkType.INTERACTIONS,
+        ChunkType.ESCAPED_PARTICLES,
+    })
+
+    @property
+    def consumed_chunk_types(self) -> FrozenSet[ChunkType]:
+        return self._CONSUMED_CHUNK_TYPES
+
     def __init__(
         self,
         z_enter_face: Float | float,
@@ -206,10 +217,11 @@ class CollimatorExitPlaneHandler(BaseDataHandler):
         if data is None:
             return
 
-        if chunk_type == "escaped_particles":
+        if chunk_type == ChunkType.ESCAPED_PARTICLES:
             pos_z = np.asarray(data["pos_z"], dtype=Float)
             pos_x = np.asarray(data["pos_x"], dtype=Float)
             pos_y = np.asarray(data["pos_y"], dtype=Float)
+            raw_ids = data["particle_ID"]
 
             # Отбираем только фотоны, вышедшие через верхний (выходной) торец коллиматора z >= z_exit_face
             exit_mask = (
@@ -219,23 +231,22 @@ class CollimatorExitPlaneHandler(BaseDataHandler):
             )
             if np.any(exit_mask):
                 self._escaped_chunks.append({
-                    "particle_id": np.asarray(data["particle_id"][exit_mask], dtype=np.int64).copy(),
-                    "birth_x": np.asarray(data["birth_x"][exit_mask], dtype=Float).copy(),
-                    "birth_y": np.asarray(data["birth_y"][exit_mask], dtype=Float).copy(),
-                    "birth_z": np.asarray(data["birth_z"][exit_mask], dtype=Float).copy(),
+                    "particle_ID": np.asarray(raw_ids[exit_mask], dtype=np.int64).copy(),
                     "pos_x": pos_x[exit_mask].copy(),
                     "pos_y": pos_y[exit_mask].copy(),
                     "pos_z": pos_z[exit_mask].copy(),
-                    "has_interacted": np.asarray(data["has_interacted"][exit_mask], dtype=np.bool_).copy(),
                 })
 
-        elif chunk_type == "initial_states":
+        elif chunk_type == ChunkType.INITIAL_STATES:
             self._initial_chunks.append({
                 "particle_ID": np.asarray(data["particle_ID"], dtype=np.int64).copy(),
                 "emission_energy": np.asarray(data["emission_energy"], dtype=Float).copy(),
+                "pos_x": np.asarray(data["pos_x"], dtype=Float).copy(),
+                "pos_y": np.asarray(data["pos_y"], dtype=Float).copy(),
+                "pos_z": np.asarray(data["pos_z"], dtype=Float).copy(),
             })
 
-        elif chunk_type == "interactions":
+        elif chunk_type == ChunkType.INTERACTIONS:
             # Сохраняем только акты рассеяния (process_id == 1 Compton, process_id == 2 Coherent);
             # фотоэффект (process_id == 0) поглощает частицу на месте.
             proc_ids = np.asarray(data["process_id"], dtype=np.int8)
@@ -271,27 +282,60 @@ class CollimatorExitPlaneHandler(BaseDataHandler):
             )
             return
 
-        particle_ids = np.concatenate([chunk["particle_id"] for chunk in self._escaped_chunks])
-        birth_x = np.concatenate([chunk["birth_x"] for chunk in self._escaped_chunks])
-        birth_y = np.concatenate([chunk["birth_y"] for chunk in self._escaped_chunks])
-        birth_z = np.concatenate([chunk["birth_z"] for chunk in self._escaped_chunks])
+        particle_ids = np.concatenate([chunk["particle_ID"] for chunk in self._escaped_chunks])
         raw_exit_x = np.concatenate([chunk["pos_x"] for chunk in self._escaped_chunks])
         raw_exit_y = np.concatenate([chunk["pos_y"] for chunk in self._escaped_chunks])
         raw_exit_z = np.concatenate([chunk["pos_z"] for chunk in self._escaped_chunks])
-        has_interacted = np.concatenate([chunk["has_interacted"] for chunk in self._escaped_chunks])
 
         count_scored = len(particle_ids)
+        birth_x = np.zeros(count_scored, dtype=Float)
+        birth_y = np.zeros(count_scored, dtype=Float)
+        birth_z = np.zeros(count_scored, dtype=Float)
         component = np.zeros(count_scored, dtype=np.int8)
         final_energy = np.full(count_scored, self._primary_energy, dtype=Float)
         compton_count = np.zeros(count_scored, dtype=np.int32)
         coherent_count = np.zeros(count_scored, dtype=np.int32)
 
+        # Восстановление координат рождения и начальной энергии из initial_states
+        if self._initial_chunks:
+            init_ids = np.concatenate([chunk["particle_ID"] for chunk in self._initial_chunks])
+            init_energies = np.concatenate([chunk["emission_energy"] for chunk in self._initial_chunks])
+            init_bx = np.concatenate([chunk["pos_x"] for chunk in self._initial_chunks])
+            init_by = np.concatenate([chunk["pos_y"] for chunk in self._initial_chunks])
+            init_bz = np.concatenate([chunk["pos_z"] for chunk in self._initial_chunks])
+
+            sort_init = np.argsort(init_ids)
+            init_ids_sorted = init_ids[sort_init]
+
+            found_pos = np.searchsorted(init_ids_sorted, particle_ids)
+            found_pos = np.clip(found_pos, 0, max(len(init_ids_sorted) - 1, 0))
+            valid_match = (len(init_ids_sorted) > 0) & (init_ids_sorted[found_pos] == particle_ids)
+
+            matched_init_idx = sort_init[found_pos]
+            birth_x = np.where(valid_match, init_bx[matched_init_idx], birth_x)
+            birth_y = np.where(valid_match, init_by[matched_init_idx], birth_y)
+            birth_z = np.where(valid_match, init_bz[matched_init_idx], birth_z)
+            final_energy = np.where(valid_match, init_energies[matched_init_idx], final_energy)
+
+        # Определение рассеянных частиц по наличию событий рассеяния в interactions
+        if self._scatter_chunks:
+            inter_ids = np.concatenate([chunk["particle_ID"] for chunk in self._scatter_chunks])
+            inter_procs = np.concatenate([chunk["process_id"] for chunk in self._scatter_chunks])
+            inter_edep = np.concatenate([chunk["energy_deposit"] for chunk in self._scatter_chunks])
+            scattered_mask = np.isin(particle_ids, inter_ids)
+        else:
+            inter_ids = np.zeros(0, dtype=np.int64)
+            inter_procs = np.zeros(0, dtype=np.int8)
+            inter_edep = np.zeros(0, dtype=Float)
+            scattered_mask = np.zeros(count_scored, dtype=np.bool_)
+
+        unscattered_mask = ~scattered_mask
+
         # Точная проекция на плоскость выходного торца z = z_exit_face
         exit_x = raw_exit_x.copy()
         exit_y = raw_exit_y.copy()
 
-        # 1. Обработка нерассеянных частиц (has_interacted == False): Geometric vs Septal Penetration
-        unscattered_mask = ~has_interacted
+        # 1. Обработка нерассеянных частиц (unscattered_mask): Geometric vs Septal Penetration
         if np.any(unscattered_mask):
             birth_x_unscattered = birth_x[unscattered_mask]
             birth_y_unscattered = birth_y[unscattered_mask]
@@ -334,62 +378,36 @@ class CollimatorExitPlaneHandler(BaseDataHandler):
             )
             component[unscattered_mask] = unscattered_components
 
-        # 2. Обработка рассеянных в коллиматоре частиц (has_interacted == True)
-        scattered_mask = has_interacted
+        # 2. Обработка рассеянных в коллиматоре частиц (scattered_mask)
         if np.any(scattered_mask):
             component[scattered_mask] = np.int8(PhotonComponent.COLLIMATOR_SCATTER)
             scattered_ids = particle_ids[scattered_mask]
 
-            # Восстановление начальной энергии из initial_states (для полиэнергетических источников)
-            if self._initial_chunks:
-                init_ids = np.concatenate([chunk["particle_ID"] for chunk in self._initial_chunks])
-                init_energies = np.concatenate([chunk["emission_energy"] for chunk in self._initial_chunks])
-                sort_init = np.argsort(init_ids)
-                init_ids_sorted = init_ids[sort_init]
-                init_energies_sorted = init_energies[sort_init]
+            relevant_mask = np.isin(inter_ids, scattered_ids)
+            if np.any(relevant_mask):
+                rel_ids = inter_ids[relevant_mask]
+                rel_procs = inter_procs[relevant_mask]
+                rel_edep = inter_edep[relevant_mask]
 
-                found_pos = np.searchsorted(init_ids_sorted, scattered_ids)
-                found_pos = np.clip(found_pos, 0, max(len(init_ids_sorted) - 1, 0))
-                valid_match = (
-                    (len(init_ids_sorted) > 0)
-                    & (init_ids_sorted[found_pos] == scattered_ids)
+                # Сопоставление с индексом внутри вектора scattered_ids
+                sort_scat_order = np.argsort(scattered_ids)
+                sorted_scat_ids = scattered_ids[sort_scat_order]
+                target_positions = np.searchsorted(sorted_scat_ids, rel_ids)
+                original_scat_indices = sort_scat_order[target_positions]
+
+                edep_accum = np.zeros(len(scattered_ids), dtype=Float)
+                compton_accum = np.zeros(len(scattered_ids), dtype=np.int32)
+                coherent_accum = np.zeros(len(scattered_ids), dtype=np.int32)
+
+                np.add.at(edep_accum, original_scat_indices, rel_edep)
+                np.add.at(compton_accum, original_scat_indices, (rel_procs == 1).astype(np.int32))
+                np.add.at(coherent_accum, original_scat_indices, (rel_procs == 2).astype(np.int32))
+
+                final_energy[scattered_mask] = np.maximum(
+                    0.0, final_energy[scattered_mask] - edep_accum
                 )
-                scattered_initial_energy = np.where(
-                    valid_match, init_energies_sorted[found_pos], self._primary_energy
-                )
-                final_energy[scattered_mask] = scattered_initial_energy
-
-            # Суммирование потерь энергии и подсчет числа рассеяний из scatter_chunks
-            if self._scatter_chunks:
-                inter_ids = np.concatenate([chunk["particle_ID"] for chunk in self._scatter_chunks])
-                inter_procs = np.concatenate([chunk["process_id"] for chunk in self._scatter_chunks])
-                inter_edep = np.concatenate([chunk["energy_deposit"] for chunk in self._scatter_chunks])
-
-                relevant_mask = np.isin(inter_ids, scattered_ids)
-                if np.any(relevant_mask):
-                    rel_ids = inter_ids[relevant_mask]
-                    rel_procs = inter_procs[relevant_mask]
-                    rel_edep = inter_edep[relevant_mask]
-
-                    # Сопоставление с индексом внутри вектора scattered_ids
-                    sort_scat_order = np.argsort(scattered_ids)
-                    sorted_scat_ids = scattered_ids[sort_scat_order]
-                    target_positions = np.searchsorted(sorted_scat_ids, rel_ids)
-                    original_scat_indices = sort_scat_order[target_positions]
-
-                    edep_accum = np.zeros(len(scattered_ids), dtype=Float)
-                    compton_accum = np.zeros(len(scattered_ids), dtype=np.int32)
-                    coherent_accum = np.zeros(len(scattered_ids), dtype=np.int32)
-
-                    np.add.at(edep_accum, original_scat_indices, rel_edep)
-                    np.add.at(compton_accum, original_scat_indices, (rel_procs == 1).astype(np.int32))
-                    np.add.at(coherent_accum, original_scat_indices, (rel_procs == 2).astype(np.int32))
-
-                    final_energy[scattered_mask] = np.maximum(
-                        0.0, final_energy[scattered_mask] - edep_accum
-                    )
-                    compton_count[scattered_mask] = compton_accum
-                    coherent_count[scattered_mask] = coherent_accum
+                compton_count[scattered_mask] = compton_accum
+                coherent_count[scattered_mask] = coherent_accum
 
         # Координаты относительно точки рождения источника (для shift-invariant PSF)
         relative_x = exit_x - birth_x

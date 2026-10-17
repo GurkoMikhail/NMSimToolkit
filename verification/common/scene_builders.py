@@ -176,6 +176,52 @@ def build_collimator_verification_scene(
 _SHARED_PROPAGATOR: Optional[ParticlePropagator] = None
 
 
+class QuotaBoundedSimulationManager(SimulationManager):
+    """
+    Менеджер симуляции с точным соблюдением верхней границы квоты испускаемых частиц
+    при многошаговом пополнении банка (предотвращает переполнение квоты за stop_time
+    на последнем неполном батче, см. docs/architecture_backlog.md п. 24).
+    """
+
+    def __init__(self, *args: Any, max_emitted_particles: int, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._max_emitted_particles = int(max_emitted_particles)
+
+    @property
+    def has_pending_sources(self) -> bool:
+        """Проверяет наличие неисчерпанной квоты частиц и времени симуляции."""
+        emitted_so_far = int(self.bank.count_array[0]) - self.initial_particle_id
+        if emitted_so_far >= self._max_emitted_particles:
+            return False
+        return super().has_pending_sources
+
+    def _replenish_bank(self) -> None:
+        """Докачивает в банк не более оставшейся квоты max_emitted_particles частиц."""
+        if not self.active_sources or self.global_timer >= self.stop_time:
+            return
+
+        emitted_so_far = int(self.bank.count_array[0]) - self.initial_particle_id
+        remaining_quota = self._max_emitted_particles - emitted_so_far
+        if remaining_quota <= 0:
+            self.global_timer = self.stop_time
+            return
+
+        num_active = int(np.count_nonzero(self.bank.state.is_active))
+        free_slots = int(self.bank.capacity - num_active)
+        num_to_inject = min(free_slots, remaining_quota)
+
+        if num_to_inject <= 0:
+            return
+
+        delta_time = self._calculate_time_step(num_to_inject)
+        target_time = Float(min(float(self.global_timer + delta_time), float(self.stop_time)))
+
+        self._distribute_quotas(target_time, num_to_inject)
+        self.global_timer = target_time
+        if int(self.bank.count_array[0]) - self.initial_particle_id >= self._max_emitted_particles:
+            self.global_timer = self.stop_time
+
+
 def _get_shared_propagator() -> ParticlePropagator:
     """Возвращает общий экземпляр ParticlePropagator со скомпилированным Numba transport_kernel."""
     global _SHARED_PROPAGATOR
@@ -226,16 +272,6 @@ def run_collimator_simulation(
     buffer_cap = max(effective_batch * 2, 100_000)
 
     propagator = _get_shared_propagator()
-    sim_manager = SimulationManager(
-        scene=scene_setup.world_volume,
-        propagator=propagator,
-        stop_time=Float(1.0 * units.s),
-        particles_number=effective_batch,
-        min_energy=Float(1.0 * units.keV),
-        buffer_capacity=buffer_cap,
-        seed=seed,
-    )
-
     exit_handler = CollimatorExitPlaneHandler(
         z_enter_face=scene_setup.z_enter_face,
         z_exit_face=scene_setup.z_exit_face,
@@ -246,6 +282,18 @@ def run_collimator_simulation(
         primary_energy=primary_energy_scalar,
         total_emitted=particles_number,
         solid_angle_fraction=scene_setup.source_node.solid_angle_fraction,
+    )
+
+    sim_manager = QuotaBoundedSimulationManager(
+        scene=scene_setup.world_volume,
+        propagator=propagator,
+        stop_time=Float(1.0 * units.s),
+        particles_number=effective_batch,
+        min_energy=Float(1.0 * units.keV),
+        buffer_capacity=buffer_cap,
+        seed=seed,
+        consumed_chunk_types=exit_handler.consumed_chunk_types,
+        max_emitted_particles=particles_number,
     )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -274,7 +322,7 @@ def run_collimator_simulation(
         particles_emitted=particles_number,
         elapsed_time=elapsed_duration,
         particle_throughput=throughput,
-        simulation_steps=int(sim_manager.step),
+        simulation_steps=int(sim_manager.step_count),
         photons=classified,
     )
 
@@ -282,6 +330,7 @@ def run_collimator_simulation(
 __all__ = [
     "CollimatorImplementationKind",
     "CollimatorSceneSetup",
+    "QuotaBoundedSimulationManager",
     "SimulationRunSummary",
     "build_collimator_verification_scene",
     "run_collimator_simulation",

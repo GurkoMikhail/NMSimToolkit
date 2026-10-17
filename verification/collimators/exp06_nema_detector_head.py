@@ -42,8 +42,8 @@ from core.geometry.geometries import Box
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import Volume
 from core.other.typing_definitions import Float
+from core.physics.interaction_buffers import ChunkType
 from core.transport.propagator import ParticlePropagator
-from core.transport.simulation_managers import SimulationManager
 import settings.database_setting as database_setting
 from verification.common.metrics import (
     ProfileResolutionMetrics,
@@ -56,7 +56,10 @@ from verification.common.presets import (
     CollimatorPreset,
     RadionuclidePreset,
 )
-from verification.common.scene_builders import CollimatorImplementationKind
+from verification.common.scene_builders import (
+    CollimatorImplementationKind,
+    QuotaBoundedSimulationManager,
+)
 from verification.common.sources import ConePointSource
 
 
@@ -172,6 +175,15 @@ class NemaDetectorHeadHandler(BaseDataHandler):
     _pyrex_scatter_ids: list[NDArray[np.int64]]
     _events: CrystalScintillationEvents | None
 
+    _CONSUMED_CHUNK_TYPES: frozenset[ChunkType] = frozenset({
+        ChunkType.INITIAL_STATES,
+        ChunkType.INTERACTIONS,
+    })
+
+    @property
+    def consumed_chunk_types(self) -> frozenset[ChunkType]:
+        return self._CONSUMED_CHUNK_TYPES
+
     def __init__(
         self,
         crystal_volume_id: int,
@@ -217,13 +229,13 @@ class NemaDetectorHeadHandler(BaseDataHandler):
         if data is None:
             return
 
-        if chunk_type == "initial_states":
+        if chunk_type == ChunkType.INITIAL_STATES:
             self._initial_chunks.append({
                 "particle_ID": np.asarray(data["particle_ID"], dtype=np.int64).copy(),
                 "pos_x": np.asarray(data["pos_x"], dtype=np.float64).copy(),
                 "pos_y": np.asarray(data["pos_y"], dtype=np.float64).copy(),
             })
-        elif chunk_type == "interactions":
+        elif chunk_type == ChunkType.INTERACTIONS:
             vol_ids = np.asarray(data["volume_id"], dtype=np.int64)
             proc_ids = np.asarray(data["process_id"], dtype=np.int8)
             part_ids = np.asarray(data["particle_ID"], dtype=np.int64)
@@ -525,7 +537,7 @@ def run_single_detector_head_simulation(
     )
 
     batch_size = min(num_particles, 500_000)
-    sim_manager = SimulationManager(
+    sim_manager = QuotaBoundedSimulationManager(
         scene=world_volume,
         propagator=_get_head_propagator(),
         stop_time=Float(1.0 * units.s),
@@ -533,6 +545,8 @@ def run_single_detector_head_simulation(
         min_energy=Float(5.0 * units.keV),
         buffer_capacity=max(batch_size * 3, 200_000),
         seed=seed,
+        consumed_chunk_types=head_handler.consumed_chunk_types,
+        max_emitted_particles=num_particles,
     )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
