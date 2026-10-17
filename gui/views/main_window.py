@@ -732,16 +732,16 @@ class MainWindow(QMainWindow):
 
     def _on_focused_job_changed(self, index: int) -> None:
         """
-        Переключение фокуса визуализации на указанную задачу.
+        Мгновенное переключение фокуса визуализации на указанную задачу без паузы и потери накопленных данных.
         """
-        self.orchestrator_session.set_focused_job(index)
-        self.lbl_status.setText(f"Фокус визуализации: Задача #{index + 1}")
         jobs = self.orchestrator_session.jobs
         if 0 <= index < len(jobs):
             self._apply_job_angles_to_viewport(jobs[index])
             self.spin_preview_view.blockSignals(True)
             self.spin_preview_view.setValue(index + 1)
             self.spin_preview_view.blockSignals(False)
+        self.orchestrator_session.set_focused_job(index)
+        self.lbl_status.setText(f"Фокус визуализации: Задача #{index + 1}")
 
     def _on_pool_size_changed(self, pool_size: int) -> None:
         """

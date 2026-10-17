@@ -7,6 +7,7 @@
 import json
 import logging
 import time
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Tuple
 
 import hepunits as units
@@ -60,6 +61,26 @@ def _find_dose_grids(root_node: SpatialNode) -> List[DoseGridNode]:
         for child_node in root_node.childs:
             grids_list.extend(_find_dose_grids(child_node))
     return grids_list
+
+
+def _is_per_task_shm_enabled(task_dict: Dict[str, Any], extra_handler_args: Any) -> bool:
+    """Определяет, активирован ли режим пер-тасковых сегментов SharedMemory для задачи."""
+    if bool(task_dict.get("_per_task_dose_shm", False)) or bool(task_dict.get("_per_task_shm", False)):
+        return True
+    dict_extra = task_dict.get("_extra_handler_args")
+    if isinstance(dict_extra, Mapping) and bool(dict_extra.get("per_task_shm", False)):
+        return True
+    if isinstance(extra_handler_args, Mapping) and bool(extra_handler_args.get("per_task_shm", False)):
+        return True
+    if isinstance(extra_handler_args, (tuple, list)):
+        for arg_item in extra_handler_args:
+            if isinstance(arg_item, Mapping) and bool(arg_item.get("per_task_shm", False)):
+                return True
+        if len(extra_handler_args) >= 8:
+            for arg_item in extra_handler_args[7:]:
+                if isinstance(arg_item, bool) and arg_item:
+                    return True
+    return False
 
 
 def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], SimulationConfig]:
@@ -197,18 +218,47 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                     grid_nodes = [
                         grid_node for grid_node in grid_nodes if grid_node.name in handler_config.grid_names
                     ]
-                handlers.append(DoseMapHandler(grid_nodes=grid_nodes, shm_name=handler_config.shm_name))
+                use_per_task_dose = task_id is not None and _is_per_task_shm_enabled(task_dict, extra_handler_args)
+                base_dose_shm = handler_config.shm_name or "nmsim_dose_shm"
+                effective_dose_shm = (
+                    f"{base_dose_shm}_task_{int(task_id)}" if use_per_task_dose else handler_config.shm_name
+                )
+                handlers.append(DoseMapHandler(grid_nodes=grid_nodes, shm_name=effective_dose_shm))
+
+        if not any(isinstance(handler, DoseMapHandler) for handler in handlers):
+            active_grids = [grid_node for grid_node in _find_dose_grids(root_scene) if grid_node.is_active]
+            if active_grids:
+                use_per_task_dose = task_id is not None and _is_per_task_shm_enabled(task_dict, extra_handler_args)
+                base_dose_shm = "nmsim_dose_shm"
+                effective_dose_shm = (
+                    f"{base_dose_shm}_task_{int(task_id)}" if use_per_task_dose else base_dose_shm
+                )
+                handlers.append(DoseMapHandler(grid_nodes=active_grids, shm_name=effective_dose_shm))
 
         # Внедрение внешних обработчиков (Dependency Injection)
         if extra_handlers:
             handlers.extend(extra_handlers)
 
         if extra_handler_factory is not None:
-            created_handlers = extra_handler_factory(
-                root_scene, task_dict, task_id, *extra_handler_args
-            )
+            if isinstance(extra_handler_args, Mapping):
+                created_handlers = extra_handler_factory(
+                    root_scene, task_dict, task_id, extra_handler_args
+                )
+            elif isinstance(extra_handler_args, (tuple, list)):
+                created_handlers = extra_handler_factory(
+                    root_scene, task_dict, task_id, *extra_handler_args
+                )
+            else:
+                created_handlers = extra_handler_factory(
+                    root_scene, task_dict, task_id
+                )
             if created_handlers:
                 handlers.extend(created_handlers)
+
+        stop_check = task_dict.get("_stop_check")
+        if callable(stop_check) and stop_check():
+            _logger.info(f"Воркер {task_id}: получена команда кооперативной остановки до запуска расчета, пропуск.")
+            return (context_data, final_config)
 
         # 5. Инициализация пропагатора и менеджера симуляции с единым детерминированным ГСЧ
         consumed_chunk_types = frozenset().union(*(handler.consumed_chunk_types for handler in handlers))
@@ -230,12 +280,15 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
 
         ipc_pause_event = task_dict.get("_run_event", task_dict.get("_pause_event"))
         if ipc_pause_event is not None:
-            if not bool(ipc_pause_event.is_set()):
+            if callable(stop_check) and stop_check():
+                manager.stop()
+            elif not bool(ipc_pause_event.is_set()):
                 manager.pause()
             pause_bridge = IpcPauseBridge(
                 manager=manager,
                 ipc_event=ipc_pause_event,
                 poll_interval=0.02,
+                stop_check=stop_check if callable(stop_check) else None,
             )
             pause_bridge.start()
 

@@ -145,16 +145,20 @@ class ResultsViewer(QWidget):
     def set_projection_data(self, image_data: np.ndarray) -> None:
         """
         Обновляет 2D матрицу проекции и пересчитывает линейные профили.
+        Использует переиспользуемый буфер, не удерживая прямую ссылку на SharedMemory.buf.
         """
-        self._current_projection = image_data
+        if self._current_projection is None or self._current_projection.shape != image_data.shape:
+            self._current_projection = np.array(image_data, dtype=np.float32, copy=True)
+        else:
+            np.copyto(self._current_projection, image_data)
 
         if self.image_view is not None:
-            self.image_view.setImage(image_data.T, autoRange=False)
+            self.image_view.setImage(self._current_projection.T, autoRange=False)
 
-        total_counts = int(np.sum(image_data))
+        total_counts = int(np.sum(self._current_projection))
         self.lbl_stats.setText(f"Всего отсчетов: {total_counts:,}")
 
-        self._update_profiles(image_data)
+        self._update_profiles(self._current_projection)
 
     def _update_profiles(self, image_data: np.ndarray) -> None:
         """
@@ -180,11 +184,26 @@ class ResultsViewer(QWidget):
             self._prof_x_curve.setData(prof_x)
             self._prof_y_curve.setData(prof_y)
 
+    def update_spectrum(self, energies: np.ndarray, bins: int = 120, max_energy: float = 200.0) -> None:
+        """
+        Обновляет гистограмму энергетического спектра (с очисткой при пустом массиве).
+        """
+        self.set_spectrum_data(energies, bins=bins, max_energy=max_energy)
+
     def set_spectrum_data(self, energy_array: np.ndarray, bins: int = 120, max_energy: float = 200.0) -> None:
         """
         Строит гистограмму энергетического спектра по зарегистрированным событиям.
+        Если передан пустой массив (например, при переключении фокуса на задачу без хитов),
+        очищает текущую кривую спектра.
         """
-        if self.spectrum_plot is None or len(energy_array) == 0:
+        if self.spectrum_plot is None or energy_array is None:
+            return
+
+        if len(energy_array) == 0:
+            if self._spectrum_curve is not None:
+                self._spectrum_curve.setData([], [])
+            else:
+                self.spectrum_plot.clear()
             return
 
         counts, edges = np.histogram(energy_array, bins=bins, range=(0, max_energy))
@@ -273,8 +292,11 @@ class ResultsViewer(QWidget):
         self.accumulation_cleared.emit()
 
 
+ResultsViewerWidget = ResultsViewer
+
 __all__ = [
     "configure_pyqtgraph_theme",
     "ResultsViewer",
+    "ResultsViewerWidget",
 ]
 

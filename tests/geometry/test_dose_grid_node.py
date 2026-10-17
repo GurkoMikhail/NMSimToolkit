@@ -1,4 +1,5 @@
 import unittest
+from multiprocessing import shared_memory
 import numpy as np
 from PySide6.QtWidgets import QApplication
 
@@ -51,9 +52,21 @@ class TestDoseGridNode(unittest.TestCase):
         # Проверка локального origin: центр узла в (0,0,0), нижний угол в (-Lx/2, -Ly/2, -Lz/2)
         self.assertEqual(node.origin, (-30.0, -40.0, -50.0))
 
-        # Проверка расчета объема памяти: 30 * 40 * 50 * 8 байт = 480 000 байт ~ 0.4578 МБ
-        expected_mb = (30 * 40 * 50 * 8) / (1024 * 1024)
-        self.assertAlmostEqual(node.memory_mb, expected_mb, places=4)
+        # Проверка дефолтного типа данных (float32) и расчета объема памяти: 30 * 40 * 50 * 4 байта
+        self.assertEqual(node.dtype, "float32")
+        self.assertEqual(node.numpy_dtype, np.dtype(np.float32))
+        expected_megabytes_f32 = (30 * 40 * 50 * 4) / (1024 * 1024)
+        self.assertAlmostEqual(node.memory_mb, expected_megabytes_f32, places=4)
+
+        # Проверка переключения точности на float64 и пересчета памяти
+        node.dtype = "float64"
+        self.assertEqual(node.dtype, "float64")
+        self.assertEqual(node.numpy_dtype, np.dtype(np.float64))
+        expected_megabytes_f64 = (30 * 40 * 50 * 8) / (1024 * 1024)
+        self.assertAlmostEqual(node.memory_mb, expected_megabytes_f64, places=4)
+        with self.assertRaises(ValueError):
+            node.dtype = "int16"  # type: ignore[assignment]
+        node.dtype = "float32"
 
         # Проверка изменения шага вокселя и валидации
         node.dose_voxel_size = 5.0
@@ -91,7 +104,7 @@ class TestDoseGridNode(unittest.TestCase):
         self.assertIsInstance(vm, DoseGridViewModel)
 
         changed_props = []
-        vm.property_changed.connect(lambda p, v: changed_props.append((p, v)))
+        vm.property_changed.connect(lambda prop_name, prop_val: changed_props.append((prop_name, prop_val)))
 
         vm.dose_voxel_size = 2.5
         self.assertEqual(node.dose_voxel_size, 2.5)
@@ -101,6 +114,10 @@ class TestDoseGridNode(unittest.TestCase):
         vm.size = [50.0, 50.0, 50.0]
         np.testing.assert_array_equal(node.size, np.array([50.0, 50.0, 50.0]))
         self.assertIn(('grid_shape', (20, 20, 20)), changed_props)
+
+        vm.dtype = "float64"
+        self.assertEqual(node.dtype, "float64")
+        self.assertIn(('dtype', 'float64'), changed_props)
 
         vm.is_active = False
         self.assertFalse(node.is_active)
@@ -115,7 +132,7 @@ class TestDoseGridNode(unittest.TestCase):
         # Добавление независимого узла сетки дозы
         tree_widget._add_dose_grid_node(scene_vm.root_vm)
         nodes = scene_vm.all_nodes()
-        dose_vms = [n for n in nodes if isinstance(n, DoseGridViewModel)]
+        dose_vms = [node_item for node_item in nodes if isinstance(node_item, DoseGridViewModel)]
         self.assertEqual(len(dose_vms), 1)
         self.assertEqual(dose_vms[0].name, "DoseGrid_1")
 
@@ -147,13 +164,20 @@ class TestDoseGridNode(unittest.TestCase):
         # Проверка начальных значений
         self.assertEqual(inspector.dose_grid_section.spin_dose_grid_size_x.value(), 100.0)
         self.assertEqual(inspector.dose_grid_section.spin_dose_grid_voxel.value(), 5.0)
+        self.assertEqual(inspector.dose_grid_section.combo_dose_grid_dtype.currentText(), "float32")
         self.assertIn("20 × 20 × 20", inspector.dose_grid_section.lbl_dose_grid_shape.text())
+        self.assertIn("float32", inspector.dose_grid_section.lbl_dose_grid_memory.text())
 
         # Редактирование в инспекторе
         inspector.dose_grid_section.spin_dose_grid_voxel.setValue(2.0)
         self.assertEqual(vm.dose_voxel_size, 2.0)
         self.assertEqual(node.dose_voxel_size, 2.0)
         self.assertIn("50 × 50 × 50", inspector.dose_grid_section.lbl_dose_grid_shape.text())
+
+        inspector.dose_grid_section.combo_dose_grid_dtype.setCurrentText("float64")
+        self.assertEqual(vm.dtype, "float64")
+        self.assertEqual(node.dtype, "float64")
+        self.assertIn("float64", inspector.dose_grid_section.lbl_dose_grid_memory.text())
 
     def test_06_dose_map_handler_multiple_grids_accumulation(self):
         """Проверка независимого накопления дозы в несколько узлов DoseGridNode."""
@@ -235,7 +259,7 @@ class TestDoseGridNode(unittest.TestCase):
 
         # Добавляем сетку дозы как дочерний элемент гамма-камеры
         tree_widget._add_dose_grid_node(cam_vm)
-        dose_children = [c for c in cam_vm.children if isinstance(c, DoseGridViewModel)]
+        dose_children = [child_vm for child_vm in cam_vm.children if isinstance(child_vm, DoseGridViewModel)]
         self.assertEqual(len(dose_children), 1)
         dose_child = dose_children[0]
 
@@ -283,7 +307,13 @@ class TestDoseGridNode(unittest.TestCase):
     def test_11_dose_grid_node_serialization_and_deserialization(self):
         """Проверка сериализации DoseGridNode в конфигурацию и обратного восстановления через SceneBuilder."""
         root = CompositeNode(name="Root")
-        grid = DoseGridNode(name="DoseTarget", size=[150.0, 250.0, 350.0], dose_voxel_size=2.5, is_active=True)
+        grid = DoseGridNode(
+            name="DoseTarget",
+            size=[150.0, 250.0, 350.0],
+            dose_voxel_size=2.5,
+            is_active=True,
+            dtype="float64",
+        )
         grid.translate(10.0, 20.0, 30.0)
         root.add_child(grid)
 
@@ -296,6 +326,7 @@ class TestDoseGridNode(unittest.TestCase):
         self.assertEqual(child_cfg.dose_voxel_size, 2.5)
         np.testing.assert_allclose(child_cfg.size, [150.0, 250.0, 350.0])
         self.assertTrue(child_cfg.is_active)
+        self.assertEqual(child_cfg.dtype, "float64")
 
         # Обратное восстановление через SceneBuilder
         builder = SceneBuilder()
@@ -309,7 +340,134 @@ class TestDoseGridNode(unittest.TestCase):
         self.assertEqual(reconstructed_grid.dose_voxel_size, 2.5)
         np.testing.assert_allclose(reconstructed_grid.size, [150.0, 250.0, 350.0])
         self.assertTrue(reconstructed_grid.is_active)
+        self.assertEqual(reconstructed_grid.dtype, "float64")
         self.assertEqual(reconstructed_grid.grid_shape, (60, 100, 140))
+
+    def test_12_dose_shm_naming_and_multi_worker_additive_accumulation(self):
+        """
+        Проверка согласования имен SharedMemory между OrchestratorSession и DoseMapHandler,
+        а также аддитивного накопления дозы несколькими воркерами в родительский сегмент.
+        """
+        # 1. Сценарий с одной сеткой дозы
+        world_single = CompositeNode(name="World")
+        grid_single = DoseGridNode(name="Grid1", size=[20.0, 20.0, 20.0], dose_voxel_size=10.0)
+        world_single.add_child(grid_single)
+        scene_vm_single = SceneViewModel(world_single)
+        session_single = OrchestratorSession(scene_vm=scene_vm_single)
+
+        single_shm, single_shape, single_info = session_single._collect_dose_ipc_config()
+        self.assertEqual(single_shm, "nmsim_dose_shm")
+        self.assertEqual(single_shape, (2, 2, 2))
+        self.assertEqual(len(single_info), 1)
+        self.assertEqual(single_info[0]["shm_name"], "nmsim_dose_shm")
+        self.assertEqual(single_info[0]["dtype"], "float32")
+
+        handler_single = DoseMapHandler(grid_nodes=[grid_single], shm_name="nmsim_dose_shm", create_shm=False)
+        try:
+            self.assertEqual(len(handler_single.entries), 1)
+            self.assertEqual(handler_single.entries[0].shm_name, single_info[0]["shm_name"])
+            self.assertEqual(handler_single.entries[0].dtype, np.dtype(np.float32))
+        finally:
+            handler_single.close()
+            session_single.close()
+
+        # 2. Сценарий с двумя сетками дозы
+        world_multi = CompositeNode(name="World")
+        grid_first = DoseGridNode(name="Grid1", size=[20.0, 20.0, 20.0], dose_voxel_size=10.0)
+        grid_second = DoseGridNode(name="Grid2", size=[40.0, 40.0, 40.0], dose_voxel_size=10.0, dtype="float64")
+        world_multi.add_child(grid_first)
+        world_multi.add_child(grid_second)
+        scene_vm_multi = SceneViewModel(world_multi)
+        session_multi = OrchestratorSession(scene_vm=scene_vm_multi)
+
+        multi_shm, _, multi_info = session_multi._collect_dose_ipc_config()
+        self.assertIsNone(multi_shm)
+        self.assertEqual(len(multi_info), 2)
+        self.assertEqual(multi_info[0]["shm_name"], "nmsim_dose_shm_Grid1")
+        self.assertEqual(multi_info[0]["dtype"], "float32")
+        self.assertEqual(multi_info[1]["shm_name"], "nmsim_dose_shm_Grid2")
+        self.assertEqual(multi_info[1]["dtype"], "float64")
+
+        handler_multi = DoseMapHandler(
+            grid_nodes=[grid_first, grid_second], shm_name="nmsim_dose_shm", create_shm=False
+        )
+        try:
+            self.assertEqual(len(handler_multi.entries), 2)
+            self.assertEqual(handler_multi.entries[0].shm_name, multi_info[0]["shm_name"])
+            self.assertEqual(handler_multi.entries[0].dtype, np.dtype(np.float32))
+            self.assertEqual(handler_multi.entries[1].shm_name, multi_info[1]["shm_name"])
+            self.assertEqual(handler_multi.entries[1].dtype, np.dtype(np.float64))
+        finally:
+            handler_multi.close()
+            session_multi.close()
+
+        # 3. Проверка аддитивного накопления в предварительно созданный родительский сегмент SharedMemory
+        parent_shm_name = "nmsim_test_parent_dose_shm"
+        grid_shape = grid_single.grid_shape
+        grid_dtype = grid_single.numpy_dtype
+        nbytes = int(np.prod(grid_shape) * grid_dtype.itemsize)
+        try:
+            stale_shm = shared_memory.SharedMemory(name=parent_shm_name, create=False)
+            stale_shm.close()
+            stale_shm.unlink()
+        except FileNotFoundError:
+            pass
+
+        parent_shm = shared_memory.SharedMemory(name=parent_shm_name, create=True, size=nbytes)
+        try:
+            parent_buf = np.ndarray(grid_shape, dtype=grid_dtype, buffer=parent_shm.buf, order="F")
+            parent_buf.fill(0.0)
+
+            chunk_first = {
+                'type': ChunkType.INTERACTIONS,
+                'data': {
+                    'pos_x': np.array([5.0]),
+                    'pos_y': np.array([5.0]),
+                    'pos_z': np.array([5.0]),
+                    'energy_deposit': np.array([60.0]),
+                },
+            }
+            chunk_second = {
+                'type': ChunkType.INTERACTIONS,
+                'data': {
+                    'pos_x': np.array([5.0]),
+                    'pos_y': np.array([5.0]),
+                    'pos_z': np.array([5.0]),
+                    'energy_deposit': np.array([90.0]),
+                },
+            }
+
+            # Воркер 1 (ракурс 1)
+            worker_handler_1 = DoseMapHandler(grid_nodes=[grid_single], shm_name=parent_shm_name, create_shm=True)
+            self.assertFalse(worker_handler_1.entries[0]._owns_shm)
+            worker_handler_1.process_chunk(chunk_first)
+            worker_handler_1.close()
+
+            # Проверяем, что после закрытия первого воркера сегмент жив и содержит 60.0
+            self.assertAlmostEqual(float(np.sum(parent_buf)), 60.0)
+
+            # Воркер 2 (ракурс 2) подключается к тому же сегменту и НЕ затирает его нулями
+            worker_handler_2 = DoseMapHandler(grid_nodes=[grid_single], shm_name=parent_shm_name, create_shm=True)
+            self.assertFalse(worker_handler_2.entries[0]._owns_shm)
+            worker_handler_2.process_chunk(chunk_second)
+            worker_handler_2.close()
+
+            # Суммарная доза должна быть 60.0 + 90.0 = 150.0, и сегмент по-прежнему доступен по имени
+            check_shm = shared_memory.SharedMemory(name=parent_shm_name, create=False)
+            try:
+                check_buf = np.ndarray(grid_shape, dtype=grid_dtype, buffer=check_shm.buf, order="F")
+                self.assertAlmostEqual(float(np.sum(check_buf)), 150.0)
+                self.assertAlmostEqual(float(check_buf[1, 1, 1]), 150.0)
+                del check_buf
+            finally:
+                check_shm.close()
+            del parent_buf
+        finally:
+            parent_shm.close()
+            try:
+                parent_shm.unlink()
+            except FileNotFoundError:
+                pass
 
 
 if __name__ == '__main__':

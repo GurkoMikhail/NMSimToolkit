@@ -34,6 +34,8 @@ class Orchestrator:
         """
         Инициализирует оркестратор сырым словарем конфигурации или объектом SimulationConfig.
         """
+        self._active_pool: Optional[Any] = None
+        self._stop_requested: bool = False
         if isinstance(raw_config_dict, SimulationConfig):
             self.raw_config_dict: Dict[str, Any] = raw_config_dict.model_dump()
             self.parsed_config: SimulationConfig = raw_config_dict
@@ -42,6 +44,22 @@ class Orchestrator:
             self.raw_config_dict = deepcopy(dict(raw_config_dict))
             SweepCompiler.apply_protocol_defaults(self.raw_config_dict)
             self.parsed_config = SimulationConfig.model_validate(self.raw_config_dict)
+
+    def terminate_pool(self) -> None:
+        """
+        Принудительно завершает активный пул дочерних процессов моделирования,
+        предотвращая зависание фоновых воркеров при остановке сессии из GUI.
+        """
+        self._stop_requested = True
+        pool_ref = self._active_pool
+        if pool_ref is not None:
+            try:
+                pool_ref.terminate()
+                pool_ref.join()
+            except (OSError, ValueError, RuntimeError):
+                pass
+            finally:
+                self._active_pool = None
 
     def compile_protocol(self) -> CustomSweepProtocolConfig:
         """
@@ -118,12 +136,27 @@ class Orchestrator:
                     task_index,
                 ))
 
+            self._stop_requested = False
             if pool_size > 1:
-                with Pool(pool_size) as worker_pool:
+                worker_pool = Pool(pool_size)
+                self._active_pool = worker_pool
+                try:
                     results_list = worker_pool.map(simulation_worker_task, payloads)
+                    worker_pool.close()
+                    worker_pool.join()
+                finally:
+                    if self._active_pool is not None:
+                        try:
+                            worker_pool.terminate()
+                            worker_pool.join()
+                        except (OSError, ValueError, RuntimeError):
+                            pass
+                        self._active_pool = None
             else:
                 results_list = []
                 for single_payload in payloads:
+                    if self._stop_requested:
+                        break
                     results_list.append(simulation_worker_task(single_payload))
 
             _logger.info(f"Оркестратор: все {len(task_contexts)} задач успешно завершены.")

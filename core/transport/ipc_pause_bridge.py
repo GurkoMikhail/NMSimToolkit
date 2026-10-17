@@ -3,15 +3,15 @@
 """
 
 import threading
-from typing import Any
+from typing import Any, Callable, Optional
 
 from core.transport.simulation_managers import SimulationManager, SimulationState
 
 
 class IpcPauseBridge(threading.Thread):
     """
-    Легковесный фоновый поток-адаптер для трансляции межпроцессных сигналов паузы (IPC Event)
-    в публичные вызовы методов SimulationManager.pause() и SimulationManager.resume().
+    Легковесный фоновый поток-адаптер для трансляции межпроцессных сигналов паузы и остановки
+    в публичные вызовы методов SimulationManager.pause(), SimulationManager.resume() и SimulationManager.stop().
     Обеспечивает полную изоляцию расчетного ядра от подсистем multiprocessing и IPC.
     """
 
@@ -20,11 +20,13 @@ class IpcPauseBridge(threading.Thread):
         manager: SimulationManager,
         ipc_event: Any,
         poll_interval: float = 0.02,
+        stop_check: Optional[Callable[[], bool]] = None,
     ) -> None:
         super().__init__(name="IpcPauseBridge", daemon=True)
         self.manager = manager
         self.ipc_event = ipc_event
         self.poll_interval = poll_interval
+        self.stop_check = stop_check
         self._stop_event = threading.Event()
         self._last_state_was_set: bool = bool(ipc_event.is_set())
 
@@ -33,9 +35,13 @@ class IpcPauseBridge(threading.Thread):
         self._stop_event.set()
 
     def run(self) -> None:
-        """Основной цикл опроса флага межпроцессного события паузы."""
+        """Основной цикл опроса флагов межпроцессного управления паузой и кооперативной остановкой."""
         while not self._stop_event.is_set():
             if self.manager.state == SimulationState.STOPPED:
+                break
+
+            if callable(self.stop_check) and self.stop_check():
+                self.manager.stop()
                 break
 
             current_is_set = bool(self.ipc_event.is_set())

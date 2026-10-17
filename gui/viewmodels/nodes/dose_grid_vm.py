@@ -59,8 +59,19 @@ class DoseGridViewModel(NodeViewModel):
 
     @property
     def memory_mb(self) -> float:
-        """Расход памяти RAM для сетки типа float64 в МБ."""
+        """Расход памяти RAM для сетки с учетом выбранного типа данных (dtype) в МБ."""
         return float(self.core_node.memory_mb)
+
+    @property
+    def dtype(self) -> str:
+        """Тип данных вокселей сетки дозы ('float32' или 'float64')."""
+        return str(self.core_node.dtype)
+
+    @dtype.setter
+    def dtype(self, val: str) -> None:
+        self.core_node.dtype = val
+        self.property_changed.emit('dtype', self.core_node.dtype)
+        self.property_changed.emit('memory_mb', self.memory_mb)
 
     @property
     def origin(self) -> Tuple[float, float, float]:

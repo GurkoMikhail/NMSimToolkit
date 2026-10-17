@@ -589,7 +589,8 @@ class DataManager(threading.Thread):
         def do_write() -> None:
             for retry_index in range(retries_count):
                 try:
-                    with h5py.File(self.filename, "a", libver="latest") as file_handle:
+                    open_kwargs: Dict[str, Any] = {"libver": "latest"} if self.swmr else {}
+                    with h5py.File(self.filename, "a", **open_kwargs) as file_handle:
                         if self.swmr and not file_handle.swmr_mode:
                             try:
                                 file_handle.swmr_mode = True

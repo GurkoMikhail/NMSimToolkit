@@ -5,9 +5,11 @@
 """
 
 import os
+from pathlib import Path
 import tempfile
 import unittest
 import numpy as np
+from pydantic import ValidationError
 from PySide6.QtWidgets import QApplication
 
 from core.scene.nodes import SpatialNode, CompositeNode
@@ -18,7 +20,10 @@ from settings.database_setting import material_database
 from core.scene.gantry_node import GantryNode
 from core.source.sources import Source
 from core.config.models import (
+    BaseCompositeNodeConfig,
+    DataManagerConfig,
     SimulationConfig,
+    SimulationManagerConfig,
     TranslateConfig,
     RotateConfig,
     SourceConfig,
@@ -31,8 +36,11 @@ from core.config.exporter import SceneExporter
 from core.config.builder import SceneBuilder
 from core.config.template_binder import ConfigTemplateBinder
 from core.config.sweep_compiler import SweepCompiler
+from core.config.yaml_loader import load_raw_config
 import hepunits as units
 
+from gui.models.gui_settings import GuiSimulationSettings
+from gui.views.simulation_settings_dialog import SimulationSettingsDialog
 from gui.views.widgets.bindable_field import BindableDoubleField
 from gui.views.property_inspector import PropertyInspector
 from gui.viewmodels.scene_viewmodel import SceneViewModel
@@ -276,14 +284,14 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         templated_scene = ConfigTemplateBinder.apply_bindings(scene_raw_dict, bindings_reg)
 
         # Проверка детей экспортированного шаблона
-        children_by_name = {c["name"]: c for c in templated_scene["children"]}
+        children_by_name = {child_item["name"]: child_item for child_item in templated_scene["children"]}
         vol_cfg = children_by_name["Phantom"]
         source_cfg = children_by_name["HotSpot"]
         gantry_cfg = children_by_name["Gantry"]
 
         # Проверка Volume: сформированы TranslateConfig и RotateConfig со строками ${var}
-        trans_cfgs = [t for t in vol_cfg["transformations"] if "x" in t or "y" in t or "z" in t]
-        rot_cfgs = [t for t in vol_cfg["transformations"] if "alpha" in t or "beta" in t or "gamma" in t]
+        trans_cfgs = [tr_item for tr_item in vol_cfg["transformations"] if "x" in tr_item or "y" in tr_item or "z" in tr_item]
+        rot_cfgs = [tr_item for tr_item in vol_cfg["transformations"] if "alpha" in tr_item or "beta" in tr_item or "gamma" in tr_item]
         self.assertEqual(len(trans_cfgs), 1)
         self.assertEqual(len(rot_cfgs), 1)
         self.assertEqual(trans_cfgs[0]["x"], "${table_x_var} mm")
@@ -305,7 +313,6 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         self.assertEqual(extracted_bindings["Gantry"]["gantry_angle"], "gantry_var")
 
         # 4. Проверка чистоты ядра: SceneBuilder обязан работать Fail-Fast на неразрешенных макросах
-        from core.config.models import BaseCompositeNodeConfig
         with self.assertRaises(ValueError):
             SceneBuilder().build_scene(BaseCompositeNodeConfig.model_validate(templated_scene))
 
@@ -445,7 +452,6 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
 
     def test_step_and_shoot_config_zipped_length_validation(self) -> None:
         """Проверка валидации несовпадающей длины zipped_variables в StepAndShootProtocolConfig."""
-        from pydantic import ValidationError
         with self.assertRaises(ValidationError):
             StepAndShootProtocolConfig(
                 steps=3,
@@ -534,20 +540,12 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         self.assertEqual(restored_vm.steps, 4)
         self.assertEqual(restored_vm.radius_raw, [220.0, 230.0, 240.0, 250.0])
         self.assertEqual(restored_vm.grid_variables["collimator_tilt"], [0.0, 5.0])
+
     def test_universal_simulation_manager_bindings_and_roundtrip(self) -> None:
         """
         Проверка универсальности Property Binding: привязка параметров SimulationManager
         (particles_number, min_energy), экспорт в YAML, извлечение макросов и инъекция в воркер.
         """
-        import tempfile
-        from pathlib import Path
-        from core.config.models import SimulationConfig, SimulationManagerConfig, DataManagerConfig, BaseCompositeNodeConfig
-        from core.config.template_binder import ConfigTemplateBinder
-        from core.config.sweep_compiler import SweepCompiler
-        from core.config.yaml_loader import load_raw_config, load_simulation_config
-        from gui.models.gui_settings import GuiSimulationSettings
-        from gui.views.simulation_settings_dialog import SimulationSettingsDialog
-
         # 1. Проверка SimulationSettingsDialog с привязкой параметров
         settings = GuiSimulationSettings(particles_number=50000, min_energy=15.0)
         dialog = SimulationSettingsDialog(
@@ -610,16 +608,12 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
             self.assertEqual(final_cfg.simulation_manager.particles_number, 100000)
             self.assertAlmostEqual(float(final_cfg.simulation_manager.min_energy), float(25.0 * units.keV))
 
-
     def test_count_config_strict_validation(self) -> None:
         """
         Проверка строгого контракта CountConfig:
         - разрешены только положительные int (> 0) и макросы вида ${var_name};
         - запрещены 0, отрицательные числа, булевы значения и мусорные строки.
         """
-        from pydantic import ValidationError
-        from core.config.models import SimulationManagerConfig
-
         # Валидные значения
         cfg1 = SimulationManagerConfig(particles_number=1000)
         self.assertEqual(cfg1.particles_number, 1000)

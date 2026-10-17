@@ -312,21 +312,21 @@ class ConfigTemplateBinder:
                                 as_matrix=False,
                             )
                             for dec_cfg in decomposed_cfgs:
-                                if isinstance(dec_cfg, TranslateConfig):
-                                    expanded_transforms.append({
-                                        "type": "translate",
-                                        "x": float(dec_cfg.x),
-                                        "y": float(dec_cfg.y),
-                                        "z": float(dec_cfg.z),
-                                        "in_local": bool(tr_item.get("in_local", False)),
-                                    })
-                                elif isinstance(dec_cfg, RotateConfig):
+                                if isinstance(dec_cfg, RotateConfig):
                                     expanded_transforms.append({
                                         "type": "rotate",
                                         "alpha": f"{float(np.degrees(dec_cfg.alpha)):.6g} deg",
                                         "beta": f"{float(np.degrees(dec_cfg.beta)):.6g} deg",
                                         "gamma": f"{float(np.degrees(dec_cfg.gamma)):.6g} deg",
                                         "rotation_center": list(dec_cfg.rotation_center),
+                                        "in_local": bool(tr_item.get("in_local", False)),
+                                    })
+                                elif isinstance(dec_cfg, TranslateConfig):
+                                    expanded_transforms.append({
+                                        "type": "translate",
+                                        "x": float(dec_cfg.x),
+                                        "y": float(dec_cfg.y),
+                                        "z": float(dec_cfg.z),
                                         "in_local": bool(tr_item.get("in_local", False)),
                                     })
                         else:
@@ -369,6 +369,16 @@ class ConfigTemplateBinder:
                         transform.setdefault("type", "rotate")
                         rot_applied = True
 
+                if has_rot and not rot_applied:
+                    new_rot: Dict[str, Any] = {"type": "rotate", "alpha": 0.0, "beta": 0.0, "gamma": 0.0}
+                    if b_alpha:
+                        new_rot["alpha"] = _format_angle_macro(b_alpha)
+                    if b_beta:
+                        new_rot["beta"] = _format_angle_macro(b_beta)
+                    if b_gamma:
+                        new_rot["gamma"] = _format_angle_macro(b_gamma)
+                    transforms_list.insert(0, new_rot)
+
                 if has_trans and not trans_applied:
                     new_trans: Dict[str, Any] = {"type": "translate", "x": 0.0, "y": 0.0, "z": 0.0}
                     if bx:
@@ -378,16 +388,6 @@ class ConfigTemplateBinder:
                     if bz:
                         new_trans["z"] = f"${{{bz}}} mm"
                     transforms_list.append(new_trans)
-
-                if has_rot and not rot_applied:
-                    new_rot: Dict[str, Any] = {"type": "rotate", "alpha": 0.0, "beta": 0.0, "gamma": 0.0}
-                    if b_alpha:
-                        new_rot["alpha"] = _format_angle_macro(b_alpha)
-                    if b_beta:
-                        new_rot["beta"] = _format_angle_macro(b_beta)
-                    if b_gamma:
-                        new_rot["gamma"] = _format_angle_macro(b_gamma)
-                    transforms_list.append(new_rot)
 
             # 2. Активность источника
             b_act = node_bindings.get("activity")

@@ -58,10 +58,20 @@ class TrackRenderer:
         self._last_update_time: float = 0.0
         self._current_rendered_style: Optional[str] = None
 
+    def append_points(self, batch: Dict[str, np.ndarray]) -> None:
+        """
+        Добавляет пакет точек треков с поддержкой сброса при переключении фокуса задачи.
+        """
+        self.add_tracks_batch(batch)
+
     def add_tracks_batch(self, batch: Dict[str, np.ndarray]) -> None:
         """
         Добавляет пакет треков из очереди телеметрии ядра.
+        При наличии флага reset=True предварительно очищает буфер треков и 3D-актор.
         """
+        if bool(batch.get("reset", False)):
+            self.clear()
+
         pos_x = batch.get('pos_x')
         pos_y = batch.get('pos_y')
         pos_z = batch.get('pos_z')
@@ -76,11 +86,11 @@ class TrackRenderer:
         n_new = len(pos_x)
 
         # Добавляем точки и цвета в кольцевые буферы
-        for i in range(n_new):
-            pt = (float(pos_x[i]), float(pos_y[i]), float(pos_z_arr[i]))
+        for point_idx in range(n_new):
+            pt = (float(pos_x[point_idx]), float(pos_y[point_idx]), float(pos_z_arr[point_idx]))
             self._point_buffer.append(pt)
 
-            proc = int(process_ids[i]) if process_ids is not None else 1
+            proc = int(process_ids[point_idx]) if process_ids is not None else 1
             color = PROCESS_COLORS.get(proc, (0.8, 0.8, 0.8))
             self._color_buffer.append(color)
 
@@ -88,13 +98,17 @@ class TrackRenderer:
             # даже если события разделены другими частицами в SoA-банке
             if self.render_as_lines:
                 if particle_ids is not None:
-                    pid = int(particle_ids[i])
+                    pid = int(particle_ids[point_idx])
                     if pid in self._particle_last_pos:
                         prev_pt = self._particle_last_pos[pid]
                         self._lines_buffer.append((prev_pt, pt, color))
                     self._particle_last_pos[pid] = pt
-                elif i > 0:
-                    prev_pt = (float(pos_x[i - 1]), float(pos_y[i - 1]), float(pos_z_arr[i - 1]))
+                elif point_idx > 0:
+                    prev_pt = (
+                        float(pos_x[point_idx - 1]),
+                        float(pos_y[point_idx - 1]),
+                        float(pos_z_arr[point_idx - 1]),
+                    )
                     self._lines_buffer.append((prev_pt, pt, color))
 
         # Ограничение размера карты предыдущих позиций частиц

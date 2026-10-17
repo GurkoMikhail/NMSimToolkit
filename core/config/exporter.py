@@ -83,7 +83,8 @@ class SceneExporter:
         Преобразует матрицу трансформации 4x4 в список TransformConfig.
         По умолчанию при as_matrix=True выгружает полную матрицу 4x4 (MatrixTransformConfig),
         что гарантирует 100% стабильность сохранения/загрузки без потери знаков и Gimbal lock.
-        При as_matrix=False выполняет декомпозицию на TranslateConfig и RotateConfig.
+        При as_matrix=False выполняет декомпозицию на RotateConfig и TranslateConfig
+        (в порядке [RotateConfig, TranslateConfig], так как SpatialNode умножает матрицы слева: T @ R = [R | t]).
         """
         transforms: List[TransformConfig] = []
         if matrix is None or np.allclose(matrix, np.eye(4), atol=1e-7):
@@ -97,14 +98,7 @@ class SceneExporter:
             transforms.append(MatrixTransformConfig(matrix=mat_4x4))
             return transforms
 
-        # 1. Извлечение трансляции
-        translation_x = float(matrix[0, 3])
-        translation_y = float(matrix[1, 3])
-        translation_z = float(matrix[2, 3])
-        if not (math.isclose(translation_x, 0.0, abs_tol=1e-6) and math.isclose(translation_y, 0.0, abs_tol=1e-6) and math.isclose(translation_z, 0.0, abs_tol=1e-6)):
-            transforms.append(TranslateConfig(x=translation_x, y=translation_y, z=translation_z))
-
-        # 2. Извлечение вращения
+        # 1. Извлечение вращения (применяется первым, чтобы последующая трансляция не поворачивалась)
         rot_mat = matrix[:3, :3]
         if not np.allclose(rot_mat, np.eye(3), atol=1e-5):
             try:
@@ -119,6 +113,13 @@ class SceneExporter:
                 ))
             except ValueError as error:
                 logger.warning(f"Ошибка при декомпозиции матрицы вращения: {error}")
+
+        # 2. Извлечение трансляции (применяется после вращения: M = T @ R = [R | t])
+        translation_x = float(matrix[0, 3])
+        translation_y = float(matrix[1, 3])
+        translation_z = float(matrix[2, 3])
+        if not (math.isclose(translation_x, 0.0, abs_tol=1e-6) and math.isclose(translation_y, 0.0, abs_tol=1e-6) and math.isclose(translation_z, 0.0, abs_tol=1e-6)):
+            transforms.append(TranslateConfig(x=translation_x, y=translation_y, z=translation_z))
 
         return transforms
 
@@ -377,6 +378,7 @@ class SceneExporter:
                 size=(float(node.size[0]), float(node.size[1]), float(node.size[2])),
                 dose_voxel_size=float(node.dose_voxel_size),
                 is_active=bool(node.is_active),
+                dtype=node.dtype,
                 children=children_cfgs,
             )
 

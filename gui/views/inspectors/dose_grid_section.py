@@ -7,6 +7,7 @@ import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QLabel,
@@ -57,6 +58,14 @@ class DoseGridInspectorSection(BaseInspectorSection):
         self.spin_dose_grid_voxel.valueChanged.connect(self._on_dose_grid_voxel_step_changed)
         form_layout.addRow("Шаг вокселя:", self.spin_dose_grid_voxel)
 
+        self.combo_dose_grid_dtype = QComboBox()
+        self.combo_dose_grid_dtype.addItems(["float32", "float64"])
+        self.combo_dose_grid_dtype.setToolTip(
+            "Точность представления вокселей карты дозы (float32 — 4 байта, float64 — 8 байт)"
+        )
+        self.combo_dose_grid_dtype.currentTextChanged.connect(self._on_dose_grid_dtype_changed)
+        form_layout.addRow("Точность (dtype):", self.combo_dose_grid_dtype)
+
         self.lbl_dose_grid_shape = QLabel("–")
         self.lbl_dose_grid_shape.setToolTip("Разрешение воксельной сетки (Nx × Ny × Nz)")
         form_layout.addRow("Разрешение сетки:", self.lbl_dose_grid_shape)
@@ -94,6 +103,7 @@ class DoseGridInspectorSection(BaseInspectorSection):
             self.spin_dose_grid_size_y.setValue(float(grid_size[1]))
             self.spin_dose_grid_size_z.setValue(float(grid_size[2]))
             self.spin_dose_grid_voxel.setValue(float(self._current_vm.dose_voxel_size))
+            self.combo_dose_grid_dtype.setCurrentText(str(self._current_vm.dtype))
             self.chk_dose_grid_active.setChecked(bool(self._current_vm.is_active))
             self._update_dose_grid_metrics()
 
@@ -128,6 +138,13 @@ class DoseGridInspectorSection(BaseInspectorSection):
                 self._update_dose_grid_metrics()
             finally:
                 self._is_updating_ui = False
+        elif prop_name == "dtype":
+            self._is_updating_ui = True
+            try:
+                self.combo_dose_grid_dtype.setCurrentText(str(new_val))
+                self._update_dose_grid_metrics()
+            finally:
+                self._is_updating_ui = False
         elif prop_name in ("grid_shape", "memory_mb"):
             self._update_dose_grid_metrics()
         elif prop_name == "is_active":
@@ -143,9 +160,18 @@ class DoseGridInspectorSection(BaseInspectorSection):
             return
         shape = self._current_vm.grid_shape
         n_voxels = int(shape[0] * shape[1] * shape[2])
-        mem_mb = self._current_vm.memory_mb
+        memory_megabytes = self._current_vm.memory_mb
+        dtype_str = self._current_vm.dtype
         self.lbl_dose_grid_shape.setText(f"{shape[0]} × {shape[1]} × {shape[2]} ({n_voxels:,} вокс.)")
-        self.lbl_dose_grid_memory.setText(f"{mem_mb:.2f} МБ (float64)")
+        self.lbl_dose_grid_memory.setText(f"{memory_megabytes:.2f} МБ ({dtype_str})")
+
+    def _on_dose_grid_dtype_changed(self, dtype_text: str) -> None:
+        """Обновляет тип данных (float32 / float64) сетки дозы в ViewModel."""
+        if self._is_updating_ui or not isinstance(self._current_vm, DoseGridViewModel):
+            return
+        if dtype_text in ("float32", "float64"):
+            self._current_vm.dtype = dtype_text
+            self._update_dose_grid_metrics()
 
     def _on_dose_grid_size_changed(self) -> None:
         """Обновляет размеры сетки дозы в ViewModel при редактировании в UI."""

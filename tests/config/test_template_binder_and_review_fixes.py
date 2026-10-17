@@ -30,14 +30,21 @@ from core.config.models import (
     DataManagerConfig,
     VolumeConfig,
     BoxConfig,
+    BaseCompositeNodeConfig,
+    StepAndShootProtocolConfig,
 )
+from core.config.builder import SceneBuilder
+from core.config.exporter import SceneExporter
 from core.config.template_binder import ConfigTemplateBinder
 from core.config.yaml_dumper import dump_simulation_config
 from core.config.yaml_loader import load_raw_config, load_simulation_config
 from core.config.orchestrator import Orchestrator
 from core.config.sweep_compiler import SweepCompiler
 from core.config.simulation_worker import simulation_worker_task
+from core.scene.nodes import SpatialNode
 from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
+from gui.viewmodels.scene_viewmodel import SceneViewModel
+from gui.viewmodels.procedure_viewmodel import StepAndShootProcedureViewModel
 
 
 class TestReviewFixesUnitsAndKinematics(unittest.TestCase):
@@ -259,6 +266,103 @@ class TestReviewFixesTemplateBinder(unittest.TestCase):
         }
         ConfigTemplateBinder.apply_bindings(plain_dict, {"data_manager": {"filename": "gantry_angle"}})
         self.assertEqual(plain_dict["data_manager"]["filename"], "results/scan_${gantry_angle}.hdf")
+
+    def test_decompose_matrix_and_builder_roundtrip_preserves_y_translation(self) -> None:
+        """
+        Регрессионный тест: SceneExporter.decompose_matrix(mat, as_matrix=False) + SceneBuilder
+        восстанавливают идентичную 4x4 матрицу mat для комбинации поворота (gamma=90 deg)
+        и сдвига (y=329.05 mm) без превращения сдвига по Y в сдвиг по Z.
+        """
+        source_node = SpatialNode(name="CamHead")
+        source_node.rotate(alpha=0.0, beta=0.0, gamma=float(np.radians(90.0)), in_local=False)
+        source_node.translate(0.0, 329.05, 0.0, in_local=False)
+        original_matrix = source_node.local_matrix.copy()
+        np.testing.assert_allclose(original_matrix[0:3, 3], [0.0, 329.05, 0.0], atol=1e-6)
+
+        decomposed_transforms = SceneExporter.decompose_matrix(original_matrix, as_matrix=False)
+        self.assertEqual(len(decomposed_transforms), 2)
+        self.assertEqual(decomposed_transforms[0].type, "rotate")
+        self.assertEqual(decomposed_transforms[1].type, "translate")
+
+        node_cfg = BaseCompositeNodeConfig(name="CamHead", transformations=decomposed_transforms)
+        rebuilt_node = SceneBuilder().build_scene(node_cfg)
+        np.testing.assert_allclose(rebuilt_node.local_matrix, original_matrix, atol=1e-6)
+        np.testing.assert_allclose(rebuilt_node.local_matrix[0:3, 3], [0.0, 329.05, 0.0], atol=1e-6)
+
+    def test_tb161_gui_pipeline_preserves_camera_positions_and_head_angles(self) -> None:
+        """
+        Регрессионный тест полного цикла GUI для tb161_nema_protocol_direct.yaml:
+        загрузка SceneViewModel + StepAndShootProcedureViewModel.sync_with_scene +
+        SceneExporter.export_to_config + ConfigTemplateBinder.apply_bindings +
+        SweepCompiler.inject_variables для gantry_angle = 0 сохраняет
+        GammaCamera_1 в (0, +329.05, 0) и GammaCamera_2 в (0, -329.05, 0),
+        а proc_vm.head_angles равны [90.0, 270.0].
+        """
+        yaml_path = Path(__file__).resolve().parents[2] / "tb161_nema_protocol_direct.yaml"
+        raw_dict = load_raw_config(yaml_path)
+        bindings = ConfigTemplateBinder.extract_bindings(raw_dict)
+        resolved_cfg = load_simulation_config(yaml_path, resolve_protocol=True)
+
+        builder = SceneBuilder(base_dir=yaml_path.parent)
+        root_node = builder.build_scene(resolved_cfg.scene)
+
+        scene_vm = SceneViewModel()
+        scene_vm.load_scene(
+            root_node,
+            distribution_registry=builder.distribution_registry,
+            slots_registry=builder.slots_registry,
+            bindings_registry=bindings,
+            base_dir=yaml_path.parent,
+        )
+
+        self.assertIsInstance(resolved_cfg.protocol, StepAndShootProtocolConfig)
+        assert isinstance(resolved_cfg.protocol, StepAndShootProtocolConfig)
+        proc_vm = StepAndShootProcedureViewModel.from_config(resolved_cfg.protocol)
+        proc_vm.sync_with_scene(scene_vm)
+
+        # Проверяем, что локальные углы камер считаны из сцены как [90.0, 270.0]
+        np.testing.assert_allclose(proc_vm.head_angles, [90.0, 270.0], atol=1e-4)
+
+        # Экспорт сцены и наложение привязок как в GUI перед передачей в воркер
+        exported_cfg = SceneExporter.export_to_config(
+            root_node,
+            simulation_manager_cfg=resolved_cfg.simulation_manager,
+            data_manager_cfg=resolved_cfg.data_manager,
+            protocol=proc_vm.to_config(),
+            distribution_registry=scene_vm.distribution_registry,
+            slots_registry=scene_vm.slots_registry,
+        )
+        merged_bindings = {**scene_vm.bindings_registry, **proc_vm.bindings_registry}
+        bound_cfg = ConfigTemplateBinder.apply_bindings(exported_cfg, merged_bindings)
+        assert isinstance(bound_cfg, SimulationConfig)
+
+        orchestrator = Orchestrator(bound_cfg)
+        sweep_cfg = orchestrator.compile_protocol()
+        jobs = orchestrator._generate_job_list(sweep_cfg)
+        self.assertGreater(len(jobs), 0)
+
+        # Первый шаг: gantry_angle = 0
+        step0_dict = SweepCompiler.inject_variables(orchestrator.raw_config_dict, jobs[0])
+        step0_cfg = SimulationConfig.model_validate(step0_dict)
+        worker_root = SceneBuilder(base_dir=yaml_path.parent).build_scene(step0_cfg.scene)
+
+        def _find_node(node: SpatialNode, target_name: str) -> SpatialNode | None:
+            if node.name == target_name:
+                return node
+            for child in node.childs:
+                found = _find_node(child, target_name)
+                if found is not None:
+                    return found
+            return None
+
+        cam1 = _find_node(worker_root, "GammaCamera_1")
+        cam2 = _find_node(worker_root, "GammaCamera_2")
+        self.assertIsNotNone(cam1)
+        self.assertIsNotNone(cam2)
+        assert cam1 is not None and cam2 is not None
+
+        np.testing.assert_allclose(cam1.global_matrix[0:3, 3], [0.0, 329.05, 0.0], atol=1e-4)
+        np.testing.assert_allclose(cam2.global_matrix[0:3, 3], [0.0, -329.05, 0.0], atol=1e-4)
 
 
 class TestReviewFixesSimulationWorker(unittest.TestCase):

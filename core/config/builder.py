@@ -356,6 +356,7 @@ class SceneBuilder:
             size=size,
             dose_voxel_size=dose_voxel_size,
             is_active=config.is_active,
+            dtype=config.dtype,
         )
         return node
 

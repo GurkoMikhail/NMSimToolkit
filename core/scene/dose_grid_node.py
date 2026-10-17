@@ -5,12 +5,31 @@
 """
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple
+from typing import Any, Literal, Optional, Sequence, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float
 from core.scene.nodes import CompositeNode
+
+VALID_DOSE_DTYPES: Tuple[str, str] = ("float32", "float64")
+
+
+def _normalize_dose_dtype(value: Any) -> Literal["float32", "float64"]:
+    """Проверяет и нормализует тип данных сетки дозы ('float32' или 'float64')."""
+    try:
+        dtype_name = np.dtype(value).name
+    except TypeError as exc:
+        raise ValueError(
+            f"Тип данных сетки дозы должен быть 'float32' или 'float64', получено {value!r}."
+        ) from exc
+    if dtype_name == "float32":
+        return "float32"
+    if dtype_name == "float64":
+        return "float64"
+    raise ValueError(
+        f"Тип данных сетки дозы должен быть 'float32' или 'float64', получено {value!r}."
+    )
 
 
 class DoseGridNode(CompositeNode):
@@ -27,6 +46,7 @@ class DoseGridNode(CompositeNode):
         size: Sequence[Float | float] | NDArray[Float] = (100.0, 100.0, 100.0),
         dose_voxel_size: Float | float = 5.0,
         is_active: bool = True,
+        dtype: str | np.dtype[Any] = "float32",
     ) -> None:
         super().__init__(name=name)
         size_array = np.asarray(size, dtype=Float)
@@ -41,6 +61,21 @@ class DoseGridNode(CompositeNode):
         self._size: NDArray[Float] = size_array
         self._dose_voxel_size: float = voxel_step
         self.is_active: bool = bool(is_active)
+        self._dtype: Literal["float32", "float64"] = _normalize_dose_dtype(dtype)
+
+    @property
+    def dtype(self) -> Literal["float32", "float64"]:
+        """Строковое имя типа данных вокселей сетки дозы ('float32' или 'float64')."""
+        return self._dtype
+
+    @dtype.setter
+    def dtype(self, value: str | np.dtype[Any]) -> None:
+        self._dtype = _normalize_dose_dtype(value)
+
+    @property
+    def numpy_dtype(self) -> np.dtype[Any]:
+        """Объект типа данных NumPy для буфера сетки дозы."""
+        return np.dtype(self._dtype)
 
     @property
     def size(self) -> NDArray[Float]:
@@ -92,10 +127,11 @@ class DoseGridNode(CompositeNode):
 
     @property
     def memory_mb(self) -> float:
-        """Оценка расхода оперативной памяти для сетки типа float64 в МБ."""
+        """Оценка расхода оперативной памяти для сетки с учетом выбранного типа данных (dtype) в МБ."""
         n_elements = int(np.prod(self.grid_shape))
-        return float(n_elements * 8 / (1024 * 1024))
+        itemsize = int(np.dtype(self._dtype).itemsize)
+        return float(n_elements * itemsize / (1024 * 1024))
 
 
-__all__ = ["DoseGridNode"]
+__all__ = ["DoseGridNode", "VALID_DOSE_DTYPES"]
 

@@ -1045,14 +1045,25 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
                 gantry_view_model.gantry_angle = self._start_angle
                 self.sync_cameras(camera_view_models)
             elif camera_view_models:
-                # Камеры уже присутствуют в сцене: считываем радиус из сцены без мутации матриц
+                # Камеры уже присутствуют в сцене: считываем радиус и локальные углы из сцены без мутации матриц
                 first_camera_vm = camera_view_models[0]
                 camera_position = first_camera_vm.local_matrix[0:3, 3]
                 distance_to_isocenter = float(np.hypot(camera_position[0], camera_position[1]))
                 if distance_to_isocenter > 1.0:
                     self._radius = max(10.0, distance_to_isocenter - first_camera_vm.half_thickness)
 
-            # 3. Zero-Config авто-привязка станины и детекторов в единый реестр привязок процедуры
+                extracted_head_angles: List[float] = []
+                for cam_vm in camera_view_models:
+                    cam_pos = cam_vm.local_matrix[0:3, 3]
+                    if float(np.hypot(cam_pos[0], cam_pos[1])) > 1e-3:
+                        cam_angle = float(np.degrees(np.arctan2(cam_pos[1], cam_pos[0])) % 360.0)
+                    else:
+                        cam_angle = 0.0
+                    extracted_head_angles.append(cam_angle)
+                self._head_angles = extracted_head_angles
+                self._gamma_cameras = len(camera_view_models)
+
+            # 3. Zero-Config авто-привязка станины в единый реестр привязок процедуры
             if gantry_view_model is not None and gantry_view_model.core_node is not None:
                 self.bind_node_property(gantry_view_model.core_node, "rotation.alpha", "gantry_angle")
                 self.bind_node_property(gantry_view_model.core_node, "gantry_angle", "gantry_angle")
@@ -1062,18 +1073,6 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
                     gantry_bindings = scene_view_model.bindings_registry.setdefault(gantry_view_model.core_node, {})
                     gantry_bindings.setdefault("rotation.alpha", "gantry_angle")
                     gantry_bindings.setdefault("gantry_angle", "gantry_angle")
-
-            for camera_view_model in camera_view_models:
-                cam_core = camera_view_model.core_node
-                if cam_core is not None:
-                    self.bind_node_property(cam_core, "radius", "radius")
-                    self.bind_node_property(cam_core, "translation.y", "radius")
-                camera_view_model.bindings.setdefault('radius', 'radius')
-                camera_view_model.bindings.setdefault('translation.y', 'radius')
-                if scene_view_model is not None and cam_core is not None:
-                    camera_bindings = scene_view_model.bindings_registry.setdefault(cam_core, {})
-                    camera_bindings.setdefault('radius', 'radius')
-                    camera_bindings.setdefault('translation.y', 'radius')
         finally:
             self._is_syncing_with_scene = False
 

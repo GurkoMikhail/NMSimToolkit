@@ -178,6 +178,7 @@ class DoseGridNodeConfig(CompositeNodeConfig):
     size: Tuple[LengthConfig, LengthConfig, LengthConfig] = (100.0 * units.mm, 100.0 * units.mm, 100.0 * units.mm)
     dose_voxel_size: LengthConfig = 5.0 * units.mm
     is_active: bool = True
+    dtype: Literal['float32', 'float64'] = 'float32'
 
 class GantryConfig(CompositeNodeConfig):
     type: Literal['Gantry'] = 'Gantry'

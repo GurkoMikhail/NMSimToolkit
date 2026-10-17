@@ -1,34 +1,56 @@
-logging:
-  output_dir: "logs/simulation_default"
-  level: "INFO"
-  console: false
-  per_task_files: true
-  filename_pattern: "task_{task_id}.log"
+pool_size: 4
+protocol:
+  type: StepAndShoot
+  steps: 60
+  start_angle: 0.0
+  end_angle: 3.141592653589793
+  endpoint: false
+  rotation_direction: CW
+  time_per_step: 29999999999.999996
+  initial_time: 0.0
+  sequential_time: true
+  radius: 258.75
+  grid_variables: {}
+  zipped_variables: {}
+Materials:
+- &air_2598 Air, Dry (near sea level)
+- &glass_e941 Glass, Borosilicate (Pyrex)
+- &pb_0789 Pb
+- &sodium_iodide_a6c2 Sodium Iodide
+- &water_6a66 Water, Liquid
 simulation_manager:
-  start_time: 0.0
-  stop_time: 1000000000.0
+  start_time: ${start_time}
+  stop_time: ${stop_time}
   particles_number: 10000
   min_energy: 0.001
+  physics_list: emstandard_opt4
 data_manager:
-  filename: nema_4.2/0.0_deg.hdf
+  filename: output_tb161_dual_cam/${gantry_angle deg}_deg.hdf
   handlers:
   - type: HistoryAssemblerHandler
     sensitive_volumes:
     - Detector_1
     - Detector_2
     save_initial_states: true
+  buffer_capacity: 100000
+  floating_point_precision: float32
+  compression: gzip
+  compression_opts: 4
 scene:
   name: Simulation_volume
+  tags: []
   transformations: []
   children:
   - name: Phantom
+    tags: []
     transformations: []
     children:
     - name: Source
+      tags: []
       transformations: []
       children: []
       type: Source
-      activity: 0.1
+      activity: 100 MBq
       distribution:
         path: phantoms/nema/nema_voxel_size_4.2_mm.dat
         format: raw
@@ -38,36 +60,74 @@ scene:
         - 92
         order: F
         encoding: text
+        dtype: float32
       voxel_size: 4.2
       radiation_type: Gamma
-      energy: 0.159
-      half_life: 13.2 hour
+      energy:
+      - - 74.57 keV
+        - 0.1619853426854968
+      - - 48.9 keV
+        - 0.2673544490925675
+      - - 46 keV
+        - 0.1761394017551033
+      - - 25.65 keV
+        - 0.36486018934985687
+      - - 52 keV
+        - 0.02201742521938791
+      - - 57.4 keV
+        - 0.0062906929198251185
+      - - 106.1 keV
+        - 0.0007863366149781398
+      - - 131.8 keV
+        - 0.00047180196898688383
+      - - 160 keV
+        - 6.290692919825118e-05
+      - - 292 keV
+        - 3.145346459912559e-05
+      half_life: 595295999999999.9
+      radionuclide: 161Tb
+      phantom_type: NEMA IEC Body Phantom
     type: WoodcockVoxelVolume
-    voxel_size: 4.0
+    voxel_size: 4.2
     distribution:
-      path: phantoms/material_map.npy
+      path: phantoms/nema/anema_voxel_size_4.2_mm.dat
       mapping:
-        0.0: Vacuum
-        1.0: Air, Dry (near sea level)
-        2.0: Adipose Tissue (ICRU-44)
-        3.0: Tissue, Soft (ICRU-44)
-        4.0: B-100 Bone-Equivalent Plastic
-      format: numpy
+        0.04: *air_2598
+        0.15: *water_6a66
+      format: raw
+      shape:
+      - 128
+      - 128
+      - 92
+      order: F
+      encoding: text
+      dtype: float32
   - name: Gantry
-    transformations: []
+    tags: []
+    transformations:
+    - type: rotate
+      alpha: ${gantry_angle}
+      beta: 0.0
+      gamma: 0.0
+      rotation_center:
+      - 0.0
+      - 0.0
+      - 0.0
+      in_local: false
     children:
     - name: GammaCamera_1
+      tags: []
       transformations:
       - type: matrix
         matrix:
-        - - 0.0
+        - - 1.0
+          - 0.0
+          - -0.0
+          - 0.0
+        - - -0.0
           - 0.0
           - -1.0
-          - 355.25
-        - - -1.0
-          - 0.0
-          - 0.0
-          - 0.0
+          - 329.05
         - - 0.0
           - 1.0
           - 0.0
@@ -79,9 +139,11 @@ scene:
         in_local: false
       children:
       - name: Casing_1
+        tags: []
         transformations: []
         children:
         - name: Detector_box_1
+          tags: []
           transformations:
           - type: matrix
             matrix:
@@ -104,6 +166,7 @@ scene:
             in_local: false
           children:
           - name: Collimator_1
+            tags: []
             transformations:
             - type: matrix
               matrix:
@@ -118,23 +181,24 @@ scene:
               - - 0.0
                 - 0.0
                 - 1.0
-                - 30.25
+                - 42.8
               - - 0.0
                 - 0.0
                 - 0.0
                 - 1.0
               in_local: false
             children: []
-            type: ParametricParallelCollimator
+            type: DirectParallelCollimator
             size:
             - 540.0
             - 400.0
-            - 30.0
+            - 35.0
             hole_diameter: 1.5
             septa: 0.2
-            material: Pb
+            material: *pb_0789
             hole_shape: hexagonal
           - name: Detector_1
+            tags: []
             transformations:
             - type: matrix
               matrix:
@@ -149,7 +213,7 @@ scene:
               - - 0.0
                 - 0.0
                 - 1.0
-                - 9.5
+                - 20.45
               - - 0.0
                 - 0.0
                 - 0.0
@@ -162,8 +226,9 @@ scene:
               x: 540.0
               y: 400.0
               z: 9.5
-            material: Sodium Iodide
+            material: *sodium_iodide_a6c2
           - name: Glass_backend_1
+            tags: []
             transformations:
             - type: matrix
               matrix:
@@ -178,7 +243,7 @@ scene:
               - - 0.0
                 - 0.0
                 - 1.0
-                - -20.25
+                - -22.3
               - - 0.0
                 - 0.0
                 - 0.0
@@ -190,22 +255,22 @@ scene:
               type: Box
               x: 540.0
               y: 400.0
-              z: 50.0
-            material: Glass, Borosilicate (Pyrex)
+              z: 76.0
+            material: *glass_e941
           type: Volume
           geometry:
             type: Box
             x: 540.0
             y: 400.0
-            z: 90.5
-          material: Air, Dry (near sea level)
+            z: 120.60000000000001
+          material: *air_2598
         type: Volume
         geometry:
           type: Box
           x: 580.0
           y: 440.0
-          z: 110.5
-        material: Pb
+          z: 140.6
+        material: *pb_0789
       type: GammaCamera
       slots:
         casing: Casing_1
@@ -214,17 +279,18 @@ scene:
         crystal: Detector_1
         glass_backend: Glass_backend_1
     - name: GammaCamera_2
+      tags: []
       transformations:
       - type: matrix
         matrix:
+        - - -1.0
+          - 0.0
+          - 0.0
+          - -0.0
         - - 0.0
           - 0.0
           - 1.0
-          - -355.25
-        - - 1.0
-          - 0.0
-          - 0.0
-          - 0.0
+          - -329.05
         - - 0.0
           - 1.0
           - 0.0
@@ -236,9 +302,11 @@ scene:
         in_local: false
       children:
       - name: Casing_2
+        tags: []
         transformations: []
         children:
         - name: Detector_box_2
+          tags: []
           transformations:
           - type: matrix
             matrix:
@@ -261,6 +329,7 @@ scene:
             in_local: false
           children:
           - name: Collimator_2
+            tags: []
             transformations:
             - type: matrix
               matrix:
@@ -275,23 +344,24 @@ scene:
               - - 0.0
                 - 0.0
                 - 1.0
-                - 30.25
+                - 42.8
               - - 0.0
                 - 0.0
                 - 0.0
                 - 1.0
               in_local: false
             children: []
-            type: ParametricParallelCollimator
+            type: DirectParallelCollimator
             size:
             - 540.0
             - 400.0
-            - 30.0
+            - 35.0
             hole_diameter: 1.5
             septa: 0.2
-            material: Pb
+            material: *pb_0789
             hole_shape: hexagonal
           - name: Detector_2
+            tags: []
             transformations:
             - type: matrix
               matrix:
@@ -306,7 +376,7 @@ scene:
               - - 0.0
                 - 0.0
                 - 1.0
-                - 9.5
+                - 20.45
               - - 0.0
                 - 0.0
                 - 0.0
@@ -319,8 +389,9 @@ scene:
               x: 540.0
               y: 400.0
               z: 9.5
-            material: Sodium Iodide
+            material: *sodium_iodide_a6c2
           - name: Glass_backend_2
+            tags: []
             transformations:
             - type: matrix
               matrix:
@@ -335,7 +406,7 @@ scene:
               - - 0.0
                 - 0.0
                 - 1.0
-                - -20.25
+                - -22.3
               - - 0.0
                 - 0.0
                 - 0.0
@@ -347,22 +418,22 @@ scene:
               type: Box
               x: 540.0
               y: 400.0
-              z: 50.0
-            material: Glass, Borosilicate (Pyrex)
+              z: 76.0
+            material: *glass_e941
           type: Volume
           geometry:
             type: Box
             x: 540.0
             y: 400.0
-            z: 90.5
-          material: Air, Dry (near sea level)
+            z: 120.60000000000001
+          material: *air_2598
         type: Volume
         geometry:
           type: Box
           x: 580.0
           y: 440.0
-          z: 110.5
-        material: Pb
+          z: 140.6
+        material: *pb_0789
       type: GammaCamera
       slots:
         casing: Casing_2
@@ -370,21 +441,30 @@ scene:
         collimator: Collimator_2
         crystal: Detector_2
         glass_backend: Glass_backend_2
+    - name: DoseGrid_1
+      tags: []
+      transformations: []
+      children: []
+      type: DoseGridNode
+      size:
+      - 580.0
+      - 800.0
+      - 440.0
+      dose_voxel_size: 4.0
+      is_active: true
+      dtype: float32
     type: Gantry
-  - name: DoseGrid_1
-    transformations: []
-    children: []
-    type: DoseGridNode
-    size:
-    - 1200.0
-    - 1200.0
-    - 800.0
-    dose_voxel_size: 8.0
-    is_active: true
   type: Volume
   geometry:
     type: Box
     x: 1200.0
     y: 1200.0
     z: 800.0
-  material: Air, Dry (near sea level)
+  material: *air_2598
+logging:
+  output_dir: logs/tb161_direct
+  level: INFO
+  console: false
+  per_task_files: true
+  format: '[%(asctime)s: %(levelname)s] [%(name)s] %(message)s'
+  filename_pattern: task_{task_id}.log

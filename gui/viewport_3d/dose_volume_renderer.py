@@ -349,12 +349,17 @@ class DoseVolumeRenderer:
         if entry.grid is None or "dose" not in entry.grid.point_data:
             return
 
-        # 1. Мутация скаляров in-place без выделения новых VTK-объектов
-        flat_dose = dose_3d.flatten(order="F").astype(np.float32)
+        # 1. Мутация скаляров in-place через zero-copy view без выделения промежуточных массивов
+        if dose_3d.ndim == 1:
+            flat_dose = dose_3d
+        elif dose_3d.flags.f_contiguous:
+            flat_dose = dose_3d.ravel(order="K")
+        else:
+            flat_dose = np.ravel(dose_3d, order="F")
         target_scalars = np.asarray(entry.grid.point_data["dose"])
         if target_scalars.shape != flat_dose.shape:
             return
-        target_scalars[:] = flat_dose
+        np.copyto(target_scalars, flat_dose, casting="same_kind")
 
         # 2. Оповещение конвейера VTK об изменении скалярных данных
         scalars = entry.grid.GetPointData().GetScalars()

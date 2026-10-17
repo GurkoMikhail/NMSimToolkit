@@ -35,6 +35,7 @@ class DoseGridEntry:
         shm_name: Optional[str] = None,
         create_shm: bool = True,
         node: Optional[DoseGridNode] = None,
+        dtype: Optional[Union[str, np.dtype[Any]]] = None,
     ) -> None:
         self.name = name
         self.grid_shape: Tuple[int, int, int] = (
@@ -51,44 +52,62 @@ class DoseGridEntry:
             self.inverse_global_matrix = np.asarray(inverse_global_matrix, dtype=np.float64)
         else:
             self.inverse_global_matrix = np.eye(4, dtype=np.float64)
-        self.shm_name = shm_name or f"nmsim_dose_{name}_{abs(id(self))}"
-        self.create_shm = create_shm
-        self._owns_shm = create_shm
+        self.shm_name: Optional[str] = shm_name if shm_name else None
+        self.create_shm: bool = create_shm
+        self._owns_shm: bool = False
         self.node = node
+        resolved_dtype = dtype if dtype is not None else (node.dtype if node is not None else "float32")
+        self.dtype: np.dtype[Any] = np.dtype(resolved_dtype)
 
         self._shm: Optional[shared_memory.SharedMemory] = None
         self._dose_grid: Optional[np.ndarray] = None
         self._init_shared_memory()
 
     def _init_shared_memory(self) -> None:
-        nbytes = int(np.prod(self.grid_shape) * np.dtype(np.float64).itemsize)
+        if not self.shm_name:
+            self._shm = None
+            self._owns_shm = False
+            self._dose_grid = np.zeros(self.grid_shape, dtype=self.dtype, order="F")
+            return
+
+        nbytes = int(np.prod(self.grid_shape) * self.dtype.itemsize)
         if self.create_shm:
             try:
                 self._shm = shared_memory.SharedMemory(name=self.shm_name, create=True, size=nbytes)
+                self._owns_shm = True
+                self._dose_grid = np.ndarray(self.grid_shape, dtype=self.dtype, buffer=self._shm.buf, order="F")
+                self._dose_grid.fill(0.0)
             except FileExistsError:
-                try:
-                    temp_shm = shared_memory.SharedMemory(name=self.shm_name, create=False)
-                    temp_shm.close()
-                    temp_shm.unlink()
-                except (OSError, RuntimeError, ValueError, KeyError, BufferError):
-                    pass
-                try:
+                existing_shm = shared_memory.SharedMemory(name=self.shm_name, create=False)
+                if existing_shm.size >= nbytes:
+                    self._shm = existing_shm
+                    self._owns_shm = False
+                    self._dose_grid = np.ndarray(self.grid_shape, dtype=self.dtype, buffer=self._shm.buf, order="F")
+                else:
+                    try:
+                        existing_shm.close()
+                        existing_shm.unlink()
+                    except (OSError, RuntimeError, ValueError, KeyError, BufferError):
+                        pass
                     self._shm = shared_memory.SharedMemory(name=self.shm_name, create=True, size=nbytes)
-                except (OSError, RuntimeError, ValueError, KeyError, BufferError):
-                    self._shm = shared_memory.SharedMemory(name=self.shm_name, create=False)
+                    self._owns_shm = True
+                    self._dose_grid = np.ndarray(self.grid_shape, dtype=self.dtype, buffer=self._shm.buf, order="F")
+                    self._dose_grid.fill(0.0)
         else:
+            self._owns_shm = False
             try:
-                self._shm = shared_memory.SharedMemory(name=self.shm_name, create=False)
+                existing_shm = shared_memory.SharedMemory(name=self.shm_name, create=False)
+                if existing_shm.size >= nbytes:
+                    self._shm = existing_shm
+                    self._dose_grid = np.ndarray(self.grid_shape, dtype=self.dtype, buffer=self._shm.buf, order="F")
+                else:
+                    existing_shm.close()
+                    self._shm = None
+                    self._dose_grid = np.zeros(self.grid_shape, dtype=self.dtype, order="F")
             except FileNotFoundError:
                 _logger.warning(f"SharedMemory '{self.shm_name}' для сетки '{self.name}' не найден.")
                 self._shm = None
-
-        if self._shm is not None:
-            self._dose_grid = np.ndarray(self.grid_shape, dtype=np.float64, buffer=self._shm.buf)
-            if self.create_shm:
-                self._dose_grid.fill(0.0)
-        else:
-            self._dose_grid = np.zeros(self.grid_shape, dtype=np.float64)
+                self._dose_grid = np.zeros(self.grid_shape, dtype=self.dtype, order="F")
 
     def accumulate(self, pos_x: np.ndarray, pos_y: np.ndarray, pos_z: np.ndarray, edep: np.ndarray) -> None:
         """
@@ -119,7 +138,11 @@ class DoseGridEntry:
         if not np.any(in_bounds):
             return
 
-        np.add.at(self._dose_grid, (ix[in_bounds], iy[in_bounds], iz[in_bounds]), edep[in_bounds])
+        np.add.at(
+            self._dose_grid,
+            (ix[in_bounds], iy[in_bounds], iz[in_bounds]),
+            np.asarray(edep[in_bounds], dtype=self.dtype),
+        )
 
     def clear(self) -> None:
         """Сброс накопленной дозы в ноль."""
@@ -128,6 +151,7 @@ class DoseGridEntry:
 
     def close(self) -> None:
         """Закрытие и удаление сегмента SharedMemory."""
+        self._dose_grid = None
         if self._shm is not None:
             try:
                 self._shm.close()
@@ -137,7 +161,6 @@ class DoseGridEntry:
                 _logger.debug(f"Ошибка закрытия SharedMemory '{self.shm_name}': {shm_error}")
             finally:
                 self._shm = None
-                self._dose_grid = None
 
 
 class DoseMapHandler(BaseDataHandler):
@@ -153,7 +176,7 @@ class DoseMapHandler(BaseDataHandler):
     def __init__(
         self,
         grid_nodes: Optional[Sequence[DoseGridNode]] = None,
-        shm_name: str = "nmsim_dose_shm",
+        shm_name: Optional[str] = "nmsim_dose_shm",
         create_shm: bool = True,
     ) -> None:
         super().__init__()
@@ -161,11 +184,13 @@ class DoseMapHandler(BaseDataHandler):
         self._entries_by_name: Dict[str, DoseGridEntry] = {}
 
         if grid_nodes is not None:
-            for node in grid_nodes:
-                if not node.is_active:
-                    continue
-                node_name = node.name
-                node_shm = f"{shm_name}_{node_name}_{abs(id(node))}"
+            active_nodes = [node for node in grid_nodes if node.is_active]
+            for idx, node in enumerate(active_nodes):
+                node_name = node.name or f"DoseGrid_{idx}"
+                if shm_name:
+                    node_shm: Optional[str] = f"{shm_name}_{node_name}" if len(active_nodes) > 1 else shm_name
+                else:
+                    node_shm = None
                 inv_mat = node.inverse_global_matrix
                 entry = DoseGridEntry(
                     name=node_name,
@@ -176,6 +201,7 @@ class DoseMapHandler(BaseDataHandler):
                     shm_name=node_shm,
                     create_shm=create_shm,
                     node=node,
+                    dtype=node.dtype,
                 )
                 self.entries.append(entry)
                 self._entries_by_name[node_name] = entry
@@ -186,9 +212,9 @@ class DoseMapHandler(BaseDataHandler):
 
     def add_grid_node(self, node: DoseGridNode, shm_prefix: Optional[str] = None) -> None:
         """Динамическое добавление узла DoseGridNode в обработчик."""
-        node_name = node.name
+        node_name = node.name or f"DoseGrid_{len(self.entries)}"
         prefix = shm_prefix or "nmsim_dose_shm"
-        node_shm = f"{prefix}_{node_name}_{abs(id(node))}"
+        node_shm = f"{prefix}_{node_name}"
         inv_mat = node.inverse_global_matrix
         entry = DoseGridEntry(
             name=node_name,
@@ -199,6 +225,7 @@ class DoseMapHandler(BaseDataHandler):
             shm_name=node_shm,
             create_shm=True,
             node=node,
+            dtype=node.dtype,
         )
         self.entries.append(entry)
         self._entries_by_name[node_name] = entry
@@ -281,7 +308,7 @@ class DoseMapHandler(BaseDataHandler):
                             existing_dset = dose_group[entry.name]
                             if isinstance(existing_dset, h5py.Dataset) and existing_dset.shape == entry._dose_grid.shape:
                                 existing_dset[...] = (
-                                    np.asarray(existing_dset[...], dtype=np.float64) + entry._dose_grid
+                                    np.asarray(existing_dset[...], dtype=entry.dtype) + entry._dose_grid
                                 )
                                 existing_dset.attrs['voxel_size'] = entry.voxel_size
                                 existing_dset.attrs['origin'] = entry.origin
