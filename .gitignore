@@ -156,6 +156,7 @@ output data/
 
 # stat files
 /stats/*.txt
+/stats/*.prof
 
 # log files
 /logs/*.log

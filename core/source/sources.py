@@ -287,7 +287,7 @@ class Source(CompositeNode):
         """
         Генерирует частицы и инжектирует их напрямую в банк через механизм Direct Injection (SoA).
         """
-        num_particles = min(batch_size, bank.capacity - len(bank.active_indices))
+        num_particles = min(batch_size, bank.capacity - int(np.count_nonzero(bank.state.is_active)))
         if num_particles <= 0:
             return np.array([], dtype=Index)
 

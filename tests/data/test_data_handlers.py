@@ -578,11 +578,11 @@ class TestDataHandlers(unittest.TestCase):
 
     def test_escaped_particles_buffering_and_subscription_gating(self) -> None:
         """
-        Проверка гейтинга _collect_escaped_particles по подписке и буферизации EscapedParticlesBuffer:
+        Проверка гейтинга _record_finished_histories по подписке и буферизации EscapedParticlesBuffer:
         1. Без подписки на ChunkType.ESCAPED_PARTICLES емкость буфера равна 0 и чанки не создаются.
         2. С подпиской на ChunkType.ESCAPED_PARTICLES и ChunkType.INITIAL_STATES для непрореагировавших
            вылетевших частиц автоматически дозаписываются начальные состояния в initial_states, а точки
-           вылета накапливаются в escaped_particles и сбрасываются по заполнению буфера.
+           вылета накапливаются в escaped_particles и сбрасываются при подготовке емкости шага.
         """
         from core.other.typing_definitions import Float, Index
         from core.particles.particles import ParticleBank
@@ -610,7 +610,7 @@ class TestDataHandlers(unittest.TestCase):
         self.assertEqual(esc_buf.cursor_value, 2)
         self.assertEqual(esc_buf.remaining_capacity, 2)
 
-        flushed = esc_buf.flush_to_dict(clear=True)
+        flushed = esc_buf.flush(clear=True)
         self.assertEqual(esc_buf.cursor_value, 0)
         np.testing.assert_array_equal(flushed["particle_ID"], np.array([200, 400], dtype=Index))
         np.testing.assert_array_equal(flushed["pos_x"], np.array([40.0, 80.0], dtype=Float))
@@ -662,16 +662,18 @@ class TestDataHandlers(unittest.TestCase):
         sim_with_esc.bank.state.direction.z[:4] = np.array([1.0, 0.0, 1.0, 0.0], dtype=Float)
 
         # Первая порция из 2 частиц меньше емкости буфера (4) -> накапливается в буфере, очередь пуста
-        sim_with_esc._collect_escaped_particles(np.array([0, 1], dtype=Index))
+        sim_with_esc._record_finished_histories(np.array([0, 1], dtype=Index))
         self.assertEqual(sim_with_esc.data_buffer.escaped_particles.cursor_value, 2)
         # В initial_states записана только непрореагировавшая частица 0 (ID=11)
         self.assertEqual(sim_with_esc.data_buffer.initial_states.cursor_value, 1)
         self.assertEqual(int(sim_with_esc.data_buffer.initial_states.particle_ID[0]), 11)
         self.assertTrue(sim_with_esc.queue.empty())
 
-        # Вторая порция из 2 частиц заполняет буфер escaped_particles до capacity (4) -> автоматический сброс в очередь
-        # Согласно причинно-следственному порядку flush_escaped_particles сначала сбрасывает initial_states, затем escaped_particles
-        sim_with_esc._collect_escaped_particles(np.array([2, 3], dtype=Index))
+        # Перед вторым шагом (или при записи еще 3 частиц) _ensure_step_capacity сбрасывает буферы,
+        # когда remaining_capacity (2) < active_count (3), сохраняя причинно-следственный порядок
+        sim_with_esc._record_finished_histories(np.array([2, 3], dtype=Index))
+        self.assertEqual(sim_with_esc.data_buffer.escaped_particles.cursor_value, 4)
+        sim_with_esc._ensure_step_capacity(1)
         self.assertEqual(sim_with_esc.data_buffer.escaped_particles.cursor_value, 0)
         self.assertFalse(sim_with_esc.queue.empty())
         chunk_init = sim_with_esc.queue.get_nowait()

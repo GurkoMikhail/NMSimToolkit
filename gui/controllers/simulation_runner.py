@@ -132,7 +132,7 @@ class SimulationRunner(QThread):
         """
         if self.manager is not None:
             self.manager.step_once()
-            self.status_updated.emit(f"Выполнен шаг {self.manager.step}")
+            self.status_updated.emit(f"Выполнен шаг {self.manager.step_count}")
 
 
 __all__ = [

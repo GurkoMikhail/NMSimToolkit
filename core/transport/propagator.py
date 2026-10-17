@@ -62,11 +62,13 @@ class ParticlePropagator:
         geometry_buffer: NDArray[Any],
         physics_buffer: PhysicsBuffer,
         rng_ctx: RNGContext,
+        active_indices: Optional[NDArray[Index]] = None,
     ) -> None:
         """
         Выполняет один полный шаг переноса и взаимодействий для всех активных частиц в банке.
         """
-        active_indices = bank.active_indices
+        if active_indices is None:
+            active_indices = bank.active_indices
         if active_indices.size == 0:
             return
 

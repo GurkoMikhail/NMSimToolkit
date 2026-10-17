@@ -47,11 +47,14 @@ def _push_to_interaction_buffer(
     dir_y: Float,
     dir_z: Float,
 ) -> None:
-    """Записывает акт взаимодействия частицы напрямую в кольцевой буфер InteractionBuffer."""
+    """Записывает акт взаимодействия частицы напрямую в буфер с курсором InteractionBuffer."""
     if inter_buffer.capacity <= 0:
         return
 
-    idx = inter_buffer.cursor[0] % inter_buffer.capacity
+    idx = inter_buffer.cursor[0]
+    inter_buffer.cursor[0] = idx + 1
+    if idx >= inter_buffer.capacity:
+        return
 
     inter_buffer.process_id[idx] = process_id
     inter_buffer.volume_id[idx] = volume_id
@@ -73,8 +76,6 @@ def _push_to_interaction_buffer(
     inter_buffer.direction.x[idx] = dir_x
     inter_buffer.direction.y[idx] = dir_y
     inter_buffer.direction.z[idx] = dir_z
-
-    inter_buffer.cursor[0] += 1
 
 
 @njit(cache=True, inline='always')

@@ -84,7 +84,10 @@ def _write_single_initial_state(
     initial_state_buffer: InitialStateBuffer,
 ) -> None:
     """Записывает начальное состояние одной частицы по индексу слота банка в InitialStateBuffer."""
-    idx = initial_state_buffer.cursor[0] % initial_state_buffer.capacity
+    idx = initial_state_buffer.cursor[0]
+    initial_state_buffer.cursor[0] = idx + 1
+    if idx >= initial_state_buffer.capacity:
+        return
 
     initial_state_buffer.particle_ID[idx] = initial_state.ID[p_idx]
     initial_state_buffer.emission_time[idx] = initial_state.emission_time[p_idx]
@@ -98,8 +101,6 @@ def _write_single_initial_state(
     initial_state_buffer.emission_direction.y[idx] = initial_state.emission_direction.y[p_idx]
     initial_state_buffer.emission_direction.z[idx] = initial_state.emission_direction.z[p_idx]
 
-    initial_state_buffer.cursor[0] += 1
-
 
 @njit(cache=True)
 def _push_to_initial_state_kernel(
@@ -107,7 +108,7 @@ def _push_to_initial_state_kernel(
     target_indices: NDArray[Index],
     initial_state_buffer: InitialStateBuffer,
 ) -> None:
-    """Записывает начальные состояния выбранных частиц в кольцевой буфер InitialStateBuffer."""
+    """Записывает начальные состояния выбранных частиц в буфер с курсором InitialStateBuffer."""
     if initial_state_buffer.capacity <= 0:
         return
 
@@ -167,10 +168,12 @@ def _push_to_dead_particles_kernel(
         return
 
     for j in range(target_indices.shape[0]):
+        idx = dead_buffer.cursor[0]
+        dead_buffer.cursor[0] = idx + 1
+        if idx >= dead_buffer.capacity:
+            continue
         p_idx = target_indices[j]
-        idx = dead_buffer.cursor[0] % dead_buffer.capacity
         dead_buffer.particle_ID[idx] = initial_state.ID[p_idx]
-        dead_buffer.cursor[0] += 1
 
 
 @njit(cache=True)
@@ -185,13 +188,15 @@ def _push_to_escaped_particles_kernel(
         return
 
     for j in range(target_indices.shape[0]):
+        idx = escaped_buffer.cursor[0]
+        escaped_buffer.cursor[0] = idx + 1
+        if idx >= escaped_buffer.capacity:
+            continue
         p_idx = target_indices[j]
-        idx = escaped_buffer.cursor[0] % escaped_buffer.capacity
         escaped_buffer.particle_ID[idx] = initial_state.ID[p_idx]
         escaped_buffer.position.x[idx] = state.position.x[p_idx]
         escaped_buffer.position.y[idx] = state.position.y[p_idx]
         escaped_buffer.position.z[idx] = state.position.z[p_idx]
-        escaped_buffer.cursor[0] += 1
 
 
 def make_transport_kernel(mapped_process_ids: NDArray[Index]) -> Any:

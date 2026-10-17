@@ -14,7 +14,10 @@ from core.physics.processes import (
 from core.physics.physics_compiler import PhysicsCompiler
 from core.physics.physics_buffer import ElementCSR, PhysicsBuffer
 from core.physics.interaction_buffers import (
+    TELEMETRY_ORDER,
     ChunkType,
+    TelemetryBuffer,
+    TelemetryPayload,
     InteractionBuffer,
     InitialStateBuffer,
     DeadParticlesBuffer,
@@ -34,7 +37,10 @@ __all__ = [
     'PhysicsCompiler',
     'ElementCSR',
     'PhysicsBuffer',
+    'TELEMETRY_ORDER',
     'ChunkType',
+    'TelemetryBuffer',
+    'TelemetryPayload',
     'InteractionBuffer',
     'InitialStateBuffer',
     'DeadParticlesBuffer',

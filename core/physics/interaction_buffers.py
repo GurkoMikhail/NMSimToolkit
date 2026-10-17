@@ -3,7 +3,7 @@
 """
 
 from enum import Enum
-from typing import Any, NamedTuple
+from typing import AbstractSet, Any, NamedTuple, Protocol, TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
@@ -20,6 +20,37 @@ class ChunkType(Enum):
     INTERACTIONS = "interactions"
     DEAD_PARTICLES = "dead_particles"
     ESCAPED_PARTICLES = "escaped_particles"
+
+
+TELEMETRY_ORDER: tuple[ChunkType, ...] = (
+    ChunkType.INITIAL_STATES,
+    ChunkType.INTERACTIONS,
+    ChunkType.ESCAPED_PARTICLES,
+    ChunkType.DEAD_PARTICLES,
+)
+"""Причинно-следственный порядок каналов телеметрии (ранг = позиция в кортеже)."""
+
+TelemetryPayload: TypeAlias = dict[str, NDArray[Any]] | NDArray[ID]
+
+
+class TelemetryBuffer(Protocol):
+    """Статический контракт буфера телеметрии с курсором записи."""
+
+    @property
+    def capacity(self) -> int: ...
+
+    @property
+    def cursor_value(self) -> int: ...
+
+    @property
+    def remaining_capacity(self) -> int: ...
+
+    @property
+    def is_enabled(self) -> bool: ...
+
+    def reset_cursor(self) -> None: ...
+
+    def flush(self, clear: bool = True) -> TelemetryPayload: ...
 
 
 class RNGContext(NamedTuple):
@@ -70,6 +101,10 @@ class InteractionBuffer(NamedTuple):
     @property
     def remaining_capacity(self) -> int:
         return self.capacity - self.cursor_value
+
+    @property
+    def is_enabled(self) -> bool:
+        return self.capacity > 0
 
     def reset_cursor(self) -> None:
         self.cursor[0] = 0
@@ -138,7 +173,7 @@ class InteractionBuffer(NamedTuple):
         buffer.validate()
         return buffer
 
-    def flush_to_dict(self, clear: bool = True) -> dict[str, NDArray[Any]]:
+    def flush(self, clear: bool = True) -> dict[str, NDArray[Any]]:
         cursor_pos = self.cursor_value
         chunk: dict[str, NDArray[Any]] = {
             'process_id': self.process_id[:cursor_pos].copy(),
@@ -161,7 +196,7 @@ class InteractionBuffer(NamedTuple):
         if clear:
             self.reset_cursor()
         return chunk
-    
+
 
 class InitialStateBuffer(NamedTuple):
     """
@@ -184,6 +219,10 @@ class InitialStateBuffer(NamedTuple):
     @property
     def remaining_capacity(self) -> int:
         return self.capacity - self.cursor_value
+
+    @property
+    def is_enabled(self) -> bool:
+        return self.capacity > 0
 
     def reset_cursor(self) -> None:
         self.cursor[0] = 0
@@ -229,7 +268,7 @@ class InitialStateBuffer(NamedTuple):
         buffer.validate()
         return buffer
 
-    def flush_to_dict(self, clear: bool = True) -> dict[str, NDArray[Any]]:
+    def flush(self, clear: bool = True) -> dict[str, NDArray[Any]]:
         cursor_pos = self.cursor_value
         chunk: dict[str, NDArray[Any]] = {
             'particle_ID': self.particle_ID[:cursor_pos].copy(),
@@ -263,6 +302,10 @@ class DeadParticlesBuffer(NamedTuple):
     def remaining_capacity(self) -> int:
         return self.capacity - self.cursor_value
 
+    @property
+    def is_enabled(self) -> bool:
+        return self.capacity > 0
+
     def reset_cursor(self) -> None:
         self.cursor[0] = 0
 
@@ -286,7 +329,7 @@ class DeadParticlesBuffer(NamedTuple):
         buffer.validate()
         return buffer
 
-    def flush_to_array(self, clear: bool = True) -> NDArray[ID]:
+    def flush(self, clear: bool = True) -> NDArray[ID]:
         cursor_pos = self.cursor_value
         chunk = self.particle_ID[:cursor_pos].copy()
         if clear:
@@ -311,6 +354,10 @@ class EscapedParticlesBuffer(NamedTuple):
     @property
     def remaining_capacity(self) -> int:
         return self.capacity - self.cursor_value
+
+    @property
+    def is_enabled(self) -> bool:
+        return self.capacity > 0
 
     def reset_cursor(self) -> None:
         self.cursor[0] = 0
@@ -344,7 +391,7 @@ class EscapedParticlesBuffer(NamedTuple):
         buffer.validate()
         return buffer
 
-    def flush_to_dict(self, clear: bool = True) -> dict[str, NDArray[Any]]:
+    def flush(self, clear: bool = True) -> dict[str, NDArray[Any]]:
         cursor_pos = self.cursor_value
         chunk: dict[str, NDArray[Any]] = {
             'particle_ID': self.particle_ID[:cursor_pos].copy(),
@@ -366,6 +413,18 @@ class SimulationDataBuffer(NamedTuple):
     dead_particles: DeadParticlesBuffer
     escaped_particles: EscapedParticlesBuffer
 
+    def channel(self, chunk_type: ChunkType) -> TelemetryBuffer:
+        """Возвращает буфер канала по типу чанка."""
+        match chunk_type:
+            case ChunkType.INITIAL_STATES:
+                return self.initial_states
+            case ChunkType.INTERACTIONS:
+                return self.interactions
+            case ChunkType.ESCAPED_PARTICLES:
+                return self.escaped_particles
+            case ChunkType.DEAD_PARTICLES:
+                return self.dead_particles
+
     @classmethod
     def allocate(
         cls,
@@ -385,9 +444,26 @@ class SimulationDataBuffer(NamedTuple):
             escaped_particles=EscapedParticlesBuffer.allocate(escaped_particles_capacity),
         )
 
+    @classmethod
+    def allocate_for(
+        cls,
+        capacity: int,
+        enabled: AbstractSet[ChunkType],
+    ) -> 'SimulationDataBuffer':
+        """Выделяет заданную ёмкость только подписанным каналам; у неподписанных capacity == 0."""
+        return cls.allocate(
+            interaction_capacity=capacity if ChunkType.INTERACTIONS in enabled else 0,
+            initial_state_capacity=capacity if ChunkType.INITIAL_STATES in enabled else 0,
+            dead_particles_capacity=capacity if ChunkType.DEAD_PARTICLES in enabled else 0,
+            escaped_particles_capacity=capacity if ChunkType.ESCAPED_PARTICLES in enabled else 0,
+        )
+
 
 __all__ = [
+    "TELEMETRY_ORDER",
     "ChunkType",
+    "TelemetryBuffer",
+    "TelemetryPayload",
     "RNGContext",
     "InteractionBuffer",
     "InitialStateBuffer",
@@ -395,6 +471,7 @@ __all__ = [
     "EscapedParticlesBuffer",
     "SimulationDataBuffer",
 ]
+
 
 
 

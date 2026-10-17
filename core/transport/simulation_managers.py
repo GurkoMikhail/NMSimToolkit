@@ -5,10 +5,9 @@
 from datetime import datetime, timedelta
 from enum import Enum, auto
 import logging
-import queue
-from signal import SIGINT, signal
+from queue import Full, Queue
 import threading
-from typing import AbstractSet, Any, Callable, Dict, FrozenSet, List, Optional, Union
+from typing import AbstractSet, Any, Callable, ClassVar, Dict, FrozenSet, List, Optional, Union
 
 import hepunits as units
 import numpy as np
@@ -17,7 +16,7 @@ from numpy.typing import NDArray
 from core.geometry.geometry_compiler import GeometryCompiler
 from core.other.typing_definitions import Float, Index
 from core.particles.particles import ParticleBank
-from core.physics.interaction_buffers import ChunkType, RNGContext, SimulationDataBuffer
+from core.physics.interaction_buffers import TELEMETRY_ORDER, ChunkType, RNGContext, SimulationDataBuffer
 from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.physics_compiler import PhysicsCompiler
 from core.scene.nodes import CompositeNode
@@ -50,15 +49,16 @@ class SimulationState(Enum):
     STOPPED = auto()
 
 
-Queue = queue.Queue
-Thread = threading.Thread
-
-
-class SimulationManager(Thread):
+class SimulationManager(threading.Thread):
     """
     Вычислительный менеджер симуляции, оптимизированный под Data-Oriented Design (SoA),
     с поддержкой непрерывной инжекции частиц и эффективного уплотнения буферов данных на месте.
     """
+
+    MAX_NEWTON_ITERATIONS: ClassVar[int] = 5
+    NEWTON_TARGET_PRECISION: ClassVar[float] = 1e-3
+    MIN_TIME_STEP: ClassVar[Float] = Float(1e-9)
+    QUEUE_PUT_TIMEOUT: ClassVar[float] = 0.05
 
     active_sources: List[Source]
     scene: CompositeNode
@@ -70,6 +70,7 @@ class SimulationManager(Thread):
     min_energy: Float
     queue: Queue[Any]
     consumed_chunk_types: FrozenSet[ChunkType]
+    step_count: int
     bank: ParticleBank
     data_buffer: SimulationDataBuffer
     geometry_buffer: NDArray[Any]
@@ -120,16 +121,14 @@ class SimulationManager(Thread):
             if consumed_chunk_types is None
             else frozenset(consumed_chunk_types)
         )
-        self.step = 1
+        self.step_count = 0
         self.daemon = True
 
         self.bank = ParticleBank.allocate(self.particles_number)
         self.bank.count_array[0] = Index(self.initial_particle_id)
-        self.data_buffer = SimulationDataBuffer.allocate(
-            interaction_capacity=effective_capacity if ChunkType.INTERACTIONS in self.consumed_chunk_types else 0,
-            initial_state_capacity=effective_capacity if ChunkType.INITIAL_STATES in self.consumed_chunk_types else 0,
-            dead_particles_capacity=effective_capacity if ChunkType.DEAD_PARTICLES in self.consumed_chunk_types else 0,
-            escaped_particles_capacity=effective_capacity if ChunkType.ESCAPED_PARTICLES in self.consumed_chunk_types else 0,
+        self.data_buffer = SimulationDataBuffer.allocate_for(
+            capacity=effective_capacity,
+            enabled=self.consumed_chunk_types,
         )
 
         self.rng = np.random.default_rng(seed) if seed is not None else self.propagator.rng
@@ -148,10 +147,6 @@ class SimulationManager(Thread):
         self._state = SimulationState.IDLE
         self._run_event = threading.Event()
         self._run_event.set()
-
-        if threading.current_thread() is threading.main_thread():
-            signal(SIGINT, self.sigint_handler)
-
 
     @property
     def state(self) -> SimulationState:
@@ -197,117 +192,73 @@ class SimulationManager(Thread):
         self.next_step()
         self.flush_all()
 
-    def sigint_handler(self, signum: int, frame: Any) -> None:
-        """Обработчик сигнала прерывания SIGINT."""
-        _logger.error(f'{self.name} interrupted at {timedelta(seconds=self.global_timer/units.second)}')
-        self.stop()
+    def _put_to_queue(self, item: Any) -> None:
+        """Помещает элемент в выходную очередь с периодической проверкой флага остановки."""
+        while True:
+            try:
+                self.queue.put(item, timeout=self.QUEUE_PUT_TIMEOUT)
+                return
+            except Full:
+                if self.is_stopped:
+                    _logger.warning(
+                        "%s: элемент очереди отброшен, так как очередь переполнена после остановки",
+                        self.name,
+                    )
+                    return
 
     def send_data(self, data: Any) -> None:
         """Отправляет пакет телеметрии в выходную очередь симуляции."""
-        self.queue.put(data)
+        self._put_to_queue(data)
 
-    def flush_interactions(self) -> None:
-        """
-        Сбрасывает накопленный буфер взаимодействий в очередь телеметрии.
-        """
-        interaction_count = self.data_buffer.interactions.cursor_value
-        if interaction_count == 0:
+    def _flush_channel(self, chunk_type: ChunkType) -> None:
+        """Сбрасывает буфер одного канала телеметрии в очередь, если в нём есть записи."""
+        buffer = self.data_buffer.channel(chunk_type)
+        count = buffer.cursor_value
+        if count == 0:
             return
-        if ChunkType.INTERACTIONS not in self.consumed_chunk_types:
-            self.data_buffer.interactions.reset_cursor()
-            return
+        _logger.debug("%s flushing %d %s", self.name, count, chunk_type.value)
+        self.send_data({"type": chunk_type, "data": buffer.flush()})
 
-        _logger.debug(f'{self.name} flushing {interaction_count} interactions')
-
-        chunk = {
-            'type': ChunkType.INTERACTIONS,
-            'data': self.data_buffer.interactions.flush_to_dict(clear=True)
-        }
-        self.send_data(chunk)
-
-    def flush_escaped_particles(self) -> None:
-        """
-        Сбрасывает накопленный буфер вылетевших за пределы сцены частиц в очередь телеметрии.
-        Перед отправкой гарантированно сбрасываются начальные состояния и взаимодействия.
-        """
-        escaped_count = self.data_buffer.escaped_particles.cursor_value
-        if escaped_count == 0:
-            return
-        if ChunkType.ESCAPED_PARTICLES not in self.consumed_chunk_types:
-            self.data_buffer.escaped_particles.reset_cursor()
-            return
-
-        self.flush_initial_states()
-        self.flush_interactions()
-
-        _logger.debug(f'{self.name} flushing {escaped_count} escaped particles')
-
-        chunk = {
-            'type': ChunkType.ESCAPED_PARTICLES,
-            'data': self.data_buffer.escaped_particles.flush_to_dict(clear=True)
-        }
-        self.send_data(chunk)
-
-    def flush_dead_particles(self) -> None:
-        """
-        Сбрасывает накопленные идентификаторы выбывших частиц в очередь телеметрии.
-        Для сохранения строгой причинно-следственной связи перед отправкой выбывших частиц
-        гарантированно сбрасываются все предшествующие начальные состояния, взаимодействия
-        и вылетевшие частицы.
-        """
-        dead_count = self.data_buffer.dead_particles.cursor_value
-        if dead_count == 0:
-            return
-        if ChunkType.DEAD_PARTICLES not in self.consumed_chunk_types:
-            self.data_buffer.dead_particles.reset_cursor()
-            return
-
-        self.flush_initial_states()
-        self.flush_interactions()
-        self.flush_escaped_particles()
-
-        _logger.debug(f'{self.name} flushing {dead_count} dead particles')
-        chunk = {
-            'type': ChunkType.DEAD_PARTICLES,
-            'data': self.data_buffer.dead_particles.flush_to_array(clear=True)
-        }
-        self.send_data(chunk)
-
-    def flush_initial_states(self) -> None:
-        """
-        Сбрасывает буфер начальных состояний частиц в очередь телеметрии.
-        """
-        initial_count = self.data_buffer.initial_states.cursor_value
-        if initial_count == 0:
-            return
-        if ChunkType.INITIAL_STATES not in self.consumed_chunk_types:
-            self.data_buffer.initial_states.reset_cursor()
-            return
-
-        _logger.debug(f'{self.name} flushing {initial_count} initial states')
-
-        chunk = {
-            'type': ChunkType.INITIAL_STATES,
-            'data': self.data_buffer.initial_states.flush_to_dict(clear=True)
-        }
-        self.send_data(chunk)
+    def _flush_through(self, last: ChunkType) -> None:
+        """Каскадно сбрасывает все каналы с рангом <= ранга last в причинно-следственном порядке."""
+        for chunk_type in TELEMETRY_ORDER:
+            self._flush_channel(chunk_type)
+            if chunk_type is last:
+                return
 
     def flush_all(self) -> None:
         """
         Выполняет полный сброс всех буферов телеметрии в строгом причинно-следственном порядке:
         initial_states → interactions → escaped_particles → dead_particles.
         """
-        self.flush_initial_states()
-        self.flush_interactions()
-        self.flush_escaped_particles()
-        self.flush_dead_particles()
+        self._flush_through(TELEMETRY_ORDER[-1])
+
+    def _ensure_step_capacity(self, required: int) -> None:
+        """Предусловие шага: каждый включённый канал вмещает не менее required записей."""
+        for chunk_type in reversed(TELEMETRY_ORDER):
+            buffer = self.data_buffer.channel(chunk_type)
+            if buffer.is_enabled and buffer.remaining_capacity < required:
+                self._flush_through(chunk_type)
+                return
+
+    def _check_no_overflow(self) -> None:
+        """Постусловие шага: проверяет, что ни один канал телеметрии не был переполнен."""
+        for chunk_type in TELEMETRY_ORDER:
+            buffer = self.data_buffer.channel(chunk_type)
+            if buffer.cursor_value > buffer.capacity:
+                raise RuntimeError(
+                    f"Переполнение канала {chunk_type.value}: "
+                    f"{buffer.cursor_value} > {buffer.capacity}"
+                )
 
     def _invalidate_by_energy(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
         return self.bank.state.energy[active_indices] < self.min_energy
 
     def _invalidate_by_volume(self, active_indices: NDArray[Index]) -> NDArray[np.bool_]:
         navigation_state = self.bank.navigation_state
-        return (navigation_state.current_volume[active_indices] < 0) & (navigation_state.boundary_distance[active_indices] > 0.0)
+        return (navigation_state.current_volume[active_indices] < 0) & (
+            navigation_state.boundary_distance[active_indices] > 0.0
+        )
 
     def _apply_invalidators(self, active_indices: NDArray[Index]) -> NDArray[Index]:
         dead_mask = np.zeros(len(active_indices), dtype=np.bool_)
@@ -320,10 +271,6 @@ class SimulationManager(Thread):
             return dead_indices
         return np.array([], dtype=Index)
 
-    MAX_NEWTON_ITERATIONS = 5
-    NEWTON_TARGET_PRECISION = 1e-3
-    MIN_TIME_STEP = Float(1e-9)
-
     def _calculate_time_step(self, num_to_inject: int) -> Float:
         total_activity = float(sum(source_node.get_activity(self.global_timer) for source_node in self.active_sources))
         if total_activity <= 0.0:
@@ -332,34 +279,28 @@ class SimulationManager(Thread):
         # Начальное приближение: линейная экстраполяция
         delta_time = Float(num_to_inject / total_activity)
 
-        def objective_func(current_delta_time: Float) -> float:
-            return (
+        # Метод Ньютона-Рафсона
+        for _ in range(self.MAX_NEWTON_ITERATIONS):
+            target_time = Float(self.global_timer + delta_time)
+            function_value = (
                 float(
                     sum(
-                        source_node.get_activity(self.global_timer) * source_node._get_effective_dt(current_delta_time)
+                        source_node.get_expected_particles(self.global_timer, target_time)
                         for source_node in self.active_sources
                     )
                 )
                 - num_to_inject
             )
-
-        def derivative_func(current_delta_time: Float) -> float:
-            return float(
-                sum(source_node.get_activity(self.global_timer + current_delta_time) for source_node in self.active_sources)
-            )
-
-        # Метод Ньютона-Рафсона
-        for _ in range(self.MAX_NEWTON_ITERATIONS):
-            function_value = objective_func(delta_time)
-            derivative_value = derivative_func(delta_time)
-            if derivative_value == 0.0:
-                break
-            delta_time = Float(delta_time - Float(function_value / derivative_value))
             if abs(function_value) < self.NEWTON_TARGET_PRECISION:
                 break
+            derivative_value = float(
+                sum(source_node.get_activity(target_time) for source_node in self.active_sources)
+            )
+            if derivative_value <= 0.0:
+                break
+            delta_time = Float(delta_time - Float(function_value / derivative_value))
 
-        delta_time = max(delta_time, self.MIN_TIME_STEP)
-        return delta_time
+        return max(delta_time, self.MIN_TIME_STEP)
 
     def _distribute_quotas(self, target_time: Float, num_to_inject: int) -> None:
         expected = np.array(
@@ -384,10 +325,12 @@ class SimulationManager(Thread):
                 source_obj.inject(self.bank, int(quota_count), self.global_timer, target_time)
 
     def _replenish_bank(self) -> None:
+        if not self.active_sources or self.global_timer >= self.stop_time:
+            return
+
         num_active = int(np.count_nonzero(self.bank.state.is_active))
         num_to_inject = int(self.bank.capacity - num_active)
-
-        if num_to_inject <= 0 or not self.active_sources or self.global_timer >= self.stop_time:
+        if num_to_inject <= 0:
             return
 
         delta_time = self._calculate_time_step(num_to_inject)
@@ -402,139 +345,78 @@ class SimulationManager(Thread):
         self._replenish_bank()
 
         active_indices = self.bank.active_indices
-
         if active_indices.size == 0:
             return
 
-        if len(active_indices) > self.data_buffer.initial_states.remaining_capacity:
-            self.flush_initial_states()
-
-        if len(active_indices) > self.data_buffer.interactions.remaining_capacity:
-            self.flush_interactions()
-
+        self._ensure_step_capacity(active_indices.size)
         self.propagator.step(
             self.bank,
             self.data_buffer,
             self.geometry_buffer,
             self.physics_buffer,
             self.rng_ctx,
+            active_indices=active_indices,
         )
 
         dead_indices = self._apply_invalidators(active_indices)
-
         if dead_indices.size > 0:
-            self._collect_escaped_particles(dead_indices)
-            self._handle_dead_particles(dead_indices)
+            self._record_finished_histories(dead_indices)
 
-        self.step += 1
+        self._check_no_overflow()
+        self.step_count += 1
 
-    def _push_indices_with_flush(
-        self,
-        indices: NDArray[Index],
-        buffer: Any,
-        push_fn: Callable[[NDArray[Index]], None],
-        flush_fn: Callable[[], None],
-        flush_on_full: bool = False,
-    ) -> None:
-        """
-        Записывает массив индексов слотов банка в целевой кольцевой буфер порциями,
-        автоматически выполняя сброс буфера при нехватке свободного места.
-        """
-        total_count = int(indices.shape[0])
-        if total_count == 0 or buffer.capacity <= 0:
-            return
-
-        buffer_capacity = buffer.capacity
-        if total_count > buffer.remaining_capacity:
-            flush_fn()
-
-        if total_count <= buffer.remaining_capacity:
-            push_fn(indices)
-            if flush_on_full and buffer.remaining_capacity == 0:
-                flush_fn()
-        else:
-            for offset in range(0, total_count, buffer_capacity):
-                chunk_indices = indices[offset:offset + buffer_capacity]
-                if int(chunk_indices.shape[0]) > buffer.remaining_capacity:
-                    flush_fn()
-                push_fn(chunk_indices)
-                if flush_on_full and buffer.remaining_capacity == 0:
-                    flush_fn()
-
-    def _collect_escaped_particles(self, dead_indices: NDArray[Index]) -> None:
-        """
-        Накопление вылетевших за границы геометрии сцены частиц в предвыделенном кольцевом буфере
-        EscapedParticlesBuffer со сбросом в очередь телеметрии по заполнению буфера.
-        При активной подписке на INITIAL_STATES начальные состояния вылетевших без рассеяния
-        частиц предварительно записываются в InitialStateBuffer.
-        """
-        if self.queue is None or self.data_buffer.escaped_particles.capacity <= 0:
-            return
-
-        escaped_mask = self.bank.navigation_state.current_volume[dead_indices] < 0
-        if not np.any(escaped_mask):
-            return
-
-        escaped_indices = dead_indices[escaped_mask]
-
-        self._push_indices_with_flush(
-            indices=escaped_indices,
-            buffer=self.data_buffer.initial_states,
-            push_fn=lambda chunk: _push_uncollided_to_initial_state_kernel(
-                self.bank.initial_state, self.bank.state, chunk, self.data_buffer.initial_states
-            ),
-            flush_fn=self.flush_initial_states,
+    def _record_finished_histories(self, dead_indices: NDArray[Index]) -> None:
+        """Регистрирует завершившие историю частицы во всех включённых каналах."""
+        bank = self.bank
+        buffers = self.data_buffer
+        _push_uncollided_to_initial_state_kernel(
+            bank.initial_state, bank.state, dead_indices, buffers.initial_states
         )
-
-        self._push_indices_with_flush(
-            indices=escaped_indices,
-            buffer=self.data_buffer.escaped_particles,
-            push_fn=lambda chunk: _push_to_escaped_particles_kernel(
-                self.bank.initial_state, self.bank.state, chunk, self.data_buffer.escaped_particles
-            ),
-            flush_fn=self.flush_escaped_particles,
-            flush_on_full=True,
-        )
-
-    def _handle_dead_particles(self, dead_indices: NDArray[Index]) -> None:
-        """
-        Запись идентификаторов поглощенных и выбывших частиц в кольцевой буфер завершенных историй.
-        """
-        self._push_indices_with_flush(
-            indices=dead_indices,
-            buffer=self.data_buffer.dead_particles,
-            push_fn=lambda chunk: _push_to_dead_particles_kernel(
-                self.bank.initial_state, chunk, self.data_buffer.dead_particles
-            ),
-            flush_fn=self.flush_dead_particles,
-        )
+        if buffers.escaped_particles.is_enabled:
+            escaped_indices = dead_indices[bank.navigation_state.current_volume[dead_indices] < 0]
+            if escaped_indices.size > 0:
+                _push_to_escaped_particles_kernel(
+                    bank.initial_state, bank.state, escaped_indices, buffers.escaped_particles
+                )
+        _push_to_dead_particles_kernel(bank.initial_state, dead_indices, buffers.dead_particles)
 
     def run(self) -> None:
         """Запуск цикла симуляции в рабочем потоке."""
-        self._run()
-
-    def _run(self) -> None:
-        _logger.info(f'{self.name} started from {timedelta(seconds=self.global_timer/units.second)} to {timedelta(seconds=self.stop_time/units.second)}')
+        _logger.info(
+            "%s started from %s to %s",
+            self.name,
+            timedelta(seconds=float(self.global_timer / units.second)),
+            timedelta(seconds=float(self.stop_time / units.second)),
+        )
         start_timepoint = datetime.now()
         if self._state != SimulationState.STOPPED and self._state != SimulationState.PAUSED:
             self._state = SimulationState.RUNNING
 
-        while (self.has_active_particles or self.has_pending_sources) and not self.is_stopped:
+        while (self.has_pending_sources or self.has_active_particles) and not self.is_stopped:
             self._run_event.wait()
             if self.is_stopped:
                 break
 
             self.next_step()
-            _logger.debug(f'Global timer of {self.name} at {timedelta(seconds=self.global_timer/units.second)}')
+            if _logger.isEnabledFor(logging.DEBUG):
+                _logger.debug(
+                    "Global timer of %s at %s",
+                    self.name,
+                    timedelta(seconds=float(self.global_timer / units.second)),
+                )
 
         # Финальный сброс телеметрии
         self.flush_all()
-        self.queue.put('stop')
+        self._put_to_queue("stop")
         self._state = SimulationState.STOPPED
 
         stop_timepoint = datetime.now()
-        _logger.info(f'{self.name} finished at {timedelta(seconds=self.global_timer/units.second)}')
-        _logger.info(f'The simulation of {self.name} took {stop_timepoint - start_timepoint}')
+        _logger.info(
+            "%s finished at %s",
+            self.name,
+            timedelta(seconds=float(self.global_timer / units.second)),
+        )
+        _logger.info("The simulation of %s took %s", self.name, stop_timepoint - start_timepoint)
 
 
 __all__ = [
