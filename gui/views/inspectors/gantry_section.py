@@ -64,7 +64,7 @@ class GantryInspectorSection(BaseInspectorSection):
                 self.spin_gantry_angle.bind_variable(bound_var)
             else:
                 self.spin_gantry_angle.unbind()
-            self.spin_gantry_angle.setValue(float(self._current_vm.gantry_angle_deg))
+            self.spin_gantry_angle.setValue(float(self._current_vm.gantry_angle))
             self.chk_wireframe_visible.setChecked(bool(self._current_vm.wireframe_visible))
         finally:
             self._is_updating_ui = old_state
@@ -74,7 +74,7 @@ class GantryInspectorSection(BaseInspectorSection):
         if not isinstance(self._current_vm, GantryViewModel):
             return
 
-        if prop_name == "gantry_angle_deg":
+        if prop_name == "gantry_angle":
             self._is_updating_ui = True
             try:
                 self.spin_gantry_angle.setValue(float(new_val))
@@ -97,7 +97,7 @@ class GantryInspectorSection(BaseInspectorSection):
         """Передает новое значение угла поворота ротора в модель GantryViewModel."""
         if self._is_updating_ui or not isinstance(self._current_vm, GantryViewModel):
             return
-        self._current_vm.gantry_angle_deg = float(value)
+        self._current_vm.gantry_angle = float(value)
 
     def _on_gantry_wireframe_toggled(self, checked: bool) -> None:
         """Переключает видимость кинематических направляющих станины."""

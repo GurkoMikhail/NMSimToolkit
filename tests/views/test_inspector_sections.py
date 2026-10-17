@@ -18,7 +18,7 @@ except ImportError:
 
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
-from core.materials.materials import Material
+from core.materials.materials import Material, MaterialArray
 from core.scene.nodes import CompositeNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.geometry.direct_collimators import CollimatorHoleShape, DirectParallelCollimator
@@ -170,7 +170,7 @@ class TestInspectorSections(unittest.TestCase):
 
         inspector = PropertyInspector()
         emitted_values: List[float] = []
-        inspector.dose_voxel_size_changed.connect(lambda v: emitted_values.append(v))
+        inspector.dose_voxel_size_changed.connect(emitted_values.append)
 
         inspector.set_target_viewmodel(dose_vm)
         self.assertFalse(inspector.dose_grid_section.isHidden())
@@ -261,8 +261,11 @@ class TestInspectorSections(unittest.TestCase):
 
         # 1. Начальное заполнение таблицы
         self.assertEqual(section.tbl_source_spectrum.rowCount(), 1)
-        self.assertEqual(section.tbl_source_spectrum.item(0, 0).text(), "140.5000")
-        self.assertEqual(section.tbl_source_spectrum.item(0, 1).text(), "1.0000")
+        cell_00 = section.tbl_source_spectrum.item(0, 0)
+        cell_01 = section.tbl_source_spectrum.item(0, 1)
+        assert cell_00 is not None and cell_01 is not None
+        self.assertEqual(cell_00.text(), "140.5000")
+        self.assertEqual(cell_01.text(), "1.0000")
 
         # 2. Добавление строки
         section._on_add_spectrum_row()
@@ -270,30 +273,42 @@ class TestInspectorSections(unittest.TestCase):
         self.assertEqual(len(source_vm.spectrum), 2)
 
         # 3. Валидный ввод с запятой и экспоненциальной записью
-        section.tbl_source_spectrum.item(0, 0).setText("364,2")
+        item_energy = section.tbl_source_spectrum.item(0, 0)
+        assert item_energy is not None
+        item_energy.setText("364,2")
         section._on_spectrum_cell_changed(0, 0)
         self.assertAlmostEqual(source_vm.spectrum[0][0], 364.2, places=3)
 
-        section.tbl_source_spectrum.item(0, 0).setText("5.11e2")
+        item_energy = section.tbl_source_spectrum.item(0, 0)
+        assert item_energy is not None
+        item_energy.setText("5.11e2")
         section._on_spectrum_cell_changed(0, 0)
         self.assertAlmostEqual(source_vm.spectrum[0][0], 511.0, places=3)
 
         # 4. LBYL: ввод неположительной энергии (<= 0) не выбрасывает исключение и откатывает к валидному
-        section.tbl_source_spectrum.item(0, 0).setText("-100.0")
+        item_energy = section.tbl_source_spectrum.item(0, 0)
+        assert item_energy is not None
+        item_energy.setText("-100.0")
         section._on_spectrum_cell_changed(0, 0)
         self.assertGreater(source_vm.spectrum[0][0], 0.0)
 
-        section.tbl_source_spectrum.item(0, 0).setText("0")
+        item_energy = section.tbl_source_spectrum.item(0, 0)
+        assert item_energy is not None
+        item_energy.setText("0")
         section._on_spectrum_cell_changed(0, 0)
         self.assertGreater(source_vm.spectrum[0][0], 0.0)
 
         # 5. LBYL: ввод отрицательного веса (< 0) не приводит к исключению
-        section.tbl_source_spectrum.item(0, 1).setText("-0.5")
+        item_weight = section.tbl_source_spectrum.item(0, 1)
+        assert item_weight is not None
+        item_weight.setText("-0.5")
         section._on_spectrum_cell_changed(0, 1)
         self.assertGreaterEqual(source_vm.spectrum[0][1], 0.0)
 
         # 6. LBYL: нечисловой ввод откатывает значение
-        section.tbl_source_spectrum.item(0, 0).setText("bad_text")
+        item_energy = section.tbl_source_spectrum.item(0, 0)
+        assert item_energy is not None
+        item_energy.setText("bad_text")
         section._on_spectrum_cell_changed(0, 0)
         self.assertGreater(source_vm.spectrum[0][0], 0.0)
 
@@ -355,16 +370,21 @@ class TestInspectorSections(unittest.TestCase):
 
         # 1. Редактирование с запятой
         cell = tbl.item(0, radius_col)
+        assert cell is not None
         cell.setText("275,5")
         section._on_zipped_cell_changed(0, radius_col)
         self.assertAlmostEqual(proc_vm.zipped_variables["radius"][0], 275.5)
 
         # 2. Ограничение радиуса по LBYL (не менее 10.0)
+        cell = tbl.item(0, radius_col)
+        assert cell is not None
         cell.setText("-50.0")
         section._on_zipped_cell_changed(0, radius_col)
         self.assertGreaterEqual(proc_vm.zipped_variables["radius"][0], 10.0)
 
         # 3. Невалидный ввод восстанавливает таблицу
+        cell = tbl.item(0, radius_col)
+        assert cell is not None
         cell.setText("bad_val")
         section._on_zipped_cell_changed(0, radius_col)
         self.assertGreaterEqual(proc_vm.zipped_variables["radius"][0], 10.0)
@@ -373,9 +393,9 @@ class TestInspectorSections(unittest.TestCase):
         """Верификация LBYL проверки неподдерживаемой формы каналов прямого коллиматора."""
         lead_mat = Material(name="Lead")
         col_node = DirectParallelCollimator(
-            size=[50.0, 50.0, 30.0],
-            hole_diameter=1.5,
-            septa=0.2,
+            size=[Float(50.0), Float(50.0), Float(30.0)],
+            hole_diameter=Float(1.5),
+            septa=Float(0.2),
             material=lead_mat,
             hole_shape=CollimatorHoleShape.HEXAGONAL,
         )
@@ -415,9 +435,8 @@ class TestInspectorSections(unittest.TestCase):
 
     def test_voxel_volume_material_mapping_table(self) -> None:
         """Верификация заполнения таблицы материалов воксельного фантома и LBYL защиты."""
-        from core.materials.materials import MaterialArray
         mat_arr = MaterialArray((2, 2, 2))
-        voxel_node = WoodcockVoxelVolume(voxel_size=2.0, material_distribution=mat_arr, name="Phantom")
+        voxel_node = WoodcockVoxelVolume(voxel_size=Float(2.0), material_distribution=mat_arr, name="Phantom")
         voxel_vm = VoxelVolumeViewModel(voxel_node)
         section = VoxelVolumeInspectorSection()
         section.bind_viewmodel(voxel_vm)
@@ -435,3 +454,22 @@ class TestInspectorSections(unittest.TestCase):
 
         # LBYL: Невалидный индекс не приводит к исключению
         section._on_mapping_material_changed(999, "Vacuum")
+
+    def test_gantry_section_angle_binding_and_external_signal(self) -> None:
+        """Проверка работы GantryInspectorSection со свойством gantry_angle без суффикса _deg."""
+        gantry_node = GantryNode(name="TestGantry")
+        gantry_vm = GantryViewModel(gantry_node)
+        section = GantryInspectorSection()
+        section.bind_viewmodel(gantry_vm)
+        gantry_vm.property_changed.connect(section.on_property_changed_externally)
+
+        self.assertAlmostEqual(section.spin_gantry_angle.value(), 0.0)
+
+        # Изменение через UI спинбокс обновляет gantry_vm.gantry_angle
+        section.spin_gantry_angle.setValue(60.0)
+        self.assertAlmostEqual(gantry_vm.gantry_angle, 60.0)
+
+        # Внешнее изменение свойства gantry_angle во ViewModel обновляет спинбокс
+        gantry_vm.gantry_angle = 135.0
+        self.assertAlmostEqual(section.spin_gantry_angle.value(), 135.0)
+

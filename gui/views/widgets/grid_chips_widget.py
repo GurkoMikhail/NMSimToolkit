@@ -5,8 +5,7 @@
 пакетный ввод чисел через запятую и диалог генератора диапазонов.
 """
 
-import re
-from typing import Any, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 import numpy as np
 
 from PySide6.QtCore import (
@@ -43,6 +42,39 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from core.config.units import (
+    normalize_unit_name,
+    parse_unit_tokens,
+    parse_unit_value,
+)
+from gui.views.widgets.bindable_field import UnitAwareDoubleSpinBox
+
+KNOWN_VARIABLE_DEFAULT_UNITS: Dict[str, str] = {
+    "gantry_angle": "deg",
+    "current_angle": "deg",
+    "start_angle": "deg",
+    "end_angle": "deg",
+    "radius": "mm",
+    "ring_radius": "mm",
+    "step_time": "s",
+    "start_time": "s",
+    "stop_time": "s",
+    "current_time": "s",
+    "time_per_step": "s",
+    "time_per_frame": "s",
+    "frame_time": "s",
+    "initial_time": "s",
+    "frame_duration": "s",
+    "activity": "MBq",
+    "min_energy": "keV",
+}
+
+
+def infer_variable_default_unit(variable_name: str) -> Optional[str]:
+    """Определяет единицу измерения по умолчанию для известных переменных протокола сканирования."""
+    cleaned_name = str(variable_name).strip()
+    return KNOWN_VARIABLE_DEFAULT_UNITS.get(cleaned_name)
 
 # Стили оформления заголовка и кнопок
 TITLE_LABEL_STYLE = "color: #a0c0ff; font-weight: bold;"
@@ -180,9 +212,14 @@ class _ChipLineEdit(QLineEdit):
     editing_committed = Signal(float, bool)
     editing_cancelled = Signal(bool)
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        """Инициализирует внутреннее поле ввода чипса."""
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        default_unit: Optional[str] = None,
+    ) -> None:
+        """Инициализирует внутреннее поле ввода чипса с поддержкой парсинга единиц измерения."""
         super().__init__(parent)
+        self._default_unit: Optional[str] = normalize_unit_name(default_unit) if default_unit else None
         self.setObjectName("GridChipEdit")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet(
@@ -193,10 +230,14 @@ class _ChipLineEdit(QLineEdit):
             "  border-radius: 3px;"
             "  font-size: 11px;"
             "  padding: 0px 4px;"
-            "  min-width: 38px;"
+            "  min-width: 48px;"
             "  min-height: 18px;"
             "}"
         )
+
+    def set_default_unit(self, unit: Optional[str]) -> None:
+        """Задает целевую единицу измерения для парсинга вводимого текста."""
+        self._default_unit = normalize_unit_name(unit) if unit and unit.strip() else None
 
     def keyPressEvent(self, key_event: QKeyEvent) -> None:
         """Обрабатывает нажатия клавиш Enter и Escape при инлайн-редактировании."""
@@ -216,10 +257,14 @@ class _ChipLineEdit(QLineEdit):
         self._commit_edit(refocus=False)
 
     def _commit_edit(self, refocus: bool = False) -> None:
-        """Парсит введенное число и испускает сигнал завершения или отмены редактирования."""
-        cleaned_text = self.text().strip().replace(",", ".")
+        """Парсит введенное число или размерное выражение и испускает сигнал завершения или отмены."""
+        raw_text = self.text().strip()
         try:
-            parsed_number = float(cleaned_text)
+            parsed_number = parse_unit_value(
+                raw_text,
+                default_unit=self._default_unit,
+                to_hepunits=False,
+            )
             self.editing_committed.emit(parsed_number, refocus)
         except ValueError:
             self.editing_cancelled.emit(refocus)
@@ -232,7 +277,7 @@ class GridChip(QFrame):
       - Выделение фокусом (клик мыши или клавиатура);
       - Навигацию стрелками Left/Right;
       - Удаление клавишами Delete и Backspace с переносом фокуса;
-      - Инлайн-редактирование по Enter или двойному клику мыши.
+      - Инлайн-редактирование по Enter или двойному клику мыши с конвертацией единиц.
     """
 
     value_changed = Signal(float)
@@ -240,10 +285,18 @@ class GridChip(QFrame):
     navigate_requested = Signal(int)
     clicked = Signal()
 
-    def __init__(self, value: float, parent: Optional[QWidget] = None) -> None:
-        """Инициализирует капсулу чипса с указанным числовым значением."""
+    def __init__(
+        self,
+        value: float,
+        parent: Optional[QWidget] = None,
+        default_unit: Optional[str] = None,
+    ) -> None:
+        """Инициализирует капсулу чипса с указанным числовым значением и целевой единицей."""
         super().__init__(parent)
         self._value: float = float(value)
+        self._default_unit: Optional[str] = (
+            normalize_unit_name(default_unit) if default_unit and default_unit.strip() else None
+        )
         self.setObjectName("GridChip")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
@@ -256,12 +309,22 @@ class GridChip(QFrame):
         self._label_display.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._stacked_layout.addWidget(self._label_display)
 
-        self._edit_input = _ChipLineEdit()
+        self._edit_input = _ChipLineEdit(default_unit=self._default_unit)
         self._edit_input.editing_committed.connect(self._on_edit_committed)
         self._edit_input.editing_cancelled.connect(self._on_edit_cancelled)
         self._stacked_layout.addWidget(self._edit_input)
 
         self._apply_styles()
+
+    @property
+    def default_unit(self) -> Optional[str]:
+        """Возвращает целевую единицу измерения чипса."""
+        return self._default_unit
+
+    def set_default_unit(self, unit: Optional[str]) -> None:
+        """Устанавливает целевую единицу измерения чипса."""
+        self._default_unit = normalize_unit_name(unit) if unit and unit.strip() else None
+        self._edit_input.set_default_unit(self._default_unit)
 
     def _apply_styles(self) -> None:
         """Применяет табличные CSS-стили оформления чипса."""
@@ -378,15 +441,38 @@ class GridRangeDialog(QDialog):
     по заданному шагу или по заданному количеству точек с предпросмотром.
     """
 
-    def __init__(self, variable_name: str, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        variable_name: str,
+        parent: Optional[QWidget] = None,
+        default_unit: Optional[str] = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Генератор сетки: {variable_name}")
         self.setModal(True)
         self.resize(360, 260)
+        resolved_unit = (
+            normalize_unit_name(default_unit)
+            if default_unit and default_unit.strip()
+            else infer_variable_default_unit(variable_name)
+        )
+        self._default_unit: Optional[str] = resolved_unit
         self._generated_values: List[float] = []
 
         self._init_ui()
         self._update_preview()
+
+    @property
+    def default_unit(self) -> Optional[str]:
+        """Целевая единица измерения генератора диапазона."""
+        return self._default_unit
+
+    def set_default_unit(self, unit: Optional[str]) -> None:
+        """Устанавливает целевую единицу измерения для полей генератора диапазона."""
+        self._default_unit = normalize_unit_name(unit) if unit and unit.strip() else None
+        self.spin_start.set_default_unit(self._default_unit)
+        self.spin_stop.set_default_unit(self._default_unit)
+        self.spin_step.set_default_unit(self._default_unit)
 
     def _init_ui(self) -> None:
         dialog_layout = QVBoxLayout(self)
@@ -401,21 +487,21 @@ class GridRangeDialog(QDialog):
         self.combo_mode.currentIndexChanged.connect(self._on_mode_changed)
         form_layout.addRow("Режим:", self.combo_mode)
 
-        self.spin_start = QDoubleSpinBox()
+        self.spin_start = UnitAwareDoubleSpinBox(self, default_unit=self._default_unit)
         self.spin_start.setRange(-100000.0, 100000.0)
         self.spin_start.setDecimals(4)
         self.spin_start.setValue(0.0)
         self.spin_start.valueChanged.connect(self._update_preview)
         form_layout.addRow("Старт:", self.spin_start)
 
-        self.spin_stop = QDoubleSpinBox()
+        self.spin_stop = UnitAwareDoubleSpinBox(self, default_unit=self._default_unit)
         self.spin_stop.setRange(-100000.0, 100000.0)
         self.spin_stop.setDecimals(4)
         self.spin_stop.setValue(180.0)
         self.spin_stop.valueChanged.connect(self._update_preview)
         form_layout.addRow("Стоп:", self.spin_stop)
 
-        self.spin_step = QDoubleSpinBox()
+        self.spin_step = UnitAwareDoubleSpinBox(self, default_unit=self._default_unit)
         self.spin_step.setRange(0.0001, 100000.0)
         self.spin_step.setDecimals(4)
         self.spin_step.setValue(10.0)
@@ -533,7 +619,7 @@ class GridVariableChipsRow(QWidget):
     Включает:
       - Заголовок с именем и счетчиком значений;
       - Контейнер ультракомпактных чипсов со свободным горизонтальным переносом;
-      - Инлайн-поле ввода [+ значение] для одиночного ввода или ввода через запятую;
+      - Инлайн-поле ввода [+ значение] для одиночного или пакетного ввода с поддержкой единиц измерения;
       - Кнопку [⚙ Сетка] генератора диапазона значений;
       - Кнопку [🗑] удаления всей переменной.
     """
@@ -546,16 +632,34 @@ class GridVariableChipsRow(QWidget):
         var_name: str,
         values: List[float],
         parent: Optional[QWidget] = None,
+        default_unit: Optional[str] = None,
     ) -> None:
         """Инициализирует строку чипсов для указанной Grid-переменной."""
         super().__init__(parent)
         self.var_name: str = str(var_name)
+        resolved_unit = (
+            normalize_unit_name(default_unit)
+            if default_unit and default_unit.strip()
+            else infer_variable_default_unit(self.var_name)
+        )
+        self._default_unit: Optional[str] = resolved_unit
         self._values: List[float] = [float(number_element) for number_element in values] if values else [0.0]
         self._chips: List[GridChip] = []
         self._is_updating: bool = False
 
         self._init_ui()
         self._rebuild_chips()
+
+    @property
+    def default_unit(self) -> Optional[str]:
+        """Возвращает целевую единицу измерения для данной переменной сетки."""
+        return self._default_unit
+
+    def set_default_unit(self, unit: Optional[str]) -> None:
+        """Устанавливает целевую единицу измерения для строки и всех ее чипсов."""
+        self._default_unit = normalize_unit_name(unit) if unit and unit.strip() else None
+        for chip_item in self._chips:
+            chip_item.set_default_unit(self._default_unit)
 
     def _init_ui(self) -> None:
         """Создает элементы интерфейса строки управления Grid-переменной."""
@@ -590,8 +694,11 @@ class GridVariableChipsRow(QWidget):
         self.input_add_value = QLineEdit(self.chips_container)
         self.input_add_value.setObjectName("GridAddValueInput")
         self.input_add_value.setPlaceholderText("+ значение")
+        self.input_add_value.setToolTip(
+            "Введите одно или несколько значений через запятую (поддерживаются единицы измерения: 25 cm, 140 keV, pi rad)"
+        )
         self.input_add_value.setMinimumWidth(75)
-        self.input_add_value.setMaximumWidth(110)
+        self.input_add_value.setMaximumWidth(150)
         self.input_add_value.setFixedHeight(22)
         self.input_add_value.setStyleSheet(INPUT_ADD_VALUE_NORMAL_STYLE)
         self.input_add_value.returnPressed.connect(self._on_add_input_entered)
@@ -647,7 +754,11 @@ class GridVariableChipsRow(QWidget):
             self._chips.clear()
 
             for number_value in self._values:
-                chip_widget = GridChip(number_value, parent=self.chips_container)
+                chip_widget = GridChip(
+                    number_value,
+                    parent=self.chips_container,
+                    default_unit=self._default_unit,
+                )
                 chip_widget.delete_requested.connect(self._create_delete_handler(chip_widget))
                 chip_widget.navigate_requested.connect(self._create_navigate_handler(chip_widget))
                 chip_widget.value_changed.connect(self._create_value_changed_handler(chip_widget))
@@ -734,20 +845,20 @@ class GridVariableChipsRow(QWidget):
         self.input_add_value.setStyleSheet(INPUT_ADD_VALUE_NORMAL_STYLE)
 
     def _on_add_input_entered(self) -> None:
-        """Добавляет одно или несколько значений, введенных в текстовое поле."""
+        """Добавляет одно или несколько значений (с поддержкой единиц измерения), введенных в текстовое поле."""
         raw_text = self.input_add_value.text().strip()
         if not raw_text:
             return
 
-        parsed_tokens = [token.strip() for token in re.split(r"[,;\s]+", raw_text) if token.strip()]
-        new_numbers: List[float] = []
-        for token_string in parsed_tokens:
-            try:
-                parsed_float = float(token_string.replace(",", "."))
-                new_numbers.append(parsed_float)
-            except ValueError:
-                self.input_add_value.setStyleSheet(INPUT_ADD_VALUE_ERROR_STYLE)
-                return
+        try:
+            new_numbers = parse_unit_tokens(
+                raw_text,
+                default_unit=self._default_unit,
+                to_hepunits=False,
+            )
+        except ValueError:
+            self.input_add_value.setStyleSheet(INPUT_ADD_VALUE_ERROR_STYLE)
+            return
 
         self.input_add_value.setStyleSheet(INPUT_ADD_VALUE_NORMAL_STYLE)
         self.input_add_value.clear()
@@ -758,7 +869,11 @@ class GridVariableChipsRow(QWidget):
 
     def _on_grid_generator_clicked(self) -> None:
         """Открывает диалог генератора диапазона значений сетки."""
-        generator_dialog = GridRangeDialog(self.var_name, parent=self)
+        generator_dialog = GridRangeDialog(
+            self.var_name,
+            parent=self,
+            default_unit=self._default_unit,
+        )
         if generator_dialog.exec() == QDialog.DialogCode.Accepted:
             generated_values = generator_dialog.get_generated_values()
             if generated_values:
@@ -801,4 +916,7 @@ __all__ = [
     "GridChip",
     "GridRangeDialog",
     "GridVariableChipsRow",
+    "KNOWN_VARIABLE_DEFAULT_UNITS",
+    "infer_variable_default_unit",
 ]
+

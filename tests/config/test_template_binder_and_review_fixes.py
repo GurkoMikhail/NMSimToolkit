@@ -84,10 +84,6 @@ class TestReviewFixesUnitsAndKinematics(unittest.TestCase):
         self.assertAlmostEqual(mat[1, 3], 255.0, places=5)
         self.assertAlmostEqual(mat[0, 3], 0.0, places=5)
 
-        # Проверка обратной совместимости с angle_deg
-        mat_legacy = compute_orbit_matrix(radius=250.0, angle_deg=90.0, z=10.0, half_thickness=5.0)
-        np.testing.assert_array_almost_equal(mat, mat_legacy)
-
         # Проверка compute_spect_poses с start_angle и end_angle
         poses = compute_spect_poses(views_or_protocol=4, gamma_cameras=1, start_angle=0.0, end_angle=180.0)
         self.assertEqual(len(poses), 4)

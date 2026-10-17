@@ -47,6 +47,7 @@ class TransformInspectorSection(BaseInspectorSection):
             max_val=5000.0,
             step=1.0,
             decimals=2,
+            unit="mm",
         )
         field.set_variable_provider(self._get_protocol_variables)
         field.set_variable_created_callback(self._on_variable_created)
@@ -63,6 +64,7 @@ class TransformInspectorSection(BaseInspectorSection):
             max_val=180.0,
             step=1.0,
             decimals=2,
+            unit="deg",
         )
         field.set_variable_provider(self._get_protocol_variables)
         field.set_variable_created_callback(self._on_variable_created)

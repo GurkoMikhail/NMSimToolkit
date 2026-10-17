@@ -48,9 +48,11 @@ from core.config.template_binder import ConfigTemplateBinder
 from core.config.yaml_loader import load_simulation_config, load_raw_config
 from core.config.builder import SceneBuilder
 from core.config.models import (
+    CustomSweepProtocolConfig,
     DataManagerConfig,
     SimulationManagerConfig,
     SourceMetadataConfig,
+    StepAndShootProtocolConfig,
 )
 import settings.database_setting as database_setting
 
@@ -767,20 +769,19 @@ class MainWindow(QMainWindow):
 
         if self.current_config is not None and self.current_config.simulation_manager is not None:
             cfg_mgr = self.current_config.simulation_manager
-            try:
-                self.orchestrator_session.particles_number = int(cfg_mgr.particles_number)
-            except (TypeError, ValueError):
-                pass
-            try:
-                val_stop = float(cfg_mgr.stop_time)
-                self.orchestrator_session.stop_time = val_stop / float(units.s)
-            except (TypeError, ValueError):
-                pass
-            try:
-                val_en = float(cfg_mgr.min_energy)
-                self.orchestrator_session.min_energy = val_en / float(units.keV)
-            except (TypeError, ValueError):
-                pass
+            raw_particles = cfg_mgr.particles_number
+            if isinstance(raw_particles, (int, float)) and not isinstance(raw_particles, bool):
+                self.orchestrator_session.particles_number = int(raw_particles)
+            if not isinstance(
+                self.current_config.protocol,
+                (StepAndShootProtocolConfig, CustomSweepProtocolConfig),
+            ):
+                raw_stop_time = cfg_mgr.stop_time
+                if isinstance(raw_stop_time, (int, float)) and not isinstance(raw_stop_time, bool):
+                    self.orchestrator_session.stop_time = float(raw_stop_time) / float(units.s)
+            raw_min_energy = cfg_mgr.min_energy
+            if isinstance(raw_min_energy, (int, float)) and not isinstance(raw_min_energy, bool):
+                self.orchestrator_session.min_energy = float(raw_min_energy) / float(units.keV)
         else:
             self.orchestrator_session.particles_number = int(self.sim_settings.particles_number)
             self.orchestrator_session.min_energy = float(self.sim_settings.min_energy)
@@ -975,38 +976,21 @@ class MainWindow(QMainWindow):
                         self.data_manager_vm.min_buffer_capacity = parsed_particles
                         if self.data_manager_vm.buffer_capacity < parsed_particles:
                             self.data_manager_vm.buffer_capacity = parsed_particles
-                    elif isinstance(raw_particles, str):
-                        try:
-                            num = float(raw_particles)
-                            if num.is_integer() and num > 0:
-                                parsed_particles = int(num)
-                                self.sim_settings.particles_number = parsed_particles
-                                self.orchestrator_session.particles_number = parsed_particles
-                                self.property_inspector.data_manager_section.set_min_buffer_capacity(parsed_particles)
-                                self.data_manager_vm.min_buffer_capacity = parsed_particles
-                                if self.data_manager_vm.buffer_capacity < parsed_particles:
-                                    self.data_manager_vm.buffer_capacity = parsed_particles
-                        except (ValueError, TypeError):
-                            pass
 
-                    try:
-                        stop_time_seconds = float(cfg.simulation_manager.stop_time) / float(units.s)
-                        self.orchestrator_session.stop_time = stop_time_seconds
-                    except (TypeError, ValueError):
-                        pass
+                    if not isinstance(self.procedure_vm, StepAndShootProcedureViewModel) or cfg.protocol is None:
+                        raw_start_time = cfg.simulation_manager.start_time
+                        if isinstance(raw_start_time, (int, float)) and not isinstance(raw_start_time, bool):
+                            self.orchestrator_session.start_time = float(raw_start_time) / float(units.s)
+                        raw_stop_time = cfg.simulation_manager.stop_time
+                        if isinstance(raw_stop_time, (int, float)) and not isinstance(raw_stop_time, bool):
+                            self.orchestrator_session.stop_time = float(raw_stop_time) / float(units.s)
+                        self.property_inspector.procedure_section.update_ui_from_vm()
 
                     raw_min_energy = cfg.simulation_manager.min_energy
                     if isinstance(raw_min_energy, (int, float)) and not isinstance(raw_min_energy, bool):
                         scaled_min_energy = float(raw_min_energy) / float(units.keV)
                         self.sim_settings.min_energy = scaled_min_energy
                         self.orchestrator_session.min_energy = scaled_min_energy
-                    elif isinstance(raw_min_energy, str):
-                        try:
-                            scaled_min_energy = float(raw_min_energy) / float(units.keV)
-                            self.sim_settings.min_energy = scaled_min_energy
-                            self.orchestrator_session.min_energy = scaled_min_energy
-                        except (TypeError, ValueError):
-                            pass
 
                 if cfg.pool_size is not None:
                     self.sim_settings.pool_size = int(cfg.pool_size)
@@ -1029,16 +1013,34 @@ class MainWindow(QMainWindow):
                     if self.current_config is not None
                     else None
                 )
-                start_time_val = (
-                    float(prev_sim_mgr.start_time)
-                    if prev_sim_mgr is not None and isinstance(prev_sim_mgr.start_time, (int, float))
-                    else 0.0 * units.ns
+                if self.procedure_vm is not None:
+                    for time_prop in ("start_time", "stop_time"):
+                        bound_time_var = self.procedure_vm.bindings.get(time_prop)
+                        if bound_time_var:
+                            self.procedure_vm.bind_property("simulation_manager", time_prop, bound_time_var)
+
+                start_time_cfg = self.orchestrator_session._get_start_time_cfg()
+                has_explicit_start_binding = bool(
+                    self.procedure_vm is not None
+                    and (
+                        self.procedure_vm.bindings.get("start_time")
+                        or "start_time" in self.procedure_vm.get_property_bindings("simulation_manager")
+                    )
                 )
+                if (
+                    not has_explicit_start_binding
+                    and self.orchestrator_session.start_time == 0.0
+                    and prev_sim_mgr is not None
+                    and isinstance(prev_sim_mgr.start_time, (int, float))
+                    and float(prev_sim_mgr.start_time) != 0.0
+                ):
+                    start_time_cfg = prev_sim_mgr.start_time
+                stop_time_cfg = self.orchestrator_session._get_stop_time_cfg()
                 sim_mgr = SimulationManagerConfig(
-                    start_time=start_time_val,
+                    start_time=start_time_cfg,
                     particles_number=int(self.sim_settings.particles_number),
                     min_energy=float(self.sim_settings.min_energy) * units.keV,
-                    stop_time=float(self.orchestrator_session.stop_time) * units.s,
+                    stop_time=stop_time_cfg,
                     physics_list=prev_sim_mgr.physics_list if prev_sim_mgr is not None else None,
                     seed=prev_sim_mgr.seed if prev_sim_mgr is not None else None,
                 )

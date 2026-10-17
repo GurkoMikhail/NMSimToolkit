@@ -78,7 +78,7 @@ class TestStage3Viewport(unittest.TestCase):
         manipulator.orbit_changed.connect(lambda r, a, z: events.append((r, a, z)))
 
         # Поворот на 90 градусов
-        manipulator.set_orbit_parameters(radius=250.0, angle_deg=90.0)
+        manipulator.set_orbit_parameters(radius=250.0, angle=90.0)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0], (250.0, 90.0, 0.0))
 
@@ -1102,7 +1102,7 @@ class TestStage3Viewport(unittest.TestCase):
         camera_vm = self._create_test_camera_vm("CamRadial")
         camera_vm.local_matrix = compute_orbit_matrix(
             radius=250.0,
-            angle_deg=0.0,
+            angle=0.0,
             axial_z=0.0,
             half_thickness=camera_vm.half_thickness,
         )
@@ -1135,7 +1135,7 @@ class TestStage3Viewport(unittest.TestCase):
         camera_vm = self._create_test_camera_vm("CamTangential")
         camera_vm.local_matrix = compute_orbit_matrix(
             radius=250.0,
-            angle_deg=0.0,
+            angle=0.0,
             axial_z=0.0,
             half_thickness=camera_vm.half_thickness,
         )
@@ -1214,7 +1214,7 @@ class TestStage3Viewport(unittest.TestCase):
         camera_vm = self._create_test_camera_vm("CamRotateSingle")
         camera_vm.local_matrix = compute_orbit_matrix(
             radius=250.0,
-            angle_deg=0.0,
+            angle=0.0,
             axial_z=0.0,
             half_thickness=camera_vm.half_thickness,
         )
@@ -1332,7 +1332,7 @@ class TestStage3Viewport(unittest.TestCase):
         camera_vm = self._create_test_camera_vm("CamLifecycleTest")
         camera_vm.local_matrix = compute_orbit_matrix(
             radius=250.0,
-            angle_deg=0.0,
+            angle=0.0,
             axial_z=0.0,
             half_thickness=camera_vm.half_thickness,
         )
@@ -1363,7 +1363,7 @@ class TestStage3Viewport(unittest.TestCase):
         camera_vm = self._create_test_camera_vm("CamPortraitTest")
         camera_vm.local_matrix = compute_orbit_matrix(
             radius=250.0,
-            angle_deg=0.0,
+            angle=0.0,
             axial_z=0.0,
             half_thickness=camera_vm.half_thickness,
         )
@@ -1420,7 +1420,7 @@ class TestStage3Viewport(unittest.TestCase):
         camera_vm = self._create_test_camera_vm("CamRollCommitTest")
         camera_vm.local_matrix = compute_orbit_matrix(
             radius=250.0,
-            angle_deg=0.0,
+            angle=0.0,
             axial_z=0.0,
             half_thickness=camera_vm.half_thickness,
         )

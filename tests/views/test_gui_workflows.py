@@ -114,7 +114,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         orbit_radius_face = 250.0
         mat = compute_orbit_matrix(
             radius=orbit_radius_face,
-            angle_deg=0.0,
+            angle=0.0,
             z=0.0,
             half_thickness=cam_vm.half_thickness
         )
@@ -133,7 +133,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         # Проверяем local_matrix
         cam_vm.local_matrix = compute_orbit_matrix(
             radius=orbit_radius_face,
-            angle_deg=90.0,
+            angle=90.0,
             z=10.0,
             half_thickness=cam_vm.half_thickness,
         )
@@ -518,7 +518,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         face_radius = 280.0
         cam_vm.local_matrix = compute_orbit_matrix(
             radius=face_radius,
-            angle_deg=45.0,
+            angle=45.0,
             z=15.0,
             half_thickness=cam_vm.half_thickness,
         )

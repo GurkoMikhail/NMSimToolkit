@@ -53,8 +53,8 @@ class TestSpectSimulationHDF5(unittest.TestCase):
             views_or_protocol=16,
             gamma_cameras=4,
             head_angle_offsets=[0.0, 90.0, 180.0, 270.0],
-            start_angle_deg=0.0,
-            end_angle_deg=360.0,
+            start_angle=0.0,
+            end_angle=360.0,
         )
         self.assertEqual(len(poses), 4)
         self.assertEqual(len(poses[0]), 4)

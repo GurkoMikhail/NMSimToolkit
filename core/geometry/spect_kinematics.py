@@ -39,20 +39,12 @@ def compute_spect_poses(
     end_angle: float = 360.0,
     head_angle_offsets: Optional[List[float]] = None,
     endpoint: bool = False,
-    *,
-    start_angle_deg: Optional[float] = None,
-    end_angle_deg: Optional[float] = None,
 ) -> List[List[float]]:
     """
     Вычисляет список углов для всех детекторных головок на каждом шаге гантри ОФЭКТ.
     Возвращает список позиций гантри, где каждая позиция — список углов [head_0, head_1, ..., head_{N-1}].
     Поддерживает передачу как объекта протокола IStepKinematicsConfig / ISpectProtocolConfig, так и скалярных параметров.
     """
-    if start_angle_deg is not None:
-        start_angle = start_angle_deg
-    if end_angle_deg is not None:
-        end_angle = end_angle_deg
-
     if isinstance(views_or_protocol, IStepKinematicsConfig):
         positions_count = max(1, int(views_or_protocol.steps))
         cameras_count = max(1, int(gamma_cameras))
@@ -93,14 +85,11 @@ def compute_spect_poses(
 
 def compute_orbit_matrix(
     radius: float,
-    angle: Optional[float] = None,
+    angle: float = 0.0,
     z: float = 0.0,
     half_thickness: float = 0.0,
     roll: float = 0.0,
     axial_z: Optional[float] = None,
-    *,
-    angle_deg: Optional[float] = None,
-    roll_deg: Optional[float] = None,
 ) -> NDArray[Float]:
     """
     Вычисляет кинематическую матрицу трансформации 4x4 для круговой орбиты ОФЭКТ,
@@ -113,10 +102,6 @@ def compute_orbit_matrix(
     Поперечная ось (+X детектора) направлена тангенциально к орбите.
     Параметр roll задает вращение детектора в его собственной плоскости вокруг нормали Z (в градусах).
     """
-    if angle is None:
-        angle = 0.0 if angle_deg is None else float(angle_deg)
-    if roll == 0.0 and roll_deg is not None:
-        roll = float(roll_deg)
     if axial_z is not None:
         z = float(axial_z)
 

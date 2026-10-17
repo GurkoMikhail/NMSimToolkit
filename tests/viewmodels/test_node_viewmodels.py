@@ -1,14 +1,18 @@
 import unittest
-import numpy as np
 
+from core.config.models import StepAndShootProtocolConfig
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.scene.nodes import SpatialNode, CompositeNode
-from gui.viewmodels.decorators import core_field, gui_field
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
-from gui.viewmodels.nodes.factory import create_node_viewmodel
+from gui.viewmodels.procedure_viewmodel import (
+    CustomSweepProcedureViewModel,
+    SpectProcedureViewModel,
+    StepAndShootProcedureViewModel,
+    procedure_from_config,
+)
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 
 
@@ -97,9 +101,6 @@ class TestStage2ViewModels(unittest.TestCase):
 
     def test_spect_procedure_steps_and_total_projections(self):
         """Проверка полей steps, total_projections и синхронизации с конфигурацией."""
-        from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel, procedure_from_config
-        from core.config.models import StepAndShootProtocolConfig
-
         proc = SpectProcedureViewModel()
         self.assertEqual(proc.steps, 32)
         self.assertEqual(proc.gamma_cameras, 2)
@@ -126,6 +127,30 @@ class TestStage2ViewModels(unittest.TestCase):
         loaded_vm = procedure_from_config(cfg)
         self.assertIsInstance(loaded_vm, SpectProcedureViewModel)
         self.assertEqual(loaded_vm.steps, 16)
+
+    def test_procedure_start_stop_time_and_bindings(self):
+        """Проверка свойств start_time/stop_time в CustomSweepProcedureViewModel и синхронизации привязок."""
+        sweep_vm = CustomSweepProcedureViewModel(
+            zipped_variables={"t_start": [0.0, 10.0], "t_stop": [10.0, 30.0]},
+            start_time=2.5,
+            stop_time=12.5,
+        )
+        self.assertAlmostEqual(sweep_vm.start_time, 2.5)
+        self.assertAlmostEqual(sweep_vm.stop_time, 12.5)
+
+        sweep_vm.bind_property("simulation_manager", "start_time", "t_start")
+        sweep_vm.bind_property("simulation_manager", "stop_time", "t_stop")
+        self.assertEqual(sweep_vm.bindings.get("start_time"), "t_start")
+        self.assertEqual(sweep_vm.bindings.get("stop_time"), "t_stop")
+
+        sweep_vm.remove_variable("t_start")
+        self.assertNotIn("start_time", sweep_vm.bindings)
+        self.assertNotIn("start_time", sweep_vm.get_property_bindings("simulation_manager"))
+        self.assertEqual(sweep_vm.bindings.get("stop_time"), "t_stop")
+
+        sas_vm = StepAndShootProcedureViewModel(steps=4, time_per_step=5.0, initial_time=10.0, sequential_time=True)
+        self.assertAlmostEqual(sas_vm.start_time, 10.0)
+        self.assertAlmostEqual(sas_vm.stop_time, 15.0)
 
 
 if __name__ == '__main__':

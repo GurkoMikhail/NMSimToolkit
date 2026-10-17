@@ -40,14 +40,23 @@ class BaseProcedureViewModel(QObject):
     parameter_changed = Signal(str, object)
     bindings_changed = Signal()
 
-    def __init__(self, name: str = "Procedure", procedure_type: str = "Base", parent: Optional[QObject] = None) -> None:
+    def __init__(
+        self,
+        name: str = "Procedure",
+        procedure_type: str = "Base",
+        parent: Optional[QObject] = None,
+        start_time: float = 0.0,
+        stop_time: float = 1.0,
+    ) -> None:
         super().__init__(parent)
         self._name: str = name
         self._procedure_type: str = procedure_type
+        self._start_time: float = max(0.0, float(start_time))
+        self._stop_time: float = max(0.001, float(stop_time))
         # Единый реестр привязок свойств узлов сцены к переменным процедуры
         # Ключ: SpatialNode ядра (или NodeViewModel), значение: словарь {имя_свойства: имя_переменной}
         self.bindings_registry: Dict[Any, Dict[str, str]] = {}
-        # Скалярные привязки параметров самой процедуры (например, radius -> cam_radius)
+        # Скалярные привязки параметров самой процедуры (например, radius -> cam_radius, start_time -> t_start)
         self.bindings: Dict[str, str] = {}
         self._is_syncing_with_scene: bool = False
 
@@ -66,17 +75,22 @@ class BaseProcedureViewModel(QObject):
         if not var_name:
             self.unbind_node_property(node, prop_name)
             return
+        clean_var = str(var_name)
+        if node == "simulation_manager" and prop_name in ("start_time", "stop_time"):
+            self.bindings[prop_name] = clean_var
         if node not in self.bindings_registry:
             self.bindings_registry[node] = {}
-        if self.bindings_registry[node].get(prop_name) == str(var_name):
+        if self.bindings_registry[node].get(prop_name) == clean_var:
             return
-        self.bindings_registry[node][prop_name] = str(var_name)
+        self.bindings_registry[node][prop_name] = clean_var
         self.bindings_changed.emit()
         if not self._is_syncing_with_scene:
             self.changed.emit()
 
     def unbind_node_property(self, node: Any, prop_name: str) -> None:
         """Удаляет привязку свойства узла из единого реестра."""
+        if node == "simulation_manager" and prop_name in ("start_time", "stop_time"):
+            self.bindings.pop(prop_name, None)
         if node in self.bindings_registry:
             if prop_name not in self.bindings_registry[node]:
                 return
@@ -133,6 +147,32 @@ class BaseProcedureViewModel(QObject):
         """Тип процедуры (например, SPECT, PET, CustomSweep)."""
         return self._procedure_type
 
+    @property
+    def start_time(self) -> float:
+        """Статическое время начала интервала симуляции (секунды)."""
+        return self._start_time
+
+    @start_time.setter
+    def start_time(self, new_start_time: float) -> None:
+        validated_start = max(0.0, float(new_start_time))
+        if self._start_time != validated_start:
+            self._start_time = validated_start
+            self.changed.emit()
+            self.parameter_changed.emit("start_time", validated_start)
+
+    @property
+    def stop_time(self) -> float:
+        """Статическое время окончания интервала симуляции (секунды)."""
+        return self._stop_time
+
+    @stop_time.setter
+    def stop_time(self, new_stop_time: float) -> None:
+        validated_stop = max(0.001, float(new_stop_time))
+        if self._stop_time != validated_stop:
+            self._stop_time = validated_stop
+            self.changed.emit()
+            self.parameter_changed.emit("stop_time", validated_stop)
+
     def to_config(self) -> AnyProtocolConfig:
         """Конвертация параметров процедуры в Pydantic-конфигурацию ядра."""
         raise NotImplementedError("to_config() должен быть реализован в подклассе.")
@@ -164,8 +204,16 @@ class CustomSweepProcedureViewModel(BaseProcedureViewModel):
         name: str = "Пользовательский скан (Custom Sweep)",
         procedure_type: str = "CustomSweep",
         parent: Optional[QObject] = None,
+        start_time: float = 0.0,
+        stop_time: float = 1.0,
     ) -> None:
-        super().__init__(name=name, procedure_type=procedure_type, parent=parent)
+        super().__init__(
+            name=name,
+            procedure_type=procedure_type,
+            parent=parent,
+            start_time=start_time,
+            stop_time=stop_time,
+        )
         self._grid_variables: Dict[str, List[float]] = dict(grid_variables) if grid_variables else {}
         self._zipped_variables: Dict[str, List[float]] = dict(zipped_variables) if zipped_variables else {}
 
@@ -226,11 +274,18 @@ class CustomSweepProcedureViewModel(BaseProcedureViewModel):
         self.parameter_changed.emit(clean_name, float_values)
 
     def remove_variable(self, var_name: str) -> None:
-        """Удаляет переменную и очищает связанные с ней привязки из единого реестра."""
+        """Удаляет переменную и очищает связанные с ней привязки из единого реестра и словаря bindings."""
         clean_name = str(var_name).strip()
         removed = self._grid_variables.pop(clean_name, None) is not None
         removed = (self._zipped_variables.pop(clean_name, None) is not None) or removed
         if removed:
+            scalar_props_to_remove = [
+                prop_key for prop_key, bound_var_name in self.bindings.items()
+                if bound_var_name == clean_name
+            ]
+            for prop_key in scalar_props_to_remove:
+                self.bindings.pop(prop_key, None)
+
             nodes_to_clean: List[Any] = []
             for node_key, bindings_map in list(self.bindings_registry.items()):
                 properties_to_remove = [
@@ -405,6 +460,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         else:
             start_time_list = [initial_offset] * steps
             stop_time_list = [initial_offset + step_duration] * steps
+        self._start_time = start_time_list[0]
+        self._stop_time = stop_time_list[0]
 
         if isinstance(self._radius, list):
             fallback_radius = float(self._radius[0]) if self._radius else 250.0
@@ -475,7 +532,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         """Слушатель (Observer) изменений свойств узла станины GantryViewModel."""
         if self._is_syncing_with_scene:
             return
-        if property_name == "gantry_angle_deg":
+        if property_name == "gantry_angle":
             angle_value = float(property_value)
             if abs(self._start_angle - angle_value) > 1e-4:
                 self._is_syncing_with_scene = True
@@ -506,7 +563,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
                             other_angle = float(np.degrees(np.arctan2(other_position[1], other_position[0])) % 360.0)
                             other_camera_vm.local_matrix = compute_orbit_matrix(
                                 radius=new_radius,
-                                angle_deg=other_angle,
+                                angle=other_angle,
                                 z=float(other_position[2]),
                                 half_thickness=other_camera_vm.half_thickness,
                             )
@@ -596,7 +653,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
                     camera_angle = float(np.degrees(np.arctan2(camera_position[1], camera_position[0])) % 360.0)
                     camera_view_model.local_matrix = compute_orbit_matrix(
                         radius=eff_radius,
-                        angle_deg=camera_angle,
+                        angle=camera_angle,
                         z=float(camera_position[2]),
                         half_thickness=camera_view_model.half_thickness,
                     )
@@ -667,7 +724,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
             if self._observed_gantry is not None and not self._is_syncing_with_scene:
                 self._is_syncing_with_scene = True
                 try:
-                    self._observed_gantry.gantry_angle_deg = angle_value
+                    self._observed_gantry.gantry_angle = angle_value
                 finally:
                     self._is_syncing_with_scene = False
             elif self._observed_cameras and not self._is_syncing_with_scene:
@@ -775,10 +832,10 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
 
             camera_view_model.local_matrix = compute_orbit_matrix(
                 radius=self._radius,
-                angle_deg=orbit_angle,
+                angle=orbit_angle,
                 z=axial_position_z,
                 half_thickness=camera_view_model.half_thickness,
-                roll_deg=roll_angle,
+                roll=roll_angle,
             )
 
     def remove_variable(self, var_name: str) -> None:
@@ -985,7 +1042,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         self._is_syncing_with_scene = True
         try:
             if had_created_cameras:
-                gantry_view_model.gantry_angle_deg = self._start_angle
+                gantry_view_model.gantry_angle = self._start_angle
                 self.sync_cameras(camera_view_models)
             elif camera_view_models:
                 # Камеры уже присутствуют в сцене: считываем радиус из сцены без мутации матриц
@@ -1073,6 +1130,8 @@ class PetProcedureViewModel(BaseProcedureViewModel):
         self._ring_radius: float = max(50.0, float(ring_radius))
         self._detector_heads: int = max(2, int(detector_heads))
         self._time_per_frame: float = max(0.1, float(time_per_frame))
+        self._start_time = 0.0
+        self._stop_time = self._time_per_frame
 
     @property
     def ring_radius(self) -> float:
@@ -1107,6 +1166,7 @@ class PetProcedureViewModel(BaseProcedureViewModel):
         frame_time_val = max(0.1, float(new_time))
         if self._time_per_frame != frame_time_val:
             self._time_per_frame = frame_time_val
+            self._stop_time = frame_time_val
             self.changed.emit()
             self.parameter_changed.emit("time_per_frame", frame_time_val)
 

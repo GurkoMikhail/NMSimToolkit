@@ -47,7 +47,7 @@ class IKinematicConstraint(Protocol):
         self,
         target_node: Any,
         axis: np.ndarray,
-        proposed_angle_deg: float,
+        proposed_angle: float,
         initial_matrix: np.ndarray,
     ) -> Tuple[np.ndarray, float, Dict[str, Any]]:
         """
@@ -102,7 +102,7 @@ class FixedSubcomponentKinematicConstraint:
         self,
         target_node: Any,
         axis: np.ndarray,
-        proposed_angle_deg: float,
+        proposed_angle: float,
         initial_matrix: np.ndarray,
     ) -> Tuple[np.ndarray, float, Dict[str, Any]]:
         return (axis, 0.0, {'status_message': 'Геометрия компонента зафиксирована'})
@@ -150,7 +150,7 @@ class RootVolumeKinematicConstraint:
         self,
         target_node: Any,
         axis: np.ndarray,
-        proposed_angle_deg: float,
+        proposed_angle: float,
         initial_matrix: np.ndarray,
     ) -> Tuple[np.ndarray, float, Dict[str, Any]]:
         return (axis, 0.0, {'status_message': 'Вращение рутового объема заблокировано'})
@@ -267,9 +267,9 @@ class SpectOrbitKinematicConstraint:
         initial_angle = float(np.degrees(np.arctan2(pos_y, pos_x)) % 360.0)
         initial_z = pos_z
 
-        rad = math.radians(initial_angle)
-        radial_unit = np.array([math.cos(rad), math.sin(rad), 0.0], dtype=np.float64)
-        tangent_unit = np.array([-math.sin(rad), math.cos(rad), 0.0], dtype=np.float64)
+        orbit_angle = math.radians(initial_angle)
+        radial_unit = np.array([math.cos(orbit_angle), math.sin(orbit_angle), 0.0], dtype=np.float64)
+        tangent_unit = np.array([-math.sin(orbit_angle), math.cos(orbit_angle), 0.0], dtype=np.float64)
         axial_unit = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
         action: str
@@ -309,8 +309,8 @@ class SpectOrbitKinematicConstraint:
         elif action == 'tangential':
             delta_tangent = float(np.dot(proposed_world_delta, tangent_unit))
             effective_radius = initial_radius + camera_half_thickness
-            delta_angle_deg = math.degrees(delta_tangent / effective_radius) if effective_radius > 1e-3 else 0.0
-            new_angle_raw = initial_angle + delta_angle_deg
+            delta_angle = math.degrees(delta_tangent / effective_radius) if effective_radius > 1e-3 else 0.0
+            new_angle_raw = initial_angle + delta_angle
             snapped_angle = round(new_angle_raw / 5.0) * 5.0
             new_angle = float(snapped_angle % 360.0)
             new_radius = initial_radius
@@ -327,7 +327,7 @@ class SpectOrbitKinematicConstraint:
 
         new_matrix = compute_orbit_matrix(
             radius=new_radius,
-            angle_deg=new_angle,
+            angle=new_angle,
             z=new_z,
             half_thickness=camera_half_thickness,
         )
@@ -336,12 +336,12 @@ class SpectOrbitKinematicConstraint:
         initial_dir_y = initial_matrix[0:3, 1]
         cos_roll = float(np.clip(np.dot(initial_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
         sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), initial_dir_y), initial_dir_z))
-        roll_angle_deg = math.degrees(math.atan2(sin_roll, cos_roll))
-        if abs(roll_angle_deg) > 1e-3:
-            roll_rad = math.radians(roll_angle_deg)
+        roll_angle = math.degrees(math.atan2(sin_roll, cos_roll))
+        if abs(roll_angle) > 1e-3:
+            roll_value = math.radians(roll_angle)
             roll_mat = np.array([
-                [math.cos(roll_rad), -math.sin(roll_rad), 0.0],
-                [math.sin(roll_rad), math.cos(roll_rad), 0.0],
+                [math.cos(roll_value), -math.sin(roll_value), 0.0],
+                [math.sin(roll_value), math.cos(roll_value), 0.0],
                 [0.0, 0.0, 1.0],
             ], dtype=np.float64)
             new_matrix[0:3, 0:3] = new_matrix[0:3, 0:3] @ roll_mat
@@ -361,7 +361,7 @@ class SpectOrbitKinematicConstraint:
         self,
         target_node: Any,
         axis: np.ndarray,
-        proposed_angle_deg: float,
+        proposed_angle: float,
         initial_matrix: np.ndarray,
     ) -> Tuple[np.ndarray, float, Dict[str, Any]]:
         """
@@ -385,12 +385,12 @@ class SpectOrbitKinematicConstraint:
             return (dir_z_global, 0.0, {})
 
         sign = 1.0 if dot_product > 0.0 else -1.0
-        effective_angle = proposed_angle_deg * sign
-        snapped_angle_deg = float(round(effective_angle / 90.0) * 90.0)
+        effective_angle = proposed_angle * sign
+        snapped_angle = float(round(effective_angle / 90.0) * 90.0)
 
-        angle_rad = math.radians(snapped_angle_deg)
-        cos_val = math.cos(angle_rad)
-        sin_val = math.sin(angle_rad)
+        rotation_angle = math.radians(snapped_angle)
+        cos_val = math.cos(rotation_angle)
+        sin_val = math.sin(rotation_angle)
 
         rotation_mat_3x3 = np.array([
             [cos_val, -sin_val, 0.0],
@@ -401,17 +401,17 @@ class SpectOrbitKinematicConstraint:
         new_matrix = initial_matrix.copy()
         new_matrix[0:3, 0:3] = initial_matrix[0:3, 0:3] @ rotation_mat_3x3
 
-        is_portrait = int(round(snapped_angle_deg / 90.0)) % 2 != 0
+        is_portrait = int(round(snapped_angle / 90.0)) % 2 != 0
         orientation_text = "Книжная (Portrait)" if is_portrait else "Альбомная (Landscape)"
-        status_message = f"ОФЭКТ: Ориентация детектора = {orientation_text} ({snapped_angle_deg:.0f}°)"
+        status_message = f"ОФЭКТ: Ориентация детектора = {orientation_text} ({snapped_angle:.0f}°)"
 
         changed_data = {
             'matrix': new_matrix,
-            'angle_deg': snapped_angle_deg,
+            'angle': snapped_angle,
             'orientation': orientation_text,
             'status_message': status_message,
         }
-        return (dir_z_global, snapped_angle_deg, changed_data)
+        return (dir_z_global, snapped_angle, changed_data)
 
     def on_transform_changed(self, target_node: Any, changed_data: Dict[str, Any]) -> None:
         """
@@ -434,7 +434,7 @@ class SpectOrbitKinematicConstraint:
 
             self.spect_manipulator.set_orbit_parameters(
                 radius=float(new_radius),
-                angle_deg=float(new_angle if new_angle is not None else default_angle),
+                angle=float(new_angle if new_angle is not None else default_angle),
                 z=float(new_z if new_z is not None else default_z),
                 render=False,
                 emit_signal=False,
@@ -461,13 +461,13 @@ class SpectOrbitKinematicConstraint:
                             sibling_dir_y = sibling.local_matrix[0:3, 1]
                             cos_roll = float(np.clip(np.dot(sibling_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
                             sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), sibling_dir_y), sibling_dir_z))
-                            sibling_roll_deg = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
+                            sibling_roll = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
                             sibling.local_matrix = compute_orbit_matrix(
                                 radius=float(new_radius),
-                                angle_deg=sibling_angle,
+                                angle=sibling_angle,
                                 z=float(sibling_position[2]),
                                 half_thickness=sibling.half_thickness,
-                                roll_deg=sibling_roll_deg,
+                                roll=sibling_roll,
                             )
 
                 if new_angle is not None and procedure is not None:
@@ -483,13 +483,13 @@ class SpectOrbitKinematicConstraint:
                             sibling_dir_y = sibling.local_matrix[0:3, 1]
                             cos_roll = float(np.clip(np.dot(sibling_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
                             sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), sibling_dir_y), sibling_dir_z))
-                            sibling_roll_deg = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
+                            sibling_roll = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
                             sibling.local_matrix = compute_orbit_matrix(
                                 radius=sibling_radius,
-                                angle_deg=(base_start_angle + sib_offset) % 360.0,
+                                angle=(base_start_angle + sib_offset) % 360.0,
                                 z=float(sibling_position[2]),
                                 half_thickness=sibling.half_thickness,
-                                roll_deg=sibling_roll_deg,
+                                roll=sibling_roll,
                             )
 
     def on_transform_committed(self, target_node: Any, commit_data: Dict[str, Any]) -> None:
@@ -605,9 +605,9 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
         initial_angle = float(np.degrees(np.arctan2(pos_y, pos_x)) % 360.0)
         initial_z = pos_z
 
-        rad = math.radians(initial_angle)
-        radial_unit = np.array([math.cos(rad), math.sin(rad), 0.0], dtype=np.float64)
-        tangent_unit = np.array([-math.sin(rad), math.cos(rad), 0.0], dtype=np.float64)
+        orbit_angle = math.radians(initial_angle)
+        radial_unit = np.array([math.cos(orbit_angle), math.sin(orbit_angle), 0.0], dtype=np.float64)
+        tangent_unit = np.array([-math.sin(orbit_angle), math.cos(orbit_angle), 0.0], dtype=np.float64)
         axial_unit = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
         action: str
@@ -644,13 +644,13 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
             new_angle = initial_angle
             new_z = initial_z
             status_message = f"ОФЭКТ (Гантри): Радиус орбиты R = {new_radius:.1f} мм (Сетка: 10 мм)"
-            gantry_angle = gantry_node_vm.gantry_angle_deg
+            gantry_angle = gantry_node_vm.gantry_angle
         elif action == 'tangential':
             delta_tangent = float(np.dot(delta_gantry, tangent_unit))
             effective_radius = initial_radius + camera_half_thickness
-            delta_angle_deg = math.degrees(delta_tangent / effective_radius) if effective_radius > 1e-3 else 0.0
-            current_gantry_angle = gantry_node_vm.gantry_angle_deg
-            new_gantry_raw = current_gantry_angle + delta_angle_deg
+            delta_angle = math.degrees(delta_tangent / effective_radius) if effective_radius > 1e-3 else 0.0
+            current_gantry_angle = gantry_node_vm.gantry_angle
+            new_gantry_raw = current_gantry_angle + delta_angle
             snapped_gantry = round(new_gantry_raw / 5.0) * 5.0
             gantry_angle = float(snapped_gantry % 360.0)
             new_radius = initial_radius
@@ -664,12 +664,12 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
             new_z = float(snapped_z)
             new_radius = initial_radius
             new_angle = initial_angle
-            gantry_angle = gantry_node_vm.gantry_angle_deg
+            gantry_angle = gantry_node_vm.gantry_angle
             status_message = f"ОФЭКТ (Гантри): Смещение Z = {new_z:.1f} мм (Сетка: 10 мм)"
 
         new_matrix = compute_orbit_matrix(
             radius=new_radius,
-            angle_deg=new_angle,
+            angle=new_angle,
             z=new_z,
             half_thickness=camera_half_thickness,
         )
@@ -678,12 +678,12 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
         initial_dir_y = initial_matrix[0:3, 1]
         cos_roll = float(np.clip(np.dot(initial_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
         sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), initial_dir_y), initial_dir_z))
-        roll_angle_deg = math.degrees(math.atan2(sin_roll, cos_roll))
-        if abs(roll_angle_deg) > 1e-3:
-            roll_rad = math.radians(roll_angle_deg)
+        roll_angle = math.degrees(math.atan2(sin_roll, cos_roll))
+        if abs(roll_angle) > 1e-3:
+            roll_value = math.radians(roll_angle)
             roll_mat = np.array([
-                [math.cos(roll_rad), -math.sin(roll_rad), 0.0],
-                [math.sin(roll_rad), math.cos(roll_rad), 0.0],
+                [math.cos(roll_value), -math.sin(roll_value), 0.0],
+                [math.sin(roll_value), math.cos(roll_value), 0.0],
                 [0.0, 0.0, 1.0],
             ], dtype=np.float64)
             new_matrix[0:3, 0:3] = new_matrix[0:3, 0:3] @ roll_mat
@@ -714,7 +714,7 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
             if changed_data.get('action') == 'tangential':
                 new_gantry_angle = changed_data.get('gantry_angle', changed_data.get('angle'))
                 if new_gantry_angle is not None:
-                    gantry_node_vm.gantry_angle_deg = float(new_gantry_angle)
+                    gantry_node_vm.gantry_angle = float(new_gantry_angle)
                     if isinstance(procedure, IRotatableProcedure):
                         procedure.start_angle = float(new_gantry_angle)
 
@@ -730,13 +730,13 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
                             sibling_dir_y = sibling.local_matrix[0:3, 1]
                             cos_roll = float(np.clip(np.dot(sibling_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
                             sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), sibling_dir_y), sibling_dir_z))
-                            sibling_roll_deg = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
+                            sibling_roll = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
                             sibling.local_matrix = compute_orbit_matrix(
                                 radius=float(new_radius),
-                                angle_deg=sibling_angle,
+                                angle=sibling_angle,
                                 z=float(sibling_pos[2]),
                                 half_thickness=sibling.half_thickness,
-                                roll_deg=sibling_roll_deg,
+                                roll=sibling_roll,
                             )
                     if procedure is not None:
                         procedure.radius = float(new_radius)
@@ -745,11 +745,11 @@ class CameraMountKinematicConstraint(SpectOrbitKinematicConstraint):
                 current_radius = float(changed_data['radius']) if 'radius' in changed_data else (
                     float(np.hypot(target_node.local_matrix[0, 3], target_node.local_matrix[1, 3])) - target_node.half_thickness
                 )
-                current_gantry_angle = gantry_node_vm.gantry_angle_deg
+                current_gantry_angle = gantry_node_vm.gantry_angle
                 current_z = float(changed_data.get('z', target_node.local_matrix[2, 3]))
                 self.spect_manipulator.set_orbit_parameters(
                     radius=current_radius,
-                    angle_deg=current_gantry_angle,
+                    angle=current_gantry_angle,
                     z=current_z,
                     render=False,
                     emit_signal=False,
@@ -848,7 +848,7 @@ class GantryKinematicConstraint:
         self,
         target_node: Any,
         axis: np.ndarray,
-        proposed_angle_deg: float,
+        proposed_angle: float,
         initial_matrix: np.ndarray,
     ) -> Tuple[np.ndarray, float, Dict[str, Any]]:
         """
@@ -856,10 +856,10 @@ class GantryKinematicConstraint:
         Снаппинг угла с шагом 5 градусов.
         """
         z_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-        snapped_angle_deg = float(round(proposed_angle_deg / 5.0) * 5.0)
-        angle_rad = math.radians(snapped_angle_deg)
-        cos_val = math.cos(angle_rad)
-        sin_val = math.sin(angle_rad)
+        snapped_angle = float(round(proposed_angle / 5.0) * 5.0)
+        rotation_angle = math.radians(snapped_angle)
+        cos_val = math.cos(rotation_angle)
+        sin_val = math.sin(rotation_angle)
 
         rot_z = np.array([
             [cos_val, -sin_val, 0.0, 0.0],
@@ -873,35 +873,35 @@ class GantryKinematicConstraint:
 
         changed_data = {
             'matrix': new_matrix,
-            'angle_deg': new_gantry_angle,
-            'delta_angle_deg': snapped_angle_deg,
+            'angle': new_gantry_angle,
+            'delta_angle': snapped_angle,
             'status_message': f"Гантри: Угол ротора θ = {new_gantry_angle:.1f}° (Сетка: 5°)",
         }
-        return (z_axis, snapped_angle_deg, changed_data)
+        return (z_axis, snapped_angle, changed_data)
 
     def on_transform_changed(self, target_node: Any, changed_data: Dict[str, Any]) -> None:
         """Обновление при непрерывном вращении ротора."""
-        angle_deg = changed_data.get('angle_deg')
-        if angle_deg is not None:
+        angle = changed_data.get('angle')
+        if angle is not None:
             gantry_node_vm = self._gantry_vm if self._gantry_vm is not None else target_node
             if gantry_node_vm is not None and isinstance(gantry_node_vm.core_node, GantryNode):
-                if abs(gantry_node_vm.gantry_angle_deg - float(angle_deg)) > 1e-4:
-                    gantry_node_vm.gantry_angle_deg = float(angle_deg)
+                if abs(gantry_node_vm.gantry_angle - float(angle)) > 1e-4:
+                    gantry_node_vm.gantry_angle = float(angle)
             procedure = self._procedure_ref() if self._procedure_ref is not None else None
             if isinstance(procedure, IRotatableProcedure):
-                procedure.start_angle = float(angle_deg)
+                procedure.start_angle = float(angle)
 
     def on_transform_committed(self, target_node: Any, commit_data: Dict[str, Any]) -> None:
         """Фиксация угла ротора в процедуре."""
-        angle_deg = commit_data.get('angle_deg')
-        if angle_deg is not None:
+        angle = commit_data.get('angle')
+        if angle is not None:
             gantry_node_vm = self._gantry_vm if self._gantry_vm is not None else target_node
             if gantry_node_vm is not None and isinstance(gantry_node_vm.core_node, GantryNode):
-                if abs(gantry_node_vm.gantry_angle_deg - float(angle_deg)) > 1e-4:
-                    gantry_node_vm.gantry_angle_deg = float(angle_deg)
+                if abs(gantry_node_vm.gantry_angle - float(angle)) > 1e-4:
+                    gantry_node_vm.gantry_angle = float(angle)
             procedure = self._procedure_ref() if self._procedure_ref is not None else None
             if isinstance(procedure, IRotatableProcedure):
-                procedure.start_angle = float(angle_deg)
+                procedure.start_angle = float(angle)
 
 
 

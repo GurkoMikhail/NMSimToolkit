@@ -52,11 +52,11 @@ class TestGantryNode(unittest.TestCase):
 
         camera_1, slots_1 = create_default_gamma_camera(name="Camera_1")
         camera_vm_1 = GammaCameraViewModel(camera_1, slots=slots_1)
-        camera_1.local_matrix = compute_orbit_matrix(radius=250.0, angle_deg=0.0, z=0.0, half_thickness=camera_vm_1.half_thickness)
+        camera_1.local_matrix = compute_orbit_matrix(radius=250.0, angle=0.0, z=0.0, half_thickness=camera_vm_1.half_thickness)
 
         camera_2, slots_2 = create_default_gamma_camera(name="Camera_2")
         camera_vm_2 = GammaCameraViewModel(camera_2, slots=slots_2)
-        camera_2.local_matrix = compute_orbit_matrix(radius=250.0, angle_deg=180.0, z=0.0, half_thickness=camera_vm_2.half_thickness)
+        camera_2.local_matrix = compute_orbit_matrix(radius=250.0, angle=180.0, z=0.0, half_thickness=camera_vm_2.half_thickness)
 
         gantry.add_child(camera_1)
         gantry.add_child(camera_2)
@@ -134,7 +134,7 @@ class TestGantryNode(unittest.TestCase):
 
         camera, slots = create_default_gamma_camera(name="MountedCamera")
         camera_vm = GammaCameraViewModel(camera, slots=slots)
-        camera.local_matrix = compute_orbit_matrix(radius=250.0, angle_deg=0.0, z=0.0, half_thickness=camera_vm.half_thickness)
+        camera.local_matrix = compute_orbit_matrix(radius=250.0, angle=0.0, z=0.0, half_thickness=camera_vm.half_thickness)
         gantry.add_child(camera)
 
         initial_camera_local = np.copy(camera.local_matrix)

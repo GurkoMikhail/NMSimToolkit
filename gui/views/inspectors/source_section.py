@@ -84,6 +84,7 @@ class SourceInspectorSection(BaseInspectorSection):
             max_val=100000.0,
             step=10.0,
             decimals=3,
+            unit="MBq",
         )
         self.spin_source_activity.setValue(100.0)
         self.spin_source_activity.set_variable_provider(self._get_protocol_variables)

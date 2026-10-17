@@ -19,7 +19,7 @@ class SPECTManipulator(QObject):
     - Осевой сдвиг Z (высота вдоль продольной оси стола)
     """
 
-    orbit_changed = Signal(float, float, float)  # radius, angle_deg, z_pos
+    orbit_changed = Signal(float, float, float)  # radius, angle, z_pos
 
     def __init__(
         self,
@@ -32,7 +32,7 @@ class SPECTManipulator(QObject):
         super().__init__()
         self.viewport = viewport
         self.radius = float(initial_radius)
-        self.angle_deg = float(initial_angle)
+        self.angle = float(initial_angle)
         self.z_pos = float(initial_z)
         self.half_thickness: float = 0.0
 
@@ -47,7 +47,7 @@ class SPECTManipulator(QObject):
     def set_orbit_parameters(
         self,
         radius: float,
-        angle_deg: float,
+        angle: float,
         z: Optional[float] = None,
         render: bool = False,
         emit_signal: bool = True
@@ -56,36 +56,36 @@ class SPECTManipulator(QObject):
         Установка параметров орбиты с проверкой граничных ограничений.
         """
         self.radius = float(np.clip(radius, self._min_radius, self._max_radius))
-        self.angle_deg = float(angle_deg % 360.0)
+        self.angle = float(angle % 360.0)
         if z is not None:
             self.z_pos = float(z)
 
         self.update_visuals(render=render)
         if emit_signal:
-            self.orbit_changed.emit(self.radius, self.angle_deg, self.z_pos)
+            self.orbit_changed.emit(self.radius, self.angle, self.z_pos)
 
-    def rotate_by(self, delta_angle_deg: float) -> None:
+    def rotate_by(self, delta_angle: float) -> None:
         """
         Инкрементальный поворот гантри ОФЭКТ на заданный угол.
         """
-        self.set_orbit_parameters(self.radius, self.angle_deg + delta_angle_deg, self.z_pos)
+        self.set_orbit_parameters(self.radius, self.angle + delta_angle, self.z_pos)
 
     def set_radius(self, new_radius: float) -> None:
         """
         Изменение радиуса орбиты до лицевой поверхности гамма-камеры.
         """
-        self.set_orbit_parameters(new_radius, self.angle_deg, self.z_pos)
+        self.set_orbit_parameters(new_radius, self.angle, self.z_pos)
 
     def get_cartesian_position(self, half_thickness: Optional[float] = None) -> Tuple[float, float, float]:
         """
         Вычисляет декартовы координаты (X, Y, Z) центра гамма-камеры с учетом
         радиуса орбиты до лицевой поверхности.
         """
-        angle_rad = np.radians(self.angle_deg)
+        orbit_angle = np.radians(self.angle)
         camera_half_thickness = self.half_thickness if half_thickness is None else float(half_thickness)
         center_radius = self.radius + camera_half_thickness
-        pos_x = center_radius * np.cos(angle_rad)
-        pos_y = center_radius * np.sin(angle_rad)
+        pos_x = center_radius * np.cos(orbit_angle)
+        pos_y = center_radius * np.sin(orbit_angle)
         return (float(pos_x), float(pos_y), float(self.z_pos))
 
     def get_orientation_matrix(self, half_thickness: Optional[float] = None) -> np.ndarray:
@@ -96,7 +96,7 @@ class SPECTManipulator(QObject):
         thickness_val = self.half_thickness if half_thickness is None else float(half_thickness)
         return compute_orbit_matrix(
             radius=self.radius,
-            angle=self.angle_deg,
+            angle=self.angle,
             z=self.z_pos,
             half_thickness=thickness_val,
         )

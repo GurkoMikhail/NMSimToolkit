@@ -25,10 +25,14 @@ from gui.viewport_3d.track_renderer import TrackRenderer
 from gui.views.main_window import MainWindow
 from gui.controllers.orchestrator_session import OrchestratorSession
 from gui.controllers.ipc_receiver import IPCReceiver
+from gui.controllers.viewport_controller import SceneViewportController
+from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
+from gui.viewmodels.scene_viewmodel import SceneViewModel
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
 from core.source.sources import PointSource
 from core.scene.dose_grid_node import DoseGridNode
+from core.scene.nodes import CompositeNode
 from settings.database_setting import material_database
 
 
@@ -243,7 +247,6 @@ class TestDoseAndTrackFixes(unittest.TestCase):
         dose_grid = DoseGridNode(name="DoseScorer", size=[160.0, 160.0, 160.0], dose_voxel_size=10.0)
         world.add_child(dose_grid)
 
-        from gui.viewmodels.scene_viewmodel import SceneViewModel
         scene_vm = SceneViewModel(world)
         session = OrchestratorSession(scene_vm=scene_vm)
         try:
@@ -253,8 +256,8 @@ class TestDoseAndTrackFixes(unittest.TestCase):
             received_tracks = []
             received_doses = []
 
-            session.tracks_received.connect(lambda t: received_tracks.append(t))
-            session.dose_volume_received.connect(lambda d: received_doses.append(d))
+            session.tracks_received.connect(received_tracks.append)
+            session.dose_volume_received.connect(received_doses.append)
 
             sample_tracks = {'pos_x': np.array([1.0, 2.0]), 'pos_y': np.array([0.0, 0.0]), 'pos_z': np.array([0.0, 0.0])}
             sample_dose = np.ones((16, 16, 16), dtype=np.float32)
@@ -328,7 +331,7 @@ class TestDoseAndTrackFixes(unittest.TestCase):
                 }
                 receiver._process_track_item(item)
 
-            total_samples = sum(len(a) for a in receiver._accumulated_energies)
+            total_samples = sum(len(arr) for arr in receiver._accumulated_energies)
             self.assertLessEqual(total_samples, receiver.max_spectrum_samples * 2)
             self.assertGreater(total_samples, 0)
 
@@ -404,6 +407,93 @@ class TestDoseAndTrackFixes(unittest.TestCase):
         finally:
             win.close()
 
+    def test_multi_actor_dose_volume_renderer_and_controller_sync(self) -> None:
+        """
+        Проверка мульти-акторной визуализации нескольких сеток дозы:
+        1. Одновременная отрисовка N именованных сеток из Dict[str, np.ndarray].
+        2. Независимое обновление in-place без пересоздания акторов VTK.
+        3. Управление индивидуальной видимостью через is_active и dose_visible.
+        4. Синхронизация трансформации актора при перемещении DoseGridViewModel.
+        5. Удаление актора сетки при удалении узла DoseGridViewModel из сцены.
+        """
+        vp = VTKViewport()
+        try:
+            root = CompositeNode(name="World")
+            grid_node_a = DoseGridNode(name="OrganA", size=[40.0, 40.0, 40.0], dose_voxel_size=10.0)
+            grid_node_b = DoseGridNode(name="OrganB", size=[60.0, 60.0, 60.0], dose_voxel_size=20.0)
+            grid_node_b.translate(100.0, 0.0, 0.0)
+            root.add_child(grid_node_a)
+            root.add_child(grid_node_b)
+
+            scene_vm = SceneViewModel(root)
+            controller = SceneViewportController(viewport=vp, scene_vm=scene_vm)
+
+            vm_a = scene_vm.find_by_name("OrganA")
+            vm_b = scene_vm.find_by_name("OrganB")
+            self.assertIsInstance(vm_a, DoseGridViewModel)
+            self.assertIsInstance(vm_b, DoseGridViewModel)
+
+            dose_a = np.zeros((4, 4, 4), dtype=np.float32)
+            dose_a[1, 1, 1] = 25.0
+            dose_b = np.zeros((3, 3, 3), dtype=np.float32)
+            dose_b[2, 2, 2] = 80.0
+
+            controller.on_dose_volume_received({"OrganA": dose_a, "OrganB": dose_b})
+
+            entries = controller.dose_renderer.entries
+            self.assertIn("OrganA", entries)
+            self.assertIn("OrganB", entries)
+            entry_a = entries["OrganA"]
+            entry_b = entries["OrganB"]
+
+            self.assertEqual(entry_a.actor_name, "dose_volume_OrganA")
+            self.assertEqual(entry_b.actor_name, "dose_volume_OrganB")
+            self.assertEqual(entry_a.base_voxel_size, (10.0, 10.0, 10.0))
+            self.assertEqual(entry_b.base_voxel_size, (20.0, 20.0, 20.0))
+            self.assertAlmostEqual(float(np.max(entry_a.grid.point_data["dose"])), 25.0)
+            self.assertAlmostEqual(float(np.max(entry_b.grid.point_data["dose"])), 80.0)
+
+            initial_grid_a = entry_a.grid
+            initial_grid_b = entry_b.grid
+
+            # Повторное обновление мутирует сетки in-place
+            dose_a[0, 0, 0] = 50.0
+            controller.on_dose_volume_received({"OrganA": dose_a, "OrganB": dose_b})
+            self.assertIs(entries["OrganA"].grid, initial_grid_a)
+            self.assertIs(entries["OrganB"].grid, initial_grid_b)
+            self.assertAlmostEqual(float(np.max(entry_a.grid.point_data["dose"])), 50.0)
+
+            # Отключение dose_visible скрывает сетку OrganA, оставляя OrganB видимой
+            assert isinstance(vm_a, DoseGridViewModel)
+            assert isinstance(vm_b, DoseGridViewModel)
+            vm_a.dose_visible = False
+            self.assertFalse(entries["OrganA"].visible)
+            self.assertTrue(entries["OrganB"].visible)
+
+            vm_a.dose_visible = True
+            self.assertTrue(entries["OrganA"].visible)
+
+            # Отключение is_active также скрывает сетку
+            vm_b.is_active = False
+            self.assertFalse(entries["OrganB"].visible)
+            vm_b.is_active = True
+            self.assertTrue(entries["OrganB"].visible)
+
+            # Перемещение узла обновляет матрицу трансформации соответствующей сетки дозы
+            vm_a.translate(x=45.0, y=-15.0, z=10.0)
+            matrix_a = entries["OrganA"].transform_matrix
+            assert matrix_a is not None
+            np.testing.assert_allclose(matrix_a, vm_a.global_matrix)
+
+            # Удаление узла из сцены удаляет соответствующую запись из рендерера дозы
+            scene_vm.node_removed.connect(controller.on_node_removed)
+            scene_vm.remove_node(vm_a)
+            self.assertNotIn("OrganA", controller.dose_renderer.entries)
+            self.assertIn("OrganB", controller.dose_renderer.entries)
+        finally:
+            vp.close()
+
 
 if __name__ == '__main__':
     unittest.main()
+

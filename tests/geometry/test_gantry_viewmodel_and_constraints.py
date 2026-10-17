@@ -51,7 +51,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         self.assertEqual(gantry_vm.node_type, "GantryNode")
 
     def test_gantry_viewmodel_angle_property_and_signals(self) -> None:
-        """Проверка изменения угла ротора через свойство gantry_angle_deg и испускания сигналов."""
+        """Проверка изменения угла ротора через свойство gantry_angle и испускания сигналов."""
         core_gantry = GantryNode(name="RotaryGantry")
         gantry_vm = GantryViewModel(core_gantry)
 
@@ -60,8 +60,8 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         transform_signals = []
         gantry_vm.transform_changed.connect(lambda: transform_signals.append(True))
 
-        gantry_vm.gantry_angle_deg = 45.0
-        self.assertAlmostEqual(gantry_vm.gantry_angle_deg, 45.0)
+        gantry_vm.gantry_angle = 45.0
+        self.assertAlmostEqual(gantry_vm.gantry_angle, 45.0)
         self.assertAlmostEqual(core_gantry.gantry_angle, np.radians(45.0))
         self.assertTrue(len(signals_received) >= 1)
         self.assertTrue(len(transform_signals) >= 1)
@@ -91,7 +91,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
             self.assertIs(cam.parent_vm, gantry_vm)
 
         # Начальный угол станины равен start_angle
-        self.assertAlmostEqual(gantry_vm.gantry_angle_deg, 30.0)
+        self.assertAlmostEqual(gantry_vm.gantry_angle, 30.0)
 
     def test_spect_procedure_returns_specialized_constraints(self) -> None:
         """Проверка возврата GantryKinematicConstraint и CameraMountKinematicConstraint."""
@@ -129,14 +129,14 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         np.testing.assert_allclose(world_delta, [0.0, 0.0, 0.0])
 
         # Проверка вращения: снаппинг к 5 градусам
-        rot_axis, snapped_deg, rot_data = constraint.filter_rotation(
+        rot_axis, snapped_angle, rot_data = constraint.filter_rotation(
             target_node=gantry_vm,
             axis=np.array([0.0, 0.0, 1.0]),
-            proposed_angle_deg=23.4,
+            proposed_angle=23.4,
             initial_matrix=np.eye(4),
         )
-        self.assertAlmostEqual(snapped_deg, 25.0)
-        self.assertAlmostEqual(rot_data["angle_deg"], 25.0)
+        self.assertAlmostEqual(snapped_angle, 25.0)
+        self.assertAlmostEqual(rot_data["angle"], 25.0)
 
         # При коммите угол фиксируется в процедуре
         constraint.on_transform_committed(gantry_vm, rot_data)
@@ -194,7 +194,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         self.assertAlmostEqual(cam2_radius, 300.0)
         self.assertAlmostEqual(procedure.radius, 300.0)
         # Станина не должна вращаться при радиальном смещении
-        self.assertAlmostEqual(gantry_vm.gantry_angle_deg, 0.0)
+        self.assertAlmostEqual(gantry_vm.gantry_angle, 0.0)
 
     def test_camera_mount_tangential_translation_rotates_gantry_without_double_rotation(self) -> None:
         """
@@ -248,7 +248,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
 
         # Оповещение констрейнта транслирует перемещение в поворот станины
         constraint.on_transform_changed(cam1_target, changed_data)
-        self.assertAlmostEqual(gantry_vm.gantry_angle_deg, 20.0)
+        self.assertAlmostEqual(gantry_vm.gantry_angle, 20.0)
         self.assertAlmostEqual(procedure.start_angle, 20.0)
 
         # Фиксация перемещения
@@ -295,7 +295,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         _, _, rot_data_1 = constraint_cam1.filter_rotation(
             target_node=cam1,
             axis=cam1.local_matrix[0:3, 2],
-            proposed_angle_deg=90.0,
+            proposed_angle=90.0,
             initial_matrix=cam1.local_matrix,
         )
         cam1.local_matrix = rot_data_1["matrix"]
@@ -304,7 +304,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         _, _, rot_data_2 = constraint_cam2.filter_rotation(
             target_node=cam2,
             axis=cam2.local_matrix[0:3, 2],
-            proposed_angle_deg=90.0,
+            proposed_angle=90.0,
             initial_matrix=cam2.local_matrix,
         )
         cam2.local_matrix = rot_data_2["matrix"]
@@ -525,18 +525,18 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         camera_view_model_second = camera_view_models[1]
 
         # 1. Поворот станины -> обновление procedure.start_angle
-        gantry_view_model.gantry_angle_deg = 45.0
+        gantry_view_model.gantry_angle = 45.0
         self.assertAlmostEqual(procedure.start_angle, 45.0)
 
         # 2. Изменение procedure.start_angle -> обновление угла станины
         procedure.start_angle = 75.0
-        self.assertAlmostEqual(gantry_view_model.gantry_angle_deg, 75.0)
+        self.assertAlmostEqual(gantry_view_model.gantry_angle, 75.0)
 
         # 3. Изменение радиуса камеры -> обновление procedure.radius
         cam1_angle = float(np.degrees(np.arctan2(camera_view_model_first.local_matrix[1, 3], camera_view_model_first.local_matrix[0, 3])) % 360.0)
         camera_view_model_first.local_matrix = compute_orbit_matrix(
             radius=320.0,
-            angle_deg=cam1_angle,
+            angle=cam1_angle,
             z=float(camera_view_model_first.local_matrix[2, 3]),
             half_thickness=camera_view_model_first.half_thickness,
         )
@@ -552,13 +552,13 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         # 5. Динамическое добавление 3-й камеры на станину
         third_camera_view_model = create_default_gamma_camera_vm(name="Camera_3")
         third_camera_view_model.local_matrix = compute_orbit_matrix(
-            radius=290.0, angle_deg=240.0, z=0.0, half_thickness=third_camera_view_model.half_thickness
+            radius=290.0, angle=240.0, z=0.0, half_thickness=third_camera_view_model.half_thickness
         )
         scene_view_model.add_node(gantry_view_model, third_camera_view_model)
 
         # Изменение радиуса добавленной камеры обновляет процедуру
         third_camera_view_model.local_matrix = compute_orbit_matrix(
-            radius=330.0, angle_deg=240.0, z=0.0, half_thickness=third_camera_view_model.half_thickness
+            radius=330.0, angle=240.0, z=0.0, half_thickness=third_camera_view_model.half_thickness
         )
         self.assertAlmostEqual(procedure.radius, 330.0)
 
@@ -566,7 +566,7 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         scene_view_model.remove_node(third_camera_view_model)
         # Изменение радиуса удаленной камеры больше не влияет на процедуру
         third_camera_view_model.local_matrix = compute_orbit_matrix(
-            radius=150.0, angle_deg=240.0, z=0.0, half_thickness=third_camera_view_model.half_thickness
+            radius=150.0, angle=240.0, z=0.0, half_thickness=third_camera_view_model.half_thickness
         )
         self.assertAlmostEqual(procedure.radius, 330.0)
 

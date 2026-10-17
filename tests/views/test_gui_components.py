@@ -155,7 +155,7 @@ class TestGuiReviewFixes(unittest.TestCase):
     # -------------------------------------------------------------------------
     def test_clean_1_and_2_orbit_matrix_unification(self):
         """Проверка дедупликации формулы матрицы орбиты."""
-        mat_vm = compute_orbit_matrix(radius=250.0, angle_deg=90.0, z=10.0)
+        mat_vm = compute_orbit_matrix(radius=250.0, angle=90.0, z=10.0)
         self.assertEqual(mat_vm.shape, (4, 4))
         self.assertAlmostEqual(mat_vm[0, 3], 0.0, places=4)
         self.assertAlmostEqual(mat_vm[1, 3], 250.0, places=4)

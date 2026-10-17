@@ -96,7 +96,7 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         manipulator.set_orbit_parameters(300.0, 45.0, z=10.0, emit_signal=False)
         self.assertEqual(len(emitted), 0)
         self.assertEqual(manipulator.radius, 300.0)
-        self.assertEqual(manipulator.angle_deg, 45.0)
+        self.assertEqual(manipulator.angle, 45.0)
         self.assertEqual(manipulator.z_pos, 10.0)
 
         # emit_signal=True: сигнал испускается
@@ -112,7 +112,7 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         # Задаем камере матрицу трансформации: радиус лицевой поверхности 329.05, угол 90 град, z = 15.0
         half_th = cam_vm.half_thickness
         target_mat = compute_orbit_matrix(
-            radius=329.05, angle_deg=90.0, z=15.0, half_thickness=half_th
+            radius=329.05, angle=90.0, z=15.0, half_thickness=half_th
         )
         cam.local_matrix = target_mat
 
@@ -130,7 +130,7 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         for angle in [0.0, 30.0, 45.0, 90.0, 135.0, 180.0, 270.0, 315.0]:
             radius = 280.0
             z = 25.0
-            mat = compute_orbit_matrix(radius=radius, angle_deg=angle, z=z)
+            mat = compute_orbit_matrix(radius=radius, angle=angle, z=z)
 
             # 1. Позиция камеры
             cam_pos = mat[:3, 3]
@@ -162,7 +162,7 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
 
         # Камера на радиусе 400 мм (по лицевой поверхности) и угле 120 град
         expected_matrix = compute_orbit_matrix(
-            radius=400.0, angle_deg=120.0, z=50.0, half_thickness=half_th
+            radius=400.0, angle=120.0, z=50.0, half_thickness=half_th
         )
         cam.local_matrix = np.copy(expected_matrix)
 
@@ -337,10 +337,10 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
 
         # Проверяем нормализацию угла 360 градусов -> эквивалентно 0.0 на орбите
         mat_360 = compute_orbit_matrix(
-            radius=200.0, angle_deg=360.0, half_thickness=vm.half_thickness
+            radius=200.0, angle=360.0, half_thickness=vm.half_thickness
         )
         mat_0 = compute_orbit_matrix(
-            radius=200.0, angle_deg=0.0, half_thickness=vm.half_thickness
+            radius=200.0, angle=0.0, half_thickness=vm.half_thickness
         )
         np.testing.assert_allclose(mat_360, mat_0, atol=1e-5)
         vm.local_matrix = mat_360
@@ -569,7 +569,7 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         from gui.viewport_3d.spect_manipulator import SPECTManipulator
 
         camera_vm = create_default_gamma_camera_vm(name="ConstraintFallbackCam")
-        camera_vm.local_matrix = compute_orbit_matrix(radius=300.0, angle_deg=60.0, z=15.0)
+        camera_vm.local_matrix = compute_orbit_matrix(radius=300.0, angle=60.0, z=15.0)
 
         manipulator = SPECTManipulator(viewport=None, initial_radius=300.0, initial_angle=60.0, initial_z=15.0)
         constraint = SpectOrbitKinematicConstraint(camera_vm=camera_vm, spect_manipulator=manipulator)
@@ -580,7 +580,7 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         constraint.on_transform_changed(camera_vm, changed_data)
 
         self.assertAlmostEqual(manipulator.radius, 320.0)
-        self.assertAlmostEqual(manipulator.angle_deg, 60.0, places=4)
+        self.assertAlmostEqual(manipulator.angle, 60.0, places=4)
         self.assertAlmostEqual(manipulator.z_pos, 15.0, places=4)
 
 

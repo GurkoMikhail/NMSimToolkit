@@ -15,14 +15,21 @@
 
 import unittest
 from unittest.mock import patch
+import hepunits as units
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from core.config.models import SimulationManagerConfig
+from core.config.sweep_compiler import SweepCompiler
+from core.scene.nodes import CompositeNode
+from gui.controllers.orchestrator_session import OrchestratorSession
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
+    CustomSweepProcedureViewModel,
     StepAndShootProcedureViewModel,
 )
+from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.views.property_inspector import PropertyInspector
 from gui.views.widgets.grid_chips_widget import (
     GridChip,
@@ -32,11 +39,12 @@ from gui.views.widgets.grid_chips_widget import (
 
 
 class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
+    qt_application: QApplication | None = None
+
     @classmethod
     def setUpClass(cls) -> None:
-        cls.qt_application = QApplication.instance()
-        if cls.qt_application is None:
-            cls.qt_application = QApplication([])
+        app_inst = QApplication.instance()
+        cls.qt_application = app_inst if isinstance(app_inst, QApplication) else QApplication([])
 
     def test_viewmodel_standard_variables_protocol(self) -> None:
         """
@@ -91,7 +99,7 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
 
         for current_column in range(column_count):
             header_item = table_widget.horizontalHeaderItem(current_column)
-            self.assertIsNotNone(header_item)
+            assert header_item is not None
             header_text = header_item.text()
             if "gantry_angle" in header_text:
                 gantry_column_index = current_column
@@ -112,17 +120,17 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
         # Проверка флагов ячеек: gantry_angle и step_time не должны быть редактируемыми
         for row_index in range(table_widget.rowCount()):
             gantry_cell = table_widget.item(row_index, gantry_column_index)
-            self.assertIsNotNone(gantry_cell)
-            self.assertEqual(gantry_cell.flags() & Qt.ItemIsEditable, Qt.ItemFlags(0))
-            self.assertTrue(bool(gantry_cell.flags() & Qt.ItemIsEnabled))
+            assert gantry_cell is not None
+            self.assertEqual(gantry_cell.flags() & Qt.ItemFlag.ItemIsEditable, Qt.ItemFlag(0))
+            self.assertTrue(bool(gantry_cell.flags() & Qt.ItemFlag.ItemIsEnabled))
 
             step_time_cell = table_widget.item(row_index, step_time_column_index)
-            self.assertIsNotNone(step_time_cell)
-            self.assertEqual(step_time_cell.flags() & Qt.ItemIsEditable, Qt.ItemFlags(0))
+            assert step_time_cell is not None
+            self.assertEqual(step_time_cell.flags() & Qt.ItemFlag.ItemIsEditable, Qt.ItemFlag(0))
 
             radius_cell = table_widget.item(row_index, radius_column_index)
-            self.assertIsNotNone(radius_cell)
-            self.assertTrue(bool(radius_cell.flags() & Qt.ItemIsEditable))
+            assert radius_cell is not None
+            self.assertTrue(bool(radius_cell.flags() & Qt.ItemFlag.ItemIsEditable))
 
         # Попытка удалить стандартную колонку gantry_angle должна быть заблокирована с предупреждением
         table_widget.setCurrentCell(0, gantry_column_index)
@@ -143,15 +151,15 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
         self.assertEqual(chip_widget._label_display.text(), "12.5")
 
         # Проверка сигнала инлайн-редактирования
-        values_logged = []
-        chip_widget.value_changed.connect(lambda new_number: values_logged.append(new_number))
+        values_logged: list[float] = []
+        chip_widget.value_changed.connect(values_logged.append)
 
         chip_widget.start_editing()
         self.assertEqual(chip_widget._stacked_layout.currentIndex(), 1)
 
         # Ввод нового значения
         chip_widget._edit_input.setText("45.25")
-        key_press_return = QKeyEvent(QEvent.KeyPress, Qt.Key_Return, Qt.NoModifier)
+        key_press_return = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
         chip_widget._edit_input.keyPressEvent(key_press_return)
 
         self.assertEqual(chip_widget.value, 45.25)
@@ -160,20 +168,20 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
         self.assertEqual(values_logged, [45.25])
 
         # Клавиатурные сигналы Delete и навигации
-        delete_logged = []
-        navigate_logged = []
+        delete_logged: list[bool] = []
+        navigate_logged: list[int] = []
         chip_widget.delete_requested.connect(lambda: delete_logged.append(True))
-        chip_widget.navigate_requested.connect(lambda offset: navigate_logged.append(offset))
+        chip_widget.navigate_requested.connect(navigate_logged.append)
 
-        key_press_delete = QKeyEvent(QEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier)
+        key_press_delete = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier)
         chip_widget.keyPressEvent(key_press_delete)
         self.assertEqual(len(delete_logged), 1)
 
-        key_press_left = QKeyEvent(QEvent.KeyPress, Qt.Key_Left, Qt.NoModifier)
+        key_press_left = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier)
         chip_widget.keyPressEvent(key_press_left)
         self.assertEqual(navigate_logged, [-1])
 
-        key_press_right = QKeyEvent(QEvent.KeyPress, Qt.Key_Right, Qt.NoModifier)
+        key_press_right = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
         chip_widget.keyPressEvent(key_press_right)
         self.assertEqual(navigate_logged, [-1, 1])
 
@@ -193,7 +201,7 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
         self.assertEqual(len(chips_row._chips), 2)
         self.assertEqual(chips_row.table.rowCount(), 2)
 
-        changed_history = []
+        changed_history: list[tuple[str, list[float]]] = []
         chips_row.values_changed.connect(lambda var_title, number_list: changed_history.append((var_title, number_list)))
 
         # Добавление одиночного значения
@@ -230,9 +238,9 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
         self.assertEqual(len(chips_row.values), 1)
 
         # Удаление всей переменной через кнопку корзины
-        with patch("PySide6.QtWidgets.QMessageBox.question", return_value=QMessageBox.Yes):
-            deleted_vars = []
-            chips_row.variable_deleted.connect(lambda removed_title: deleted_vars.append(removed_title))
+        with patch("PySide6.QtWidgets.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes):
+            deleted_vars: list[str] = []
+            chips_row.variable_deleted.connect(deleted_vars.append)
             chips_row._on_delete_clicked()
             self.assertEqual(deleted_vars, ["collimator_tilt"])
 
@@ -290,7 +298,7 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
         # Инлайн-редактирование с вводом экспоненциального числа
         chip_small.start_editing()
         chip_small._edit_input.setText("1e-4")
-        key_press_return = QKeyEvent(QEvent.KeyPress, Qt.Key_Return, Qt.NoModifier)
+        key_press_return = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
         chip_small._edit_input.keyPressEvent(key_press_return)
         self.assertAlmostEqual(chip_small.value, 0.0001, places=7)
         self.assertEqual(chip_small._label_display.text(), "0.0001")
@@ -340,7 +348,7 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
         self.assertNotIn("#3b2222", chips_row.input_add_value.styleSheet())
 
         # Нажатие Escape очищает поле
-        escape_event = QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
+        escape_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
         chips_row.eventFilter(chips_row.input_add_value, escape_event)
         self.assertEqual(chips_row.input_add_value.text(), "")
 
@@ -357,6 +365,79 @@ class TestProtocolStandardVariablesAndGridChips(unittest.TestCase):
             chips_row._on_chip_delete_requested(target_chip_first, direction_hint=0)
             mock_focus_delete.assert_called_once()
         self.assertEqual(chips_row.values, [180.0])
+
+    def test_procedure_section_time_interval_bindable_fields_and_orchestrator_export(self) -> None:
+        """
+        Проверка полей initial_time, sequential_time, start_time, stop_time в ProcedureInspectorSection
+        и формирования временных макросов в OrchestratorSession.
+        """
+        # 1. StepAndShoot: проверка initial_time и sequential_time в UI
+        sas_vm = StepAndShootProcedureViewModel(steps=3, time_per_step=5.0, initial_time=0.0, sequential_time=True)
+        inspector = PropertyInspector()
+        inspector.set_procedure_viewmodel(sas_vm)
+        inspector.set_target_viewmodel(sas_vm)
+
+        proc_sec = inspector.procedure_section
+        proc_sec.spin_proc_initial_time.setValue(10.0)
+        self.assertAlmostEqual(sas_vm.initial_time, 10.0)
+        self.assertEqual(sas_vm.zipped_variables["start_time"], [10.0, 15.0, 20.0])
+        self.assertEqual(sas_vm.zipped_variables["stop_time"], [15.0, 20.0, 25.0])
+
+        proc_sec.chk_proc_sequential_time.setChecked(False)
+        self.assertFalse(sas_vm.sequential_time)
+        self.assertEqual(sas_vm.zipped_variables["start_time"], [10.0, 10.0, 10.0])
+        self.assertEqual(sas_vm.zipped_variables["stop_time"], [15.0, 15.0, 15.0])
+
+        # 2. CustomSweep: проверка статических start_time/stop_time и привязок BindableDoubleField
+        custom_vm = CustomSweepProcedureViewModel(
+            zipped_variables={
+                "frame_start": [0.0, 10.0, 30.0],
+                "frame_stop": [10.0, 30.0, 60.0],
+            },
+            start_time=2.0,
+            stop_time=8.0,
+        )
+        inspector.set_procedure_viewmodel(custom_vm)
+        inspector.set_target_viewmodel(custom_vm)
+
+        self.assertAlmostEqual(proc_sec.spin_start_time.value(), 2.0)
+        self.assertAlmostEqual(proc_sec.spin_stop_time.value(), 8.0)
+
+        scene_vm = SceneViewModel(CompositeNode(name="World"))
+        session = OrchestratorSession(scene_vm=scene_vm, procedure_vm=custom_vm)
+        self.assertAlmostEqual(float(session._get_start_time_cfg()), 2.0 * units.s)
+        self.assertAlmostEqual(float(session._get_stop_time_cfg()), 8.0 * units.s)
+
+        # Привязка к произвольным переменным через BindableDoubleField
+        proc_sec.spin_start_time.bind_variable("frame_start")
+        proc_sec.spin_stop_time.bind_variable("frame_stop")
+
+        self.assertEqual(custom_vm.bindings.get("start_time"), "frame_start")
+        self.assertEqual(custom_vm.bindings.get("stop_time"), "frame_stop")
+        self.assertEqual(session._get_start_time_cfg(), "${frame_start} s")
+        self.assertEqual(session._get_stop_time_cfg(), "${frame_stop} s")
+
+        jobs = session.generate_jobs()
+        self.assertEqual(len(jobs), 3)
+        self.assertEqual(jobs[0], {"frame_start": 0.0, "frame_stop": 10.0})
+        self.assertEqual(jobs[1], {"frame_start": 10.0, "frame_stop": 30.0})
+        self.assertEqual(jobs[2], {"frame_start": 30.0, "frame_stop": 60.0})
+
+        raw_mgr = {
+            "particles_number": 1000,
+            "start_time": session._get_start_time_cfg(),
+            "stop_time": session._get_stop_time_cfg(),
+        }
+        resolved_0 = SimulationManagerConfig.model_validate(SweepCompiler.inject_variables(raw_mgr, jobs[0]))
+        resolved_1 = SimulationManagerConfig.model_validate(SweepCompiler.inject_variables(raw_mgr, jobs[1]))
+        resolved_2 = SimulationManagerConfig.model_validate(SweepCompiler.inject_variables(raw_mgr, jobs[2]))
+
+        self.assertAlmostEqual(float(resolved_0.start_time) / float(units.s), 0.0)
+        self.assertAlmostEqual(float(resolved_0.stop_time) / float(units.s), 10.0)
+        self.assertAlmostEqual(float(resolved_1.start_time) / float(units.s), 10.0)
+        self.assertAlmostEqual(float(resolved_1.stop_time) / float(units.s), 30.0)
+        self.assertAlmostEqual(float(resolved_2.start_time) / float(units.s), 30.0)
+        self.assertAlmostEqual(float(resolved_2.stop_time) / float(units.s), 60.0)
 
 
 if __name__ == "__main__":

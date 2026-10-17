@@ -170,12 +170,32 @@ class OrchestratorSession(QObject):
         return self._is_focused_paused
 
     @property
+    def start_time(self) -> float:
+        """Время начала моделирования (секунды), определяемое активной процедурой (SSOT)."""
+        if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
+            return float(self.procedure_vm.initial_time)
+        elif isinstance(self.procedure_vm, BaseProcedureViewModel):
+            return float(self.procedure_vm.start_time)
+        return 0.0
+
+    @start_time.setter
+    def start_time(self, new_start_time: float) -> None:
+        """Синхронизация времени начала с активной моделью процедуры."""
+        validated_time = max(0.0, float(new_start_time))
+        if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
+            self.procedure_vm.initial_time = validated_time
+        elif isinstance(self.procedure_vm, BaseProcedureViewModel):
+            self.procedure_vm.start_time = validated_time
+
+    @property
     def stop_time(self) -> float:
-        """Время экспозиции/моделирования, определяемое активной процедурой (SSOT)."""
+        """Время экспозиции/окончания моделирования, определяемое активной процедурой (SSOT)."""
         if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
             return float(self.procedure_vm.time_per_step)
         elif isinstance(self.procedure_vm, PetProcedureViewModel):
             return float(self.procedure_vm.time_per_frame)
+        elif isinstance(self.procedure_vm, BaseProcedureViewModel):
+            return float(self.procedure_vm.stop_time)
         return 1.0
 
     @stop_time.setter
@@ -186,28 +206,59 @@ class OrchestratorSession(QObject):
             self.procedure_vm.time_per_step = validated_time
         elif isinstance(self.procedure_vm, PetProcedureViewModel):
             self.procedure_vm.time_per_frame = validated_time
+        elif isinstance(self.procedure_vm, BaseProcedureViewModel):
+            self.procedure_vm.stop_time = validated_time
+
+    def _format_time_macro(self, var_name: str) -> str:
+        """Форматирует макрос переменной времени с учетом типа протокола."""
+        clean_var = str(var_name).strip()
+        if isinstance(self.procedure_vm, StepAndShootProcedureViewModel) and clean_var in (
+            "start_time",
+            "stop_time",
+            "step_time",
+            "current_time",
+        ):
+            return f"${{{clean_var}}}"
+        return f"${{{clean_var}}} s"
 
     def _get_start_time_cfg(self) -> Any:
         """Вычисляет конфигурацию времени начала для экспортера ядра."""
+        if isinstance(self.procedure_vm, BaseProcedureViewModel):
+            sim_mgr_bindings = self.procedure_vm.get_property_bindings("simulation_manager")
+            bound_var = self.procedure_vm.bindings.get("start_time") or sim_mgr_bindings.get("start_time")
+            if bound_var:
+                return self._format_time_macro(bound_var)
+
         if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
             return "${start_time}"
         elif isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
             all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
             if "start_time" in all_sweep_vars:
                 return "${start_time} s"
+            return float(self.procedure_vm.start_time) * units.s
+        elif isinstance(self.procedure_vm, BaseProcedureViewModel):
+            return float(self.procedure_vm.start_time) * units.s
         return 0.0 * units.ns
 
     def _get_stop_time_cfg(self) -> Any:
         """Вычисляет конфигурацию времени остановки для экспортера ядра."""
+        if isinstance(self.procedure_vm, BaseProcedureViewModel):
+            sim_mgr_bindings = self.procedure_vm.get_property_bindings("simulation_manager")
+            bound_var = self.procedure_vm.bindings.get("stop_time") or sim_mgr_bindings.get("stop_time")
+            if bound_var:
+                return self._format_time_macro(bound_var)
+
         if isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
             return "${stop_time}"
         elif isinstance(self.procedure_vm, CustomSweepProcedureViewModel):
             all_sweep_vars = set(self.procedure_vm.grid_variables.keys()) | set(self.procedure_vm.zipped_variables.keys())
             if "stop_time" in all_sweep_vars:
                 return "${stop_time} s"
-            return 1.0 * units.s
+            return float(self.procedure_vm.stop_time) * units.s
         elif isinstance(self.procedure_vm, PetProcedureViewModel):
             return float(self.procedure_vm.time_per_frame) * units.s
+        elif isinstance(self.procedure_vm, BaseProcedureViewModel):
+            return float(self.procedure_vm.stop_time) * units.s
         return 1.0 * units.s
 
     @property
