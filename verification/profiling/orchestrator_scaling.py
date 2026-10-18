@@ -41,15 +41,24 @@ class OrchestratorScalingRecord:
 
 
 def _load_base_protocol_dict(collimator_type: CollimatorKind) -> Dict[str, Any]:
-    """Загружает базовый YAML-конфиг протокола NEMA 161Tb для выбранного типа коллиматора."""
-    yaml_filename = (
-        "tb161_nema_protocol.yaml"
-        if collimator_type == "parametric"
-        else "tb161_nema_protocol_direct.yaml"
-    )
-    yaml_path = Path(yaml_filename).resolve()
+    """Загружает базовый YAML-конфиг протокола NEMA 161Tb и выставляет выбранный тип коллиматора."""
+    yaml_path = Path("tb161_nema_protocol.yaml").resolve()
     with yaml_path.open("r", encoding="utf-8") as yaml_file:
         loaded_data: Dict[str, Any] = yaml.safe_load(yaml_file)
+
+    target_type = (
+        "ParametricParallelCollimator"
+        if collimator_type == "parametric"
+        else "DirectParallelCollimator"
+    )
+    for node in loaded_data.get("scene", {}).get("children", []):
+        if node.get("name") == "Gantry":
+            for cam in node.get("children", []):
+                for casing in cam.get("children", []):
+                    for det_box in casing.get("children", []):
+                        for child in det_box.get("children", []):
+                            if str(child.get("name", "")).startswith("Collimator"):
+                                child["type"] = target_type
     return loaded_data
 
 

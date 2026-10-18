@@ -1,7 +1,6 @@
 """
 Сквозной интеграционный тест полного цикла round-trip и верификации эквивалентности
-протоколов StepAndShoot и CustomSweep для конфигураций tb161_nema_protocol.yaml
-и tb161_nema_protocol_direct.yaml.
+протоколов StepAndShoot и CustomSweep для конфигурации tb161_nema_protocol.yaml.
 """
 
 from copy import deepcopy
@@ -31,10 +30,8 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
     """Тестирование сквозного цикла чтения, экспорта и эквивалентности StepAndShoot vs CustomSweep."""
 
     def setUp(self) -> None:
-        self.yaml_path = Path("tb161_nema_protocol_direct.yaml").resolve()
-        self.parametric_yaml_path = Path("tb161_nema_protocol.yaml").resolve()
+        self.yaml_path = Path("tb161_nema_protocol.yaml").resolve()
         self.assertTrue(self.yaml_path.exists(), f"Файл {self.yaml_path} должен существовать")
-        self.assertTrue(self.parametric_yaml_path.exists(), f"Файл {self.parametric_yaml_path} должен существовать")
 
     def test_tb161_full_roundtrip_integrity(self) -> None:
         # 1. Извлечение биндингов из шаблона конфигурации через сервис ConfigTemplateBinder
@@ -89,10 +86,10 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
         self.assertIsNotNone(source_node, "Узел Source должен присутствовать внутри Phantom")
         self.assertIsNotNone(gantry_node, "Узел Gantry должен присутствовать в сцене")
 
-        # Проверка спектра источника: должно быть ровно 10 линий
+        # Проверка спектра источника: должно быть ровно 21 линия (Juget et al. 2021/2023)
         assert source_node is not None
         self.assertIsNotNone(source_node.energy)
-        self.assertEqual(len(source_node.energy["energy"]), 10, "Спектр 161Tb обязан содержать 10 линий")
+        self.assertEqual(len(source_node.energy["energy"]), 21, "Спектр 161Tb обязан содержать 21 линию")
 
         # 4. Экспорт сцены обратно во временный YAML-файл с наложением шаблонов макросов
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -142,13 +139,13 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
             self.assertIn(0.15, dist_map)
             self.assertNotIn(0.0, dist_map, "Фантом не должен содержать фиктивный Vacuum 0.0")
 
-            # Проверка источника: активность со строковыми единицами и 10 линий спектра
+            # Проверка источника: активность со строковыми единицами и 21 линия спектра
             source_dict = phantom_dict["children"][0]
             self.assertEqual(source_dict["name"], "Source")
             self.assertIn("MBq", str(source_dict["activity"]), "Активность должна содержать единицу MBq")
             energy_list = source_dict["energy"]
             self.assertIsInstance(energy_list, list)
-            self.assertEqual(len(energy_list), 10, "Экспортированный спектр обязан содержать 10 линий")
+            self.assertEqual(len(energy_list), 21, "Экспортированный спектр обязан содержать 21 линию")
             self.assertIn("keV", str(energy_list[0][0]))
 
             # Проверка биндинга поворота гантри и времени экспозиции в hepunits
@@ -180,7 +177,7 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
     def test_step_and_shoot_vs_custom_sweep_full_equivalence(self) -> None:
         """
         Верификация 100%-ной идентичности конфигураций StepAndShoot и CustomSweep
-        для tb161_nema_protocol.yaml и tb161_nema_protocol_direct.yaml на всех 60 ракурсах
+        для tb161_nema_protocol.yaml на всех 60 ракурсах
         с автоматической подстановкой ${start_time} и ${stop_time} (30 минут суммарного сканирования).
         """
         legacy_angles = [float(step_idx * 3.0) for step_idx in range(60)]
@@ -195,7 +192,7 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
                 result.update(_collect_matrices(child_node))
             return result
 
-        for config_path in (self.parametric_yaml_path, self.yaml_path):
+        for config_path in (self.yaml_path,):
             with self.subTest(config_file=config_path.name):
                 step_and_shoot_raw = load_raw_config(config_path)
                 # В исходном YAML-файле start_time и stop_time опущены в simulation_manager

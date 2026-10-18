@@ -1,9 +1,11 @@
 """
-Скрипт параметрического моделирования ОФЭКТ/КТ 161Tb с двухкамерной системой (GE Discovery LEHR)
-и фантомом NEMA IEQ. Основан на клиническом исследовании Marin et al. (EJNMMI Phys 2020).
+Скрипт моделирования ОФЭКТ/КТ 161Tb с двухкамерной системой (GE Discovery LEHR)
+и фантомом NEMA IEQ. Основан на клиническом исследовании Marin et al. (EJNMMI Phys 2020)
+и прецизионных спектрометрических данных Juget et al. (Appl. Radiat. Isot. 174, 2021 + Corrigendum 200, 2023).
 
 Физическая точность:
-- Моделирование учитывает полный спектр линий излучения 161Tb (ICRP 107 / Marin et al., 2020).
+- Моделирование учитывает выверенный 21-линейный спектр излучения 161Tb (Juget et al., 2021/2023; ENSDF 2020).
+- Используется аналитический коллиматор DirectParallelCollimator (RayCasting гексагональной решетки без холостых шагов Вудкока в каналах).
 - Энергетические окна не ограничивают расчет Монте-Карло: в HDF5 сохраняются все реальные
   взаимодействия и энерговыделения (min_energy = 1.0 кэВ) для последующей спектрометрической
   постобработки и выделения окон (фотопикового EM2 и рассеянного SC2).
@@ -28,9 +30,8 @@ from numpy.typing import NDArray
 from core.data.data_handlers import HistoryAssemblerHandler
 from core.data.data_manager import DataManager
 from core.data.distribution_loader import DistributionLoader
-from core.geometry.direct_collimators import CollimatorHoleShape
+from core.geometry.direct_collimators import CollimatorHoleShape, DirectParallelCollimator
 from core.geometry.geometries import Box
-from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.materials.materials import MaterialArray
@@ -46,23 +47,34 @@ from settings.processes_settings import processes_list
 PROJECT_ROOT: Path = Path(__file__).resolve().parent
 
 # ------------------------------------------------------------------------------------------------------------------------
-# 1. Спецификация радионуклида 161Tb (ICRP 107 / Marin et al., 2020)
+# 1. Спецификация радионуклида 161Tb (Juget et al., 2021 + Corrigendum 2023; Durán et al., 2020)
 # ------------------------------------------------------------------------------------------------------------------------
-TB161_HALF_LIFE: float = float(6.89 * units.day)
+TB161_HALF_LIFE: float = float(6.953 * units.day)
 
-# Полный многолинейный спектр фотонного излучения 161Tb (гамма-кванты и характеристический X-ray Dy):
-# Каждая запись: [энергия квантов в HepUnits, относительный выход %]
+# Многолинейный спектр фотонного излучения 161Tb (гамма-кванты и характеристический X-ray Dy, выход > 0.003%):
+# Каждая запись: [энергия квантов в HepUnits, интенсивность эмиссии на 100 распадов (%)]
 TB161_ENERGY_SPECTRUM: List[List[float]] = [
-    [float(74.57 * units.keV), 10.3],   # Основной фотопик ОФЭКТ
-    [float(48.9 * units.keV), 17.0],    # Рентгеновские K-бета и сопутствующие гамма-линии
-    [float(46.0 * units.keV), 11.2],    # Характеристический рентген K-альфа Dy
-    [float(25.65 * units.keV), 23.2],   # Низкоэнергетическая гамма-линия
-    [float(52.0 * units.keV), 1.4],     # Характеристический X-ray Dy
-    [float(57.4 * units.keV), 0.4],     # Высокие рентгеновские переходы
-    [float(106.1 * units.keV), 0.05],   # Септальное проникновение в LEHR
-    [float(131.8 * units.keV), 0.03],
-    [float(160.0 * units.keV), 0.004],
-    [float(292.0 * units.keV), 0.002],
+    [float(25.65 * units.keV), 23.154],    # Низкоэнергетическая гамма-линия (ENSDF 2020)
+    [float(45.21 * units.keV), 7.747],     # Характеристический рентген Dy K_alpha2
+    [float(46.00 * units.keV), 12.779],    # Характеристический рентген Dy K_alpha1
+    [float(48.92 * units.keV), 17.73],     # Гамма-линия 48.915 кэВ (вторичное окно ОФЭКТ)
+    [float(52.19 * units.keV), 3.741],     # Характеристический рентген Dy K_beta1'
+    [float(53.64 * units.keV), 1.0185],    # Характеристический рентген Dy K_beta2'
+    [float(57.19 * units.keV), 2.066],     # Гамма-линия 57.192 кэВ
+    [float(59.24 * units.keV), 0.2002],    # Гамма-линия 59.243 кэВ
+    [float(74.57 * units.keV), 10.28],     # Главный гамма-пик ОФЭКТ (74.567 кэВ)
+    [float(77.42 * units.keV), 0.0459],    # Гамма-линия 77.422 кэВ (внутри окна 74.6 кэВ)
+    [float(87.94 * units.keV), 0.1996],    # Гамма-линия 87.941 кэВ (комптоновский down-scatter)
+    [float(103.07 * units.keV), 0.1077],   # Гамма-линия 103.065 кэВ (комптоновский down-scatter)
+    [float(106.11 * units.keV), 0.0816],   # Гамма-линия 106.113 кэВ (комптоновский down-scatter)
+    [float(286.48 * units.keV), 0.01574],  # Гамма-линия 286.481 кэВ (септальное проникновение)
+    [float(292.40 * units.keV), 0.07102],  # Гамма-линия 292.401 кэВ (септальное проникновение)
+    [float(319.66 * units.keV), 0.00367],  # Гамма-линия 319.660 кэВ
+    [float(341.40 * units.keV), 0.00375],  # Гамма-линия 341.400 кэВ
+    [float(343.63 * units.keV), 0.01473],  # Гамма-линия 343.630 кэВ
+    [float(418.47 * units.keV), 0.00925],  # Гамма-линия 418.470 кэВ
+    [float(475.66 * units.keV), 0.01660],  # Гамма-линия 475.658 кэВ
+    [float(550.25 * units.keV), 0.04258],  # Гамма-линия 550.249 кэВ (главная линия пробоя септ)
 ]
 
 
@@ -97,7 +109,7 @@ def build_camera_head(
     detector_box.translate(z=Float(1.0 * units.cm))
 
     # Коллиматор LEHR (GE Discovery): толщина 3.5 см, гексагональные отверстия 1.5 мм, септа 0.2 мм
-    collimator = ParametricParallelCollimator(
+    collimator = DirectParallelCollimator(
         size=[Float(54.0 * units.cm), Float(40.0 * units.cm), Float(3.5 * units.cm)],
         hole_diameter=Float(1.5 * units.mm),
         septa=Float(0.2 * units.mm),

@@ -201,11 +201,11 @@ class TestReviewFixesTemplateBinder(unittest.TestCase):
     def test_tb161_protocol_filename_template_preserved_through_full_pipeline(self):
         """
         Регрессионный тест: проверка сохранения полного шаблона пути data_manager.filename
-        для tb161_nema_protocol_direct.yaml в цепочке:
+        для tb161_nema_protocol.yaml в цепочке:
         extract_bindings -> apply_bindings -> Orchestrator -> inject_variables -> SimulationConfig.model_validate.
         Гарантирует, что filename для угла 3.0 равен 'output_tb161_dual_cam/3.0_deg.hdf', а не 3.0 (float).
         """
-        yaml_path = Path(__file__).resolve().parents[2] / "tb161_nema_protocol_direct.yaml"
+        yaml_path = Path(__file__).resolve().parents[2] / "tb161_nema_protocol.yaml"
         raw_dict = load_raw_config(yaml_path)
         bindings = ConfigTemplateBinder.extract_bindings(raw_dict)
 
@@ -291,14 +291,14 @@ class TestReviewFixesTemplateBinder(unittest.TestCase):
 
     def test_tb161_gui_pipeline_preserves_camera_positions_and_head_angles(self) -> None:
         """
-        Регрессионный тест полного цикла GUI для tb161_nema_protocol_direct.yaml:
+        Регрессионный тест полного цикла GUI для tb161_nema_protocol.yaml:
         загрузка SceneViewModel + StepAndShootProcedureViewModel.sync_with_scene +
         SceneExporter.export_to_config + ConfigTemplateBinder.apply_bindings +
         SweepCompiler.inject_variables для gantry_angle = 0 сохраняет
         GammaCamera_1 в (0, +329.05, 0) и GammaCamera_2 в (0, -329.05, 0),
         а proc_vm.head_angles равны [90.0, 270.0].
         """
-        yaml_path = Path(__file__).resolve().parents[2] / "tb161_nema_protocol_direct.yaml"
+        yaml_path = Path(__file__).resolve().parents[2] / "tb161_nema_protocol.yaml"
         raw_dict = load_raw_config(yaml_path)
         bindings = ConfigTemplateBinder.extract_bindings(raw_dict)
         resolved_cfg = load_simulation_config(yaml_path, resolve_protocol=True)
