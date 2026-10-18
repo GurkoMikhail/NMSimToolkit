@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 import math
-from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Any,
     Dict,
+    FrozenSet,
     List,
     Optional,
     Protocol,
@@ -23,7 +23,9 @@ import vtk
 from PySide6.QtCore import QObject, Signal
 
 from core.geometry.volumes import Volume
+from core.scene.gantry_node import GantryNode
 from gui.viewport_3d.gizmo_types import GizmoAxis, GizmoMode, GizmoSpace
+from gui.viewport_3d.kinematic_constraints import SpectOrbitKinematicConstraint
 
 if TYPE_CHECKING:
     from gui.viewmodels.nodes.base_node_vm import NodeViewModel
@@ -113,10 +115,18 @@ class TransformGizmo(QObject):
         self._accumulated_scale_factor: float = 1.0
         self._last_changed_data: Optional[Dict[str, Any]] = None
         self._last_built_size: float = float(gizmo_size)
+        self._built_visuals_signature: Optional[Tuple[GizmoMode, FrozenSet[GizmoAxis], float]] = None
         self._last_mouse_pos: Optional[Tuple[int, int]] = None
         self._hovered_actor_name: Optional[str] = None
         self._observer_tags: Dict[str, int] = {}
         self._mesh_actors: Dict[str, Any] = {}
+        self._picked_actors_snapshot: Tuple[Any, ...] = ()
+
+        self._prop_picker: Any = vtk.vtkPropPicker()
+        self._prop_picker.PickFromListOn()
+        self._cell_picker: Any = vtk.vtkCellPicker()
+        self._cell_picker.SetTolerance(0.015)
+        self._cell_picker.PickFromListOn()
 
         self._actor_names: List[str] = []
         self._colors: Dict[GizmoAxis, str] = {
@@ -257,6 +267,7 @@ class TransformGizmo(QObject):
         self._gizmo_size = max(1.0, float(size))
         if self._gizmo_size > self._max_gizmo_size:
             self._max_gizmo_size = self._gizmo_size * 2.0
+        self._built_visuals_signature = None
         self.update_visuals(render=True)
 
     @property
@@ -267,6 +278,7 @@ class TransformGizmo(QObject):
     @min_gizmo_size.setter
     def min_gizmo_size(self, size: float) -> None:
         self._min_gizmo_size = max(1.0, float(size))
+        self._built_visuals_signature = None
         self.update_visuals(render=True)
 
     @property
@@ -277,6 +289,7 @@ class TransformGizmo(QObject):
     @max_gizmo_size.setter
     def max_gizmo_size(self, size: float) -> None:
         self._max_gizmo_size = max(self._min_gizmo_size, float(size))
+        self._built_visuals_signature = None
         self.update_visuals(render=True)
 
     @property
@@ -287,6 +300,7 @@ class TransformGizmo(QObject):
     @adaptive_size.setter
     def adaptive_size(self, enabled: bool) -> None:
         self._adaptive_size = bool(enabled)
+        self._built_visuals_signature = None
         self.update_visuals(render=True)
 
     @property
@@ -310,6 +324,7 @@ class TransformGizmo(QObject):
             return
 
         self._target_node = node_vm
+        self._built_visuals_signature = None
         if self._target_node is not None:
             node_constraint = self._target_node.get_effective_kinematic_constraint()
             if node_constraint is not None and self._constraint is None:
@@ -444,7 +459,13 @@ class TransformGizmo(QObject):
                 else:
                     local_filtered_delta = filtered_delta
                 new_matrix[0:3, 3] = initial_matrix[0:3, 3] + local_filtered_delta
-            self._target_node.local_matrix = new_matrix
+            is_tangential_on_gantry = (
+                changed_data.get('action') == 'tangential'
+                and self._target_node.parent_vm is not None
+                and isinstance(self._target_node.parent_vm.core_node, GantryNode)
+            )
+            if not is_tangential_on_gantry:
+                self._assign_target_local_matrix(new_matrix, shift_modifier=shift_modifier)
             self.transform_changed.emit(new_matrix)
             self._constraint.on_transform_changed(self._target_node, changed_data)
             self._constraint.on_transform_committed(self._target_node, changed_data)
@@ -750,16 +771,94 @@ class TransformGizmo(QObject):
     # Визуализация манипулятора в PyVista / VTK
     # ------------------------------------------------------------------------------------------------------------------
 
+    def _get_current_allowed_axes(self) -> FrozenSet[GizmoAxis]:
+        """Возвращает неизменяемое множество разрешённых осей манипулятора для активного режима."""
+        if self._mode == GizmoMode.TRANSLATE:
+            axes = (
+                self._constraint.get_allowed_axes(GizmoMode.TRANSLATE)
+                if self._constraint is not None
+                else {GizmoAxis.X, GizmoAxis.Y, GizmoAxis.Z, GizmoAxis.XY, GizmoAxis.XZ, GizmoAxis.YZ}
+            )
+            return frozenset(axes)
+        if self._mode == GizmoMode.ROTATE:
+            axes = (
+                self._constraint.get_allowed_axes(GizmoMode.ROTATE)
+                if self._constraint is not None
+                else {GizmoAxis.X, GizmoAxis.Y, GizmoAxis.Z}
+            )
+            return frozenset(axes)
+        if self._mode == GizmoMode.SCALE:
+            if self._constraint is not None and not self._constraint.is_scale_allowed():
+                return frozenset()
+            return frozenset({GizmoAxis.X, GizmoAxis.Y, GizmoAxis.Z, GizmoAxis.XYZ})
+        return frozenset()
+
+    def _assign_target_local_matrix(self, new_matrix: np.ndarray, shift_modifier: bool = False) -> None:
+        """Присваивает локальную матрицу целевому узлу, подавляя авто-синхронизацию процедуры при Shift-модификаторе."""
+        if self._target_node is None:
+            return
+        procedure = (
+            self._constraint.procedure_vm
+            if isinstance(self._constraint, SpectOrbitKinematicConstraint)
+            else None
+        )
+        if shift_modifier and procedure is not None:
+            prev_syncing = procedure._is_syncing_with_scene
+            procedure._is_syncing_with_scene = True
+            try:
+                self._target_node.local_matrix = new_matrix
+            finally:
+                procedure._is_syncing_with_scene = prev_syncing
+        else:
+            self._target_node.local_matrix = new_matrix
+
+    def _update_gizmo_actors_transform(
+        self,
+        center: np.ndarray,
+        dir_x: np.ndarray,
+        dir_y: np.ndarray,
+        dir_z: np.ndarray,
+    ) -> None:
+        """Обновляет матрицу положения и ориентации всех активных акторов манипулятора без пересоздания мешей."""
+        pose_matrix = np.eye(4, dtype=np.float64)
+        pose_matrix[0:3, 0] = dir_x
+        pose_matrix[0:3, 1] = dir_y
+        pose_matrix[0:3, 2] = dir_z
+        pose_matrix[0:3, 3] = center
+
+        vtk_mat = vtk.vtkMatrix4x4()
+        vtk_mat.DeepCopy(pose_matrix.ravel())
+
+        for mesh_actor in self._mesh_actors.values():
+            if mesh_actor is not None:
+                try:
+                    mesh_actor.SetUserMatrix(vtk_mat)
+                except (AttributeError, TypeError):
+                    pass
+
+    def _rebuild_picker_lists(self) -> None:
+        """Синхронизирует списки акторов (PickList) кэшированных VTK-пикеров."""
+        actors_tuple = tuple(self._mesh_actors.values())
+        if self._picked_actors_snapshot == actors_tuple:
+            return
+        self._picked_actors_snapshot = actors_tuple
+        try:
+            self._prop_picker.InitializePickList()
+            self._cell_picker.InitializePickList()
+            for mesh_actor in actors_tuple:
+                if mesh_actor is not None:
+                    self._prop_picker.AddPickList(mesh_actor)
+                    self._cell_picker.AddPickList(mesh_actor)
+        except (RuntimeError, ValueError, TypeError, AttributeError):
+            pass
+
     def update_visuals(self, render: bool = True) -> None:
         """
         Построение или обновление полигональных мешей манипулятора во вьюпорте.
+        При неизменной сигнатуре (mode, allowed_axes, size) обновляет только матрицу позы акторов.
         """
-        self.remove_visuals()
-
-        if self._target_node is None or self.viewport is None:
-            return
-
-        if self.viewport.plotter is None:
+        if self._target_node is None or self.viewport is None or self.viewport.plotter is None:
+            self.remove_visuals()
             return
 
         global_matrix = self._target_node.global_matrix
@@ -772,38 +871,48 @@ class TransformGizmo(QObject):
             dir_y = np.array([0.0, 1.0, 0.0], dtype=np.float64)
             dir_z = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
-        size = self._compute_gizmo_size(gizmo_center)
+        computed_size = self._compute_gizmo_size(gizmo_center)
+        allowed_axes = self._get_current_allowed_axes()
+
+        can_reuse_size = (
+            self._built_visuals_signature is not None
+            and self._built_visuals_signature[0] == self._mode
+            and self._built_visuals_signature[1] == allowed_axes
+            and bool(self._actor_names)
+            and (
+                self._is_dragging
+                or (
+                    self._adaptive_size
+                    and abs(computed_size - self._last_built_size) / max(self._last_built_size, 1e-6) <= 0.05
+                )
+            )
+        )
+        size = self._last_built_size if can_reuse_size else computed_size
         self._last_built_size = size
 
+        signature = (self._mode, allowed_axes, round(size, 4))
+        has_custom_builder = any(
+            builder_name in self.__dict__
+            for builder_name in ('_build_translate_visuals', '_build_rotate_visuals', '_build_scale_visuals')
+        )
+
         try:
-            if self._mode == GizmoMode.TRANSLATE:
-                self._build_translate_visuals(gizmo_center, dir_x, dir_y, dir_z, size)
-            elif self._mode == GizmoMode.ROTATE:
-                self._build_rotate_visuals(gizmo_center, dir_x, dir_y, dir_z, size)
-            elif self._mode == GizmoMode.SCALE:
-                self._build_scale_visuals(gizmo_center, dir_x, dir_y, dir_z, size)
+            if not has_custom_builder and self._built_visuals_signature == signature and bool(self._actor_names):
+                self._update_gizmo_actors_transform(gizmo_center, dir_x, dir_y, dir_z)
+            else:
+                self.remove_visuals()
+                if self._mode == GizmoMode.TRANSLATE:
+                    self._build_translate_visuals(gizmo_center, dir_x, dir_y, dir_z, size)
+                elif self._mode == GizmoMode.ROTATE:
+                    self._build_rotate_visuals(gizmo_center, dir_x, dir_y, dir_z, size)
+                elif self._mode == GizmoMode.SCALE:
+                    self._build_scale_visuals(gizmo_center, dir_x, dir_y, dir_z, size)
+                self._built_visuals_signature = signature
 
             if render:
                 self.viewport.render()
         except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as err:
             _logger.error(f"Ошибка построения мешей манипулятора Gizmo: {err}")
-
-    @staticmethod
-    def _transform_local_mesh(
-        mesh: pv.PolyData,
-        center: np.ndarray,
-        dir_x: np.ndarray,
-        dir_y: np.ndarray,
-        dir_z: np.ndarray,
-    ) -> pv.PolyData:
-        """Ориентирует и переносит локальный полигональный меш в базис (dir_x, dir_y, dir_z) с центром center."""
-        transform_mat = np.eye(4, dtype=np.float64)
-        transform_mat[0:3, 0] = dir_x
-        transform_mat[0:3, 1] = dir_y
-        transform_mat[0:3, 2] = dir_z
-        transform_mat[0:3, 3] = center
-        mesh.transform(transform_mat, inplace=True)
-        return mesh
 
     def _build_translate_visuals(
         self,
@@ -813,7 +922,7 @@ class TransformGizmo(QObject):
         dir_z: np.ndarray,
         size: float
     ) -> None:
-        """Построение 3 осевых стрелок и 3 координатных плоскостей перемещения."""
+        """Построение 3 осевых стрелок и 3 координатных плоскостей перемещения в каноническом локальном базисе."""
         allowed_axes: Set[GizmoAxis] = (
             self._constraint.get_allowed_axes(GizmoMode.TRANSLATE)
             if self._constraint is not None
@@ -823,12 +932,13 @@ class TransformGizmo(QObject):
         arrow_shaft_radius = size * 0.03
         arrow_tip_length = size * 0.25
         arrow_tip_radius = size * 0.08
+        origin = (0.0, 0.0, 0.0)
 
         # Стрелка X
         if GizmoAxis.X in allowed_axes:
             arrow_x = pv.Arrow(
-                start=center,
-                direction=dir_x,
+                start=origin,
+                direction=(1.0, 0.0, 0.0),
                 tip_length=arrow_tip_length / size,
                 tip_radius=arrow_tip_radius / size,
                 shaft_radius=arrow_shaft_radius / size,
@@ -839,8 +949,8 @@ class TransformGizmo(QObject):
         # Стрелка Y
         if GizmoAxis.Y in allowed_axes:
             arrow_y = pv.Arrow(
-                start=center,
-                direction=dir_y,
+                start=origin,
+                direction=(0.0, 1.0, 0.0),
                 tip_length=arrow_tip_length / size,
                 tip_radius=arrow_tip_radius / size,
                 shaft_radius=arrow_shaft_radius / size,
@@ -851,8 +961,8 @@ class TransformGizmo(QObject):
         # Стрелка Z
         if GizmoAxis.Z in allowed_axes:
             arrow_z = pv.Arrow(
-                start=center,
-                direction=dir_z,
+                start=origin,
+                direction=(0.0, 0.0, 1.0),
                 tip_length=arrow_tip_length / size,
                 tip_radius=arrow_tip_radius / size,
                 shaft_radius=arrow_shaft_radius / size,
@@ -860,7 +970,7 @@ class TransformGizmo(QObject):
             )
             self._add_gizmo_mesh("gizmo_translate_z", arrow_z, self._colors[GizmoAxis.Z])
 
-        # Плоскости XY, XZ, YZ (ориентированные строго по локальному базису dir_x, dir_y, dir_z)
+        # Плоскости XY, XZ, YZ в локальном каноническом базисе
         plane_size = size * 0.25
         plane_offset = size * 0.2
 
@@ -871,7 +981,6 @@ class TransformGizmo(QObject):
                 i_size=plane_size,
                 j_size=plane_size,
             )
-            self._transform_local_mesh(plane_xy, center, dir_x, dir_y, dir_z)
             self._add_gizmo_mesh("gizmo_translate_xy", plane_xy, self._colors[GizmoAxis.XY], opacity=0.45)
 
         if GizmoAxis.XZ in allowed_axes:
@@ -881,7 +990,6 @@ class TransformGizmo(QObject):
                 i_size=plane_size,
                 j_size=plane_size,
             )
-            self._transform_local_mesh(plane_xz, center, dir_x, dir_y, dir_z)
             self._add_gizmo_mesh("gizmo_translate_xz", plane_xz, self._colors[GizmoAxis.XZ], opacity=0.45)
 
         if GizmoAxis.YZ in allowed_axes:
@@ -891,8 +999,10 @@ class TransformGizmo(QObject):
                 i_size=plane_size,
                 j_size=plane_size,
             )
-            self._transform_local_mesh(plane_yz, center, dir_x, dir_y, dir_z)
             self._add_gizmo_mesh("gizmo_translate_yz", plane_yz, self._colors[GizmoAxis.YZ], opacity=0.45)
+
+        self._update_gizmo_actors_transform(center, dir_x, dir_y, dir_z)
+        self._rebuild_picker_lists()
 
     def _build_rotate_visuals(
         self,
@@ -902,7 +1012,7 @@ class TransformGizmo(QObject):
         dir_z: np.ndarray,
         size: float
     ) -> None:
-        """Построение 3 круговых колец вращения вокруг осей X, Y, Z."""
+        """Построение 3 круговых колец вращения вокруг осей X, Y, Z в каноническом локальном базисе."""
         allowed_axes: Set[GizmoAxis] = (
             self._constraint.get_allowed_axes(GizmoMode.ROTATE)
             if self._constraint is not None
@@ -912,21 +1022,25 @@ class TransformGizmo(QObject):
         ring_radius = size * 0.9
         inner_r = ring_radius * 0.96
         outer_r = ring_radius * 1.04
+        origin = (0.0, 0.0, 0.0)
 
         # Кольцо вокруг X
         if GizmoAxis.X in allowed_axes:
-            ring_x = pv.Disc(center=center, inner=inner_r, outer=outer_r, normal=dir_x, r_res=1, c_res=48)
+            ring_x = pv.Disc(center=origin, inner=inner_r, outer=outer_r, normal=(1.0, 0.0, 0.0), r_res=1, c_res=48)
             self._add_gizmo_mesh("gizmo_rotate_x", ring_x, self._colors[GizmoAxis.X], opacity=0.85)
 
         # Кольцо вокруг Y
         if GizmoAxis.Y in allowed_axes:
-            ring_y = pv.Disc(center=center, inner=inner_r, outer=outer_r, normal=dir_y, r_res=1, c_res=48)
+            ring_y = pv.Disc(center=origin, inner=inner_r, outer=outer_r, normal=(0.0, 1.0, 0.0), r_res=1, c_res=48)
             self._add_gizmo_mesh("gizmo_rotate_y", ring_y, self._colors[GizmoAxis.Y], opacity=0.85)
 
         # Кольцо вокруг Z
         if GizmoAxis.Z in allowed_axes:
-            ring_z = pv.Disc(center=center, inner=inner_r, outer=outer_r, normal=dir_z, r_res=1, c_res=48)
+            ring_z = pv.Disc(center=origin, inner=inner_r, outer=outer_r, normal=(0.0, 0.0, 1.0), r_res=1, c_res=48)
             self._add_gizmo_mesh("gizmo_rotate_z", ring_z, self._colors[GizmoAxis.Z], opacity=0.85)
+
+        self._update_gizmo_actors_transform(center, dir_x, dir_y, dir_z)
+        self._rebuild_picker_lists()
 
     def _build_scale_visuals(
         self,
@@ -936,7 +1050,7 @@ class TransformGizmo(QObject):
         dir_z: np.ndarray,
         size: float
     ) -> None:
-        """Построение осевых кубиков масштабирования и центрального кубика (XYZ)."""
+        """Построение осевых кубиков масштабирования и центрального кубика (XYZ) в каноническом локальном базисе."""
         if self._constraint is not None and not self._constraint.is_scale_allowed():
             return
         box_edge = size * 0.12
@@ -944,30 +1058,29 @@ class TransformGizmo(QObject):
         shaft_rad = size * 0.02
 
         # Осевой брусок + кубик X
-        cyl_x = pv.Cylinder(center=center + dir_x * (axis_len * 0.5), direction=dir_x, radius=shaft_rad, height=axis_len)
+        cyl_x = pv.Cylinder(center=(axis_len * 0.5, 0.0, 0.0), direction=(1.0, 0.0, 0.0), radius=shaft_rad, height=axis_len)
         box_x = pv.Cube(center=(axis_len, 0.0, 0.0), x_length=box_edge, y_length=box_edge, z_length=box_edge)
-        self._transform_local_mesh(box_x, center, dir_x, dir_y, dir_z)
         mesh_x = cyl_x.merge(box_x)
         self._add_gizmo_mesh("gizmo_scale_x", mesh_x, self._colors[GizmoAxis.X])
 
         # Осевой брусок + кубик Y
-        cyl_y = pv.Cylinder(center=center + dir_y * (axis_len * 0.5), direction=dir_y, radius=shaft_rad, height=axis_len)
+        cyl_y = pv.Cylinder(center=(0.0, axis_len * 0.5, 0.0), direction=(0.0, 1.0, 0.0), radius=shaft_rad, height=axis_len)
         box_y = pv.Cube(center=(0.0, axis_len, 0.0), x_length=box_edge, y_length=box_edge, z_length=box_edge)
-        self._transform_local_mesh(box_y, center, dir_x, dir_y, dir_z)
         mesh_y = cyl_y.merge(box_y)
         self._add_gizmo_mesh("gizmo_scale_y", mesh_y, self._colors[GizmoAxis.Y])
 
         # Осевой брусок + кубик Z
-        cyl_z = pv.Cylinder(center=center + dir_z * (axis_len * 0.5), direction=dir_z, radius=shaft_rad, height=axis_len)
+        cyl_z = pv.Cylinder(center=(0.0, 0.0, axis_len * 0.5), direction=(0.0, 0.0, 1.0), radius=shaft_rad, height=axis_len)
         box_z = pv.Cube(center=(0.0, 0.0, axis_len), x_length=box_edge, y_length=box_edge, z_length=box_edge)
-        self._transform_local_mesh(box_z, center, dir_x, dir_y, dir_z)
         mesh_z = cyl_z.merge(box_z)
         self._add_gizmo_mesh("gizmo_scale_z", mesh_z, self._colors[GizmoAxis.Z])
 
         # Центральный кубик для равномерного 3-осевого масштабирования (XYZ)
         center_box = pv.Cube(center=(0.0, 0.0, 0.0), x_length=box_edge * 1.2, y_length=box_edge * 1.2, z_length=box_edge * 1.2)
-        self._transform_local_mesh(center_box, center, dir_x, dir_y, dir_z)
         self._add_gizmo_mesh("gizmo_scale_xyz", center_box, self._colors[GizmoAxis.XYZ], opacity=0.9)
+
+        self._update_gizmo_actors_transform(center, dir_x, dir_y, dir_z)
+        self._rebuild_picker_lists()
 
     def _add_gizmo_mesh(
         self,
@@ -1005,6 +1118,8 @@ class TransformGizmo(QObject):
                 self.viewport.remove_actor(name)
         self._actor_names.clear()
         self._mesh_actors.clear()
+        self._built_visuals_signature = None
+        self._rebuild_picker_lists()
 
     # ------------------------------------------------------------------------------------------------------------------
     # Интерактивное взаимодействие через VTK Interactor (Task 3.3)
@@ -1089,8 +1204,8 @@ class TransformGizmo(QObject):
 
     def _pick_gizmo_axis(self, event_x: int, event_y: int) -> Tuple[GizmoAxis, Optional[str]]:
         """
-        Определение активной оси/плоскости манипулятора по экранным координатам курсора с помощью vtkPropPicker
-        и fallback на vtkCellPicker с допуском для надежного захвата стрелок и колец.
+        Определение активной оси/плоскости манипулятора по экранным координатам курсора с помощью кэшированного
+        vtkPropPicker и fallback на vtkCellPicker с допуском для надежного захвата стрелок и колец.
         """
         if self.viewport is None or self.viewport.plotter is None or not self._mesh_actors:
             return GizmoAxis.NONE, None
@@ -1099,29 +1214,20 @@ class TransformGizmo(QObject):
         if renderer is None:
             return GizmoAxis.NONE, None
 
-        # 1. Быстрый точный пикинг через vtkPropPicker
-        picker = vtk.vtkPropPicker()
-        picker.PickFromListOn()
-        for mesh_actor in self._mesh_actors.values():
-            picker.AddPickList(mesh_actor)
+        self._rebuild_picker_lists()
 
-        picker.Pick(float(event_x), float(event_y), 0.0, renderer)
-        picked_actor = picker.GetActor()
+        # 1. Быстрый точный пикинг через кэшированный vtkPropPicker
+        self._prop_picker.Pick(float(event_x), float(event_y), 0.0, renderer)
+        picked_actor = self._prop_picker.GetActor()
         if picked_actor is not None:
             for actor_name, mesh_actor in self._mesh_actors.items():
                 if mesh_actor is picked_actor or mesh_actor == picked_actor:
                     return self._actor_axis_map.get(actor_name, GizmoAxis.NONE), actor_name
 
-        # 2. Fallback на vtkCellPicker с допуском (tolerance ~1.5% размера окна)
+        # 2. Fallback на кэшированный vtkCellPicker с допуском (tolerance ~1.5% размера окна)
         try:
-            cell_picker = vtk.vtkCellPicker()
-            cell_picker.SetTolerance(0.015)
-            cell_picker.PickFromListOn()
-            for mesh_actor in self._mesh_actors.values():
-                cell_picker.AddPickList(mesh_actor)
-
-            cell_picker.Pick(float(event_x), float(event_y), 0.0, renderer)
-            picked_actor = cell_picker.GetActor()
+            self._cell_picker.Pick(float(event_x), float(event_y), 0.0, renderer)
+            picked_actor = self._cell_picker.GetActor()
             if picked_actor is not None:
                 for actor_name, mesh_actor in self._mesh_actors.items():
                     if mesh_actor is picked_actor or mesh_actor == picked_actor:
@@ -1168,9 +1274,10 @@ class TransformGizmo(QObject):
             last_x, last_y = self._last_mouse_pos
             shift_modifier = bool(interactor.GetShiftKey())
 
-            self._process_drag(last_x, last_y, int(event_x), int(event_y), shift_modifier)
+            did_change = self._process_drag(last_x, last_y, int(event_x), int(event_y), shift_modifier)
             self._last_mouse_pos = (int(event_x), int(event_y))
-            self.viewport.render()
+            if did_change:
+                self.viewport.render()
         else:
             self._process_hover(int(event_x), int(event_y))
 
@@ -1222,26 +1329,27 @@ class TransformGizmo(QObject):
         cur_x: int,
         cur_y: int,
         shift_modifier: bool
-    ) -> None:
-        """Вычисление и применение пространственной дельты манипуляции."""
+    ) -> bool:
+        """Вычисление и применение пространственной дельты манипуляции. Возвращает True при реальном изменении."""
         if self._target_node is None or self.viewport is None or self.viewport.plotter is None:
-            return
+            return False
         if self._initial_drag_matrix is None:
-            return
+            return False
 
         if self._mode == GizmoMode.TRANSLATE:
             step_world_delta = self._compute_screen_to_world_delta(last_x, last_y, cur_x, cur_y)
             self._accumulated_world_delta += step_world_delta
-            self._apply_drag_translation(self._accumulated_world_delta, shift_modifier)
-        elif self._mode == GizmoMode.ROTATE:
+            return self._apply_drag_translation(self._accumulated_world_delta, shift_modifier)
+        if self._mode == GizmoMode.ROTATE:
             step_angle = self._compute_screen_rotation_angle(last_x, last_y, cur_x, cur_y)
             self._accumulated_angle_deg += step_angle
-            self._apply_drag_rotation(self._accumulated_angle_deg, shift_modifier)
-        elif self._mode == GizmoMode.SCALE:
+            return self._apply_drag_rotation(self._accumulated_angle_deg, shift_modifier)
+        if self._mode == GizmoMode.SCALE:
             pixel_delta = float((cur_x - last_x) + (cur_y - last_y))
             multiplier = 1.0 + pixel_delta * 0.01
             self._accumulated_scale_factor = max(0.01, self._accumulated_scale_factor * multiplier)
-            self._apply_drag_scale(self._accumulated_scale_factor, shift_modifier)
+            return self._apply_drag_scale(self._accumulated_scale_factor, shift_modifier)
+        return False
 
     def _compute_screen_rotation_angle(
         self,
@@ -1346,10 +1454,10 @@ class TransformGizmo(QObject):
         world_cur = _screen_point_to_world(float(cur_x), float(cur_y))
         return np.asarray(world_cur - world_prev, dtype=np.float64)
 
-    def _apply_drag_translation(self, total_world_delta: np.ndarray, shift_modifier: bool) -> None:
+    def _apply_drag_translation(self, total_world_delta: np.ndarray, shift_modifier: bool) -> bool:
         """Проекция общего мирового смещения на активную ось/плоскость относительно исходной точки перетаскивания."""
         if self._initial_drag_matrix is None or self._target_node is None:
-            return
+            return False
 
         if self._constraint is not None:
             filtered_delta, changed_data = self._constraint.filter_translation(
@@ -1359,6 +1467,9 @@ class TransformGizmo(QObject):
                 active_axis=self._active_axis,
             )
             changed_data.setdefault('shift_pressed', shift_modifier)
+            if not changed_data.get('changed', True):
+                return False
+
             self._last_changed_data = changed_data
             if 'matrix' in changed_data:
                 new_matrix = changed_data['matrix']
@@ -1371,13 +1482,20 @@ class TransformGizmo(QObject):
                     local_filtered_delta = filtered_delta
                 new_matrix[0:3, 3] = self._initial_drag_matrix[0:3, 3] + local_filtered_delta
 
-            self._target_node.local_matrix = new_matrix
+            is_tangential_on_gantry = (
+                changed_data.get('action') == 'tangential'
+                and self._target_node.parent_vm is not None
+                and isinstance(self._target_node.parent_vm.core_node, GantryNode)
+            )
+            if not is_tangential_on_gantry:
+                self._assign_target_local_matrix(new_matrix, shift_modifier=shift_modifier)
+
             self.transform_changed.emit(new_matrix)
             self._constraint.on_transform_changed(self._target_node, changed_data)
             if 'status_message' in changed_data:
                 self.status_message_requested.emit(str(changed_data['status_message']))
-            self.update_visuals()
-            return
+            self.update_visuals(render=False)
+            return True
 
         initial_matrix = self._initial_drag_matrix.copy()
         start_pos = initial_matrix[0:3, 3].copy()
@@ -1420,16 +1538,20 @@ class TransformGizmo(QObject):
         target_pos = start_pos + effective_delta
         snapped_target_pos = self.snap_translation_vector(target_pos, shift_modifier=shift_modifier)
 
+        if np.allclose(snapped_target_pos, self._target_node.local_matrix[0:3, 3], atol=1e-5):
+            return False
+
         new_matrix = initial_matrix.copy()
         new_matrix[0:3, 3] = snapped_target_pos
         self._target_node.local_matrix = new_matrix
         self.transform_changed.emit(new_matrix)
-        self.update_visuals()
+        self.update_visuals(render=False)
+        return True
 
-    def _apply_drag_rotation(self, total_angle_deg: float, shift_modifier: bool) -> None:
+    def _apply_drag_rotation(self, total_angle_deg: float, shift_modifier: bool) -> bool:
         """Применение суммарного поворота вокруг выбранной оси относительно начальной матрицы."""
         if self._initial_drag_matrix is None or self._target_node is None:
-            return
+            return False
 
         if self._constraint is not None:
             dir_x, dir_y, dir_z = self._extract_orthonormal_basis(self._target_node.global_matrix)
@@ -1446,6 +1568,9 @@ class TransformGizmo(QObject):
                 total_angle_deg,
                 self._initial_drag_matrix,
             )
+            if not changed_data.get('changed', True):
+                return False
+
             self._last_changed_data = changed_data
             if 'matrix' in changed_data:
                 new_matrix = changed_data['matrix']
@@ -1457,8 +1582,8 @@ class TransformGizmo(QObject):
             self._constraint.on_transform_changed(self._target_node, changed_data)
             if 'status_message' in changed_data:
                 self.status_message_requested.emit(str(changed_data['status_message']))
-            self.update_visuals()
-            return
+            self.update_visuals(render=False)
+            return True
 
         snapped_angle_deg = self.snap_angle(total_angle_deg, shift_modifier=shift_modifier)
         angle_rad = math.radians(snapped_angle_deg)
@@ -1503,16 +1628,20 @@ class TransformGizmo(QObject):
                 new_matrix[0:3, 0:3] = rotation_mat_3x3 @ initial_matrix[0:3, 0:3]
 
         new_matrix[0:3, 3] = current_center
+        if np.allclose(new_matrix, self._target_node.local_matrix, atol=1e-6):
+            return False
+
         self._target_node.local_matrix = new_matrix
         self.transform_changed.emit(new_matrix)
-        self.update_visuals()
+        self.update_visuals(render=False)
+        return True
 
-    def _apply_drag_scale(self, total_scale_factor: float, shift_modifier: bool) -> None:
+    def _apply_drag_scale(self, total_scale_factor: float, shift_modifier: bool) -> bool:
         """Применение суммарного масштабирования относительно начальной матрицы."""
         if self._initial_drag_matrix is None or self._target_node is None:
-            return
+            return False
         if self._constraint is not None and not self._constraint.is_scale_allowed():
-            return
+            return False
 
         snapped_scale = self.snap_scale_factor(total_scale_factor, shift_modifier=shift_modifier)
 
@@ -1533,9 +1662,13 @@ class TransformGizmo(QObject):
         for col_idx in range(3):
             new_matrix[0:3, col_idx] = initial_matrix[0:3, col_idx] * multipliers[col_idx]
 
+        if np.allclose(new_matrix, self._target_node.local_matrix, atol=1e-6):
+            return False
+
         self._target_node.local_matrix = new_matrix
         self.transform_changed.emit(new_matrix)
-        self.update_visuals()
+        self.update_visuals(render=False)
+        return True
 
     def _process_hover(self, event_x: int, event_y: int) -> None:
         """Подсветка активной оси манипулятора при наведении курсора мыши."""

@@ -140,7 +140,6 @@ class DirectParallelCollimator(CompositeNode):
         self._hole_diameter = float_value
         prism_geometry: PeriodicHexPrism = self.channels.geometry  # type: ignore
         prism_geometry.hole_diameter = self._hole_diameter
-        self.invalidate_geometry()
 
     @property
     def septa(self) -> Float:
@@ -155,7 +154,6 @@ class DirectParallelCollimator(CompositeNode):
         self._septa = float_value
         prism_geometry: PeriodicHexPrism = self.channels.geometry  # type: ignore
         prism_geometry.septa = self._septa
-        self.invalidate_geometry()
 
     @property
     def size(self) -> Vector3D:
@@ -170,7 +168,6 @@ class DirectParallelCollimator(CompositeNode):
         self._size = parsed_size
         self.lead_body.size = self._size
         self.channels.size = self._size
-        self.invalidate_geometry()
 
     @property
     def parent(self) -> Optional[CompositeNode]:
@@ -179,7 +176,6 @@ class DirectParallelCollimator(CompositeNode):
     @parent.setter
     def parent(self, value: Optional[CompositeNode]) -> None:
         self._parent = value
-        self.invalidate_matrix_cache()
         self._sync_hole_material()
 
     def set_parent(self, parent: CompositeNode) -> None:
@@ -271,12 +267,6 @@ class DirectParallelCollimator(CompositeNode):
                 hole_diameter=self._hole_diameter,
                 septa=self._septa
             )
-            self.invalidate_geometry()
-
-    def invalidate_geometry(self) -> None:
-        """Сбрасывает кэш геометрии дочерних физических объемов."""
-        self.lead_body.invalidate_geometry()
-        self.channels.invalidate_geometry()
 
 
 __all__ = [

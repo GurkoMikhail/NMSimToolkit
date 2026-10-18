@@ -149,6 +149,24 @@ class MockSceneViewport:
     def update_actor_transform(self, name: str, matrix: np.ndarray) -> bool:
         return name in self.actors_registry
 
+    def set_node_local_transform(self, node_id: int, local_matrix: np.ndarray, parent_id: Optional[int] = None) -> None:
+        self.render_call_count += 1
+
+    def attach_actor_to_node(self, actor_name: str, node_id: int) -> bool:
+        return actor_name in self.actors_registry
+
+    def remove_node_transform(self, node_id: int) -> None:
+        pass
+
+    def request_render(self) -> None:
+        self.render_call_count += 1
+
+    def begin_update(self) -> None:
+        pass
+
+    def end_update(self) -> None:
+        self.render_call_count += 1
+
     def remove_actor(self, name: str) -> None:
         self.actors_registry.pop(name, None)
 

@@ -127,31 +127,56 @@ class TestCoreHotfixStability(unittest.TestCase):
 
     def test_woodcock_cfunc_invalidation(self):
         """
-        Проверка: При изменении параметров коллиматора кэш _cfunc должен сбрасываться (None).
+        Проверка: При изменении параметров коллиматора, его материала или родительского объема
+        кэш _cfunc должен сбрасываться и перекомпилироваться с актуальными ID материалов.
         """
         lead = settings.material_database["Pb"]
+        water = settings.material_database["Water, Liquid"]
+        vacuum = settings.material_database["Vacuum"]
         collimator = ParametricParallelCollimator(
             size=np.array([100.0, 100.0, 40.0]),
-            hole_diameter=1.5,
-            septa=0.2,
-            material=lead
+            hole_diameter=2.0,
+            septa=0.5,
+            material=lead,
+            hole_shape=CollimatorHoleShape.SQUARE,
         )
-        # Получаем скомпилированную функцию
+        # Получаем скомпилированную функцию (без родителя отверстия заполнены Vacuum)
         cfunc_ptr = collimator.material_cfunc
         self.assertIsNotNone(cfunc_ptr)
         self.assertIsNotNone(collimator._cfunc)
+        self.assertEqual(int(collimator._cfunc(0.0, 0.0, 0.0)), int(vacuum.ID))
+        self.assertEqual(int(collimator._cfunc(1.1, 0.0, 0.0)), int(lead.ID))
 
         # Изменяем диаметр отверстия через сеттер
-        collimator.hole_diameter = 2.0
-        self.assertIsNone(collimator._cfunc, "Кэш _cfunc должен сбрасываться при invalidate_geometry")
+        collimator.hole_diameter = 2.2
+        self.assertIsNone(collimator._cfunc, "Кэш _cfunc должен сбрасываться при изменении параметров")
 
         # При повторном запросе должна скомпилироваться новая функция
         new_cfunc_ptr = collimator.material_cfunc
         self.assertIsNotNone(new_cfunc_ptr)
 
+        # Прямая замена материала корпуса через collimator.material сбрасывает _cfunc
+        sodium_iodide = settings.material_database["Sodium Iodide"]
+        collimator.material = sodium_iodide
+        self.assertIsNone(collimator._cfunc, "Кэш _cfunc должен сбрасываться при прямой смене material")
+        _ = collimator.material_cfunc
+        self.assertEqual(int(collimator._cfunc(1.2, 0.0, 0.0)), int(sodium_iodide.ID))
+
+        # Добавление коллиматора в родительский Volume сбрасывает _cfunc и обновляет материал отверстий
+        parent_box = Volume(geometry=Box(200.0, 200.0, 200.0), material=water, name="ParentBox")
+        parent_box.add_child(collimator)
+        self.assertIsNone(collimator._cfunc, "Кэш _cfunc должен сбрасываться при изменении parent")
+        _ = collimator.material_cfunc
+        self.assertEqual(int(collimator._cfunc(0.0, 0.0, 0.0)), int(water.ID))
+
+        # Смена материала уже привязанного родительского Volume актуализирует @cfunc при чтении material_cfunc
+        parent_box.material = lead
+        _ = collimator.material_cfunc
+        self.assertEqual(int(collimator._cfunc(0.0, 0.0, 0.0)), int(lead.ID))
+
     def test_volume_cascade_geometry_invalidation(self):
         """
-        Проверка: Изменение размера дочернего Volume должно инвалидировать кэш геометрии родителя.
+        Проверка: Изменение размера дочернего Volume должно сразу отражаться в geometry_buffer родителя.
         """
         vac = settings.material_database["Vacuum"]
         parent_vol = Volume(geometry=Box(200.0, 200.0, 200.0), material=vac, name="ParentVolume")
@@ -160,13 +185,24 @@ class TestCoreHotfixStability(unittest.TestCase):
 
         # Вызываем компиляцию буфера геометрии
         buf = parent_vol.geometry_buffer
-        self.assertIsNotNone(parent_vol._geometry_buffer)
+        np.testing.assert_allclose(
+            [buf[1]["shape_data"]["param_0"], buf[1]["shape_data"]["param_1"], buf[1]["shape_data"]["param_2"]],
+            [25.0, 25.0, 25.0],
+        )
 
         # Меняем размер дочернего объема
         child_vol.size = np.array([80.0, 80.0, 80.0])
 
-        # Буфер родителя должен быть инвалидирован
-        self.assertIsNone(parent_vol._geometry_buffer, "Кэш родительского объема должен сбрасываться")
+        # Буфер родителя сразу отражает актуальные полуразмеры дочернего объема
+        updated_buf = parent_vol.geometry_buffer
+        np.testing.assert_allclose(
+            [
+                updated_buf[1]["shape_data"]["param_0"],
+                updated_buf[1]["shape_data"]["param_1"],
+                updated_buf[1]["shape_data"]["param_2"],
+            ],
+            [40.0, 40.0, 40.0],
+        )
 
 
 if __name__ == '__main__':

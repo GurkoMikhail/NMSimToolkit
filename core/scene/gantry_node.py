@@ -45,7 +45,6 @@ class GantryNode(CompositeNode):
             [0.0,      0.0,     1.0, self.local_matrix[2, 3]],
             [0.0,      0.0,     0.0, 1.0],
         ], dtype=Float)
-        self.invalidate_matrix_cache()
 
 
 __all__ = ["GantryNode"]

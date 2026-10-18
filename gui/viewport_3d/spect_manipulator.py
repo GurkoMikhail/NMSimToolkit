@@ -41,6 +41,8 @@ class SPECTManipulator(QObject):
 
         self._min_radius = 50.0   # Минимальный безопасный радиус до фантома
         self._max_radius = 600.0  # Максимальный вылет штатива
+        self._cached_orbit_signature: Optional[Tuple[float, float]] = None
+        self._indicator_created: bool = False
         if auto_render:
             self.update_visuals(render=True)
 
@@ -101,39 +103,65 @@ class SPECTManipulator(QObject):
             half_thickness=thickness_val,
         )
 
+    def _build_orbit_trajectory(self) -> None:
+        """Перестраивает полилинию круговой траектории орбиты при изменении радиуса или Z."""
+        angles = np.linspace(0, 2 * np.pi, 120)
+        xs = self.radius * np.cos(angles)
+        ys = self.radius * np.sin(angles)
+        zs = np.full_like(xs, self.z_pos)
+        orbit_points = np.column_stack((xs, ys, zs))
+
+        orbit_poly = pv.lines_from_points(orbit_points, close=True)
+        self.viewport.add_mesh_actor(
+            self.orbit_actor_name,
+            orbit_poly,
+            color='#3498db',
+            opacity=0.6,
+            wireframe=True,
+        )
+        self._cached_orbit_signature = (self.radius, self.z_pos)
+
+    def _ensure_indicator_actor(self) -> None:
+        """Создает каноническую сферу индикатора в начале координат."""
+        indicator = pv.Sphere(radius=12.0, center=(0.0, 0.0, 0.0))
+        self.viewport.add_mesh_actor(
+            self.detector_indicator_name,
+            indicator,
+            color='#e74c3c',
+            opacity=0.9,
+        )
+        self._indicator_created = True
+
     def update_visuals(self, render: bool = False) -> None:
         """
         Отрисовка круговой направляющей орбиты и маркера детектора в 3D.
+        Перестраивает траекторию только при изменении (radius, z_pos),
+        а индикатор детектора перемещает матрицей трансформации без пересоздания меша.
         """
         if self.viewport is None or self.viewport.plotter is None:
             return
 
         try:
-            # 1. Траектория орбиты (окружность)
-            angles = np.linspace(0, 2 * np.pi, 120)
-            xs = self.radius * np.cos(angles)
-            ys = self.radius * np.sin(angles)
-            zs = np.full_like(xs, self.z_pos)
-            orbit_points = np.column_stack((xs, ys, zs))
+            orbit_sig = (self.radius, self.z_pos)
+            if self._cached_orbit_signature != orbit_sig:
+                self._build_orbit_trajectory()
 
-            orbit_poly = pv.lines_from_points(orbit_points, close=True)
-            self.viewport.add_mesh_actor(
-                self.orbit_actor_name,
-                orbit_poly,
-                color='#3498db',
-                opacity=0.6,
-                wireframe=True
-            )
+            if not self._indicator_created:
+                self._ensure_indicator_actor()
 
-            # 2. Индикатор положения головки детектора
             pos = self.get_cartesian_position()
-            indicator = pv.Sphere(radius=12.0, center=pos)
-            self.viewport.add_mesh_actor(
-                self.detector_indicator_name,
-                indicator,
-                color='#e74c3c',
-                opacity=0.9
+            indicator_matrix = np.eye(4, dtype=np.float64)
+            indicator_matrix[0:3, 3] = pos
+            updated = self.viewport.update_actor_transform(
+                self.detector_indicator_name, indicator_matrix
             )
+            if updated is False:
+                self._build_orbit_trajectory()
+                self._ensure_indicator_actor()
+                self.viewport.update_actor_transform(
+                    self.detector_indicator_name, indicator_matrix
+                )
+
             if render:
                 self.viewport.render()
 
@@ -144,6 +172,8 @@ class SPECTManipulator(QObject):
         """
         Очистка визуальных направляющих манипулятора.
         """
+        self._cached_orbit_signature = None
+        self._indicator_created = False
         if self.viewport is not None:
             self.viewport.remove_actor(self.orbit_actor_name)
             self.viewport.remove_actor(self.detector_indicator_name)

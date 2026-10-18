@@ -26,9 +26,20 @@ class WoodcockParametricVolume(WoodcockVolume):
     """
 
     _cfunc: Optional[Any]
+    _material: Material
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self._cfunc = None
+
+    @property
+    def material(self) -> Material:
+        """Мажорантный материал объема."""
+        return self._material
+
+    @material.setter
+    def material(self, value: Material) -> None:
+        self._material = value
         self._cfunc = None
 
     @property
@@ -39,9 +50,14 @@ class WoodcockParametricVolume(WoodcockVolume):
         cfunc_ptr: Callable[[Float, Float, Float], Index] = self._cfunc.ctypes
         return cfunc_ptr
 
-    def invalidate_geometry(self) -> None:
-        """Инвалидирует геометрический буфер и сбрасывает кэш скомпилированной функции материала."""
-        super().invalidate_geometry()
+    @property
+    def size(self) -> Vector3D:
+        """Габаритные размеры объема [Lx, Ly, Lz] в мм."""
+        return self.geometry.size
+
+    @size.setter
+    def size(self, value: Vector3D) -> None:
+        self.geometry.size = value
         self._cfunc = None
 
     def _compile_cfunc(self) -> Any:

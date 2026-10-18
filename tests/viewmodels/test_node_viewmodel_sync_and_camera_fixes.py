@@ -311,25 +311,31 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         self.assertEqual(root_vm.children[0].name, "C2")
 
     def test_volume_viewmodel_material_and_size_invalidation(self):
-        """Проверка инвалидации геометрии Volume при смене материала или размера."""
+        """Проверка актуализации геометрии и материала Volume при смене параметров через VolumeViewModel."""
         vol = Volume(geometry=Box(50, 50, 50), material=Material(name="Water"), name="Vol")
-        # Формируем кэш скомпилированной геометрии
-        _ = vol.geometry_buffer
-        self.assertIsNotNone(vol._geometry_buffer)
+        buf_init = vol.geometry_buffer
+        np.testing.assert_allclose(
+            [buf_init[0]["shape_data"]["param_0"], buf_init[0]["shape_data"]["param_1"], buf_init[0]["shape_data"]["param_2"]],
+            [25.0, 25.0, 25.0],
+        )
 
         vm = VolumeViewModel(vol)
-        # Смена размера должна сбросить кэш geometry_buffer
+        # Смена размера должна сразу отражаться в geometry_buffer
         vm.size = [60, 60, 60]
-        self.assertIsNone(vol._geometry_buffer)
-
-        # Повторно кэшируем
-        _ = vol.geometry_buffer
-        self.assertIsNotNone(vol._geometry_buffer)
+        buf_updated = vol.geometry_buffer
+        np.testing.assert_allclose(
+            [
+                buf_updated[0]["shape_data"]["param_0"],
+                buf_updated[0]["shape_data"]["param_1"],
+                buf_updated[0]["shape_data"]["param_2"],
+            ],
+            [30.0, 30.0, 30.0],
+        )
 
         # Смена материала на Vacuum
         vm.material_name = "Vacuum"
         self.assertEqual(vm.material_name, "Vacuum")
-        self.assertIsNone(vol._geometry_buffer)
+        self.assertEqual(vol.material.name, "Vacuum")
 
     def test_gamma_camera_zero_radius_and_angle_normalization(self):
         """Проверка вычисления матрицы орбиты при 360 градусах (нормализация к 0)."""
@@ -403,19 +409,29 @@ class TestNodeViewModelSyncAndCameraFixes(unittest.TestCase):
         self.assertIsNone(grandchild.parent)
 
     def test_volume_invalidate_geometry_propagation_to_ancestor_volumes(self):
-        """Проверка распространения инвалидации геометрии Volume вверх к предкам."""
+        """Проверка актуализации буфера геометрии родительского Volume при изменении дочернего Volume."""
         world = Volume(geometry=Box(500, 500, 500), material=Material(name="Air"), name="World")
         box = Volume(geometry=Box(100, 100, 100), material=Material(name="Water"), name="Box")
         world.add_child(box)
 
-        _ = world.geometry_buffer
-        self.assertIsNotNone(world._geometry_buffer)
+        buf_init = world.geometry_buffer
+        np.testing.assert_allclose(
+            [buf_init[1]["shape_data"]["param_0"], buf_init[1]["shape_data"]["param_1"], buf_init[1]["shape_data"]["param_2"]],
+            [50.0, 50.0, 50.0],
+        )
 
         box_vm = VolumeViewModel(box)
         box_vm.size = [120, 120, 120]
 
-        # Кэш предка world должен быть инвалидирован
-        self.assertIsNone(world._geometry_buffer)
+        buf_updated = world.geometry_buffer
+        np.testing.assert_allclose(
+            [
+                buf_updated[1]["shape_data"]["param_0"],
+                buf_updated[1]["shape_data"]["param_1"],
+                buf_updated[1]["shape_data"]["param_2"],
+            ],
+            [60.0, 60.0, 60.0],
+        )
 
     def test_voxel_volume_size_and_voxel_size_sync(self):
         """Проверка синхронизации size и voxel_size в VoxelVolumeViewModel."""

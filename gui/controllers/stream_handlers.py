@@ -581,7 +581,7 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
             and self.detector_inv_matrix is None
             and isinstance(self.detector_volume, SpatialNode)
         ):
-            self.detector_inv_matrix = self.detector_volume.inverse_global_matrix
+            self.detector_inv_matrix = np.linalg.inv(self.detector_volume.global_matrix)
 
         self._shm: Optional[shared_memory.SharedMemory] = None
         self._projection_array: Optional[np.ndarray] = None

@@ -112,8 +112,8 @@ def test_woodcock_voxel_volume_centering_and_cache_invalidation() -> None:
     Регрессионный тест WoodcockVoxelVolume:
     1. Эквивалентность индексации вокселей между _compile_cfunc (SoA) и _parametric_function (OOP)
        на границах вокселей и в центре координат (0, 0, 0) благодаря формуле floor((pos + 0.5 * size) / voxel_size).
-    2. Автоматический сброс кэша мажорантного материала _cached_majorant_material при обновлении
-       распределения материалов и вызове invalidate_geometry().
+    2. Автоматический сброс кэша мажорантного материала _cached_majorant_material и функции _cfunc
+       при обновлении распределения материалов и размера вокселя.
     """
     water_mat = settings.material_database["Water, Liquid"]
     bone_mat = settings.material_database["Sodium Iodide"]
@@ -158,19 +158,24 @@ def test_woodcock_voxel_volume_centering_and_cache_invalidation() -> None:
     assert int(cfunc_lookup(Float(-0.01), Float(-0.01), Float(-0.01))) == water_mat.ID
     assert int(cfunc_lookup(Float(0.01), Float(0.01), Float(0.01))) == bone_mat.ID
 
-    # Проверка инвалидации кэша мажорантного материала при замене material_distribution
+    # Проверка инвалидации кэша мажорантного материала и _cfunc при замене material_distribution
+    _ = voxel_vol.material_cfunc
+    assert voxel_vol._cfunc is not None
     new_dist = MaterialArray((4, 4, 4))
     new_dist[:, :, :] = water_mat
     new_dist[0, 0, 0] = lead_mat
     voxel_vol.material_distribution = new_dist
 
     assert voxel_vol._cached_majorant_material is None
+    assert voxel_vol._cfunc is None
     assert voxel_vol.material == lead_mat
     assert voxel_vol._cached_majorant_material == lead_mat
 
-    # Проверка сброса кэша при прямом вызове invalidate_geometry()
-    voxel_vol.invalidate_geometry()
-    assert voxel_vol._cached_majorant_material is None
+    # Проверка сброса кэша _cfunc при изменении voxel_size
+    _ = voxel_vol.material_cfunc
+    assert voxel_vol._cfunc is not None
+    voxel_vol.voxel_size = Float(3.0)
+    assert voxel_vol._cfunc is None
 
 
 def main() -> None:

@@ -40,7 +40,6 @@ class Volume(CompositeNode):
         self.geometry = geometry
         self.material = material
         self.name = f'{self.__class__.__name__}{next(self._counter)}' if name is None else name
-        self._geometry_buffer: Optional[NDArray[Any]] = None
 
     def __init_subclass__(cls) -> None:
         cls._counter = count(1)
@@ -81,7 +80,6 @@ class Volume(CompositeNode):
     @size.setter
     def size(self, value: Vector3D) -> None:
         self.geometry.size = value
-        self.invalidate_geometry()
 
     @property
     def local_bound(self) -> Vector3D:
@@ -90,34 +88,8 @@ class Volume(CompositeNode):
 
     @property
     def geometry_buffer(self) -> NDArray[Any]:
-        """Ленивая компиляция буфера геометрии GeometryBuffer (структурированный массив AoS)."""
-        if self._geometry_buffer is None:
-            self._geometry_buffer = geom_compiler.GeometryCompiler().compile_scene(self)
-        return self._geometry_buffer
-
-    def invalidate_geometry(self) -> None:
-        """Сбрасывает кэш скомпилированной геометрии у этого объёма и всех родительских Volume."""
-        self._geometry_buffer = None
-        curr: Optional[CompositeNode] = self.parent
-        while curr is not None:
-            if isinstance(curr, Volume):
-                curr._geometry_buffer = None
-            curr = curr.parent
-
-    def invalidate_matrix_cache(self) -> None:
-        """Инвалидирует кэш матриц и буфер геометрии у текущего узла и его предков/потомков."""
-        super().invalidate_matrix_cache()
-        self.invalidate_geometry()
-
-    def add_child(self, child: SpatialNode) -> None:
-        """Добавление дочернего узла с инвалидацией буферов геометрии."""
-        super().add_child(child)
-        self.invalidate_geometry()
-
-    def remove_child(self, child: SpatialNode) -> None:
-        """Удаление дочернего узла с инвалидацией буферов геометрии."""
-        super().remove_child(child)
-        self.invalidate_geometry()
+        """Компилирует буфер геометрии GeometryBuffer (структурированный массив AoS)."""
+        return geom_compiler.GeometryCompiler().compile_scene(self)
 
     @property
     def top_volume(self) -> Volume:

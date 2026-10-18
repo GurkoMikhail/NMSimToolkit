@@ -13,6 +13,7 @@ from core.config.models import (
     DataManagerConfig,
 )
 from core.config.orchestrator import Orchestrator
+from core.config.sweep_compiler import SweepCompiler
 from gui.controllers.ipc_receiver import IPCReceiver
 from gui.controllers.stream_handlers import (
     ControlBufferSHM,
@@ -546,46 +547,16 @@ class OrchestratorSession(QObject):
 
         self._is_generating_jobs = True
         try:
-            # Синхронизация геометрии процедуры со сценой перед экспортом
-            self.procedure_vm.sync_with_scene(self.scene_vm)
+            if (
+                isinstance(self.procedure_vm, StepAndShootProcedureViewModel)
+                and self.procedure_vm._observed_scene is not self.scene_vm
+            ):
+                self.procedure_vm.sync_with_scene(self.scene_vm)
+            elif not isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
+                self.procedure_vm.sync_with_scene(self.scene_vm)
 
-            # Сборка базовой конфигурации
-            root_core = self.scene_vm.root_vm.core_node
-            start_time_cfg: Any = self._get_start_time_cfg()
-            stop_time_cfg: Any = self._get_stop_time_cfg()
-
-            sim_mgr_cfg = SimulationManagerConfig(
-                particles_number=self.particles_number,
-                start_time=start_time_cfg,
-                stop_time=stop_time_cfg,
-                min_energy=self.min_energy * units.keV,
-            )
-            data_mgr_cfg = self.data_manager_vm.to_config()
-
-            dist_registry = self.scene_vm.distribution_registry if self.scene_vm else None
-            slots_reg = self.scene_vm.slots_registry if self.scene_vm else None
-            bindings_reg = (
-                self.procedure_vm.bindings_registry
-                if (self.procedure_vm and self.procedure_vm.bindings_registry)
-                else (self.scene_vm.bindings_registry if self.scene_vm else None)
-            )
-            sim_config = SceneExporter.export_to_config(
-                root_node=root_core,
-                simulation_manager_cfg=sim_mgr_cfg,
-                data_manager_cfg=data_mgr_cfg,
-                distribution_registry=dist_registry,
-                slots_registry=slots_reg,
-                pool_size=self.pool_size,
-            )
-            sim_config.protocol = self.procedure_vm.to_config()
-            if bindings_reg:
-                bound_cfg = ConfigTemplateBinder.apply_bindings(sim_config, bindings_reg)
-                if isinstance(bound_cfg, SimulationConfig):
-                    sim_config = bound_cfg
-
-            orchestrator = Orchestrator(sim_config)
-            sweep_config = orchestrator.compile_protocol()
-            self._jobs = orchestrator._generate_job_list(sweep_config)
+            sweep_config = SweepCompiler.compile_protocol(self.procedure_vm.to_config())
+            self._jobs = SweepCompiler.generate_job_matrix(sweep_config)
             self.jobs_generated.emit(self._jobs)
             return self._jobs
         finally:

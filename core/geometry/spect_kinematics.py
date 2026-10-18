@@ -3,7 +3,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, List, Optional, Protocol, runtime_checkable
+from typing import Any, List, Optional, Protocol, Tuple, runtime_checkable
 import numpy as np
 from numpy.typing import NDArray
 
@@ -140,10 +140,51 @@ def compute_orbit_matrix(
     return orbit_matrix
 
 
+def extract_orbit_parameters(
+    matrix: NDArray[Any],
+    half_thickness: float = 0.0,
+) -> Tuple[float, float, float, float]:
+    """
+    Извлекает кинематические параметры круговой орбиты ОФЭКТ (radius, angle, z, roll)
+    из матрицы трансформации 4x4 (обратная операция к compute_orbit_matrix).
+
+    Все углы (angle, roll) возвращаются в градусах в диапазоне [0, 360),
+    радиус и координата z — в мм.
+    """
+    pos_x = float(matrix[0, 3])
+    pos_y = float(matrix[1, 3])
+    z = float(matrix[2, 3])
+
+    center_radius = float(np.hypot(pos_x, pos_y))
+    radius = max(0.0, center_radius - float(half_thickness))
+
+    if center_radius > 1e-6:
+        orbit_angle = float(np.arctan2(pos_y, pos_x))
+    else:
+        norm_xy = float(np.hypot(float(matrix[0, 2]), float(matrix[1, 2])))
+        if norm_xy > 1e-6:
+            orbit_angle = float(np.arctan2(-float(matrix[1, 2]), -float(matrix[0, 2])))
+        else:
+            orbit_angle = 0.0
+
+    angle = float(np.degrees(orbit_angle)) % 360.0
+
+    base_x_0 = float(np.sin(orbit_angle))
+    base_x_1 = -float(np.cos(orbit_angle))
+    current_x = matrix[0:3, 0]
+
+    cos_roll = float(current_x[0]) * base_x_0 + float(current_x[1]) * base_x_1
+    sin_roll = float(current_x[2])
+    roll = float(np.degrees(np.arctan2(sin_roll, cos_roll))) % 360.0
+
+    return radius, angle, z, roll
+
+
 __all__ = [
     "ISpectProtocolConfig",
     "IStepKinematicsConfig",
     "compute_spect_poses",
     "compute_orbit_matrix",
+    "extract_orbit_parameters",
 ]
 

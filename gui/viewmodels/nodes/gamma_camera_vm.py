@@ -36,6 +36,7 @@ class GammaCameraViewModel(NodeViewModel):
         parent_vm: Optional[NodeViewModel] = None,
         slots: Optional[Union[GammaCameraSlotsConfig, Dict[str, str]]] = None,
     ) -> None:
+        self._slot_vm_cache: Dict[str, Optional[Union[VolumeViewModel, CollimatorViewModel]]] = {}
         super().__init__(core_node, parent_vm)
         self.core_node = core_node
         if slots is not None:
@@ -73,6 +74,10 @@ class GammaCameraViewModel(NodeViewModel):
 
         self._apply_fixed_constraints_to_subcomponents()
 
+    def invalidate_slot_cache(self) -> None:
+        """Сбрасывает кэш разрешённых ссылок на слоты субкомпонентов гамма-камеры."""
+        self._slot_vm_cache.clear()
+
     def _find_volume_by_name(self, target_name: Optional[str]) -> Optional[VolumeViewModel]:
         """
         Ищет дочерний узел типа VolumeViewModel по точному имени в иерархии потомков.
@@ -104,13 +109,70 @@ class GammaCameraViewModel(NodeViewModel):
             search_stack.extend(current_vm.children)
         return None
 
+    def _is_descendant_slot_vm(self, node_vm: NodeViewModel) -> bool:
+        """Проверяет, что закэшированный узел слота принадлежит поддереву этой камеры (в VM и core_node)."""
+        curr_vm: Optional[NodeViewModel] = node_vm.parent_vm
+        in_vm_tree = False
+        while curr_vm is not None:
+            if curr_vm is self:
+                in_vm_tree = True
+                break
+            curr_vm = curr_vm.parent_vm
+        if not in_vm_tree:
+            return False
+
+        curr_core = node_vm.core_node.parent
+        while curr_core is not None:
+            if curr_core is self.core_node:
+                return True
+            curr_core = curr_core.parent
+        return False
+
+    def _get_cached_volume_slot(self, slot_key: str, target_name: Optional[str]) -> Optional[VolumeViewModel]:
+        """Возвращает VolumeViewModel слота из кэша или разрешает его поиском по поддереву."""
+        if not target_name:
+            return None
+        cached = self._slot_vm_cache.get(slot_key)
+        if (
+            cached is not None
+            and isinstance(cached, VolumeViewModel)
+            and cached.name == target_name
+            and self._is_descendant_slot_vm(cached)
+        ):
+            return cached
+        resolved = self._find_volume_by_name(target_name)
+        if resolved is not None:
+            self._slot_vm_cache[slot_key] = resolved
+        else:
+            self._slot_vm_cache.pop(slot_key, None)
+        return resolved
+
+    def _get_cached_collimator_slot(self, slot_key: str, target_name: Optional[str]) -> Optional[CollimatorViewModel]:
+        """Возвращает CollimatorViewModel слота из кэша или разрешает его поиском по поддереву."""
+        if not target_name:
+            return None
+        cached = self._slot_vm_cache.get(slot_key)
+        if (
+            cached is not None
+            and isinstance(cached, CollimatorViewModel)
+            and cached.name == target_name
+            and self._is_descendant_slot_vm(cached)
+        ):
+            return cached
+        resolved = self._find_collimator_by_name(target_name)
+        if resolved is not None:
+            self._slot_vm_cache[slot_key] = resolved
+        else:
+            self._slot_vm_cache.pop(slot_key, None)
+        return resolved
+
     # -------------------------------------------------------------------------
     # Типизированный доступ к слотам (Sockets)
     # -------------------------------------------------------------------------
     @property
     def crystal_vm(self) -> Optional[VolumeViewModel]:
         """ViewModel сцинтилляционного кристалла (слот crystal)."""
-        return self._find_volume_by_name(self.slots.crystal)
+        return self._get_cached_volume_slot("crystal", self.slots.crystal)
 
     @property
     def detector_vm(self) -> Optional[VolumeViewModel]:
@@ -120,22 +182,22 @@ class GammaCameraViewModel(NodeViewModel):
     @property
     def collimator_vm(self) -> Optional[CollimatorViewModel]:
         """ViewModel коллиматора (слот collimator)."""
-        return self._find_collimator_by_name(self.slots.collimator)
+        return self._get_cached_collimator_slot("collimator", self.slots.collimator)
 
     @property
     def casing_vm(self) -> Optional[VolumeViewModel]:
         """ViewModel защитного корпуса (слот casing)."""
-        return self._find_volume_by_name(self.slots.casing)
+        return self._get_cached_volume_slot("casing", self.slots.casing)
 
     @property
     def detector_box_vm(self) -> Optional[VolumeViewModel]:
         """ViewModel внутренней воздушной полости детектора (слот detector_box)."""
-        return self._find_volume_by_name(self.slots.detector_box)
+        return self._get_cached_volume_slot("detector_box", self.slots.detector_box)
 
     @property
     def glass_backend_vm(self) -> Optional[VolumeViewModel]:
         """ViewModel оптической подложки (слот glass_backend)."""
-        return self._find_volume_by_name(self.slots.glass_backend)
+        return self._get_cached_volume_slot("glass_backend", self.slots.glass_backend)
 
     # -------------------------------------------------------------------------
     # Геометрические параметры и их динамический пересчет
@@ -333,8 +395,6 @@ class GammaCameraViewModel(NodeViewModel):
         for subcomponent_vm in (detector_box, collimator, crystal, glass_backend):
             subcomponent_vm.property_changed.emit('local_matrix', subcomponent_vm.core_node.local_matrix)
 
-        casing.core_node.invalidate_geometry()
-
         self.property_changed.emit('detector_size', self.detector_size)
         self.property_changed.emit('detector_thickness', self.detector_thickness)
         self.property_changed.emit('collimator_thickness', self.collimator_thickness)
@@ -360,7 +420,16 @@ class GammaCameraViewModel(NodeViewModel):
             current_vm.set_child_kinematic_constraint(fixed_constraint)
             stack.extend(current_vm.children)
 
+    def add_child(self, child_vm: NodeViewModel) -> None:
+        self.invalidate_slot_cache()
+        super().add_child(child_vm)
+
+    def remove_child(self, child_vm: NodeViewModel) -> None:
+        self.invalidate_slot_cache()
+        super().remove_child(child_vm)
+
     def sync_children_from_core(self) -> None:
+        self.invalidate_slot_cache()
         super().sync_children_from_core()
         self._apply_fixed_constraints_to_subcomponents()
 

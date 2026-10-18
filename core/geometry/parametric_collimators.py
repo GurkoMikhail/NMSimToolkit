@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional, Sequence, Tuple
 import numpy as np
 from numba import cfunc, njit
 from numpy.typing import NDArray
@@ -17,6 +17,7 @@ from core.geometry.volumes import Volume
 from core.geometry.woodcock_volumes import WoodcockParametricVolume
 from core.materials.materials import Material
 from core.other.typing_definitions import Float, Index, Length, NumbaFloat, NumbaIndex, Vector3D
+from core.scene.nodes import CompositeNode
 
 
 class ParametricParallelCollimator(WoodcockParametricVolume):
@@ -30,6 +31,7 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
     _hole_diameter: Float
     _septa: Float
     _hole_shape: CollimatorHoleShape
+    _compiled_material_ids: Optional[Tuple[Index, Index]]
 
     def __init__(
         self,
@@ -53,6 +55,7 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
         if not isinstance(hole_shape, CollimatorHoleShape):
             raise TypeError(f"hole_shape должен быть строго CollimatorHoleShape, получено {type(hole_shape).__name__}")
 
+        self._compiled_material_ids = None
         super().__init__(
             geometry=Box(Float(size_arr[0]), Float(size_arr[1]), Float(size_arr[2])),
             material=material_lead,
@@ -81,7 +84,7 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
             raise ValueError(f"Диаметр отверстия должен быть строго положительным (> 0), получено {value}")
         self._hole_diameter = numeric_value
         self._compute_constants()
-        self.invalidate_geometry()
+        self._cfunc = None
 
     @property
     def hole_width(self) -> Float:
@@ -104,7 +107,7 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
             raise ValueError(f"Толщина септы должна быть строго положительной (> 0), получено {value}")
         self._septa = numeric_value
         self._compute_constants()
-        self.invalidate_geometry()
+        self._cfunc = None
 
     @property
     def hole_shape(self) -> CollimatorHoleShape:
@@ -125,7 +128,25 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
 
         self._hole_shape = value
         self._compute_constants()
-        self.invalidate_geometry()
+        self._cfunc = None
+
+    @property
+    def parent(self) -> Optional[CompositeNode]:
+        """Родительский составной узел в иерархии сцены."""
+        return self._parent
+
+    @parent.setter
+    def parent(self, value: Optional[CompositeNode]) -> None:
+        self._parent = value
+        self._cfunc = None
+
+    @property
+    def material_cfunc(self) -> Callable[[Float, Float, Float], Index]:
+        """Указатель ctypes на скомпилированную функцию @cfunc с проверкой актуальности материала каналов."""
+        current_ids = (Index(self.material.ID), Index(self._resolve_hole_material().ID))
+        if self._cfunc is not None and self._compiled_material_ids != current_ids:
+            self._cfunc = None
+        return super().material_cfunc
 
     def _resolve_hole_material(self) -> Material:
         """
@@ -171,6 +192,7 @@ class ParametricParallelCollimator(WoodcockParametricVolume):
         """Компилирует специализированную Numba-функцию трассировки материала по координатам."""
         material_lead_identifier = Index(self.material.ID)
         hole_material_identifier = Index(self._resolve_hole_material().ID)
+        self._compiled_material_ids = (material_lead_identifier, hole_material_identifier)
 
         if self._hole_shape == CollimatorHoleShape.HEXAGONAL:
             period_x = Float(self._period[0])

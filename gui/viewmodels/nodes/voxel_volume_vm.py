@@ -44,7 +44,6 @@ class VoxelVolumeViewModel(NodeViewModel):
         if all(dim_val > 0 for dim_val in dims):
             new_voxel_size = new_size_arr / np.asarray(dims, dtype=np.float64)
             self.core_node.voxel_size = new_voxel_size
-        self.core_node.invalidate_geometry()
         self.property_changed.emit('size', new_size_arr)
 
     @property
@@ -64,7 +63,6 @@ class VoxelVolumeViewModel(NodeViewModel):
         if dist is not None:
             self.core_node.geometry.size = np.asarray(dist.shape, dtype=np.float64) * val_arr
         self.core_node.voxel_size = val_arr
-        self.core_node.invalidate_geometry()
         self.property_changed.emit('voxel_size', val_arr)
         self.property_changed.emit('size', self.size)
 
@@ -108,8 +106,9 @@ class VoxelVolumeViewModel(NodeViewModel):
             existing_list.append(Material(name=f"Material_{new_id}", ID=new_id))
 
         existing_list[material_id] = target_material
-        self.core_node.material_distribution.element_list = existing_list
-        self.core_node.invalidate_geometry()
+        dist = self.core_node.material_distribution
+        dist.element_list = existing_list
+        self.core_node.material_distribution = dist
         self.property_changed.emit('material_distribution', self.material_list)
 
     @property
@@ -208,7 +207,6 @@ class VoxelVolumeViewModel(NodeViewModel):
             self.core_node.material_distribution = mat_arr
             new_size = np.asarray(mat_arr.shape, dtype=np.float64) * np.asarray(self.core_node.voxel_size, dtype=np.float64)
             self.core_node.size = new_size
-            self.core_node.invalidate_geometry()
 
             self.file_path = str(target_path)
             self.property_changed.emit('file_path', self.file_path)

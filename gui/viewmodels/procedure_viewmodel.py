@@ -14,7 +14,7 @@ from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
-from core.geometry.spect_kinematics import compute_orbit_matrix
+from core.geometry.spect_kinematics import compute_orbit_matrix, extract_orbit_parameters
 from core.scene.gantry_node import GantryNode
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
@@ -492,15 +492,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
                 trimmed_list.extend([padding_value] * max(0, steps - len(trimmed_list)))
                 self._zipped_variables[variable_name] = trimmed_list
 
-    def _disconnect_scene_observers(self) -> None:
-        """Отсоединение слушателей от предыдущей сцены и станины."""
-        if self._observed_scene is not None:
-            try:
-                self._observed_scene.node_removed.disconnect(self._on_scene_node_removed)
-            except (RuntimeError, TypeError):
-                pass
-            self._observed_scene = None
-
+    def _disconnect_gantry_and_camera_observers(self) -> None:
+        """Отсоединение слушателей от станины и детекторных камер без сброса подписки на сцену."""
         if self._observed_gantry is not None:
             try:
                 self._observed_gantry.property_changed.disconnect(self._on_gantry_property_changed)
@@ -523,10 +516,32 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
                 pass
         self._observed_cameras.clear()
 
+    def _disconnect_scene_observers(self) -> None:
+        """Отсоединение слушателей от предыдущей сцены, станины и камер."""
+        if self._observed_scene is not None:
+            try:
+                self._observed_scene.node_added.disconnect(self._on_scene_node_added)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                self._observed_scene.node_removed.disconnect(self._on_scene_node_removed)
+            except (RuntimeError, TypeError):
+                pass
+            self._observed_scene = None
+
+        self._disconnect_gantry_and_camera_observers()
+
+    def _on_scene_node_added(self, added_node_vm: Any) -> None:
+        """Слушатель добавления узлов в дерево сцены."""
+        if self._is_syncing_with_scene or self._observed_scene is None:
+            return
+        if self._observed_gantry is None and isinstance(added_node_vm, (GammaCameraViewModel, GantryViewModel)):
+            self.sync_with_scene(self._observed_scene)
+
     def _on_scene_node_removed(self, removed_node_vm: Any) -> None:
         """Слушатель удаления узлов из дерева сцены."""
         if removed_node_vm is self._observed_gantry:
-            self._disconnect_scene_observers()
+            self._disconnect_gantry_and_camera_observers()
 
     def _on_gantry_property_changed(self, property_name: str, property_value: Any) -> None:
         """Слушатель (Observer) изменений свойств узла станины GantryViewModel."""
@@ -538,6 +553,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
                 self._is_syncing_with_scene = True
                 try:
                     self._start_angle = angle_value
+                    self._update_standard_variables()
                     self.changed.emit()
                     self.parameter_changed.emit("start_angle", angle_value)
                 finally:
@@ -550,23 +566,27 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         if property_name == "local_matrix" and isinstance(property_value, np.ndarray):
             sender_obj = self.sender()
             sender_half_thickness = sender_obj.half_thickness if isinstance(sender_obj, GammaCameraViewModel) else 0.0
-            position_vector = property_value[0:3, 3]
-            center_distance = float(np.hypot(position_vector[0], position_vector[1]))
-            new_radius = max(10.0, center_distance - sender_half_thickness)
-            if abs(self._radius - new_radius) > 1e-4:
+            raw_radius, _, _, _ = extract_orbit_parameters(property_value, half_thickness=sender_half_thickness)
+            new_radius = max(10.0, raw_radius)
+            if abs(self.radius - new_radius) > 1e-4:
                 self._is_syncing_with_scene = True
                 try:
                     self._radius = new_radius
                     for other_camera_vm in self._observed_cameras:
                         if other_camera_vm is not sender_obj:
-                            other_position = other_camera_vm.local_matrix[0:3, 3]
-                            other_angle = float(np.degrees(np.arctan2(other_position[1], other_position[0])) % 360.0)
-                            other_camera_vm.local_matrix = compute_orbit_matrix(
-                                radius=new_radius,
-                                angle=other_angle,
-                                z=float(other_position[2]),
+                            other_r, other_angle, other_z, other_roll = extract_orbit_parameters(
+                                other_camera_vm.local_matrix,
                                 half_thickness=other_camera_vm.half_thickness,
                             )
+                            if abs(other_r - new_radius) > 1e-4:
+                                other_camera_vm.local_matrix = compute_orbit_matrix(
+                                    radius=new_radius,
+                                    angle=other_angle,
+                                    z=other_z,
+                                    half_thickness=other_camera_vm.half_thickness,
+                                    roll=other_roll,
+                                )
+                    self._update_standard_variables(regenerate_angles=False)
                     self.changed.emit()
                     self.parameter_changed.emit("radius", new_radius)
                 finally:
@@ -626,6 +646,8 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         if self._gamma_cameras != camera_count:
             self._gamma_cameras = camera_count
             self._recalculate_head_angles()
+            if self._observed_scene is not None and not self._is_syncing_with_scene:
+                self.sync_with_scene(self._observed_scene)
             self.changed.emit()
             self.parameter_changed.emit("gamma_cameras", camera_count)
 
@@ -639,29 +661,42 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
     @radius.setter
     def radius(self, new_radius: Any) -> None:
         if isinstance(new_radius, (list, tuple)):
-            self._radius = [float(rad_val) for rad_val in new_radius]
-            eff_radius = float(self._radius[0]) if self._radius else 250.0
+            parsed_radius: Any = [float(rad_val) for rad_val in new_radius]
+            eff_radius = float(parsed_radius[0]) if parsed_radius else 250.0
+            radius_changed = not (
+                isinstance(self._radius, list)
+                and len(self._radius) == len(parsed_radius)
+                and np.allclose(self._radius, parsed_radius, atol=1e-4)
+            )
         else:
-            self._radius = max(10.0, float(new_radius))
-            eff_radius = self._radius
+            parsed_radius = max(10.0, float(new_radius))
+            eff_radius = parsed_radius
+            radius_changed = isinstance(self._radius, list) or abs(float(self._radius) - eff_radius) > 1e-4
 
-        if self._observed_cameras and not self._is_syncing_with_scene:
-            self._is_syncing_with_scene = True
-            try:
-                for camera_view_model in self._observed_cameras:
-                    camera_position = camera_view_model.local_matrix[0:3, 3]
-                    camera_angle = float(np.degrees(np.arctan2(camera_position[1], camera_position[0])) % 360.0)
-                    camera_view_model.local_matrix = compute_orbit_matrix(
-                        radius=eff_radius,
-                        angle=camera_angle,
-                        z=float(camera_position[2]),
-                        half_thickness=camera_view_model.half_thickness,
-                    )
-            finally:
-                self._is_syncing_with_scene = False
-        self._update_standard_variables(regenerate_angles=False)
-        self.changed.emit()
-        self.parameter_changed.emit("radius", self._radius)
+        if radius_changed:
+            self._radius = parsed_radius
+            if self._observed_cameras and not self._is_syncing_with_scene:
+                self._is_syncing_with_scene = True
+                try:
+                    for camera_view_model in self._observed_cameras:
+                        cam_r, camera_angle, cam_z, cam_roll = extract_orbit_parameters(
+                            camera_view_model.local_matrix,
+                            half_thickness=camera_view_model.half_thickness,
+                        )
+                        if abs(cam_r - eff_radius) > 1e-4:
+                            camera_view_model.local_matrix = compute_orbit_matrix(
+                                radius=eff_radius,
+                                angle=camera_angle,
+                                z=cam_z,
+                                half_thickness=camera_view_model.half_thickness,
+                                roll=cam_roll,
+                            )
+                finally:
+                    self._is_syncing_with_scene = False
+
+            self._update_standard_variables(regenerate_angles=False)
+            self.changed.emit()
+            self.parameter_changed.emit("radius", self._radius)
 
     @property
     def radius_raw(self) -> Any:
@@ -718,13 +753,14 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
     @start_angle.setter
     def start_angle(self, new_angle: float) -> None:
         angle_value = float(new_angle)
-        if self._start_angle != angle_value:
+        if abs(self._start_angle - angle_value) > 1e-4:
             self._start_angle = angle_value
             self._update_standard_variables()
             if self._observed_gantry is not None and not self._is_syncing_with_scene:
                 self._is_syncing_with_scene = True
                 try:
-                    self._observed_gantry.gantry_angle = angle_value
+                    if abs((self._observed_gantry.gantry_angle - angle_value + 180.0) % 360.0 - 180.0) > 1e-4:
+                        self._observed_gantry.gantry_angle = angle_value
                 finally:
                     self._is_syncing_with_scene = False
             elif self._observed_cameras and not self._is_syncing_with_scene:
@@ -761,7 +797,13 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         if self._head_mode != new_mode:
             self._head_mode = str(new_mode)
             self._recalculate_head_angles()
-            if self._observed_cameras and not self._is_syncing_with_scene and len(self._observed_cameras) == len(self._head_angles):
+            if (
+                self._observed_scene is not None
+                and not self._is_syncing_with_scene
+                and len(self._observed_cameras) != self._gamma_cameras
+            ):
+                self.sync_with_scene(self._observed_scene)
+            elif self._observed_cameras and not self._is_syncing_with_scene and len(self._observed_cameras) == len(self._head_angles):
                 self._is_syncing_with_scene = True
                 try:
                     self.sync_cameras(self._observed_cameras)
@@ -779,7 +821,14 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
     def head_angles(self, new_head_angles: List[float]) -> None:
         self._head_angles = [float(angle_item) for angle_item in new_head_angles]
         self._gamma_cameras = max(1, len(self._head_angles))
-        if self._observed_cameras and not self._is_syncing_with_scene and len(self._observed_cameras) == len(self._head_angles):
+        if (
+            self._observed_scene is not None
+            and not self._is_syncing_with_scene
+            and len(self._observed_cameras) != self._gamma_cameras
+        ):
+            self.sync_with_scene(self._observed_scene)
+            self.changed.emit()
+        elif self._observed_cameras and not self._is_syncing_with_scene and len(self._observed_cameras) == len(self._head_angles):
             self._is_syncing_with_scene = True
             try:
                 self.sync_cameras(self._observed_cameras)
@@ -817,26 +866,28 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         """
         Прямая синхронизация списка детекторных камер со свойствами процедуры.
         """
+        eff_radius = self.radius
         for camera_index, camera_view_model in enumerate(camera_vms):
             angle_offset = self._head_angles[camera_index] if camera_index < len(self._head_angles) else (360.0 / max(1, len(camera_vms)) * camera_index)
-            axial_position_z = float(camera_view_model.local_matrix[2, 3]) if camera_view_model.local_matrix is not None else 0.0
             orbit_angle = (angle_offset % 360.0) if isinstance(camera_view_model.parent_vm, GantryViewModel) else ((self._start_angle + angle_offset) % 360.0)
 
+            axial_position_z = 0.0
             roll_angle = 0.0
             if camera_view_model.local_matrix is not None:
-                current_dir_z = camera_view_model.local_matrix[0:3, 2]
-                current_dir_y = camera_view_model.local_matrix[0:3, 1]
-                cos_roll = float(np.clip(np.dot(current_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
-                sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), current_dir_y), current_dir_z))
-                roll_angle = float(np.degrees(np.arctan2(sin_roll, cos_roll)))
+                _, _, axial_position_z, roll_angle = extract_orbit_parameters(
+                    camera_view_model.local_matrix,
+                    half_thickness=camera_view_model.half_thickness,
+                )
 
-            camera_view_model.local_matrix = compute_orbit_matrix(
-                radius=self._radius,
+            new_matrix = compute_orbit_matrix(
+                radius=eff_radius,
                 angle=orbit_angle,
                 z=axial_position_z,
                 half_thickness=camera_view_model.half_thickness,
                 roll=roll_angle,
             )
+            if camera_view_model.local_matrix is None or not np.allclose(new_matrix, camera_view_model.local_matrix, atol=1e-4):
+                camera_view_model.local_matrix = new_matrix
 
     def remove_variable(self, var_name: str) -> None:
         """Удаляет переменную, запрещая удаление стандартных переменных протокола Step-and-Shoot."""
@@ -980,6 +1031,10 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         if scene_view_model is None or scene_view_model.root_vm is None:
             return
 
+        self._observed_scene = scene_view_model
+        scene_view_model.node_added.connect(self._on_scene_node_added)
+        scene_view_model.node_removed.connect(self._on_scene_node_removed)
+
         all_nodes = scene_view_model.all_nodes()
         camera_view_models: List[GammaCameraViewModel] = [
             camera_node for camera_node in all_nodes
@@ -990,58 +1045,58 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         if not camera_view_models:
             return
 
-        # Поиск или создание узла станины GantryViewModel
-        gantry_view_models: List[GantryViewModel] = [
-            node for node in all_nodes
-            if isinstance(node, GantryViewModel)
-        ]
-        if gantry_view_models:
-            gantry_view_model = gantry_view_models[0]
-        else:
-            gantry_core = GantryNode(name="Gantry")
-            gantry_view_model = GantryViewModel(gantry_core)
-            scene_view_model.add_node(scene_view_model.root_vm, gantry_view_model)
-
-        # Привязка ссылки на процедуру в узле станины для кинематических ограничений
-        self._observed_scene = scene_view_model
-        scene_view_model.node_removed.connect(self._on_scene_node_removed)
-        gantry_view_model.procedure_vm = self
-        self._observed_gantry = gantry_view_model
-        gantry_view_model.property_changed.connect(self._on_gantry_property_changed)
-        gantry_view_model.child_added.connect(self._on_gantry_child_added)
-        gantry_view_model.child_removed.connect(self._on_gantry_child_removed)
-
-        # Монтирование всех существующих камер внутрь gantry_view_model
-        for existing_camera_view_model in camera_view_models:
-            if existing_camera_view_model.parent_vm is not gantry_view_model:
-                gantry_view_model.add_child(existing_camera_view_model)
-
-        had_created_cameras = False
-        needed_camera_count = self._gamma_cameras
-        if len(camera_view_models) < needed_camera_count:
-            had_created_cameras = True
-            for new_camera_index in range(len(camera_view_models), needed_camera_count):
-                camera_name = f"GammaCamera_{new_camera_index + 1}"
-                camera_core, slots_cfg = create_default_gamma_camera(name=camera_name)
-                created_camera_view_model = GammaCameraViewModel(camera_core, slots=slots_cfg)
-                scene_view_model.slots_registry[camera_core] = slots_cfg
-                scene_view_model.add_node(gantry_view_model, created_camera_view_model)
-                camera_view_models.append(created_camera_view_model)
-        elif len(camera_view_models) > needed_camera_count:
-            for extra_camera_view_model in camera_view_models[needed_camera_count:]:
-                scene_view_model.remove_node(extra_camera_view_model)
-            camera_view_models = camera_view_models[:needed_camera_count]
-
-        # Подключение слушателей изменений параметров для всех активных камер
-        for camera_view_model in camera_view_models:
-            if camera_view_model not in self._observed_cameras:
-                camera_view_model.property_changed.connect(self._on_camera_property_changed)
-                self._observed_cameras.append(camera_view_model)
-
-        # 2. Обновление угла станины и локальных параметров камер с подавлением эхо-сигналов
         self._is_syncing_with_scene = True
         try:
-            if had_created_cameras:
+            # Поиск или создание узла станины GantryViewModel
+            gantry_view_models: List[GantryViewModel] = [
+                node for node in all_nodes
+                if isinstance(node, GantryViewModel)
+            ]
+            if gantry_view_models:
+                gantry_view_model = gantry_view_models[0]
+            else:
+                gantry_core = GantryNode(name="Gantry")
+                gantry_view_model = GantryViewModel(gantry_core)
+                scene_view_model.add_node(scene_view_model.root_vm, gantry_view_model)
+
+            # Привязка ссылки на процедуру в узле станины для кинематических ограничений
+            gantry_view_model.procedure_vm = self
+            self._observed_gantry = gantry_view_model
+            gantry_view_model.property_changed.connect(self._on_gantry_property_changed)
+            gantry_view_model.child_added.connect(self._on_gantry_child_added)
+            gantry_view_model.child_removed.connect(self._on_gantry_child_removed)
+
+            # Монтирование всех существующих камер внутрь gantry_view_model
+            for existing_camera_view_model in camera_view_models:
+                if existing_camera_view_model.parent_vm is not gantry_view_model:
+                    gantry_view_model.add_child(existing_camera_view_model)
+
+            had_created_cameras = False
+            had_removed_cameras = False
+            needed_camera_count = self._gamma_cameras
+            if len(camera_view_models) < needed_camera_count:
+                had_created_cameras = True
+                for new_camera_index in range(len(camera_view_models), needed_camera_count):
+                    camera_name = f"GammaCamera_{new_camera_index + 1}"
+                    camera_core, slots_cfg = create_default_gamma_camera(name=camera_name)
+                    created_camera_view_model = GammaCameraViewModel(camera_core, slots=slots_cfg)
+                    scene_view_model.slots_registry[camera_core] = slots_cfg
+                    scene_view_model.add_node(gantry_view_model, created_camera_view_model)
+                    camera_view_models.append(created_camera_view_model)
+            elif len(camera_view_models) > needed_camera_count:
+                had_removed_cameras = True
+                for extra_camera_view_model in camera_view_models[needed_camera_count:]:
+                    scene_view_model.remove_node(extra_camera_view_model)
+                camera_view_models = camera_view_models[:needed_camera_count]
+
+            # Подключение слушателей изменений параметров для всех активных камер
+            for camera_view_model in camera_view_models:
+                if camera_view_model not in self._observed_cameras:
+                    camera_view_model.property_changed.connect(self._on_camera_property_changed)
+                    self._observed_cameras.append(camera_view_model)
+
+            # 2. Обновление угла станины и локальных параметров камер с подавлением эхо-сигналов
+            if had_created_cameras or had_removed_cameras:
                 gantry_view_model.gantry_angle = self._start_angle
                 self.sync_cameras(camera_view_models)
             elif camera_view_models:
@@ -1050,13 +1105,25 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
                 camera_position = first_camera_vm.local_matrix[0:3, 3]
                 distance_to_isocenter = float(np.hypot(camera_position[0], camera_position[1]))
                 if distance_to_isocenter > 1.0:
-                    self._radius = max(10.0, distance_to_isocenter - first_camera_vm.half_thickness)
+                    raw_r, _, _, _ = extract_orbit_parameters(
+                        first_camera_vm.local_matrix, half_thickness=first_camera_vm.half_thickness
+                    )
+                    extracted_r = max(10.0, raw_r)
+                    if not (
+                        isinstance(self._radius, list)
+                        and len(self._radius) > 0
+                        and abs(float(self._radius[0]) - extracted_r) <= 1e-4
+                    ):
+                        self._radius = extracted_r
+                    self._update_standard_variables(regenerate_angles=False)
 
                 extracted_head_angles: List[float] = []
                 for cam_vm in camera_view_models:
                     cam_pos = cam_vm.local_matrix[0:3, 3]
                     if float(np.hypot(cam_pos[0], cam_pos[1])) > 1e-3:
-                        cam_angle = float(np.degrees(np.arctan2(cam_pos[1], cam_pos[0])) % 360.0)
+                        _, cam_angle, _, _ = extract_orbit_parameters(
+                            cam_vm.local_matrix, half_thickness=cam_vm.half_thickness
+                        )
                     else:
                         cam_angle = 0.0
                     extracted_head_angles.append(cam_angle)

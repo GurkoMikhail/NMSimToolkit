@@ -43,7 +43,6 @@ class VolumeViewModel(NodeViewModel):
             self.core_node.material = database_setting.material_database[new_material_name]
         else:
             raise KeyError(f"Material '{new_material_name}' is not found in the material database.")
-        self.core_node.invalidate_geometry()
         self.color = get_material_rgba(new_material_name)
         self.property_changed.emit('material_name', new_material_name)
 

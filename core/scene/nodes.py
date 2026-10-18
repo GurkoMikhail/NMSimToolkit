@@ -16,8 +16,8 @@ class SpatialNode:
     """
     Базовый узел графа сцены, отвечающий за пространственные преобразования (матрицы 4x4).
 
-    Управляет локальными трансформациями, вычисляет и кэширует глобальную
-    и обратную глобальную матрицы преобразования.
+    Управляет локальными трансформациями и вычисляет глобальную матрицу преобразования
+    динамически по иерархии родительских узлов.
     """
 
     def __init__(self, name: Optional[str] = None, tags: Optional[Sequence[str]] = None) -> None:
@@ -25,8 +25,6 @@ class SpatialNode:
         self.tags: List[str] = [str(tag) for tag in tags] if tags is not None else []
         self.local_matrix: NDArray[Float] = np.eye(4, dtype=Float)
         self._parent: Optional[CompositeNode] = None
-        self._global_matrix_cache: Optional[NDArray[Float]] = None
-        self._inverse_global_matrix_cache: Optional[NDArray[Float]] = None
 
     @property
     def parent(self) -> Optional[CompositeNode]:
@@ -36,7 +34,6 @@ class SpatialNode:
     @parent.setter
     def parent(self, value: Optional[CompositeNode]) -> None:
         self._parent = value
-        self.invalidate_matrix_cache()
 
     @property
     def root(self) -> SpatialNode:
@@ -46,32 +43,12 @@ class SpatialNode:
             current = current.parent
         return current
 
-    def invalidate_geometry(self) -> None:
-        """Инвалидирует кэш скомпилированной геометрии вверх по иерархии родительских узлов."""
-        if self._parent is not None:
-            self._parent.invalidate_geometry()
-
-    def invalidate_matrix_cache(self) -> None:
-        """Сбрасывает кэш матриц трансформации узла."""
-        self._global_matrix_cache = None
-        self._inverse_global_matrix_cache = None
-
     @property
     def global_matrix(self) -> NDArray[Float]:
-        """Вычисляет и кэширует прямую глобальную матрицу трансформации."""
-        if self._global_matrix_cache is None:
-            if self.parent is not None:
-                self._global_matrix_cache = self.parent.global_matrix @ self.local_matrix
-            else:
-                self._global_matrix_cache = self.local_matrix
-        return self._global_matrix_cache
-
-    @property
-    def inverse_global_matrix(self) -> NDArray[Float]:
-        """Вычисляет и кэширует обратную глобальную матрицу трансформации."""
-        if self._inverse_global_matrix_cache is None:
-            self._inverse_global_matrix_cache = np.linalg.inv(self.global_matrix)
-        return self._inverse_global_matrix_cache
+        """Вычисляет прямую глобальную матрицу трансформации."""
+        if self.parent is not None:
+            return self.parent.global_matrix @ self.local_matrix
+        return self.local_matrix
 
     def translate(
         self,
@@ -80,14 +57,13 @@ class SpatialNode:
         z: Float | float = Float(0.0),
         in_local: bool = False,
     ) -> None:
-        """Перемещает узел, модифицируя local_matrix и сбрасывая кэш матриц."""
+        """Перемещает узел, модифицируя local_matrix."""
         translation = np.asarray([Float(x), Float(y), Float(z)], dtype=Float)
         translation_matrix = utils.compute_translation_matrix(translation)
         if in_local:
             self.local_matrix = self.local_matrix @ translation_matrix
         else:
             self.local_matrix = translation_matrix @ self.local_matrix
-        self.invalidate_matrix_cache()
 
     def rotate(
         self,
@@ -97,7 +73,7 @@ class SpatialNode:
         rotation_center: Sequence[Float | float] = (Float(0.0), Float(0.0), Float(0.0)),
         in_local: bool = False,
     ) -> None:
-        """Поворачивает узел вокруг заданного центра, модифицируя local_matrix и сбрасывая кэш матриц."""
+        """Поворачивает узел вокруг заданного центра, модифицируя local_matrix."""
         rotation_angles = np.asarray([Float(alpha), Float(beta), Float(gamma)], dtype=Float)
         rot_center = np.asarray([Float(coord) for coord in rotation_center], dtype=Float)
         rotation_matrix = utils.compute_translation_matrix(rot_center)
@@ -107,19 +83,20 @@ class SpatialNode:
             self.local_matrix = self.local_matrix @ rotation_matrix
         else:
             self.local_matrix = rotation_matrix @ self.local_matrix
-        self.invalidate_matrix_cache()
 
     def convert_to_local_position(self, position: NDArray[Float]) -> NDArray[Float]:
-        """Преобразует мировые координаты точек в локальную систему координат через inverse_global_matrix."""
+        """Преобразует мировые координаты точек в локальную систему координат."""
+        inv_global = np.linalg.inv(self.global_matrix)
         local_position = np.ones((position.shape[0], 4), dtype=position.dtype)
         local_position[:, :3] = position
-        np.matmul(local_position, self.inverse_global_matrix.T.astype(position.dtype), out=local_position)
+        np.matmul(local_position, inv_global.T.astype(position.dtype), out=local_position)
         return local_position[:, :3]
 
     def convert_to_local_direction(self, direction: NDArray[Float]) -> NDArray[Float]:
         """Преобразует мировые векторы направлений в локальную систему координат."""
+        inv_global = np.linalg.inv(self.global_matrix)
         direction_copy = np.copy(direction)
-        np.matmul(direction_copy, self.inverse_global_matrix[:3, :3].T.astype(direction_copy.dtype), out=direction_copy)
+        np.matmul(direction_copy, inv_global[:3, :3].T.astype(direction_copy.dtype), out=direction_copy)
         return direction_copy
 
     def convert_to_global_position(self, position: NDArray[Float]) -> NDArray[Float]:
@@ -145,14 +122,8 @@ class CompositeNode(SpatialNode):
         super().__init__(name=name, tags=tags)
         self.childs: List[SpatialNode] = []
 
-    def invalidate_matrix_cache(self) -> None:
-        """Рекурсивно сбрасывает кэш матриц трансформации вниз по дереву дочерних узлов."""
-        super().invalidate_matrix_cache()
-        for child in self.childs:
-            child.invalidate_matrix_cache()
-
     def add_child(self, child: SpatialNode) -> None:
-        """Добавляет дочерний узел с корректным переносом от прежнего родителя и инвалидацией кэшей."""
+        """Добавляет дочерний узел с корректным переносом от прежнего родителя."""
         if child.parent is self and child in self.childs:
             return
         if child.parent is not None:
@@ -160,14 +131,12 @@ class CompositeNode(SpatialNode):
         if child not in self.childs:
             self.childs.append(child)
         child.parent = self
-        self.invalidate_geometry()
 
     def remove_child(self, child: SpatialNode) -> None:
-        """Удаляет дочерний узел, сбрасывает ссылку на родителя и инвалидирует кэши геометрии и матриц."""
+        """Удаляет дочерний узел и сбрасывает ссылку на родителя."""
         if child in self.childs:
             self.childs.remove(child)
             child.parent = None
-            self.invalidate_geometry()
 
 
 __all__ = [

@@ -3,19 +3,30 @@
 и компонентного реестра InspectorRegistry.
 """
 import unittest
-from typing import Any, List
+from unittest.mock import patch
+from typing import Any, Dict, List
 import numpy as np
 import hepunits as units
 from core.other.typing_definitions import Float
 
 try:
-    from PySide6.QtWidgets import QApplication, QTableWidgetItem, QComboBox
+    from PySide6.QtWidgets import (
+        QApplication,
+        QComboBox,
+        QProgressBar,
+        QPushButton,
+        QRadioButton,
+        QTableWidgetItem,
+    )
     app = QApplication.instance()
     if app is None:
         app = QApplication(['-platform', 'offscreen'])
 except ImportError:
     app = None
 
+from core.config.exporter import SceneExporter
+from core.config.orchestrator import Orchestrator
+from core.config.template_binder import ConfigTemplateBinder
 from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.materials.materials import Material, MaterialArray
@@ -27,6 +38,7 @@ from core.source.sources import Source
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.scene.gantry_node import GantryNode
 
+from gui.controllers.orchestrator_session import OrchestratorSession
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
@@ -39,11 +51,14 @@ from gui.viewmodels.procedure_viewmodel import (
     StepAndShootProcedureViewModel,
     CustomSweepProcedureViewModel,
 )
+from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.data_handler_viewmodel import (
     DirectStreamHandlerViewModel,
     DataManagerViewModel,
 )
+from gui.views.procedure_selector_widget import ProcedureSelectorWidget
 from gui.views.property_inspector import PropertyInspector
+from gui.views.simulation_jobs_widget import SimulationJobsWidget
 from gui.views.inspectors import (
     BaseInspectorSection,
     CollimatorInspectorSection,
@@ -472,4 +487,215 @@ class TestInspectorSections(unittest.TestCase):
         # Внешнее изменение свойства gantry_angle во ViewModel обновляет спинбокс
         gantry_vm.gantry_angle = 135.0
         self.assertAlmostEqual(section.spin_gantry_angle.value(), 135.0)
+
+    def test_simulation_jobs_widget_in_place_update_preserves_widgets_and_preview(self) -> None:
+        """Проверка in-place обновления SimulationJobsWidget без пересоздания виджетов при неизменном числе задач."""
+        widget = SimulationJobsWidget()
+        initial_jobs: List[Dict[str, Any]] = [
+            {"gantry_angle": 0.0, "radius": 250.0},
+            {"gantry_angle": 90.0, "radius": 250.0},
+            {"gantry_angle": 180.0, "radius": 250.0},
+            {"gantry_angle": 270.0, "radius": 250.0},
+        ]
+        widget.set_jobs(initial_jobs)
+        self.assertEqual(widget.table.rowCount(), 4)
+
+        # Запоминаем ссылки на экземпляры виджетов и ячеек
+        id_items = [widget.table.item(row_idx, 0) for row_idx in range(4)]
+        radio_widgets = [widget.table.cellWidget(row_idx, 1) for row_idx in range(4)]
+        param_items = [widget.table.item(row_idx, 2) for row_idx in range(4)]
+        status_items = [widget.table.item(row_idx, 3) for row_idx in range(4)]
+        progress_bars = [widget.table.cellWidget(row_idx, 4) for row_idx in range(4)]
+        preview_buttons = [widget.table.cellWidget(row_idx, 5) for row_idx in range(4)]
+
+        # Переводим первую задачу в завершенное состояние перед обновлением
+        widget.on_job_finished(0)
+        assert status_items[0] is not None
+        self.assertEqual(status_items[0].text(), "Завершено")
+        assert isinstance(progress_bars[0], QProgressBar)
+        self.assertEqual(progress_bars[0].value(), 100)
+
+        # Обновляем задачи с тем же количеством (4), но новыми параметрами
+        updated_jobs: List[Dict[str, Any]] = [
+            {"gantry_angle": 15.0, "radius": 280.0},
+            {"gantry_angle": 105.0, "radius": 280.0},
+            {"gantry_angle": 195.0, "radius": 280.0},
+            {"gantry_angle": 285.0, "radius": 280.0},
+        ]
+        widget.set_jobs(updated_jobs)
+        self.assertEqual(widget.table.rowCount(), 4)
+
+        for row_idx in range(4):
+            self.assertIs(widget.table.item(row_idx, 0), id_items[row_idx])
+            self.assertIs(widget.table.cellWidget(row_idx, 1), radio_widgets[row_idx])
+            self.assertIs(widget.table.item(row_idx, 2), param_items[row_idx])
+            self.assertIs(widget.table.item(row_idx, 3), status_items[row_idx])
+            self.assertIs(widget.table.cellWidget(row_idx, 4), progress_bars[row_idx])
+            self.assertIs(widget.table.cellWidget(row_idx, 5), preview_buttons[row_idx])
+
+        assert param_items[0] is not None
+        self.assertIn("gantry_angle=15.0", param_items[0].text())
+        self.assertIn("radius=280.0", param_items[0].text())
+        self.assertEqual(status_items[0].text(), "В очереди")
+        self.assertEqual(progress_bars[0].value(), 0)
+
+        # Проверяем, что кнопка предпросмотра динамически читает актуальный словарь задачи
+        previewed_jobs: List[Dict[str, Any]] = []
+        widget.job_preview_requested.connect(previewed_jobs.append)
+        btn_row_2 = preview_buttons[2]
+        assert isinstance(btn_row_2, QPushButton)
+        btn_row_2.click()
+        self.assertEqual(len(previewed_jobs), 1)
+        self.assertEqual(previewed_jobs[0], {"gantry_angle": 195.0, "radius": 280.0})
+
+        # При изменении количества задач таблица корректно меняет число строк
+        widget.set_jobs(updated_jobs[:2])
+        self.assertEqual(widget.table.rowCount(), 2)
+        widget.set_jobs([])
+        self.assertEqual(widget.table.rowCount(), 0)
+
+    def test_procedure_section_zipped_table_in_place_update_preserves_items(self) -> None:
+        """Проверка in-place обновления ячеек tbl_zipped_variables без пересоздания QTableWidgetItem."""
+        proc_vm = StepAndShootProcedureViewModel(steps=4, radius=250.0, start_angle=0.0, end_angle=180.0)
+        section = ProcedureInspectorSection()
+        section.bind_viewmodel(proc_vm)
+
+        tbl = section.tbl_zipped_variables
+        self.assertEqual(tbl.rowCount(), 4)
+        self.assertEqual(tbl.columnCount(), 3)
+
+        initial_headers = [tbl.horizontalHeaderItem(col_idx) for col_idx in range(3)]
+        initial_cells = [
+            [tbl.item(row_idx, col_idx) for col_idx in range(3)]
+            for row_idx in range(4)
+        ]
+
+        # Меняем радиус и начальный угол при неизменном числе шагов и наборе столбцов
+        proc_vm.radius = 310.0
+        proc_vm.start_angle = 45.0
+        section.update_ui_from_vm()
+
+        for col_idx in range(3):
+            self.assertIs(tbl.horizontalHeaderItem(col_idx), initial_headers[col_idx])
+            for row_idx in range(4):
+                self.assertIs(tbl.item(row_idx, col_idx), initial_cells[row_idx][col_idx])
+
+        cell_angle_0 = tbl.item(0, 0)
+        cell_radius_0 = tbl.item(0, 1)
+        assert cell_angle_0 is not None and cell_radius_0 is not None
+        self.assertEqual(cell_angle_0.text(), "45.0000")
+        self.assertEqual(cell_radius_0.text(), "310.0000")
+
+        # При изменении числа шагов таблица корректно перестраивается под новую размерность
+        proc_vm.steps = 6
+        section.update_ui_from_vm()
+        self.assertEqual(tbl.rowCount(), 6)
+
+    def test_transform_section_update_transform_fields_skips_rebind(self) -> None:
+        """Проверка, что update_transform_fields обновляет значения спинбоксов без повторного вызова bind_variable/unbind."""
+        vol_node = Volume(geometry=Box(20.0, 20.0, 20.0), material=self.water_mat, name="MovingBox")
+        vol_vm = VolumeViewModel(vol_node)
+        vol_vm.bindings["translation.x"] = "table_x"
+
+        section = TransformInspectorSection()
+        section.bind_viewmodel(vol_vm)
+        self.assertEqual(section.spin_x.bound_variable, "table_x")
+
+        with (
+            patch.object(section.spin_x, "bind_variable") as mock_bind_x,
+            patch.object(section.spin_x, "unbind") as mock_unbind_x,
+            patch.object(section.spin_y, "bind_variable") as mock_bind_y,
+            patch.object(section.spin_y, "unbind") as mock_unbind_y,
+        ):
+            new_mat = np.eye(4, dtype=float)
+            new_mat[0, 3] = 42.5
+            new_mat[1, 3] = -18.0
+            new_mat[2, 3] = 95.0
+            vol_vm.local_matrix = new_mat
+
+            self.assertAlmostEqual(section.spin_x.value(), 42.5)
+            self.assertAlmostEqual(section.spin_y.value(), -18.0)
+            self.assertAlmostEqual(section.spin_z.value(), 95.0)
+            mock_bind_x.assert_not_called()
+            mock_unbind_x.assert_not_called()
+            mock_bind_y.assert_not_called()
+            mock_unbind_y.assert_not_called()
+
+        # При каскадном сигнале transform_changed без изменения самой local_matrix
+        # повторного вызова setValue не происходит
+        with patch.object(section.spin_x, "setValue") as mock_set_val_x:
+            vol_vm.transform_changed.emit()
+            mock_set_val_x.assert_not_called()
+
+        # Внешнее изменение реестра привязок синхронизирует привязки полей
+        vol_vm.bindings["translation.y"] = "table_y"
+        section.on_property_changed_externally("bindings", None)
+        self.assertEqual(section.spin_y.bound_variable, "table_y")
+
+    def test_orchestrator_session_generate_jobs_fast_without_scene_export(self) -> None:
+        """Проверка быстрой генерации задач в OrchestratorSession без холостого экспорта всей 3D-сцены."""
+        # 1. Изначально сцена пуста (без камер), но после первого generate_jobs
+        # добавление первой камеры в сцену автоматически подхватывается и монтирует гантри
+        root = CompositeNode(name="World")
+        scene_vm = SceneViewModel(root)
+        proc_vm = StepAndShootProcedureViewModel(steps=4, gamma_cameras=1, radius=250.0, start_angle=0.0, end_angle=180.0)
+        selector = ProcedureSelectorWidget(scene_vm=scene_vm)
+        selector.set_procedure(proc_vm)
+        session = OrchestratorSession(scene_vm=scene_vm, procedure_vm=proc_vm)
+
+        try:
+            initial_jobs = session.generate_jobs()
+            self.assertEqual(len(initial_jobs), 4)
+
+            # Добавляем первую камеру в сцену после того, как _observed_scene уже установлен
+            assert scene_vm.root_vm is not None
+            cam_node = GammaCameraNode(name="GammaCamera_1")
+            cam_vm = GammaCameraViewModel(cam_node)
+            scene_vm.add_node(scene_vm.root_vm, cam_vm)
+
+            gantry_nodes = [n for n in scene_vm.all_nodes() if isinstance(n, GantryViewModel)]
+            self.assertEqual(len(gantry_nodes), 1)
+            self.assertIs(cam_vm.parent_vm, gantry_nodes[0])
+
+            # 2. Изменение proc_vm.gamma_cameras динамически досоздает и удаляет камеры в сцене
+            proc_vm.gamma_cameras = 2
+            cameras_after_inc = [n for n in scene_vm.all_nodes() if isinstance(n, GammaCameraViewModel)]
+            self.assertEqual(len(cameras_after_inc), 2)
+
+            proc_vm.gamma_cameras = 1
+            cameras_after_dec = [n for n in scene_vm.all_nodes() if isinstance(n, GammaCameraViewModel)]
+            self.assertEqual(len(cameras_after_dec), 1)
+
+            # 3. При изменении параметров ракурса (start_angle, radius) ни OrchestratorSession,
+            # ни ProcedureSelectorWidget не выполняют экспорт сцены или повторный sync_with_scene
+            with (
+                patch.object(SceneExporter, "export_to_config") as mock_export,
+                patch.object(ConfigTemplateBinder, "apply_bindings") as mock_binder,
+                patch.object(Orchestrator, "__init__", return_value=None) as mock_orch_init,
+                patch.object(proc_vm, "sync_with_scene") as mock_sync,
+            ):
+                proc_vm.start_angle = 30.0
+                proc_vm.radius = 290.0
+                updated_jobs = session.generate_jobs()
+
+                mock_export.assert_not_called()
+                mock_binder.assert_not_called()
+                mock_orch_init.assert_not_called()
+                mock_sync.assert_not_called()
+
+                self.assertEqual(len(updated_jobs), 4)
+                self.assertAlmostEqual(updated_jobs[0]["gantry_angle"], float(np.radians(30.0)), places=5)
+                self.assertAlmostEqual(updated_jobs[0]["radius"], 290.0, places=4)
+
+            # 4. Массив индивидуальных радиусов по шагам (Body Contour) сохраняется при sync_with_scene
+            proc_vm.set_variable("radius", [290.0, 310.0, 330.0, 350.0], sweep_type="zipped")
+            proc_vm.sync_with_scene(scene_vm)
+            self.assertEqual(proc_vm.zipped_variables["radius"], [290.0, 310.0, 330.0, 350.0])
+        finally:
+            session.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
+
 

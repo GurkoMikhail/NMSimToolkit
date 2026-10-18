@@ -19,6 +19,7 @@ class TransformInspectorSection(BaseInspectorSection):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """Инициализирует секцию положения и ориентации узла."""
         self._is_transform_connected: bool = False
+        self._last_local_matrix: Optional[np.ndarray] = None
         super().__init__("Положение и ориентация", parent)
 
     def _init_ui(self) -> None:
@@ -90,6 +91,7 @@ class TransformInspectorSection(BaseInspectorSection):
         if self._is_transform_connected and isinstance(self._current_vm, NodeViewModel):
             self._current_vm.transform_changed.disconnect(self.update_transform_fields)
             self._is_transform_connected = False
+        self._last_local_matrix = None
         super().unbind()
         self.spin_x.unbind()
         self.spin_y.unbind()
@@ -99,16 +101,50 @@ class TransformInspectorSection(BaseInspectorSection):
         self.spin_rot_z.unbind()
 
     def update_ui_from_vm(self) -> None:
-        """Обновляет поля положения и ориентации из текущей модели представления."""
+        """Обновляет поля положения, ориентации и привязок из текущей модели представления."""
+        self._last_local_matrix = None
         self.update_transform_fields()
+        self._sync_transform_bindings()
 
     def on_property_changed_externally(self, prop_name: str, new_val: Any) -> None:
         """Обновляет привязки полей при внешнем изменении реестра привязок."""
         if prop_name == "bindings":
-            self.update_transform_fields()
+            self._sync_transform_bindings()
 
     def update_transform_fields(self) -> None:
-        """Синхронизация спинбоксов с матрицей трансформации и кинематическими ограничениями."""
+        """Синхронизация числовых значений спинбоксов с матрицей трансформации узла."""
+        if not isinstance(self._current_vm, NodeViewModel):
+            return
+
+        mat = self._current_vm.local_matrix
+        if not isinstance(mat, np.ndarray) or mat.shape != (4, 4) or not np.all(np.isfinite(mat)):
+            return
+
+        if self._last_local_matrix is not None and np.array_equal(mat, self._last_local_matrix):
+            return
+
+        old_state = self._is_updating_ui
+        self._is_updating_ui = True
+        try:
+            self.spin_x.setValue(float(mat[0, 3]))
+            self.spin_y.setValue(float(mat[1, 3]))
+            self.spin_z.setValue(float(mat[2, 3]))
+
+            rot_mat = mat[:3, :3]
+            det = float(np.linalg.det(rot_mat))
+            if abs(det - 1.0) < 1e-3 and np.allclose(rot_mat @ rot_mat.T, np.eye(3), atol=1e-3):
+                rotation_obj = Rotation.from_matrix(rot_mat)
+                euler = rotation_obj.as_euler("xyz", degrees=True)
+                if np.all(np.isfinite(euler)):
+                    self.spin_rot_x.setValue(float(euler[0]))
+                    self.spin_rot_y.setValue(float(euler[1]))
+                    self.spin_rot_z.setValue(float(euler[2]))
+            self._last_local_matrix = mat.copy()
+        finally:
+            self._is_updating_ui = old_state
+
+    def _sync_transform_bindings(self) -> None:
+        """Синхронизирует привязки пространственных трансформаций и доступность осей по констрейнтам."""
         if not isinstance(self._current_vm, NodeViewModel):
             return
 
@@ -136,23 +172,6 @@ class TransformInspectorSection(BaseInspectorSection):
         old_state = self._is_updating_ui
         self._is_updating_ui = True
         try:
-            mat = self._current_vm.local_matrix
-            if isinstance(mat, np.ndarray) and mat.shape == (4, 4) and np.all(np.isfinite(mat)):
-                self.spin_x.setValue(float(mat[0, 3]))
-                self.spin_y.setValue(float(mat[1, 3]))
-                self.spin_z.setValue(float(mat[2, 3]))
-
-                rot_mat = mat[:3, :3]
-                det = float(np.linalg.det(rot_mat))
-                if abs(det - 1.0) < 1e-3 and np.allclose(rot_mat @ rot_mat.T, np.eye(3), atol=1e-3):
-                    rotation_obj = Rotation.from_matrix(rot_mat)
-                    euler = rotation_obj.as_euler("xyz", degrees=True)
-                    if np.all(np.isfinite(euler)):
-                        self.spin_rot_x.setValue(float(euler[0]))
-                        self.spin_rot_y.setValue(float(euler[1]))
-                        self.spin_rot_z.setValue(float(euler[2]))
-
-            # Синхронизация биндингов пространственных трансформаций строго по данным модели
             bindings = self._current_vm.bindings
             if not bindings and self._scene_vm is not None and self._current_vm.core_node in self._scene_vm.bindings_registry:
                 bindings = self._scene_vm.bindings_registry[self._current_vm.core_node]

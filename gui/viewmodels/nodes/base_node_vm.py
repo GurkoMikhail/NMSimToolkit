@@ -21,6 +21,7 @@ class NodeViewModel(QObject):
     child_added = Signal(object)
     child_removed = Signal(object)
     transform_changed = Signal()
+    local_transform_changed = Signal()
 
     name = core_field('name', default='Node')
     visible = gui_field(default=True)
@@ -49,14 +50,17 @@ class NodeViewModel(QObject):
                 self.children.append(child_vm)
 
 
-    def _notify_transform_changed(self) -> None:
+    def _notify_transform_changed(self, _emit_local: bool = True) -> None:
         """
-        Испускает сигнал transform_changed для текущего узла и рекурсивно
-        уведомляет всех потомков, так как их эффективная global_matrix изменилась.
+        Испускает сигнал local_transform_changed только для самого изменившегося узла,
+        а сигнал transform_changed — для текущего узла и рекурсивно для всех потомков,
+        так как их эффективная global_matrix изменилась.
         """
+        if _emit_local:
+            self.local_transform_changed.emit()
         self.transform_changed.emit()
         for child in self.children:
-            child._notify_transform_changed()
+            child._notify_transform_changed(_emit_local=False)
 
     @property
     def node_type(self) -> str:
@@ -72,7 +76,6 @@ class NodeViewModel(QObject):
     @local_matrix.setter
     def local_matrix(self, matrix: np.ndarray) -> None:
         self.core_node.local_matrix = np.asarray(matrix, dtype=self.core_node.local_matrix.dtype)
-        self.core_node.invalidate_matrix_cache()
         self._notify_transform_changed()
         self.property_changed.emit('local_matrix', self.core_node.local_matrix)
 
@@ -239,7 +242,6 @@ class NodeViewModel(QObject):
                 child.parent_vm = None
                 if child.core_node.parent is self.core_node:
                     child.core_node.parent = None
-                    child.core_node.invalidate_matrix_cache()
                 child._notify_transform_changed()
                 self.child_removed.emit(child)
             self.children.clear()
@@ -257,7 +259,6 @@ class NodeViewModel(QObject):
                 self._child_kinematic_constraints.pop(id(child_view_model), None)
                 if child_view_model.core_node.parent is self.core_node:
                     child_view_model.core_node.parent = None
-                    child_view_model.core_node.invalidate_matrix_cache()
                 child_view_model._notify_transform_changed()
                 self.child_removed.emit(child_view_model)
 
@@ -278,6 +279,7 @@ class NodeViewModel(QObject):
                 existing_vm = current_view_models[id(child_core)]
                 if existing_vm.parent_vm is not self:
                     existing_vm.parent_vm = self
+                    existing_vm._notify_transform_changed()
                 existing_vm.sync_children_from_core()
 
         # Синхронизация порядка children с core_node.childs

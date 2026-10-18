@@ -111,8 +111,6 @@ class CollimatorViewModel(NodeViewModel):
         self.core_node.size = new_size_array
         if isinstance(self.core_node, DirectParallelCollimator):
             self._notify_children_geometry_changed()
-        else:
-            self.core_node.invalidate_geometry()
         self.property_changed.emit('size', new_size_array)
 
     @property
@@ -131,8 +129,6 @@ class CollimatorViewModel(NodeViewModel):
         self.core_node.hole_diameter = Float(numeric_diameter)
         if isinstance(self.core_node, DirectParallelCollimator):
             self._notify_children_geometry_changed()
-        else:
-            self.core_node.invalidate_geometry()
         self.property_changed.emit('hole_diameter', numeric_diameter)
         self.property_changed.emit('hole_width', numeric_diameter)
 
@@ -148,7 +144,6 @@ class CollimatorViewModel(NodeViewModel):
         numeric_width = float(width_value)
         if isinstance(self.core_node, ParametricParallelCollimator):
             self.core_node.hole_width = Float(numeric_width)
-            self.core_node.invalidate_geometry()
         else:
             self.core_node.hole_diameter = Float(numeric_width)
             self._notify_children_geometry_changed()
@@ -166,8 +161,6 @@ class CollimatorViewModel(NodeViewModel):
         self.core_node.septa = Float(numeric_septa)
         if isinstance(self.core_node, DirectParallelCollimator):
             self._notify_children_geometry_changed()
-        else:
-            self.core_node.invalidate_geometry()
         self.property_changed.emit('septa', numeric_septa)
 
     @property
@@ -182,8 +175,6 @@ class CollimatorViewModel(NodeViewModel):
         self.core_node.hole_shape = resolved_shape
         if isinstance(self.core_node, DirectParallelCollimator):
             self._notify_children_geometry_changed()
-        else:
-            self.core_node.invalidate_geometry()
         self.property_changed.emit('hole_shape', self.core_node.hole_shape)
 
     @property
@@ -206,8 +197,6 @@ class CollimatorViewModel(NodeViewModel):
             for child_vm in self.children:
                 if child_vm.core_node is self.core_node.lead_body:
                     child_vm.property_changed.emit('material_name', new_material_name)
-        else:
-            self.core_node.invalidate_geometry()
         self.property_changed.emit('material_name', new_material_name)
 
     @property

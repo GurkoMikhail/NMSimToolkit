@@ -50,7 +50,7 @@ from gui.viewport_3d.kinematic_constraints import (
     SpectOrbitKinematicConstraint,
 )
 
-from core.geometry import compute_spect_poses, compute_orbit_matrix
+from core.geometry import compute_spect_poses, compute_orbit_matrix, extract_orbit_parameters
 from core.geometry.geometries import PeriodicHexPrism
 from core.geometry.direct_collimators import DirectParallelCollimator
 from core.geometry.volumes import Volume
@@ -304,8 +304,12 @@ class SceneViewportController(QObject):
         """
         Добавление или обновление геометрического актора узла в 3D вьюпорте.
         """
-        actor_name = f"mesh_{id(node_vm)}"
-        holes_actor_name = f"holes_{id(node_vm)}"
+        node_id = id(node_vm)
+        parent_id = id(node_vm.parent_vm) if node_vm.parent_vm is not None else None
+        self.viewport.set_node_local_transform(node_id, node_vm.local_matrix, parent_id=parent_id)
+
+        actor_name = f"mesh_{node_id}"
+        holes_actor_name = f"holes_{node_id}"
 
         if (
             isinstance(node_vm, VolumeViewModel)
@@ -334,10 +338,11 @@ class SceneViewportController(QObject):
             self.collimator_hole_renderer.render_holes(
                 actor_name=holes_actor_name,
                 geometry=prism_geometry,
-                global_matrix=node_vm.global_matrix,
+                global_matrix=None,
                 hole_color=hole_rgb,
                 hole_opacity=hole_opacity,
             )
+            self.viewport.attach_actor_to_node(holes_actor_name, node_id)
 
         elif isinstance(node_vm, CollimatorViewModel) and isinstance(node_vm.core_node, DirectParallelCollimator):
             # Составной узел прямого коллиматора: рекурсивно обновляем акторы его дочерних узлов (lead_body и channels)
@@ -386,7 +391,7 @@ class SceneViewportController(QObject):
                 )
 
             self.viewport.add_mesh_actor(actor_name, box, color=rgb_color, opacity=calculated_opacity)
-            self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
+            self.viewport.attach_actor_to_node(actor_name, node_id)
 
             if self._is_node_selected_or_child(node_vm):
                 if isinstance(self.viewport, ISceneViewport):
@@ -407,13 +412,14 @@ class SceneViewportController(QObject):
                 self.collimator_hole_renderer.render_holes(
                     actor_name=holes_actor_name,
                     geometry=node_vm.size,
-                    global_matrix=node_vm.global_matrix,
+                    global_matrix=None,
                     hole_diameter=node_vm.hole_diameter,
                     septa=node_vm.septa,
                     hole_shape=node_vm.hole_shape,
                     hole_color=hole_rgb,
                     hole_opacity=hole_opacity,
                 )
+                self.viewport.attach_actor_to_node(holes_actor_name, node_id)
 
         elif isinstance(node_vm, VoxelVolumeViewModel):
             core_voxel_node = node_vm.core_node
@@ -451,7 +457,7 @@ class SceneViewportController(QObject):
                         preset=node_vm.opacity_preset
                     )
                 self.voxel_renderer.set_lod_factor(float(node_vm.lod_factor))
-                self.viewport.update_actor_transform(self.voxel_renderer.actor_name, node_vm.global_matrix)
+                self.viewport.attach_actor_to_node(self.voxel_renderer.actor_name, node_id)
 
                 if self._is_node_selected_or_child(node_vm):
                     self._create_or_update_voxel_selection_box(node_vm)
@@ -483,7 +489,7 @@ class SceneViewportController(QObject):
                     )
                 )
                 self.viewport.add_mesh_actor(actor_name, box, color=(1.0, 0.8, 0.1), opacity=0.35, style='wireframe')
-            self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
+            self.viewport.attach_actor_to_node(actor_name, node_id)
 
         elif isinstance(node_vm, DoseGridViewModel):
             raw_grid_size = node_vm.size
@@ -515,7 +521,7 @@ class SceneViewportController(QObject):
                 style='wireframe',
                 line_width=2.0
             )
-            self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
+            self.viewport.attach_actor_to_node(actor_name, node_id)
 
         elif isinstance(node_vm, PetScannerViewModel):
             self.pet_manipulator.set_parameters(
@@ -525,10 +531,9 @@ class SceneViewportController(QObject):
             )
             self.viewport.update_actor_transform(self.pet_manipulator.actor_name, node_vm.global_matrix)
 
-        # Подписка на изменение матрицы и свойств узла для инкрементального обновления
-        node_id = id(node_vm)
+        # Подписка на изменение локальной матрицы и свойств узла для инкрементального обновления
         if node_id not in self._node_connections:
-            conn1 = node_vm.transform_changed.connect(
+            conn1 = node_vm.local_transform_changed.connect(
                 lambda observed_node_vm=node_vm: self.on_node_transform_changed(observed_node_vm)
             )
             conn2 = node_vm.property_changed.connect(
@@ -549,6 +554,7 @@ class SceneViewportController(QObject):
                     pass
         if self.collimator_hole_renderer is not None:
             self.collimator_hole_renderer.remove_actor(f"holes_{node_id}")
+        self.viewport.remove_node_transform(node_id)
 
     def disconnect_all_nodes(self) -> None:
         """
@@ -560,28 +566,47 @@ class SceneViewportController(QObject):
         if self.transform_gizmo is not None:
             self.transform_gizmo.detach()
 
-    def on_node_transform_changed(self, node_vm: NodeViewModel) -> None:
+    @staticmethod
+    def _is_ancestor_or_self(ancestor_vm: NodeViewModel, target_vm: Optional[NodeViewModel]) -> bool:
+        """Проверяет, является ли ancestor_vm самим узлом target_vm или его предком в иерархии."""
+        current: Optional[NodeViewModel] = target_vm
+        while current is not None:
+            if current is ancestor_vm:
+                return True
+            current = current.parent_vm
+        return False
+
+    def _sync_non_hierarchical_descendants(self, node_vm: NodeViewModel) -> None:
         """
-        Инкрементальное обновление матрицы трансформации актора без пересоздания меша.
+        Синхронизирует сервисные рендереры (PetScannerViewModel, DoseGridViewModel),
+        не использующие VTK SetUserTransform, если они сами или их родитель изменили трансформацию.
         """
-        actor_name = f"mesh_{id(node_vm)}"
-        self.viewport.update_actor_transform(actor_name, node_vm.global_matrix)
-        holes_actor_name = f"holes_{id(node_vm)}"
-        if self.viewport.get_actor(holes_actor_name) is not None:
-            self.viewport.update_actor_transform(holes_actor_name, node_vm.global_matrix)
-        if isinstance(node_vm, VoxelVolumeViewModel) and self.voxel_renderer is not None:
-            self.viewport.update_actor_transform(self.voxel_renderer.actor_name, node_vm.global_matrix)
-            box_actor_name = f"selection_box_{id(node_vm)}"
-            if self.viewport.get_actor(box_actor_name) is not None:
-                self.viewport.update_actor_transform(box_actor_name, node_vm.global_matrix)
-        elif isinstance(node_vm, PetScannerViewModel) and self.pet_manipulator is not None:
+        if isinstance(node_vm, PetScannerViewModel) and self.pet_manipulator is not None:
             self.viewport.update_actor_transform(self.pet_manipulator.actor_name, node_vm.global_matrix)
         elif isinstance(node_vm, DoseGridViewModel) and self.dose_renderer is not None:
             self.dose_renderer.update_grid_transform(node_vm.name, node_vm.global_matrix)
             if "default" in self.dose_renderer.entries and len(self.dose_renderer.entries) == 1:
                 self.dose_renderer.update_grid_transform("default", node_vm.global_matrix)
-        if self.transform_gizmo is not None and self.transform_gizmo.target_node is node_vm:
-            self.transform_gizmo.update_visuals()
+        for child_vm in node_vm.children:
+            self._sync_non_hierarchical_descendants(child_vm)
+
+    def on_node_transform_changed(self, node_vm: NodeViewModel) -> None:
+        """
+        Инкрементальное обновление локальной матрицы трансформации узла в C++ иерархии vtkTransform.
+        Все дочерние акторы обновляют свои мировые координаты автоматически на стороне VTK.
+        """
+        node_id = id(node_vm)
+        parent_id = id(node_vm.parent_vm) if node_vm.parent_vm is not None else None
+        self.viewport.set_node_local_transform(node_id, node_vm.local_matrix, parent_id=parent_id)
+
+        self._sync_non_hierarchical_descendants(node_vm)
+
+        if (
+            self.transform_gizmo is not None
+            and not self.transform_gizmo.is_dragging
+            and self._is_ancestor_or_self(node_vm, self.transform_gizmo.target_node)
+        ):
+            self.transform_gizmo.update_visuals(render=False)
 
     def on_node_property_changed(self, node_vm: NodeViewModel, prop_name: str, value: Any) -> None:
         """
@@ -596,7 +621,17 @@ class SceneViewportController(QObject):
 
         if prop_name in ('size', 'color', 'voxel_size', 'is_point_source', 'file_path', 'dose_voxel_size', 'is_active', 'material_name', 'is_sensitive_detector', 'hole_diameter', 'hole_width', 'septa', 'hole_shape', 'hole_material_name'):
             self.add_or_update_node_actor(node_vm)
-            self.viewport.render()
+            self.viewport.request_render()
+        elif prop_name == 'half_thickness' and isinstance(node_vm, GammaCameraViewModel):
+            for sub_vm in (
+                node_vm.detector_box_vm,
+                node_vm.collimator_vm,
+                node_vm.crystal_vm,
+                node_vm.glass_backend_vm,
+            ):
+                if sub_vm is not None:
+                    sub_parent_id = id(sub_vm.parent_vm) if sub_vm.parent_vm is not None else None
+                    self.viewport.set_node_local_transform(id(sub_vm), sub_vm.local_matrix, parent_id=sub_parent_id)
         elif prop_name in ('diameter', 'axial_length', 'num_sectors') and isinstance(node_vm, PetScannerViewModel):
             self.pet_manipulator.set_parameters(
                 diameter=float(node_vm.diameter),
@@ -619,7 +654,7 @@ class SceneViewportController(QObject):
                         energy=self._xray_energy,
                         characteristic_length=voxel_characteristic_length,
                     )
-                    self.viewport.render()
+                    self.viewport.request_render()
         elif prop_name == 'colormap_name' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
                 if str(value) == 'Physical Materials' or self._xray_mode:
@@ -644,23 +679,23 @@ class SceneViewportController(QObject):
                         threshold=float(node_vm.opacity_threshold),
                         preset=node_vm.opacity_preset
                     )
-                self.viewport.render()
+                self.viewport.request_render()
         elif prop_name == 'opacity_threshold' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
                 self.voxel_renderer.set_opacity_threshold(float(value))
-                self.viewport.render()
+                self.viewport.request_render()
         elif prop_name == 'max_opacity' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
                 self.voxel_renderer.set_max_opacity(float(value))
-                self.viewport.render()
+                self.viewport.request_render()
         elif prop_name == 'opacity_preset' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
                 self.voxel_renderer.set_opacity_preset(str(value))
-                self.viewport.render()
+                self.viewport.request_render()
         elif prop_name == 'lod_factor' and isinstance(node_vm, VoxelVolumeViewModel):
             if self.voxel_renderer is not None:
                 self.voxel_renderer.set_lod_factor(float(value))
-                self.viewport.render()
+                self.viewport.request_render()
 
     def on_node_added(self, node_vm: NodeViewModel) -> None:
         """Точечное добавление нового актора в сцену (рекурсивно для дочерних узлов)."""
@@ -729,13 +764,10 @@ class SceneViewportController(QObject):
 
             # Обновление направляющих манипуляторов ОФЭКТ/ПЭТ
             if isinstance(current_target, GammaCameraViewModel) and isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
-                matrix = current_target.local_matrix
-                pos_x = float(matrix[0, 3])
-                pos_y = float(matrix[1, 3])
-                pos_z = float(matrix[2, 3])
-                center_radius = float(np.hypot(pos_x, pos_y))
-                camera_radius = max(0.0, center_radius - current_target.half_thickness)
-                camera_angle = float(np.degrees(np.arctan2(pos_y, pos_x))) % 360.0
+                raw_r, camera_angle, pos_z, _ = extract_orbit_parameters(
+                    current_target.local_matrix, half_thickness=current_target.half_thickness
+                )
+                camera_radius = max(0.0, raw_r)
                 self.spect_manipulator.half_thickness = current_target.half_thickness
                 self.spect_manipulator.set_orbit_parameters(
                     camera_radius,
@@ -836,7 +868,10 @@ class SceneViewportController(QObject):
             style='wireframe',
             line_width=SELECTED_EDGE_HIGHLIGHT_WIDTH,
         )
-        self.viewport.update_actor_transform(box_actor_name, node_vm.global_matrix)
+        node_id = id(node_vm)
+        parent_id = id(node_vm.parent_vm) if node_vm.parent_vm is not None else None
+        self.viewport.set_node_local_transform(node_id, node_vm.local_matrix, parent_id=parent_id)
+        self.viewport.attach_actor_to_node(box_actor_name, node_id)
 
     def _remove_voxel_selection_box(self, node_vm: Optional[NodeViewModel] = None) -> None:
         """
@@ -931,13 +966,14 @@ class SceneViewportController(QObject):
         # 3. Визуальные направляющие ОФЭКТ (круговая орбита):
         if isinstance(selected_node_vm, GammaCameraViewModel) and isinstance(self.procedure_vm, StepAndShootProcedureViewModel):
             self.spect_manipulator.half_thickness = selected_node_vm.half_thickness
-            pos = selected_node_vm.local_matrix[0:3, 3]
-            cam_radius = max(10.0, float(np.hypot(pos[0], pos[1])) - selected_node_vm.half_thickness)
-            cam_angle = float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
+            raw_r, cam_angle, cam_z, _ = extract_orbit_parameters(
+                selected_node_vm.local_matrix, half_thickness=selected_node_vm.half_thickness
+            )
+            cam_radius = max(10.0, raw_r)
             self.spect_manipulator.set_orbit_parameters(
                 cam_radius,
                 cam_angle,
-                z=float(pos[2]),
+                z=cam_z,
                 render=False,
                 emit_signal=False,
             )
@@ -967,20 +1003,18 @@ class SceneViewportController(QObject):
         matrix = camera_vm.local_matrix
         if matrix is None:
             return 0.0
-        current_dir_z = matrix[0:3, 2]
-        current_dir_y = matrix[0:3, 1]
-        cos_roll = float(np.clip(np.dot(current_dir_y, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
-        sin_roll = float(np.dot(np.cross(np.array([0.0, 0.0, 1.0]), current_dir_y), current_dir_z))
-        return float(np.degrees(np.arctan2(sin_roll, cos_roll)))
+        _, _, _, roll = extract_orbit_parameters(matrix, half_thickness=camera_vm.half_thickness)
+        return roll
 
     def on_spect_manipulator_changed(self, radius: float, angle: float, z_pos: float) -> None:
         """Обработка перемещения ОФЭКТ-манипулятора в 3D-пространстве."""
         if self.scene_vm is not None and isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
             camera_vm = self.scene_vm.selected_node
-            roll_angle = self._extract_camera_roll(camera_vm)
+            _, local_angle, _, roll_angle = extract_orbit_parameters(
+                camera_vm.local_matrix, half_thickness=camera_vm.half_thickness
+            )
             if isinstance(camera_vm.parent_vm, GantryViewModel):
                 camera_vm.parent_vm.gantry_angle = angle
-                local_angle = float(np.degrees(np.arctan2(camera_vm.local_matrix[1, 3], camera_vm.local_matrix[0, 3])) % 360.0)
                 camera_vm.local_matrix = compute_orbit_matrix(
                     radius=radius,
                     angle=local_angle,
@@ -1042,6 +1076,7 @@ class SceneViewportController(QObject):
         previous_sync_state = active_procedure._is_syncing_with_scene if active_procedure is not None else False
         if active_procedure is not None:
             active_procedure._is_syncing_with_scene = True
+        self.viewport.begin_update()
         try:
             raw_gantry_angle = context.get("gantry_angle", context.get("current_angle", context.get("head_0_angle")))
             target_gantry_angle: Optional[float] = (
@@ -1055,16 +1090,20 @@ class SceneViewportController(QObject):
                     gantry_vm.gantry_angle = target_gantry_angle
 
             for camera_index, camera_view_model in enumerate(camera_vms):
+                z_pos = 0.0
+                roll_angle = 0.0
+                local_cam_angle = 0.0
+                if camera_view_model.local_matrix is not None:
+                    _, local_cam_angle, z_pos, roll_angle = extract_orbit_parameters(
+                        camera_view_model.local_matrix, half_thickness=camera_view_model.half_thickness
+                    )
+
                 if isinstance(active_procedure, StepAndShootProcedureViewModel) and camera_index < len(active_procedure.head_angles):
                     head_offset = float(active_procedure.head_angles[camera_index])
                 elif len(camera_vms) > 1:
                     head_offset = (360.0 / len(camera_vms)) * camera_index
                 else:
-                    local_pos = camera_view_model.local_matrix[0:3, 3]
-                    head_offset = float(np.degrees(np.arctan2(local_pos[1], local_pos[0])) % 360.0)
-
-                z_pos = float(camera_view_model.local_matrix[2, 3]) if camera_view_model.local_matrix is not None else 0.0
-                roll_angle = self._extract_camera_roll(camera_view_model)
+                    head_offset = local_cam_angle
 
                 if isinstance(camera_view_model.parent_vm, GantryViewModel):
                     # Камера смонтирована на станине: поворот станины уже обновил global_matrix.
@@ -1103,23 +1142,26 @@ class SceneViewportController(QObject):
 
             if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
                 selected_camera = self.scene_vm.selected_node
-                pos = selected_camera.local_matrix[0:3, 3]
-                cam_radius = max(10.0, float(np.hypot(pos[0], pos[1])) - selected_camera.half_thickness)
+                raw_r, local_angle, cam_z, _ = extract_orbit_parameters(
+                    selected_camera.local_matrix, half_thickness=selected_camera.half_thickness
+                )
+                cam_radius = max(10.0, raw_r)
                 cam_angle = (
                     selected_camera.parent_vm.gantry_angle
                     if isinstance(selected_camera.parent_vm, GantryViewModel)
-                    else float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
+                    else local_angle
                 )
                 self.spect_manipulator.set_orbit_parameters(
                     cam_radius,
                     cam_angle,
-                    z=float(pos[2]),
+                    z=cam_z,
                     render=False,
                     emit_signal=False
                 )
 
-            self.viewport.render()
+            self.viewport.request_render()
         finally:
+            self.viewport.end_update()
             if active_procedure is not None:
                 active_procedure._is_syncing_with_scene = previous_sync_state
 
@@ -1147,6 +1189,7 @@ class SceneViewportController(QObject):
         if isinstance(active_procedure, StepAndShootProcedureViewModel):
             previous_sync_state = active_procedure._is_syncing_with_scene
             active_procedure._is_syncing_with_scene = True
+            self.viewport.begin_update()
             try:
                 radius = float(active_procedure.radius)
                 calculated_poses = compute_spect_poses(
@@ -1172,8 +1215,12 @@ class SceneViewportController(QObject):
                         if camera_index < len(active_procedure.head_angles)
                         else (360.0 / max(1, len(camera_vms))) * camera_index
                     )
-                    z_pos = float(cam_vm.local_matrix[2, 3]) if cam_vm.local_matrix is not None else 0.0
-                    roll_angle = self._extract_camera_roll(cam_vm)
+                    z_pos = 0.0
+                    roll_angle = 0.0
+                    if cam_vm.local_matrix is not None:
+                        _, _, z_pos, roll_angle = extract_orbit_parameters(
+                            cam_vm.local_matrix, half_thickness=cam_vm.half_thickness
+                        )
 
                     if isinstance(cam_vm.parent_vm, GantryViewModel):
                         cam_vm.local_matrix = compute_orbit_matrix(
@@ -1195,23 +1242,26 @@ class SceneViewportController(QObject):
 
                 if isinstance(self.scene_vm.selected_node, GammaCameraViewModel):
                     selected_camera = self.scene_vm.selected_node
-                    pos = selected_camera.local_matrix[0:3, 3]
-                    cam_radius = max(10.0, float(np.hypot(pos[0], pos[1])) - selected_camera.half_thickness)
+                    raw_r, local_angle, cam_z, _ = extract_orbit_parameters(
+                        selected_camera.local_matrix, half_thickness=selected_camera.half_thickness
+                    )
+                    cam_radius = max(10.0, raw_r)
                     cam_angle = (
                         selected_camera.parent_vm.gantry_angle
                         if isinstance(selected_camera.parent_vm, GantryViewModel)
-                        else float(np.degrees(np.arctan2(pos[1], pos[0])) % 360.0)
+                        else local_angle
                     )
                     self.spect_manipulator.set_orbit_parameters(
                         cam_radius,
                         cam_angle,
-                        z=float(pos[2]),
+                        z=cam_z,
                         render=False,
                         emit_signal=False
                     )
 
-                self.viewport.render()
+                self.viewport.request_render()
             finally:
+                self.viewport.end_update()
                 active_procedure._is_syncing_with_scene = previous_sync_state
         return base_angle
 

@@ -1,5 +1,6 @@
+from contextlib import contextmanager
 import logging
-from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable
+from typing import Any, Dict, Iterator, List, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable
 
 import numpy as np
 import vtk
@@ -47,9 +48,26 @@ class ISceneViewport(Protocol):
 
     def update_actor_transform(self, name: str, matrix: np.ndarray) -> bool: ...
 
+    def set_node_local_transform(
+        self,
+        node_id: int,
+        local_matrix: np.ndarray,
+        parent_id: Optional[int] = None,
+    ) -> Any: ...
+
+    def attach_actor_to_node(self, actor_name: str, node_id: int) -> bool: ...
+
+    def remove_node_transform(self, node_id: int) -> None: ...
+
     def remove_actor(self, name: str) -> None: ...
 
     def render(self) -> None: ...
+
+    def request_render(self) -> None: ...
+
+    def begin_update(self) -> None: ...
+
+    def end_update(self) -> None: ...
 
     def get_actor(self, name: str) -> Optional[Any]: ...
 
@@ -80,7 +98,14 @@ class VTKViewport(QWidget):
 
         self.plotter: Optional[Any] = None
         self._actors: Dict[str, Any] = {}
+        self._node_transforms: Dict[int, vtk.vtkTransform] = {}
         self._is_interacting: bool = False
+        self._update_depth: int = 0
+        self._render_pending: bool = False
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.setInterval(0)
+        self._render_timer.timeout.connect(self._flush_pending_render)
 
         self._init_plotter()
 
@@ -139,6 +164,131 @@ class VTKViewport(QWidget):
             return self.plotter.render_window.GetInteractor()
         return None
 
+    def begin_update(self) -> None:
+        """
+        Включает пакетный режим обновления сцены, откладывая выполнение отрисовки
+        до парного вызова end_update().
+        """
+        self._update_depth += 1
+
+    def end_update(self) -> None:
+        """
+        Завершает пакетный режим обновления сцены и однократно выполняет накопленный рендер.
+        """
+        if self._update_depth > 0:
+            self._update_depth -= 1
+        if self._update_depth == 0 and self._render_pending:
+            self._flush_pending_render()
+
+    @contextmanager
+    def batch_update(self) -> Iterator[None]:
+        """
+        Контекстный менеджер пакетного обновления акторов и трансформаций с единичным рендером.
+        """
+        self.begin_update()
+        try:
+            yield
+        finally:
+            self.end_update()
+
+    def __enter__(self) -> 'VTKViewport':
+        self.begin_update()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.end_update()
+
+    def request_render(self) -> None:
+        """
+        Запрашивает коалесцирующую перерисовку сцены через одноразовый QTimer(0).
+        Все запросы внутри одного тика событий гарантированно схлопываются в один вызов render().
+        """
+        if self._is_interacting:
+            return
+        self._render_pending = True
+        if self._update_depth > 0:
+            return
+        if not self._render_timer.isActive():
+            self._render_timer.start(0)
+
+    def _flush_pending_render(self) -> None:
+        """
+        Выполняет отложенный рендер по срабатыванию коалесцирующего таймера или завершению пакета.
+        """
+        if self._render_timer.isActive():
+            self._render_timer.stop()
+        if not self._render_pending:
+            return
+        self._render_pending = False
+        self.render()
+
+    def set_node_local_transform(
+        self,
+        node_id: int,
+        local_matrix: np.ndarray,
+        parent_id: Optional[int] = None,
+    ) -> vtk.vtkTransform:
+        """
+        Создает или обновляет C++ объект vtkTransform для узла графа сцены и связывает
+        его с родительским vtkTransform через SetInput для автоматического каскадного пересчета в VTK.
+        """
+        node_transform = self._node_transforms.get(node_id)
+        if node_transform is None:
+            node_transform = vtk.vtkTransform()
+            self._node_transforms[node_id] = node_transform
+
+        mat_vtk = vtk.vtkMatrix4x4()
+        mat_vtk.DeepCopy(np.asarray(local_matrix, dtype=float).ravel())
+        node_transform.SetMatrix(mat_vtk)
+
+        if parent_id is not None:
+            parent_transform = self._node_transforms.get(parent_id)
+            if parent_transform is None:
+                parent_transform = vtk.vtkTransform()
+                self._node_transforms[parent_id] = parent_transform
+            if node_transform.GetInput() is not parent_transform:
+                node_transform.SetInput(parent_transform)
+        else:
+            if node_transform.GetInput() is not None:
+                node_transform.SetInput(None)
+
+        self.request_render()
+        return node_transform
+
+    def attach_actor_to_node(self, actor_name: str, node_id: int) -> bool:
+        """
+        Привязывает иерархический VTK-актор узла сцены к его C++ объекту vtkTransform через SetUserTransform.
+        """
+        actor = self._actors.get(actor_name)
+        node_transform = self._node_transforms.get(node_id)
+        if actor is None or node_transform is None:
+            return False
+        try:
+            if actor.GetUserTransform() is not node_transform:
+                actor.SetUserTransform(node_transform)
+            self.request_render()
+            return True
+        except (RuntimeError, ValueError, TypeError, AttributeError) as attach_error:
+            _logger.error(f"Ошибка привязки актора {actor_name} к узлу {node_id}: {attach_error}")
+            return False
+
+    def get_node_transform(self, node_id: int) -> Optional[vtk.vtkTransform]:
+        """
+        Возвращает зарегистрированный C++ объект vtkTransform для указанного идентификатора узла.
+        """
+        return self._node_transforms.get(node_id)
+
+    def remove_node_transform(self, node_id: int) -> None:
+        """
+        Удаляет C++ объект vtkTransform узла из реестра при удалении узла со сцены
+        и отвязывает зависящие от него дочерние трансформации.
+        """
+        removed_transform = self._node_transforms.pop(node_id, None)
+        if removed_transform is not None:
+            for child_transform in self._node_transforms.values():
+                if child_transform.GetInput() is removed_transform:
+                    child_transform.SetInput(None)
+
     def add_mesh_actor(
         self,
         name: str,
@@ -165,6 +315,7 @@ class VTKViewport(QWidget):
                 'name': name,
                 'rgb': is_rgb,
                 'reset_camera': kwargs.pop('reset_camera', False),
+                'render': kwargs.pop('render', False),
             }
             if not is_rgb and color is not None:
                 mesh_kwargs['color'] = color
@@ -172,6 +323,7 @@ class VTKViewport(QWidget):
 
             actor = self.plotter.add_mesh(mesh, **mesh_kwargs)
             self._actors[name] = actor
+            self.request_render()
             return actor
         except (RuntimeError, ValueError, TypeError) as mesh_error:
             _logger.error(f"Ошибка добавления меша {name}: {mesh_error}")
@@ -186,8 +338,21 @@ class VTKViewport(QWidget):
 
         self.remove_actor(name)
         try:
-            self.plotter.add_actor(actor, reset_camera=False, name=name)
+            is_pickable = bool(actor.GetPickable()) if isinstance(actor, vtk.vtkProp) else True
+            try:
+                self.plotter.add_actor(
+                    actor,
+                    reset_camera=False,
+                    name=name,
+                    pickable=is_pickable,
+                    render=False,
+                )
+            except TypeError:
+                self.plotter.add_actor(actor, reset_camera=False, name=name)
+                if isinstance(actor, vtk.vtkProp):
+                    actor.SetPickable(1 if is_pickable else 0)
             self._actors[name] = actor
+            self.request_render()
             return actor
         except (RuntimeError, ValueError, TypeError) as actor_error:
             _logger.error(f"Ошибка добавления актора {name}: {actor_error}")
@@ -195,8 +360,8 @@ class VTKViewport(QWidget):
 
     def update_actor_transform(self, name: str, matrix: np.ndarray) -> bool:
         """
-        Инкрементальное обновление матрицы трансформации существующего актора
-        без затратного пересоздания полигонального меша.
+        Инкрементальное обновление матрицы трансформации сервисного (неиерархического) актора
+        через SetUserMatrix без затратного пересоздания полигонального меша.
         """
         if self.plotter is None or name not in self._actors:
             return False
@@ -204,17 +369,12 @@ class VTKViewport(QWidget):
         if actor is None:
             return False
         try:
-            if isinstance(actor, pv.Actor):
-                actor.user_matrix = matrix
-            else:
-                mat_vtk = vtk.vtkMatrix4x4()
-                for i in range(4):
-                    for j in range(4):
-                        mat_vtk.SetElement(i, j, float(matrix[i, j]))
-                actor.SetUserMatrix(mat_vtk)
-            self.render()
+            mat_vtk = vtk.vtkMatrix4x4()
+            mat_vtk.DeepCopy(np.asarray(matrix, dtype=float).ravel())
+            actor.SetUserMatrix(mat_vtk)
+            self.request_render()
             return True
-        except (RuntimeError, ValueError, TypeError) as transform_error:
+        except (RuntimeError, ValueError, TypeError, AttributeError) as transform_error:
             _logger.error(f"Ошибка обновления трансформации актора {name}: {transform_error}")
             return False
 
@@ -245,10 +405,12 @@ class VTKViewport(QWidget):
                 'mapper': mapper,
                 'name': name,
                 'reset_camera': kwargs.pop('reset_camera', False),
+                'render': kwargs.pop('render', False),
             }
             vol_kwargs.update(kwargs)
             actor = self.plotter.add_volume(grid, **vol_kwargs)
             self._actors[name] = actor
+            self.request_render()
             return actor
         except (RuntimeError, ValueError, TypeError) as volume_error:
             _logger.error(f"Ошибка добавления объема {name}: {volume_error}")
@@ -258,12 +420,20 @@ class VTKViewport(QWidget):
         """
         Удаляет актор из сцены по его уникальному имени.
         """
-        if self.plotter is not None and name in self._actors:
+        was_present = name in self._actors
+        if self.plotter is not None and was_present:
             try:
-                self.plotter.remove_actor(name)
+                self.plotter.remove_actor(name, reset_camera=False, render=False)
+            except TypeError:
+                try:
+                    self.plotter.remove_actor(name)
+                except (KeyError, RuntimeError, AttributeError):
+                    pass
             except (KeyError, RuntimeError, AttributeError):
                 pass
         self._actors.pop(name, None)
+        if was_present:
+            self.request_render()
 
     def get_actor(self, name: str) -> Optional[Any]:
         """
@@ -293,7 +463,7 @@ class VTKViewport(QWidget):
             if visible:
                 property_obj.SetEdgeColor(float(color[0]), float(color[1]), float(color[2]))
                 property_obj.SetLineWidth(float(line_width))
-            self.render()
+            self.request_render()
             return True
         except (AttributeError, RuntimeError, TypeError) as highlight_error:
             _logger.error(f"Ошибка настройки подсветки рёбер актора {name}: {highlight_error}")
@@ -301,10 +471,11 @@ class VTKViewport(QWidget):
 
     def clear_actors(self) -> None:
         """
-        Очищает все добавленные пользовательские объекты из сцены.
+        Очищает все добавленные пользовательские объекты и узловые трансформации из сцены.
         """
         for name in list(self._actors.keys()):
             self.remove_actor(name)
+        self._node_transforms.clear()
 
     def reset_camera(self) -> None:
         """
@@ -338,6 +509,12 @@ class VTKViewport(QWidget):
         if args or kwargs:
             super().render(*args, **kwargs)
             return
+        if self._update_depth > 0:
+            self._render_pending = True
+            return
+        if self._render_timer.isActive():
+            self._render_timer.stop()
+        self._render_pending = False
         if self.plotter is not None:
             if self._is_interacting:
                 return
@@ -350,6 +527,10 @@ class VTKViewport(QWidget):
         """
         Корректное завершение работы и освобождение ресурсов QtInteractor.
         """
+        if self._render_timer.isActive():
+            self._render_timer.stop()
+        self._render_pending = False
+        self._node_transforms.clear()
         if self.plotter is not None:
             try:
                 self.plotter.close()

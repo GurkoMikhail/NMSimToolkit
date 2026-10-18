@@ -379,6 +379,40 @@ class ProcedureInspectorSection(BaseInspectorSection):
                 cols = [var_key for var_key in zipped_dict if var_key not in ("current_angle", "current_time")]
 
             rows = len(next(iter(zipped_dict.values()))) if zipped_dict else 0
+
+            can_update_in_place = (
+                tbl.rowCount() == rows
+                and tbl.columnCount() == len(cols)
+                and rows > 0
+            )
+            if can_update_in_place:
+                for col_idx, col_name in enumerate(cols):
+                    is_ro = isinstance(procedure_vm, StepAndShootProcedureViewModel) and col_name in (
+                        "gantry_angle",
+                        "step_time",
+                    )
+                    expected_header = f"🔒 {col_name}" if is_ro else col_name
+                    hdr = tbl.horizontalHeaderItem(col_idx)
+                    if (
+                        hdr is None
+                        or hdr.data(Qt.ItemDataRole.UserRole) != col_name
+                        or hdr.text() != expected_header
+                        or tbl.item(0, col_idx) is None
+                    ):
+                        can_update_in_place = False
+                        break
+
+            if can_update_in_place:
+                for col_idx, col_name in enumerate(cols):
+                    val_list = zipped_dict.get(col_name, [])
+                    for row_idx in range(rows):
+                        val = val_list[row_idx] if row_idx < len(val_list) else 0.0
+                        formatted_val = f"{float(val):.4f}"
+                        existing_cell = tbl.item(row_idx, col_idx)
+                        if existing_cell is not None and existing_cell.text() != formatted_val:
+                            existing_cell.setText(formatted_val)
+                return
+
             tbl.setColumnCount(len(cols))
             tbl.setRowCount(rows)
             tbl.setVerticalHeaderLabels([f"Шаг {idx + 1}" for idx in range(rows)])
@@ -418,18 +452,24 @@ class ProcedureInspectorSection(BaseInspectorSection):
             self.grid_vars_layout.removeWidget(widget)
             widget.deleteLater()
 
+        if not grid_dict:
+            has_empty_label = any(
+                isinstance(layout_item.widget(), QLabel)
+                for idx in range(self.grid_vars_layout.count())
+                if (layout_item := self.grid_vars_layout.itemAt(idx)) is not None
+            )
+            if not has_empty_label:
+                lbl = QLabel("Нет созданных Grid-переменных.")
+                lbl.setStyleSheet("color: #888888; font-style: italic;")
+                self.grid_vars_layout.addWidget(lbl)
+            return
+
         for idx in reversed(range(self.grid_vars_layout.count())):
             item = self.grid_vars_layout.itemAt(idx)
             child = item.widget() if item else None
             if isinstance(child, QLabel):
                 self.grid_vars_layout.takeAt(idx)
                 child.deleteLater()
-
-        if not grid_dict:
-            lbl = QLabel("Нет созданных Grid-переменных.")
-            lbl.setStyleSheet("color: #888888; font-style: italic;")
-            self.grid_vars_layout.addWidget(lbl)
-            return
 
         for name, vals in grid_dict.items():
             if name in self._grid_var_widgets:

@@ -1,7 +1,11 @@
 import os
+import sys
 import tempfile
 import unittest
+from typing import Any
 import numpy as np
+import vtk
+from PySide6.QtWidgets import QApplication
 
 from gui.viewport_3d.dicom_colormaps import (
     get_available_colormaps,
@@ -11,15 +15,19 @@ from gui.viewport_3d.dicom_colormaps import (
 from gui.viewport_3d.spect_manipulator import SPECTManipulator
 from gui.viewport_3d.pet_manipulator import PETManipulator
 from gui.viewport_3d.track_renderer import TrackRenderer
-from core.geometry.geometries import Box
+from gui.viewport_3d.vtk_viewport import VTKViewport
+from gui.viewport_3d.collimator_hole_renderer import CollimatorHoleRenderer
+from core.geometry.geometries import Box, PeriodicHexPrism
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.scene.gamma_camera_node import GammaCameraNode
+from core.scene.gantry_node import GantryNode
 from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from gui.viewmodels import create_default_gamma_camera_vm
 from core.scene.nodes import SpatialNode
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.gantry_vm import GantryViewModel
 from gui.viewmodels.procedure_viewmodel import (
     BaseProcedureViewModel,
     SpectProcedureViewModel,
@@ -1030,8 +1038,31 @@ class TestStage3Viewport(unittest.TestCase):
                 self._actors[str(actor_name)] = True
                 return None
 
+            def add_volume_actor(self, *args: Any, **kwargs: Any) -> Any:
+                actor_name = args[0] if args else kwargs.get('name', 'volume')
+                self._actors[str(actor_name)] = True
+                return None
+
             def update_actor_transform(self, *args: Any, **kwargs: Any) -> None:
                 pass
+
+            def set_node_local_transform(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+            def attach_actor_to_node(self, *args: Any, **kwargs: Any) -> bool:
+                return True
+
+            def remove_node_transform(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+            def request_render(self) -> None:
+                self.render_count += 1
+
+            def begin_update(self) -> None:
+                pass
+
+            def end_update(self) -> None:
+                self.render_count += 1
 
             def remove_actor(self, *args: Any, **kwargs: Any) -> None:
                 actor_name = args[0] if args else kwargs.get('name')
@@ -1612,6 +1643,343 @@ class TestStage3Viewport(unittest.TestCase):
         detector_box_vm = casing_vm.children[0]
         viewport_controller.on_node_selected(detector_box_vm)
         self.assertIsNone(viewport_controller.transform_gizmo.target_node)
+
+    def test_vtk_viewport_coalescing_request_render_and_batch_update(self) -> None:
+        """Проверка коалесценции вызовов request_render через QTimer(0) и пакетного контекста batch_update."""
+        app = QApplication.instance() or QApplication(sys.argv)
+        viewport = VTKViewport()
+
+        class _CountingPlotter:
+            def __init__(self) -> None:
+                self.render_calls = 0
+                self.renderer = None
+                self.render_window = None
+
+            def render(self) -> None:
+                self.render_calls += 1
+
+            def close(self) -> None:
+                pass
+
+        counting_plotter = _CountingPlotter()
+        viewport.plotter = counting_plotter
+
+        # 1. Множественные вызовы request_render в одном тике схлопываются в 1 рендер
+        for _ in range(10):
+            viewport.request_render()
+        self.assertEqual(counting_plotter.render_calls, 0)
+        app.processEvents()
+        self.assertEqual(counting_plotter.render_calls, 1)
+
+        # 2. Пакетный режим batch_update блокирует промежуточные рендеры и выполняет ровно 1 в конце
+        counting_plotter.render_calls = 0
+        with viewport.batch_update():
+            for idx in range(5):
+                viewport.set_node_local_transform(idx, np.eye(4))
+                viewport.request_render()
+                viewport.render()
+            self.assertEqual(counting_plotter.render_calls, 0)
+        self.assertEqual(counting_plotter.render_calls, 1)
+
+        viewport.close()
+
+    def test_vtk_viewport_native_transform_hierarchy_and_single_node_update_on_gantry_rotation(self) -> None:
+        """
+        Проверка C++ иерархии vtkTransform (SetInput):
+        при повороте GantryViewModel обновляется ровно 1 узел, а мировые матрицы всех 16 дочерних узлов
+        пересчитываются на стороне VTK с машинной точностью и без висячих ссылок при удалении.
+        """
+        app = QApplication.instance() or QApplication(sys.argv)
+        viewport = VTKViewport()
+
+        root_node = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        scene_vm = SceneViewModel(root_core_node=root_node)
+        assert scene_vm.root_vm is not None
+        cam_vm = create_default_gamma_camera_vm(name="InitCam")
+        scene_vm.add_node(scene_vm.root_vm, cam_vm)
+
+        procedure = SpectProcedureViewModel(steps=16, gamma_cameras=2, radius=260.0, start_angle=15.0)
+        procedure.sync_with_scene(scene_vm)
+
+        controller = SceneViewportController(viewport=viewport, scene_vm=scene_vm, procedure_vm=procedure)
+        gantry_vm = [node for node in scene_vm.all_nodes() if isinstance(node, GantryViewModel)][0]
+
+        local_signals: list[NodeViewModel] = []
+        for node_vm in scene_vm.all_nodes():
+            node_vm.local_transform_changed.connect(lambda vm=node_vm: local_signals.append(vm))
+
+        set_transform_calls: list[int] = []
+        orig_set_transform = viewport.set_node_local_transform
+
+        def _tracked_set_transform(node_id: int, local_matrix: np.ndarray, parent_id: Any = None) -> Any:
+            set_transform_calls.append(node_id)
+            return orig_set_transform(node_id, local_matrix, parent_id=parent_id)
+
+        viewport.set_node_local_transform = _tracked_set_transform  # type: ignore[method-assign]
+
+        # Поворачиваем станину гантри на 75 градусов
+        gantry_vm.gantry_angle = 75.0
+
+        # Сигнал local_transform_changed и обновление vtkTransform вызваны ровно 1 раз (только для станины!)
+        self.assertEqual(len(local_signals), 1)
+        self.assertIs(local_signals[0], gantry_vm)
+        self.assertEqual(set_transform_calls, [id(gantry_vm)])
+
+        # Все дочерние узлы (включая камеры, корпуса, коллиматоры, кристаллы) имеют точную мировую матрицу в VTK
+        for node_vm in scene_vm.all_nodes():
+            vtk_tf = viewport.get_node_transform(id(node_vm))
+            assert vtk_tf is not None
+            vtk_mat = np.array(
+                [[vtk_tf.GetMatrix().GetElement(r, c) for c in range(4)] for r in range(4)],
+                dtype=np.float64,
+            )
+            np.testing.assert_allclose(vtk_mat, node_vm.global_matrix, atol=1e-12)
+
+        # Проверка очистки родительской ссылки GetInput() при remove_node_transform
+        child_cam_vm = gantry_vm.children[0]
+        child_tf = viewport.get_node_transform(id(child_cam_vm))
+        assert child_tf is not None
+        self.assertIsNotNone(child_tf.GetInput())
+        viewport.remove_node_transform(id(gantry_vm))
+        self.assertIsNone(child_tf.GetInput())
+
+        controller.close()
+        viewport.close()
+
+    def test_collimator_holes_non_pickable_and_no_edge_highlight(self) -> None:
+        """
+        Проверка того, что актор каналов коллиматора holes_<id> сохраняет Pickable=False после регистрации
+        в plotter.add_actor и не получает тяжелую подсветку ребер при выделении узла.
+        """
+        class _PlotterWithDefaultPickableTrue:
+            def __init__(self) -> None:
+                self.renderer = None
+                self.render_window = None
+
+            def add_actor(
+                self,
+                actor: Any,
+                reset_camera: bool = False,
+                name: Any = None,
+                culling: bool = False,
+                pickable: bool = True,
+                render: bool = True,
+            ) -> Any:
+                # Имитируем поведение PyVista BasePlotter.add_actor, перезаписывающего SetPickable(pickable)
+                actor.SetPickable(1 if pickable else 0)
+                return actor
+
+            def remove_actor(self, name: Any, reset_camera: bool = False, render: bool = False) -> None:
+                pass
+
+            def render(self) -> None:
+                pass
+
+            def close(self) -> None:
+                pass
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        viewport = VTKViewport()
+        viewport.plotter = _PlotterWithDefaultPickableTrue()
+
+        renderer = CollimatorHoleRenderer(viewport)
+        prism = PeriodicHexPrism(size=[60.0, 60.0, 20.0], hole_diameter=3.0, septa=0.5)
+        hole_actor = renderer.render_holes(actor_name="holes_test", geometry=prism)
+        assert hole_actor is not None
+        self.assertEqual(hole_actor.GetPickable(), 0)
+
+        # Проверяем, что при выделении узла в SceneViewportController подсветка ребер не применяется к holes_<id>
+        mock_vp = self._create_mock_viewport()
+        highlighted_names: list[str] = []
+
+        def _record_highlight(actor_name: str, visible: bool, **kwargs: Any) -> bool:
+            highlighted_names.append(actor_name)
+            return True
+
+        mock_vp.set_actor_edge_highlight = _record_highlight
+
+        root_node = Volume(name="World", geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"))
+        scene_vm = SceneViewModel(root_core_node=root_node)
+        assert scene_vm.root_vm is not None
+        cam_vm = create_default_gamma_camera_vm(name="CamHighlightCheck")
+        scene_vm.add_node(scene_vm.root_vm, cam_vm)
+
+        ctrl = SceneViewportController(viewport=mock_vp, scene_vm=scene_vm)
+        highlighted_names.clear()
+        ctrl.on_node_selected(cam_vm)
+
+        self.assertTrue(any(name.startswith("mesh_") for name in highlighted_names))
+        self.assertFalse(any(name.startswith("holes_") for name in highlighted_names))
+
+        viewport.close()
+
+    def test_transform_gizmo_mesh_reuse_and_snap_gate(self) -> None:
+        """
+        Проверка кэширования геометрии ручек TransformGizmo (отсутствие пересоздания акторов при неизменной сигнатуре
+        и обновление позы через SetUserMatrix) и раннего выхода Snap Gate при микродвижениях внутри шага снаппинга.
+        """
+        from gui.viewport_3d.transform_gizmo import TransformGizmo, GizmoAxis, GizmoMode, GizmoSpace
+        from core.scene.nodes import SpatialNode
+
+        class _TrackedActor:
+            def __init__(self) -> None:
+                self.user_matrix: Any = None
+
+            def SetPickable(self, val: int) -> None:
+                pass
+
+            def GetProperty(self) -> Any:
+                return None
+
+            def SetUserMatrix(self, mat: Any) -> None:
+                self.user_matrix = mat
+
+        class _TrackedPlotter:
+            def __init__(self) -> None:
+                self.renderer = None
+
+        class _TrackedViewport:
+            def __init__(self) -> None:
+                self.plotter = _TrackedPlotter()
+                self.add_calls = 0
+                self.remove_calls = 0
+                self.render_calls = 0
+                self.actors: dict[str, _TrackedActor] = {}
+
+            def add_mesh_actor(self, name: str, mesh: Any, **kwargs: Any) -> _TrackedActor:
+                self.add_calls += 1
+                actor = _TrackedActor()
+                self.actors[name] = actor
+                return actor
+
+            def remove_actor(self, name: str) -> None:
+                self.remove_calls += 1
+                self.actors.pop(name, None)
+
+            def render(self) -> None:
+                self.render_calls += 1
+
+        vp = _TrackedViewport()
+        node = SpatialNode(name="GizmoReuseTarget")
+        node_vm = NodeViewModel(node)
+
+        gizmo = TransformGizmo(viewport=vp, target_node=node_vm, grid_snap_step=10.0, adaptive_size=False, gizmo_size=80.0)
+        initial_add_calls = vp.add_calls
+        self.assertEqual(initial_add_calls, 6)  # 3 стрелки + 3 плоскости
+
+        # Сдвигаем узел в точку на сетке 10.0 мм и вызываем update_visuals() -> меши НЕ пересоздаются, обновляется только SetUserMatrix!
+        node_vm.translate(20.0, -10.0, 10.0)
+        gizmo.update_visuals(render=False)
+        self.assertEqual(vp.add_calls, initial_add_calls)
+        self.assertEqual(vp.remove_calls, 0)
+        actor_x = vp.actors["gizmo_translate_x"]
+        self.assertIsNotNone(actor_x.user_matrix)
+        self.assertAlmostEqual(actor_x.user_matrix.GetElement(0, 3), 20.0, places=5)
+        self.assertAlmostEqual(actor_x.user_matrix.GetElement(1, 3), -10.0, places=5)
+        self.assertAlmostEqual(actor_x.user_matrix.GetElement(2, 3), 10.0, places=5)
+
+        # Проверка Snap Gate: при микродвижении на 1.0 мм (шаг сетки 10.0 мм) _apply_drag_translation возвращает False
+        gizmo._active_axis = GizmoAxis.X
+        gizmo._is_dragging = True
+        gizmo._initial_drag_matrix = node_vm.local_matrix.copy()
+        emitted_transforms: list[Any] = []
+        gizmo.transform_changed.connect(lambda m: emitted_transforms.append(m))
+
+        changed_substep = gizmo._apply_drag_translation(np.array([1.0, 0.0, 0.0], dtype=np.float64), shift_modifier=False)
+        self.assertFalse(changed_substep)
+        self.assertEqual(len(emitted_transforms), 0)
+
+        # При переходе через порог снаппинга (+6.0 мм -> снап к 30.0 мм) возвращает True и эмитит ровно 1 сигнал
+        changed_step = gizmo._apply_drag_translation(np.array([6.0, 0.0, 0.0], dtype=np.float64), shift_modifier=False)
+        self.assertTrue(changed_step)
+        self.assertEqual(len(emitted_transforms), 1)
+        self.assertEqual(vp.add_calls, initial_add_calls)  # И при перетаскивании акторы не пересоздавались!
+
+        # При смене режима на ROTATE сигнатура меняется -> меши перестраиваются (3 кольца)
+        gizmo._is_dragging = False
+        gizmo.mode = GizmoMode.ROTATE
+        self.assertEqual(vp.add_calls, initial_add_calls + 3)
+
+        # Проверка adaptive_size=True с перспективной камерой: во время перетаскивания (_is_dragging=True)
+        # и при малых изменениях дистанции (< 5%) меши НЕ пересоздаются!
+        class _PerspectiveCamera:
+            def GetPosition(self) -> tuple[float, float, float]:
+                return (0.0, 0.0, 500.0)
+
+            def GetParallelProjection(self) -> int:
+                return 0
+
+            def GetViewAngle(self) -> float:
+                return 30.0
+
+        class _RendererWithCam:
+            def __init__(self) -> None:
+                self._cam = _PerspectiveCamera()
+
+            def GetActiveCamera(self) -> _PerspectiveCamera:
+                return self._cam
+
+        vp.plotter.renderer = _RendererWithCam()  # type: ignore[assignment]
+        gizmo.mode = GizmoMode.TRANSLATE
+        gizmo.adaptive_size = True
+        builds_after_adaptive = vp.add_calls
+
+        # Во время перетаскивания даже заметное приближение к камере не должно перестраивать меши гизмо
+        gizmo._is_dragging = True
+        gizmo._active_axis = GizmoAxis.Z
+        gizmo._initial_drag_matrix = node_vm.local_matrix.copy()
+        gizmo._apply_drag_translation(np.array([0.0, 0.0, 80.0], dtype=np.float64), shift_modifier=False)
+        self.assertEqual(vp.add_calls, builds_after_adaptive)
+        gizmo._is_dragging = False
+
+    def test_spect_manipulator_transform_only_indicator_and_cached_orbit_mesh(self) -> None:
+        """
+        Проверка оптимизации SPECTManipulator:
+        - индикатор детектора создается один раз и перемещается через update_actor_transform;
+        - траектория орбиты перестраивается только при изменении (radius, z_pos) и не перестраивается при вращении по углу.
+        """
+        from gui.viewport_3d.spect_manipulator import SPECTManipulator
+
+        class _MockManipViewport:
+            def __init__(self) -> None:
+                self.plotter = object()
+                self.mesh_builds: dict[str, int] = {}
+                self.transform_updates: dict[str, np.ndarray] = {}
+
+            def add_mesh_actor(self, name: str, mesh: Any, **kwargs: Any) -> Any:
+                self.mesh_builds[name] = self.mesh_builds.get(name, 0) + 1
+                return mesh
+
+            def update_actor_transform(self, name: str, matrix: np.ndarray) -> bool:
+                self.transform_updates[name] = matrix.copy()
+                return True
+
+            def remove_actor(self, name: str) -> None:
+                pass
+
+            def render(self) -> None:
+                pass
+
+        vp = _MockManipViewport()
+        manip = SPECTManipulator(viewport=vp, initial_radius=200.0, initial_angle=0.0, initial_z=10.0, auto_render=True)
+
+        self.assertEqual(vp.mesh_builds.get("spect_orbit_trajectory"), 1)
+        self.assertEqual(vp.mesh_builds.get("spect_detector_indicator"), 1)
+
+        # Вращение детектора по углу (5 шагов) не должно перестраивать ни орбиту, ни сферу индикатора!
+        for angle in (15.0, 30.0, 45.0, 90.0, 180.0):
+            manip.set_orbit_parameters(radius=200.0, angle=angle, z=10.0, render=False)
+
+        self.assertEqual(vp.mesh_builds.get("spect_orbit_trajectory"), 1)
+        self.assertEqual(vp.mesh_builds.get("spect_detector_indicator"), 1)
+        # При угле 180° и R=200 позиция сферы (-200, 0, 10)
+        ind_mat = vp.transform_updates["spect_detector_indicator"]
+        np.testing.assert_allclose(ind_mat[0:3, 3], np.array([-200.0, 0.0, 10.0]), atol=1e-6)
+
+        # Изменение радиуса перестраивает только траекторию орбиты, но НЕ пересоздаёт сферу индикатора
+        manip.set_orbit_parameters(radius=280.0, angle=180.0, z=10.0, render=False)
+        self.assertEqual(vp.mesh_builds.get("spect_orbit_trajectory"), 2)
+        self.assertEqual(vp.mesh_builds.get("spect_detector_indicator"), 1)
 
 
 if __name__ == '__main__':

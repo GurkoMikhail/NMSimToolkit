@@ -112,7 +112,6 @@ class SceneBuilder:
                     node.local_matrix = node.local_matrix @ mat
                 else:
                     node.local_matrix = mat @ node.local_matrix
-                node.invalidate_matrix_cache()
 
 
         # Build children

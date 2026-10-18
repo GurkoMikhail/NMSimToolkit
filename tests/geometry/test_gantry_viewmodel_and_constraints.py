@@ -11,12 +11,12 @@ from core.scene.gamma_camera_node import GammaCameraNode
 from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from gui.viewmodels import create_default_gamma_camera_vm
 from core.geometry.geometries import Box
-from core.geometry.spect_kinematics import compute_orbit_matrix
+from core.geometry.spect_kinematics import compute_orbit_matrix, extract_orbit_parameters
 from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.scene.gantry_node import GantryNode
 from core.scene.nodes import CompositeNode
-from typing import Any
+from typing import Any, Optional
 from gui.controllers.viewport_controller import SceneViewportController
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.factory import create_node_viewmodel
@@ -31,7 +31,7 @@ from gui.viewport_3d.kinematic_constraints import (
     SpectOrbitKinematicConstraint,
     IRotatableProcedure,
 )
-from gui.viewport_3d.transform_gizmo import GizmoAxis, GizmoMode, GizmoSpace
+from gui.viewport_3d.transform_gizmo import GizmoAxis, GizmoMode, GizmoSpace, TransformGizmo
 
 app = QApplication.instance() or QApplication([])
 
@@ -474,6 +474,24 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
             def update_actor_transform(self, actor_name: str, matrix: Any) -> None:
                 pass
 
+            def set_node_local_transform(self, node_id: int, local_matrix: Any, parent_id: Optional[int] = None) -> None:
+                pass
+
+            def attach_actor_to_node(self, actor_name: str, node_id: int) -> bool:
+                return True
+
+            def remove_node_transform(self, node_id: int) -> None:
+                pass
+
+            def request_render(self) -> None:
+                self.rendered = True
+
+            def begin_update(self) -> None:
+                pass
+
+            def end_update(self) -> None:
+                self.rendered = True
+
             def render(self) -> None:
                 self.rendered = True
 
@@ -570,6 +588,281 @@ class TestGantryViewModelAndConstraints(unittest.TestCase):
         )
         self.assertAlmostEqual(procedure.radius, 330.0)
 
+    def test_extract_orbit_parameters_roundtrip_and_edge_cases(self) -> None:
+        """
+        Проверка обратимости пары compute_orbit_matrix <-> extract_orbit_parameters
+        на различных углах орбиты, крена (roll), Z-позициях, толщинах и вырожденном R -> 0.
+        """
+        for radius_val in (50.0, 250.0, 480.0):
+            for angle_val in (0.0, 37.5, 90.0, 180.0, 270.0, 359.5):
+                for z_val in (-120.0, 0.0, 85.0):
+                    for roll_val in (-45.0, 0.0, 22.5, 135.0):
+                        for ht_val in (0.0, 42.5):
+                            mat = compute_orbit_matrix(
+                                radius=radius_val,
+                                angle=angle_val,
+                                z=z_val,
+                                roll=roll_val,
+                                half_thickness=ht_val,
+                            )
+                            ext_r, ext_angle, ext_z, ext_roll = extract_orbit_parameters(mat, half_thickness=ht_val)
+                            self.assertAlmostEqual(ext_r, radius_val, places=6)
+                            self.assertAlmostEqual(ext_angle, angle_val % 360.0, places=6)
+                            self.assertAlmostEqual(ext_z, z_val, places=6)
+                            self.assertAlmostEqual(ext_roll, roll_val % 360.0, places=6)
+
+        # Вырожденный случай в начале координат (R_center = 0, half_thickness > 0 -> R клэмпится в 0.0)
+        identity_mat = np.eye(4, dtype=np.float64)
+        identity_mat[2, 3] = 15.0
+        ext_r0, ext_a0, ext_z0, _ = extract_orbit_parameters(identity_mat, half_thickness=30.0)
+        self.assertEqual(ext_r0, 0.0)
+        self.assertEqual(ext_a0, 0.0)
+        self.assertEqual(ext_z0, 15.0)
+
+    def test_cacheless_global_matrix_and_local_coordinate_transforms(self) -> None:
+        """
+        Проверка прямого бескэшевого вычисления SpatialNode.global_matrix,
+        обратимости convert_to_global_position / convert_to_local_position
+        и актуальности компиляции Volume.geometry_buffer при мутации дерева.
+        """
+        parent = Volume(geometry=Box(500.0, 500.0, 500.0), material=self.material, name="ParentVol")
+        child = Volume(geometry=Box(100.0, 100.0, 100.0), material=self.material, name="ChildVol")
+        grandchild = Volume(geometry=Box(20.0, 20.0, 20.0), material=self.material, name="GrandChildVol")
+        parent.add_child(child)
+        child.add_child(grandchild)
+
+        parent.local_matrix = compute_orbit_matrix(radius=200.0, angle=35.0, z=40.0, roll=15.0)
+        child.local_matrix = compute_orbit_matrix(radius=80.0, angle=120.0, z=-25.0, roll=-30.0)
+        grandchild.local_matrix = compute_orbit_matrix(radius=10.0, angle=210.0, z=5.0, roll=10.0)
+
+        # 1. Прямое вычисление global_matrix без кэширования
+        expected_global = parent.local_matrix @ child.local_matrix @ grandchild.local_matrix
+        np.testing.assert_allclose(grandchild.global_matrix, expected_global, atol=1e-12)
+
+        # 2. Обратимость позиций и направлений через convert_to_global_* / convert_to_local_*
+        local_pts = np.array([[1.0, -2.5, 3.0], [-4.0, 0.5, -1.5]], dtype=np.float64)
+        global_pts = grandchild.convert_to_global_position(local_pts)
+        recovered_pts = grandchild.convert_to_local_position(global_pts)
+        np.testing.assert_allclose(recovered_pts, local_pts, atol=1e-11)
+
+        local_dirs = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float64)
+        global_dirs = grandchild.convert_to_global_direction(local_dirs)
+        recovered_dirs = grandchild.convert_to_local_direction(global_dirs)
+        np.testing.assert_allclose(recovered_dirs, local_dirs, atol=1e-12)
+
+        # 3. Немедленное отражение мутаций родителя в global_matrix потомков и geometry_buffer
+        parent.translate(10.0, 0.0, 0.0)
+        np.testing.assert_allclose(
+            grandchild.global_matrix,
+            parent.local_matrix @ child.local_matrix @ grandchild.local_matrix,
+            atol=1e-12,
+        )
+
+        buf = parent.geometry_buffer
+        self.assertEqual(buf.shape[0], 3)
+        expected_inv_grandchild = np.linalg.inv(grandchild.global_matrix)
+        np.testing.assert_allclose(
+            [
+                buf[2]["transform"]["translation"]["x"],
+                buf[2]["transform"]["translation"]["y"],
+                buf[2]["transform"]["translation"]["z"],
+            ],
+            expected_inv_grandchild[:3, 3],
+            atol=1e-11,
+        )
+
+    def test_gamma_camera_vm_slot_caching_and_invalidation(self) -> None:
+        """
+        Проверка O(1) кэширования ссылок на слоты в GammaCameraViewModel и сброса кэша при мутации дерева.
+        """
+        camera_vm = create_default_gamma_camera_vm(name="CacheTestCam")
+        casing = camera_vm.casing_vm
+        det_box = camera_vm.detector_box_vm
+        collimator = camera_vm.collimator_vm
+        crystal = camera_vm.crystal_vm
+        glass = camera_vm.glass_backend_vm
+
+        self.assertIsNotNone(casing)
+        self.assertIsNotNone(det_box)
+        self.assertIsNotNone(collimator)
+        self.assertIsNotNone(crystal)
+        self.assertIsNotNone(glass)
+
+        # Повторные обращения возвращают закэшированные экземпляры из _slot_vm_cache
+        self.assertEqual(len(camera_vm._slot_vm_cache), 5)
+        self.assertIs(camera_vm.crystal_vm, crystal)
+        self.assertIs(camera_vm.collimator_vm, collimator)
+
+        # При sync_children_from_core кэш инвалидируется и лениво заполняется по мере обращения к слотам
+        camera_vm.sync_children_from_core()
+        self.assertEqual(len(camera_vm._slot_vm_cache), 0)
+        crystal = camera_vm.crystal_vm
+        self.assertIsNotNone(crystal)
+        self.assertEqual(len(camera_vm._slot_vm_cache), 1)
+        casing = camera_vm.casing_vm
+        det_box = camera_vm.detector_box_vm
+        collimator = camera_vm.collimator_vm
+        glass = camera_vm.glass_backend_vm
+        self.assertEqual(len(camera_vm._slot_vm_cache), 5)
+
+        # Отсоединение узла из родительского контейнера (parent_vm = None) должно инвалидировать слот в кэше
+        assert casing is not None and det_box is not None and crystal is not None and collimator is not None and glass is not None
+        det_box.remove_child(crystal)
+        self.assertIsNone(camera_vm.crystal_vm)
+        self.assertNotIn("crystal", camera_vm._slot_vm_cache)
+
+        det_box.remove_child(collimator)
+        self.assertIsNone(camera_vm.collimator_vm)
+        self.assertNotIn("collimator", camera_vm._slot_vm_cache)
+
+        # Отсоединение промежуточного контейнера det_box от casing без отсоединения glass от det_box
+        # (glass.parent_vm is det_box != None) должно инвалидировать слот glass_backend за счёт _is_descendant_slot_vm!
+        casing.remove_child(det_box)
+        self.assertIsNotNone(glass.parent_vm)
+        self.assertIsNone(camera_vm.glass_backend_vm)
+        self.assertNotIn("glass_backend", camera_vm._slot_vm_cache)
+
+    def test_tangential_drag_breaks_feedback_loop_and_preserves_second_camera_roll(self) -> None:
+        """
+        Проверка разрыва петли обратной связи Gizmo <-> Constraint <-> ProcedureVM:
+        - при синхронизации радиуса сохраняется угол roll второй камеры;
+        - при касательном перетаскивании камеры на гантри матрица самой камеры не перезаписывается.
+        """
+        root_core = CompositeNode(name="World")
+        scene_vm = SceneViewModel(root_core)
+        assert scene_vm.root_vm is not None
+        cam_init = create_default_gamma_camera_vm(name="CamInit")
+        scene_vm.add_node(scene_vm.root_vm, cam_init)
+
+        procedure = SpectProcedureViewModel(steps=16, gamma_cameras=2, radius=250.0, start_angle=0.0)
+        procedure.sync_with_scene(scene_vm)
+
+        gantry_vm = [n for n in scene_vm.all_nodes() if isinstance(n, GantryViewModel)][0]
+        cameras = [n for n in scene_vm.all_nodes() if isinstance(n, GammaCameraViewModel)]
+        cam1, cam2 = cameras[0], cameras[1]
+
+        # Задаём второй камере ненулевой угол собственного крена roll = 33.0 град
+        _, cam2_angle, cam2_z, _ = extract_orbit_parameters(cam2.local_matrix, half_thickness=cam2.half_thickness)
+        cam2.local_matrix = compute_orbit_matrix(
+            radius=250.0,
+            angle=cam2_angle,
+            z=cam2_z,
+            roll=33.0,
+            half_thickness=cam2.half_thickness,
+        )
+
+        # Изменяем радиус процедуры -> roll второй камеры обязан сохраниться равным 33.0 град!
+        procedure.radius = 300.0
+        _, _, _, cam2_roll_after = extract_orbit_parameters(cam2.local_matrix, half_thickness=cam2.half_thickness)
+        self.assertAlmostEqual(cam2_roll_after, 33.0, places=5)
+
+        # Подсчитываем число эмиссий local_transform_changed на камерах и гантри при касательном перетаскивании
+        cam1_transforms: list[int] = []
+        cam2_transforms: list[int] = []
+        gantry_transforms: list[int] = []
+        cam1.local_transform_changed.connect(lambda: cam1_transforms.append(1))
+        cam2.local_transform_changed.connect(lambda: cam2_transforms.append(1))
+        gantry_vm.local_transform_changed.connect(lambda: gantry_transforms.append(1))
+
+        constraint = cam1.get_effective_kinematic_constraint()
+        gizmo = TransformGizmo(viewport=None, target_node=cam1)
+        gizmo.set_constraint(constraint)
+        gizmo._active_axis = GizmoAxis.X  # Локальная ось X камеры направлена по касательной к орбите
+        gizmo._is_dragging = True
+        gizmo._initial_drag_matrix = cam1.local_matrix.copy()
+
+        # Касательное смещение вдоль мирового +Y (по касательной к орбите при угле 0 град)
+        changed = gizmo._apply_drag_translation(np.array([0.0, 50.0, 0.0], dtype=np.float64), shift_modifier=False)
+        self.assertTrue(changed)
+        # Локальные матрицы камер на роторе НЕ перезаписываются (0 сигналов), вращается только гантри (1 сигнал)!
+        self.assertEqual(len(cam1_transforms), 0)
+        self.assertEqual(len(cam2_transforms), 0)
+        self.assertEqual(len(gantry_transforms), 1)
+
+    def test_multi_step_tangential_drag_and_shift_individual_radial_move(self) -> None:
+        """
+        Проверка отсутствия квадратичного накопления угла гантри при многошаговом касательном перетаскивании
+        и корректности индивидуального радиального сдвига камеры при зажатом Shift.
+        """
+        root_core = CompositeNode(name="World")
+        scene_vm = SceneViewModel(root_core)
+        assert scene_vm.root_vm is not None
+        cam_init = create_default_gamma_camera_vm(name="CamInit")
+        scene_vm.add_node(scene_vm.root_vm, cam_init)
+
+        procedure = SpectProcedureViewModel(steps=16, gamma_cameras=2, radius=250.0, start_angle=30.0)
+        procedure.sync_with_scene(scene_vm)
+
+        gantry_vm = [n for n in scene_vm.all_nodes() if isinstance(n, GantryViewModel)][0]
+        cameras = [n for n in scene_vm.all_nodes() if isinstance(n, GammaCameraViewModel)]
+        cam1, cam2 = cameras[0], cameras[1]
+
+        constraint = cam1.get_effective_kinematic_constraint()
+        assert constraint is not None
+        gizmo = TransformGizmo(viewport=None, target_node=cam1)
+        gizmo.set_constraint(constraint)
+
+        # 1. Многошаговое тангенциальное перетаскивание от начального угла станины 30°
+        gizmo._active_axis = GizmoAxis.X
+        gizmo._is_dragging = True
+        gizmo._initial_drag_matrix = cam1.local_matrix.copy()
+
+        effective_radius = float(np.hypot(cam1.local_matrix[0, 3], cam1.local_matrix[1, 3]))
+        # В мировых координатах касательный вектор для камеры 1 при повороте станины на 30°: (-sin(30°), cos(30°), 0)
+        world_tangent = np.array([-np.sin(np.radians(30.0)), np.cos(np.radians(30.0)), 0.0], dtype=np.float64)
+
+        # Шаг 1: кумулятивный сдвиг на +5° -> угол станины должен стать 35°
+        changed_1 = gizmo._apply_drag_translation(
+            world_tangent * (effective_radius * np.radians(5.0)),
+            shift_modifier=False,
+        )
+        self.assertTrue(changed_1)
+        self.assertAlmostEqual(gantry_vm.gantry_angle, 35.0, places=5)
+
+        # Суб-шаг (+6° суммарно, снап к тем же 35°) -> Snap Gate обязан вернуть False!
+        changed_sub = gizmo._apply_drag_translation(
+            world_tangent * (effective_radius * np.radians(6.0)),
+            shift_modifier=False,
+        )
+        self.assertFalse(changed_sub)
+        self.assertAlmostEqual(gantry_vm.gantry_angle, 35.0, places=5)
+
+        # Шаг 2: кумулятивный сдвиг на +10° от старта -> угол станины 40° (а не 35° + 10° = 45°!)
+        changed_2 = gizmo._apply_drag_translation(
+            world_tangent * (effective_radius * np.radians(10.0)),
+            shift_modifier=False,
+        )
+        self.assertTrue(changed_2)
+        self.assertAlmostEqual(gantry_vm.gantry_angle, 40.0, places=5)
+
+        # Шаг 3: кумулятивный сдвиг на +15° от старта -> угол станины 45°
+        changed_3 = gizmo._apply_drag_translation(
+            world_tangent * (effective_radius * np.radians(15.0)),
+            shift_modifier=False,
+        )
+        self.assertTrue(changed_3)
+        self.assertAlmostEqual(gantry_vm.gantry_angle, 45.0, places=5)
+        assert gizmo._last_changed_data is not None
+        constraint.on_transform_committed(cam1, gizmo._last_changed_data)
+        gizmo._is_dragging = False
+        self.assertAlmostEqual(procedure.start_angle, 45.0, places=5)
+
+        # 2. Индивидуальный радиальный сдвиг камеры 1 с зажатым Shift (shift_modifier=True):
+        # камера 2 и procedure.radius должны остаться на 250.0 мм!
+        gizmo._active_axis = GizmoAxis.Z
+        gizmo._is_dragging = True
+        gizmo._initial_drag_matrix = cam1.local_matrix.copy()
+        world_radial = np.array([np.cos(np.radians(45.0)), np.sin(np.radians(45.0)), 0.0], dtype=np.float64)
+
+        changed_shift = gizmo._apply_drag_translation(world_radial * 37.5, shift_modifier=True)
+        self.assertTrue(changed_shift)
+        cam1_radius, _, _, _ = extract_orbit_parameters(cam1.local_matrix, half_thickness=cam1.half_thickness)
+        cam2_radius, _, _, _ = extract_orbit_parameters(cam2.local_matrix, half_thickness=cam2.half_thickness)
+        self.assertAlmostEqual(cam1_radius, 290.0, places=4)
+        self.assertAlmostEqual(cam2_radius, 250.0, places=4)
+        self.assertAlmostEqual(procedure.radius, 250.0, places=4)
+
 
 if __name__ == "__main__":
     unittest.main()
+

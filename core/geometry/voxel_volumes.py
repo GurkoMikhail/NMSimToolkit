@@ -63,10 +63,10 @@ class WoodcockVoxelVolume(WoodcockParametricVolume):
         current_voxel_size = self.voxel_size
         self._material_distribution = value
         self._cached_majorant_material = None
+        self._cfunc = None
         new_size = np.asarray(value.shape, dtype=Float) * current_voxel_size
         self.geometry.size = new_size
         self._voxel_size_ratio = current_voxel_size / self.size
-        self.invalidate_geometry()
 
     @property
     def voxel_size(self) -> Vector3D:
@@ -79,7 +79,7 @@ class WoodcockVoxelVolume(WoodcockParametricVolume):
         new_size = np.asarray(self._material_distribution.shape, dtype=Float) * vox_arr
         self.geometry.size = new_size
         self._voxel_size_ratio = vox_arr / self.size
-        self.invalidate_geometry()
+        self._cfunc = None
 
     @property
     def material(self) -> Material:
@@ -96,11 +96,6 @@ class WoodcockVoxelVolume(WoodcockParametricVolume):
     def material_list(self) -> list[Material]:
         """Список всех материалов, присутствующих в воксельном распределении."""
         return self._material_distribution.material_list
-
-    def invalidate_geometry(self) -> None:
-        """Инвалидирует геометрический буфер, скомпилированную функцию и кэш мажорантного материала."""
-        super().invalidate_geometry()
-        self._cached_majorant_material = None
 
     def _compile_cfunc(self) -> Any:
         """Компилирует Numba @cfunc для быстрого поиска ID материала по локальным координатам."""

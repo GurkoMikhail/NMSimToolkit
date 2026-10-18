@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple, Union
 import logging
 import numpy as np
 import vtk
+from vtk.util.numpy_support import numpy_to_vtk
 
 from core.geometry.geometries import PeriodicHexPrism
 from core.geometry.direct_collimators import CollimatorHoleShape
@@ -307,7 +308,6 @@ class CollimatorHoleRenderer:
         Поддерживает как передачу объекта геометрии PeriodicHexPrism (geometry/geometry_or_size),
         так и прямую передачу габаритов (collimator_size), диаметра отверстия и септы.
         """
-        actual_matrix = global_matrix if global_matrix is not None else np.eye(4)
         target_geometry = geometry if geometry is not None else geometry_or_size
         if target_geometry is None:
             raise ValueError("Необходимо передать либо geometry, либо geometry_or_size.")
@@ -347,11 +347,12 @@ class CollimatorHoleRenderer:
         cached_key = self._last_geometries.get(actor_name)
 
         if existing_actor is not None and cached_key == geometry_key:
-            # Геометрия не изменилась: обновляем цвет, непрозрачность и матрицу
+            # Геометрия не изменилась: обновляем цвет, непрозрачность и матрицу (если передана явно)
             actor_property = existing_actor.GetProperty()
             actor_property.SetColor(float(hole_color[0]), float(hole_color[1]), float(hole_color[2]))
             actor_property.SetOpacity(float(hole_opacity))
-            self.viewport.update_actor_transform(actor_name, actual_matrix)
+            if global_matrix is not None:
+                self.viewport.update_actor_transform(actor_name, global_matrix)
             return existing_actor
 
         # 1. Создание геометрического прототипа полого канала
@@ -379,16 +380,12 @@ class CollimatorHoleRenderer:
             self.remove_actor(actor_name)
             return None
 
-        # 3. Формирование point cloud в vtkPolyData
+        # 3. Формирование point cloud в vtkPolyData через векторное преобразование numpy_to_vtk
+        contiguous_centers = np.ascontiguousarray(centers_array, dtype=np.float64)
+        vtk_coords_array = numpy_to_vtk(contiguous_centers, deep=True)
+        vtk_coords_array.SetNumberOfComponents(3)
         points_vtk = vtk.vtkPoints()
-        points_vtk.SetNumberOfPoints(len(centers_array))
-        for point_index, center_point in enumerate(centers_array):
-            points_vtk.SetPoint(
-                point_index,
-                float(center_point[0]),
-                float(center_point[1]),
-                float(center_point[2]),
-            )
+        points_vtk.SetData(vtk_coords_array)
 
         points_polydata = vtk.vtkPolyData()
         points_polydata.SetPoints(points_vtk)
@@ -404,6 +401,7 @@ class CollimatorHoleRenderer:
         # 5. Создание и настройка VTK-актора
         hole_actor = vtk.vtkActor()
         hole_actor.SetMapper(glyph_mapper)
+        hole_actor.SetPickable(False)
 
         actor_property = hole_actor.GetProperty()
         actor_property.SetColor(float(hole_color[0]), float(hole_color[1]), float(hole_color[2]))
@@ -414,7 +412,9 @@ class CollimatorHoleRenderer:
 
         # 6. Регистрация актора во вьюпорте
         self.viewport.add_actor(actor_name, hole_actor)
-        self.viewport.update_actor_transform(actor_name, actual_matrix)
+        hole_actor.SetPickable(False)
+        if global_matrix is not None:
+            self.viewport.update_actor_transform(actor_name, global_matrix)
 
         self._actors[actor_name] = hole_actor
         self._last_geometries[actor_name] = geometry_key

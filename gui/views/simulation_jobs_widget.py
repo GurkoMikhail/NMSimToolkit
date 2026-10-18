@@ -99,9 +99,48 @@ class SimulationJobsWidget(QDockWidget):
     def focused_index(self) -> int:
         return self._focused_index
 
+    @staticmethod
+    def _format_job_params(job: Dict[str, Any]) -> str:
+        """Форматирование контекстных параметров задачи для отображения в таблице."""
+        params_str = ", ".join(
+            f"{key_name}={val:.1f}" if isinstance(val, float) else f"{key_name}={val}"
+            for key_name, val in job.items()
+            if not key_name.startswith('_')
+        )
+        return params_str or "Базовая задача"
+
     def set_jobs(self, jobs: List[Dict[str, Any]]) -> None:
         """Обновление таблицы на основе сгенерированного списка задач."""
+        if len(jobs) == self.table.rowCount() and len(self._jobs) == len(jobs):
+            self.table.setUpdatesEnabled(False)
+            self.table.blockSignals(True)
+            try:
+                for row_idx, job in enumerate(jobs):
+                    self._jobs[row_idx] = job
+                    params_text = self._format_job_params(job)
+                    item_params = self.table.item(row_idx, 2)
+                    if item_params is not None:
+                        if item_params.text() != params_text:
+                            item_params.setText(params_text)
+                    else:
+                        self.table.setItem(row_idx, 2, QTableWidgetItem(params_text))
+
+                    item_status = self.table.item(row_idx, 3)
+                    if item_status is not None and item_status.text() != "В очереди":
+                        item_status.setText("В очереди")
+                        item_status.setForeground(Qt.GlobalColor.white)
+                    pbar = self._progress_bars.get(row_idx)
+                    if pbar is not None and pbar.value() != 0:
+                        pbar.setValue(0)
+            finally:
+                self.table.blockSignals(False)
+                self.table.setUpdatesEnabled(True)
+            self._update_status_counts()
+            return
+
         self._jobs = list(jobs)
+        if 0 < len(jobs) <= self._focused_index:
+            self._focused_index = 0
         self._progress_bars.clear()
 
         # Очистка радиокнопок
@@ -130,12 +169,7 @@ class SimulationJobsWidget(QDockWidget):
             self.table.setCellWidget(row_idx, 1, radio_widget)
 
             # Параметры ракурса
-            params_str = ", ".join(
-                f"{key_name}={val:.1f}" if isinstance(val, float) else f"{key_name}={val}"
-                for key_name, val in job.items()
-                if not key_name.startswith('_')
-            )
-            item_params = QTableWidgetItem(params_str or "Базовая задача")
+            item_params = QTableWidgetItem(self._format_job_params(job))
             self.table.setItem(row_idx, 2, item_params)
 
             # Статус
@@ -155,10 +189,14 @@ class SimulationJobsWidget(QDockWidget):
             # Кнопка предпросмотра в 3D
             btn_preview = QPushButton("👁 Предпросмотр")
             btn_preview.setStyleSheet("padding: 2px 6px; font-size: 11px;")
-            btn_preview.clicked.connect(lambda _, job_item=job: self.job_preview_requested.emit(job_item))
+            btn_preview.clicked.connect(lambda _, idx=row_idx: self._on_preview_clicked(idx))
             self.table.setCellWidget(row_idx, 5, btn_preview)
 
         self._update_status_counts()
+
+    def _on_preview_clicked(self, index: int) -> None:
+        if 0 <= index < len(self._jobs):
+            self.job_preview_requested.emit(self._jobs[index])
 
     def _on_focus_toggled(self, index: int, checked: bool) -> None:
         if checked:

@@ -113,7 +113,6 @@ class GantryViewModel(NodeViewModel):
     @local_matrix.setter
     def local_matrix(self, matrix: np.ndarray) -> None:
         self.core_node.local_matrix = np.asarray(matrix, dtype=self.core_node.local_matrix.dtype)
-        self.core_node.invalidate_matrix_cache()
         self._notify_transform_changed()
         self.property_changed.emit("local_matrix", self.core_node.local_matrix)
         self.property_changed.emit("gantry_angle", self.gantry_angle)

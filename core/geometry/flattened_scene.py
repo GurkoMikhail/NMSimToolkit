@@ -37,7 +37,7 @@ class FlattenedScene:
 
             if isinstance(node, volumes_mod.Volume):
                 current_index = len(self._flat_list)
-                self._flat_list.append((node, node.inverse_global_matrix, Index(parent_vol_idx)))
+                self._flat_list.append((node, np.linalg.inv(node.global_matrix), Index(parent_vol_idx)))
 
             if isinstance(node, CompositeNode):
                 for child_node in node.childs:

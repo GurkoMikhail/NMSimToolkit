@@ -94,9 +94,15 @@ class ProcedureSelectorWidget(QDockWidget):
 
     def _on_procedure_data_changed(self) -> None:
         self._update_summary()
-        # Синхронизация с геометрией сцены
+        # Синхронизация с геометрией сцены (пропускается, если StepAndShoot уже отслеживает текущую сцену)
         if self.scene_vm is not None:
-            self.active_procedure.sync_with_scene(self.scene_vm)
+            active_proc = self.active_procedure
+            if (
+                isinstance(active_proc, StepAndShootProcedureViewModel)
+                and active_proc._observed_scene is self.scene_vm
+            ):
+                return
+            active_proc.sync_with_scene(self.scene_vm)
 
     def _update_summary(self) -> None:
         vm = self.active_procedure

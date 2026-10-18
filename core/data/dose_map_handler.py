@@ -191,7 +191,7 @@ class DoseMapHandler(BaseDataHandler):
                     node_shm: Optional[str] = f"{shm_name}_{node_name}" if len(active_nodes) > 1 else shm_name
                 else:
                     node_shm = None
-                inv_mat = node.inverse_global_matrix
+                inv_mat = np.linalg.inv(node.global_matrix)
                 entry = DoseGridEntry(
                     name=node_name,
                     grid_shape=node.grid_shape,
@@ -215,7 +215,7 @@ class DoseMapHandler(BaseDataHandler):
         node_name = node.name or f"DoseGrid_{len(self.entries)}"
         prefix = shm_prefix or "nmsim_dose_shm"
         node_shm = f"{prefix}_{node_name}"
-        inv_mat = node.inverse_global_matrix
+        inv_mat = np.linalg.inv(node.global_matrix)
         entry = DoseGridEntry(
             name=node_name,
             grid_shape=node.grid_shape,
