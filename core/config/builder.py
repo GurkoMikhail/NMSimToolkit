@@ -152,6 +152,9 @@ class SceneBuilder:
             candidate_path = self.base_dir / file_path
             if candidate_path.is_file():
                 return str(candidate_path)
+            parent_candidate = self.base_dir.parent / file_path
+            if parent_candidate.is_file():
+                return str(parent_candidate)
         if file_path.is_file():
             return str(file_path)
         raise FileNotFoundError(f"Файл распределения не найден: {path_str}")

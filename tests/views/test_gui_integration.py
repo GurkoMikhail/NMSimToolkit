@@ -143,7 +143,7 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         self.assertTrue(win.act_step.isEnabled())
 
         # Проверка программного вызова _on_open_yaml без диалогового окна
-        win._on_open_yaml("nema_1_cam.yaml")
+        win._on_open_yaml("examples/nema_1_cam.yaml")
         self.assertIsNotNone(win.current_config)
         self.assertIn("voxel_volume", win.viewport._actors)
 
@@ -170,7 +170,7 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         from core.config.yaml_loader import load_simulation_config
         from core.config.builder import SceneBuilder
 
-        cfg = load_simulation_config("nema_1_cam.yaml")
+        cfg = load_simulation_config("examples/nema_1_cam.yaml")
         root = SceneBuilder().build_scene(cfg.scene)
         mgr = SimulationManager(scene=root, particles_number=1000)
 
@@ -188,7 +188,7 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         from gui.viewmodels.scene_viewmodel import SceneViewModel
         from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel
 
-        cfg = load_simulation_config("nema_1_cam.yaml")
+        cfg = load_simulation_config("examples/nema_1_cam.yaml")
         root = SceneBuilder().build_scene(cfg.scene)
         scene_vm = SceneViewModel(root)
 

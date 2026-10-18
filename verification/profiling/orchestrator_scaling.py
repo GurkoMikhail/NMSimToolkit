@@ -42,7 +42,7 @@ class OrchestratorScalingRecord:
 
 def _load_base_protocol_dict(collimator_type: CollimatorKind) -> Dict[str, Any]:
     """Загружает базовый YAML-конфиг протокола NEMA 161Tb и выставляет выбранный тип коллиматора."""
-    yaml_path = Path("tb161_nema_protocol.yaml").resolve()
+    yaml_path = Path("examples/tb161_nema_protocol.yaml").resolve()
     with yaml_path.open("r", encoding="utf-8") as yaml_file:
         loaded_data: Dict[str, Any] = yaml.safe_load(yaml_file)
 

@@ -138,7 +138,7 @@ class TestDataHandlers(unittest.TestCase):
         Проверка HistoryAssemblerHandler: взаимодействия в двух кристаллах и фантоме
         сохраняются в 3 разные группы с соответствующими локальными координатами.
         """
-        yaml_path = "tb161_nema_protocol.yaml"
+        yaml_path = "examples/tb161_nema_protocol.yaml"
         cfg = load_simulation_config(yaml_path)
         root_scene = SceneBuilder().build_scene(cfg.scene)
         sensitive_vols = _find_nodes_by_names(root_scene, cfg.data_manager.handlers[0].sensitive_volumes)
@@ -708,7 +708,7 @@ class TestDataHandlers(unittest.TestCase):
         """
         self.assertTrue(issubclass(GuiStreamDataHandler, SensitiveVolumeHandler))
 
-        yaml_path = "tb161_nema_protocol.yaml"
+        yaml_path = "examples/tb161_nema_protocol.yaml"
         cfg = load_simulation_config(yaml_path)
         root_scene = SceneBuilder().build_scene(cfg.scene)
         sensitive_vols = _find_nodes_by_names(root_scene, cfg.data_manager.handlers[0].sensitive_volumes)
@@ -970,7 +970,7 @@ class TestDataHandlers(unittest.TestCase):
         2. Каждая задача пишет 2D-проекцию, 3D-треки и спектр в собственные изолированные сегменты SharedMemory.
         3. Пакеты треков при наличии TelemetryRingBufferSHM не засоряют multiprocessing.Queue.
         """
-        yaml_path = "tb161_nema_protocol.yaml"
+        yaml_path = "examples/tb161_nema_protocol.yaml"
         cfg = load_simulation_config(yaml_path)
         root_scene = SceneBuilder().build_scene(cfg.scene)
 

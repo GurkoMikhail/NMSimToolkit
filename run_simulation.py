@@ -13,7 +13,7 @@ def main() -> None:
     if len(sys.argv) >= 2:
         config_file = sys.argv[1]
     else:
-        config_file = "nema_1_cam.yaml"
+        config_file = "examples/nema_1_cam.yaml"
     print(f"Loading configuration from {config_file}...")
 
     with open(config_file, 'r', encoding='utf-8') as config_stream:

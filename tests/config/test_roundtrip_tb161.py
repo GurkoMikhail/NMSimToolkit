@@ -30,7 +30,7 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
     """Тестирование сквозного цикла чтения, экспорта и эквивалентности StepAndShoot vs CustomSweep."""
 
     def setUp(self) -> None:
-        self.yaml_path = Path("tb161_nema_protocol.yaml").resolve()
+        self.yaml_path = Path("examples/tb161_nema_protocol.yaml").resolve()
         self.assertTrue(self.yaml_path.exists(), f"Файл {self.yaml_path} должен существовать")
 
     def test_tb161_full_roundtrip_integrity(self) -> None:

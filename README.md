@@ -69,19 +69,19 @@ python -m gui.app
 ### 2. Пакетный расчет через CLI
 Для запуска моделирования без графического интерфейса по YAML-конфигурации:
 ```bash
-nmsim-cli nema_1_cam.yaml
+nmsim-cli examples/nema_1_cam.yaml
 # или
-python run_simulation.py nema_1_cam.yaml
+python run_simulation.py examples/tb161_nema_protocol.yaml
 ```
 
 ### 3. Клинические сценарии и примеры
-В каталоге [`examples/`](examples/README.md) и корне репозитория доступны готовые скрипты:
+В каталоге [`examples/`](examples/README.md) доступны готовые скрипты и YAML-конфигурации экспериментов:
 ```bash
-python examples/brain_main.py        # Томография головного мозга (фантом Хоффмана)
-python examples/heart_main.py        # Сцинтиграфия миокарда (99mTc-MIBI, 60 ракурсов)
-python examples/heart_32_main.py     # 32-проекционная ОФЭКТ миокарда
-python examples/lung_cancer_main.py  # Моделирование патологий легких
-python tb161_nema_simulation.py      # Двухкамерный протокол ОФЭКТ 161Tb с фантомом NEMA IEC
+python examples/brain_main.py             # Томография головного мозга (фантом Хоффмана)
+python examples/heart_main.py             # Сцинтиграфия миокарда (99mTc-MIBI, 60 ракурсов)
+python examples/heart_32_main.py          # 32-проекционная ОФЭКТ миокарда
+python examples/lung_cancer_main.py       # Моделирование патологий легких
+python examples/tb161_nema_simulation.py  # Двухкамерный протокол ОФЭКТ 161Tb с фантомом NEMA IEC
 ```
 
 ---
@@ -101,7 +101,7 @@ NMSimToolkit/
 ├── infra/               # Инфраструктурные сервисы и мониторинг (Telegram-уведомления)
 ├── settings/            # Конфигурация подключения к базам данных материалов и процессов
 ├── docs/                # Архитектурная документация, описание кинематики, бэклог и планы ревью
-├── examples/            # Скрипты клинических сценариев моделирования ОФЭКТ
+├── examples/            # Скрипты и YAML-протоколы клинических сценариев моделирования ОФЭКТ
 ├── phantoms/            # Цифровые анатомические и тестовые фантомы (NEMA IEC, Hoffman)
 ├── presets/             # Базовые пресеты параметров и геометрии
 ├── tests/               # Модульные и интеграционные тесты, сгруппированные по доменным пакетам:
@@ -129,7 +129,7 @@ NMSimToolkit/
 Запуск полного тестового сьюта и статического анализатора типов `mypy`:
 ```bash
 pytest
-mypy --python-version 3.12 --ignore-missing-imports core gui infra settings run_simulation.py examples tb161_nema_simulation.py
+mypy --python-version 3.12 --ignore-missing-imports core gui infra settings run_simulation.py examples
 ```
 
 ---

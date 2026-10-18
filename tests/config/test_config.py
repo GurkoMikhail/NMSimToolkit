@@ -237,7 +237,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(exported_source_cfg.phantom_type, "NEMA IEC")
 
     def test_load_nema_1_cam_yaml(self):
-        config = load_simulation_config("nema_1_cam.yaml")
+        config = load_simulation_config("examples/nema_1_cam.yaml")
         self.assertIsInstance(config, SimulationConfig)
         builder = SceneBuilder()
         root_node = builder.build_scene(config.scene)

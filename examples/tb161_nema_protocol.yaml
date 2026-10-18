@@ -31,6 +31,9 @@ scene:
     - type: WoodcockVoxelVolume
       name: Phantom
       voxel_size: 4.2 mm
+      transformations:
+        - type: rotate
+          alpha: 90 deg
       distribution:
         format: raw
         path: phantoms/nema/anema_voxel_size_4.2_mm.dat

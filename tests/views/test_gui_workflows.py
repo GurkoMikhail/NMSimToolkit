@@ -243,7 +243,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         win = MainWindow()
         try:
             win.show()
-            win._on_open_yaml("nema_1_cam.yaml")
+            win._on_open_yaml("examples/nema_1_cam.yaml")
             sens_handlers = [h for h in win.data_manager_vm.handlers if isinstance(h, SensitiveVolumeHandlerViewModel)]
             self.assertTrue(len(sens_handlers) > 0)
             handler_vm = sens_handlers[0]
@@ -564,7 +564,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         """
         win = MainWindow()
         try:
-            win._on_open_yaml("nema_1_cam.yaml")
+            win._on_open_yaml("examples/nema_1_cam.yaml")
             det_vm = win.scene_vm.find_by_name("Detector")
             self.assertIsNotNone(det_vm)
             self.assertIsInstance(det_vm, VolumeViewModel)
@@ -609,7 +609,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         Проверяет применение SimulationConfig к SceneViewModel и DataManagerViewModel
         для синхронизации чувствительных объемов.
         """
-        cfg = load_simulation_config("nema_1_cam.yaml")
+        cfg = load_simulation_config("examples/nema_1_cam.yaml")
         root = SceneBuilder().build_scene(cfg.scene)
         scene_vm = SceneViewModel()
         scene_vm.load_scene(root)
@@ -633,7 +633,7 @@ class TestGUIIntegrationFixes(unittest.TestCase):
         """
         win = MainWindow()
         try:
-            win._on_open_yaml("nema_1_cam.yaml")
+            win._on_open_yaml("examples/nema_1_cam.yaml")
             jobs = win.orchestrator_session.generate_jobs()
             self.assertGreater(len(jobs), 0)
 

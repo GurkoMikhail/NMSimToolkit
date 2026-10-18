@@ -124,7 +124,7 @@ class TestStage4Views(unittest.TestCase):
     def test_main_window_load_yaml_logic(self) -> None:
         """Проверка логики загрузки конфигурации симуляции из YAML в MainWindow."""
         main_win = MainWindow()
-        config_path = "simulation_config.yaml"
+        config_path = "examples/tb161_nema_protocol.yaml"
 
         with patch(
             "PySide6.QtWidgets.QFileDialog.getOpenFileName",

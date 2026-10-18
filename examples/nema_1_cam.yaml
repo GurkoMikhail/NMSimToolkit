@@ -33,6 +33,9 @@ scene:
         mapping:
           0.04: 'Air, Dry (near sea level)'
           0.15: 'Water, Liquid'
+      transformations:
+        - type: rotate
+          alpha: 90 deg
       children:
         - type: Source
           name: Source

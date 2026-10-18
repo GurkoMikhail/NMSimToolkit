@@ -44,7 +44,7 @@ from core.transport.simulation_managers import SimulationManager
 from settings.database_setting import attenuation_database, material_database
 from settings.processes_settings import processes_list
 
-PROJECT_ROOT: Path = Path(__file__).resolve().parent
+PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 
 # ------------------------------------------------------------------------------------------------------------------------
 # 1. Спецификация радионуклида 161Tb (Juget et al., 2021 + Corrigendum 2023; Durán et al., 2020)
@@ -217,6 +217,7 @@ def build_nema_phantom(activity: float = float(100.0 * units.MBq)) -> WoodcockVo
         material_distribution=material_distribution,
         name="Phantom",
     )
+    phantom.rotate(Float(90.0 * units.deg), Float(0.0), Float(0.0))
 
     raw_activity = _load_voxel_grid(PROJECT_ROOT / "phantoms" / "nema" / "nema_voxel_size_4.2_mm.dat")
 

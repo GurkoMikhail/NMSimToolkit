@@ -96,6 +96,8 @@ class SceneViewModel(QObject):
                             node_vm.file_path = str(candidate_path)
                         elif base_dir_path is not None and (base_dir_path / candidate_path).is_file():
                             node_vm.file_path = str((base_dir_path / candidate_path).resolve())
+                        elif base_dir_path is not None and (base_dir_path.parent / candidate_path).is_file():
+                            node_vm.file_path = str((base_dir_path.parent / candidate_path).resolve())
                         elif candidate_path.is_file():
                             node_vm.file_path = str(candidate_path.resolve())
                         else:

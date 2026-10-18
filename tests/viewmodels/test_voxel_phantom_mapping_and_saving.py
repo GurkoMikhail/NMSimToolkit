@@ -113,7 +113,7 @@ class TestVoxelPhantomMappingAndSaving(unittest.TestCase):
         Проверка восстановления непустых путей воксельного фантома и источника
         при загрузке YAML-конфигурации.
         """
-        yaml_path = Path("nema_1_cam.yaml")
+        yaml_path = Path("examples/nema_1_cam.yaml")
         self.assertTrue(yaml_path.is_file(), "Файл nema_1_cam.yaml должен присутствовать в корне проекта.")
 
         cfg = load_simulation_config(yaml_path, resolve_protocol=True)
@@ -158,7 +158,7 @@ class TestVoxelPhantomMappingAndSaving(unittest.TestCase):
         Загрузка ➔ смена материала в mapping ➔ сохранение в YAML с относительными путями ➔
         повторная сборка через SceneBuilder и валидация.
         """
-        yaml_path = Path("nema_1_cam.yaml")
+        yaml_path = Path("examples/nema_1_cam.yaml")
         cfg = load_simulation_config(yaml_path, resolve_protocol=True)
         builder = SceneBuilder(base_dir=yaml_path.parent)
         root_node = builder.build_scene(cfg.scene)
