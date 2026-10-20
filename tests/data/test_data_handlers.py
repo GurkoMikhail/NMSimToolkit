@@ -17,6 +17,7 @@ from core.materials.materials import Material
 from core.other.typing_definitions import Float, Index
 from core.particles.particles import ParticleBank
 from core.physics.interaction_buffers import ChunkType, EscapedParticlesBuffer
+from core.scene.gamma_camera_node import GammaCameraNode
 from core.scene.nodes import CompositeNode
 from core.data.data_handlers import (
     BaseDataHandler,
@@ -28,6 +29,7 @@ from core.data.data_manager import DataManager
 from core.data.dose_map_handler import DoseMapHandler
 from core.config.yaml_loader import load_simulation_config
 from core.config.builder import SceneBuilder
+from core.config.models import HistoryAssemblerHandlerConfig, SensitiveVolumeHandlerConfig
 from core.config.simulation_worker import _find_nodes_by_names
 from core.transport.ipc_pause_bridge import IpcPauseBridge
 from core.transport.simulation_managers import SimulationManager, SimulationState
@@ -38,11 +40,13 @@ from gui.controllers.stream_handlers import (
     FocusedPauseProxy,
     GuiStreamDataHandler,
     TelemetryRingBufferSHM,
+    _find_all_detector_nodes,
     create_gui_stream_handler,
     get_task_dose_shm_name,
     get_task_projection_shm_name,
     get_task_telemetry_shm_name,
 )
+from gui.factories.gamma_camera_factory import create_default_gamma_camera
 
 
 class TestDataHandlers(unittest.TestCase):
@@ -141,12 +145,14 @@ class TestDataHandlers(unittest.TestCase):
         yaml_path = "examples/tb161_nema_protocol.yaml"
         cfg = load_simulation_config(yaml_path)
         root_scene = SceneBuilder().build_scene(cfg.scene)
-        sensitive_vols = _find_nodes_by_names(root_scene, cfg.data_manager.handlers[0].sensitive_volumes)
+        first_handler_cfg = cfg.data_manager.handlers[0]
+        assert isinstance(first_handler_cfg, (SensitiveVolumeHandlerConfig, HistoryAssemblerHandlerConfig))
+        sensitive_vols = _find_nodes_by_names(root_scene, first_handler_cfg.sensitive_volumes)
 
         handler = HistoryAssemblerHandler(sensitive_volumes=sensitive_vols, save_initial_states=True)
 
         # Проверяем, что в объемы для записи попадают оба кристалла и корень мира
-        vols_to_write_names = [v.name for v in handler._get_volumes_to_write()]
+        vols_to_write_names = [vol_node.name for vol_node in handler._get_volumes_to_write()]
         self.assertIn("Detector_1", vols_to_write_names)
         self.assertIn("Detector_2", vols_to_write_names)
         self.assertIn("Simulation_volume", vols_to_write_names)
@@ -562,13 +568,18 @@ class TestDataHandlers(unittest.TestCase):
         gui_no_esc = GuiStreamDataHandler(show_escaped_tracks=False)
         self.assertEqual(
             gui_no_esc.consumed_chunk_types,
-            frozenset({ChunkType.INITIAL_STATES, ChunkType.INTERACTIONS}),
+            frozenset({ChunkType.INITIAL_STATES, ChunkType.INTERACTIONS, ChunkType.DEAD_PARTICLES}),
         )
 
         gui_with_esc = GuiStreamDataHandler(show_escaped_tracks=True)
         self.assertEqual(
             gui_with_esc.consumed_chunk_types,
-            frozenset({ChunkType.INITIAL_STATES, ChunkType.INTERACTIONS, ChunkType.ESCAPED_PARTICLES}),
+            frozenset({
+                ChunkType.INITIAL_STATES,
+                ChunkType.INTERACTIONS,
+                ChunkType.DEAD_PARTICLES,
+                ChunkType.ESCAPED_PARTICLES,
+            }),
         )
 
         received_types = []
@@ -711,7 +722,9 @@ class TestDataHandlers(unittest.TestCase):
         yaml_path = "examples/tb161_nema_protocol.yaml"
         cfg = load_simulation_config(yaml_path)
         root_scene = SceneBuilder().build_scene(cfg.scene)
-        sensitive_vols = _find_nodes_by_names(root_scene, cfg.data_manager.handlers[0].sensitive_volumes)
+        first_handler_cfg = cfg.data_manager.handlers[0]
+        assert isinstance(first_handler_cfg, (SensitiveVolumeHandlerConfig, HistoryAssemblerHandlerConfig))
+        sensitive_vols = _find_nodes_by_names(root_scene, first_handler_cfg.sensitive_volumes)
 
         shm_name = f"test_gui_sv_shm_{os.getpid()}"
         track_q: queue.Queue = queue.Queue()
@@ -748,7 +761,7 @@ class TestDataHandlers(unittest.TestCase):
 
             # Проекция должна остаться строго нулевой (события из фантома отсечены)
             proj_after_phantom = handler.get_projection_snapshot()
-            self.assertIsNotNone(proj_after_phantom)
+            assert proj_after_phantom is not None
             self.assertEqual(float(np.sum(proj_after_phantom)), 0.0)
 
             # В track_queue 3D-точки фантома переданы, но detector_energy_deposit — пустой массив (не None)
@@ -780,7 +793,7 @@ class TestDataHandlers(unittest.TestCase):
                 })
 
                 proj_after_det = handler.get_projection_snapshot()
-                self.assertIsNotNone(proj_after_det)
+                assert proj_after_det is not None
                 self.assertEqual(float(np.sum(proj_after_det)), 2.0)
 
                 item_mixed = track_q.get_nowait()
@@ -811,6 +824,7 @@ class TestDataHandlers(unittest.TestCase):
             self.assertEqual(len(created), 1)
             created_handler = created[0]
             self.assertIsInstance(created_handler, GuiStreamDataHandler)
+            assert isinstance(created_handler, GuiStreamDataHandler)
             self.assertEqual(created_handler.sensitive_volume_ids, {6, 12})
             created_handler.close()
         finally:
@@ -1111,25 +1125,8 @@ class TestDataHandlers(unittest.TestCase):
         ctrl = ControlBufferSHM(shm_name=ctrl_name, create=True, initial_focused_job=0)
         proxy = FocusedPauseProxy(ctrl_shm_name=ctrl_name, task_id=0)
 
-        class _DummySimManager:
-            def __init__(self) -> None:
-                self.state = SimulationState.RUNNING
-                self.paused = False
-                self.stopped = False
-
-            def pause(self) -> None:
-                self.paused = True
-                self.state = SimulationState.PAUSED
-
-            def resume(self) -> None:
-                self.paused = False
-                self.state = SimulationState.RUNNING
-
-            def stop(self) -> None:
-                self.stopped = True
-                self.state = SimulationState.STOPPED
-
-        dummy_mgr = _DummySimManager()
+        dummy_world = Volume(geometry=Box(100.0, 100.0, 100.0), material=Material(name="Air"), name="World")
+        dummy_mgr = SimulationManager(scene=dummy_world, particles_number=10)
         bridge = IpcPauseBridge(
             manager=dummy_mgr,
             ipc_event=proxy,
@@ -1140,7 +1137,7 @@ class TestDataHandlers(unittest.TestCase):
         try:
             ctrl.global_run = False
             time.sleep(0.03)
-            self.assertTrue(dummy_mgr.paused)
+            self.assertEqual(dummy_mgr.state, SimulationState.PAUSED)
             self.assertFalse(proxy.is_set())
 
             # Запрос кооперативной остановки разблокирует proxy и вызывает manager.stop()
@@ -1149,14 +1146,294 @@ class TestDataHandlers(unittest.TestCase):
             self.assertTrue(proxy.is_set())
             self.assertTrue(proxy.wait(timeout=0.05))
             time.sleep(0.03)
-            self.assertTrue(dummy_mgr.stopped)
+            self.assertEqual(dummy_mgr.state, SimulationState.STOPPED)
         finally:
             bridge.stop_bridge()
             bridge.join(timeout=0.5)
             proxy.close()
             ctrl.close(unlink=True)
 
+    def test_gui_stream_handler_4d_cube_anger_centroid_and_dicom_orientation(self) -> None:
+        """
+        Проверка физически строгой модели детектора в GuiStreamDataHandler:
+        1. 4D гиперспектральный куб (N_det=2, E_bins=256, Rows=128, Cols=128) в SharedMemory.
+        2. Интеграция сцинтилляционного импульса (Anger Camera Logic) по particle_ID:
+           комптоновское рассеяние (0.040 МэВ) + фотопоглощение (0.100 МэВ) одного фотона (включая
+           случай разделения между двумя чанками INTERACTIONS до DEAD_PARTICLES) дают ровно 1 импульс
+           с суммарной энергией E_sum = 0.140 МэВ и энергетически взвешенным центроидом (x_c, y_c).
+        3. Ориентация DICOM («Взгляд сквозь коллиматор»): +X_local -> левая половина (col < 64),
+           +Y_local -> верхняя половина (row < 64).
+        4. Квадратное изотропное поле зрения fov = max(size_x, size_y) на прямоугольном кристалле
+           540x400 мм: точки окружности радиуса R=150 мм имеют одинаковое смещение в пикселях по X и Y.
+        """
+        world = Volume(geometry=Box(2000.0, 2000.0, 2000.0), material=Material(name="Air"), name="World")
+        crystal_1 = Volume(geometry=Box(540.0, 400.0, 9.5), material=Material(name="NaI"), name="Crystal1")
+        crystal_2 = Volume(geometry=Box(540.0, 400.0, 9.5), material=Material(name="NaI"), name="Crystal2")
+        # Смещаем Crystal1 в +Z и поворачиваем Crystal2 вокруг Y, чтобы глобальные и локальные координаты различались
+        crystal_1.translate(0.0, 0.0, 250.0)
+        crystal_2.translate(0.0, 0.0, -250.0)
+        crystal_2.rotate(0.0, np.pi, 0.0)
+        world.add_child(crystal_1)
+        world.add_child(crystal_2)
+
+        shm_proj_name = f"test_4d_cube_proj_{os.getpid()}"
+        shm_telem_name = f"test_4d_cube_telem_{os.getpid()}"
+        cube_shape = (2, 256, 128, 128)
+
+        telem_ring = TelemetryRingBufferSHM(
+            shm_name=shm_telem_name,
+            create=True,
+            track_capacity=128,
+            spectrum_capacity=128,
+        )
+        handler = GuiStreamDataHandler(
+            shm_name=shm_proj_name,
+            telemetry_shm_name=shm_telem_name,
+            projection_shape=cube_shape,
+            create_shm=True,
+            detector_volume=crystal_1,
+            sensitive_volumes=[crystal_1, crystal_2],
+            max_energy=0.3,
+            energy_bins=256,
+        )
+
+        try:
+            c1_id = handler.target_volumes[0]
+            c2_id = handler.target_volumes[1]
+
+            def _local_to_global(node: Volume, lx: float, ly: float, lz: float = 0.0) -> np.ndarray:
+                local_hom = np.array([lx, ly, lz, 1.0], dtype=np.float64)
+                return (node.global_matrix @ local_hom)[:3]
+
+            # 1. Многократное рассеяние фотона pid=1001 в Crystal1 (разбито на 2 чанка INTERACTIONS):
+            # Хит 1: E1 = 0.040 МэВ в локальной точке (+50, +100, 0)
+            # Хит 2: E2 = 0.100 МэВ в локальной точке (+120, +30, 0)
+            # Центроид Ангера: x_c = (0.04*50 + 0.10*120)/0.14 = 100.0 мм,
+            #                  y_c = (0.04*100 + 0.10*30)/0.14 = 50.0 мм,
+            #                  E_sum = 0.140 МэВ -> e_bin = floor((0.140 / 0.3) * 256) = 119.
+            g_hit1 = _local_to_global(crystal_1, 50.0, 100.0, 0.0)
+            g_hit2 = _local_to_global(crystal_1, 120.0, 30.0, 0.0)
+
+            handler.process_chunk({
+                "type": ChunkType.INTERACTIONS,
+                "data": {
+                    "particle_ID": np.array([1001], dtype=np.uint64),
+                    "volume_id": np.array([c1_id], dtype=np.uint32),
+                    "pos_x": np.array([g_hit1[0]], dtype=np.float64),
+                    "pos_y": np.array([g_hit1[1]], dtype=np.float64),
+                    "pos_z": np.array([g_hit1[2]], dtype=np.float64),
+                    "process_id": np.array([2], dtype=np.uint16),
+                    "energy_deposit": np.array([0.040], dtype=np.float64),
+                },
+            })
+            handler.process_chunk({
+                "type": ChunkType.INTERACTIONS,
+                "data": {
+                    "particle_ID": np.array([1001], dtype=np.uint64),
+                    "volume_id": np.array([c1_id], dtype=np.uint32),
+                    "pos_x": np.array([g_hit2[0]], dtype=np.float64),
+                    "pos_y": np.array([g_hit2[1]], dtype=np.float64),
+                    "pos_z": np.array([g_hit2[2]], dtype=np.float64),
+                    "process_id": np.array([1], dtype=np.uint16),
+                    "energy_deposit": np.array([0.100], dtype=np.float64),
+                },
+            })
+            handler.process_chunk({
+                "type": ChunkType.DEAD_PARTICLES,
+                "data": np.array([1001], dtype=np.uint64),
+            })
+
+            snap = handler.get_projection_snapshot()
+            assert snap is not None
+            self.assertEqual(snap.shape, cube_shape)
+            # Ровно 1 зарегистрированный сцинтилляционный импульс (промежуточный бин от Хита 1 откатился)
+            self.assertEqual(float(np.sum(snap)), 1.0)
+            self.assertEqual(float(np.sum(snap[0])), 1.0)
+            self.assertEqual(float(np.sum(snap[1])), 0.0)
+
+            expected_ebin = int(np.floor((0.140 / 0.3) * 256))
+            fov = 540.0  # max(540.0, 400.0)
+            expected_col = int(np.floor((0.5 - 100.0 / fov) * 128))
+            expected_row = int(np.floor((0.5 - 50.0 / fov) * 128))
+            self.assertEqual(float(snap[0, expected_ebin, expected_row, expected_col]), 1.0)
+            # Проверка ориентации «Взгляд сквозь коллиматор»: +X_local слева (col < 64), +Y_local сверху (row < 64)
+            self.assertLess(expected_col, 64)
+            self.assertLess(expected_row, 64)
+
+            # В спектре кольца телеметрии записан ровно 1 интегрированный импульс 0.140 МэВ
+            _, spec_energies = telem_ring.read_spectrum()
+            self.assertEqual(len(spec_energies), 1)
+            self.assertAlmostEqual(float(spec_energies[0]), 0.140, places=5)
+
+            # 2. Проверка изометрии FOV на прямоугольном кристалле 540x400 мм:
+            # Сбрасываем проекцию и подаем 4 фотона по окружности радиуса R = 150 мм в Crystal2
+            handler.clear()
+            radius = 150.0
+            circle_pts = [
+                (radius, 0.0),
+                (-radius, 0.0),
+                (0.0, radius),
+                (0.0, -radius),
+            ]
+            pids = np.array([2001, 2002, 2003, 2004], dtype=np.uint64)
+            g_pts = np.array([_local_to_global(crystal_2, lx, ly, 0.0) for lx, ly in circle_pts])
+            handler.process_chunk({
+                "type": ChunkType.INTERACTIONS,
+                "data": {
+                    "particle_ID": pids,
+                    "volume_id": np.full(4, c2_id, dtype=np.uint32),
+                    "pos_x": g_pts[:, 0],
+                    "pos_y": g_pts[:, 1],
+                    "pos_z": g_pts[:, 2],
+                    "process_id": np.ones(4, dtype=np.uint16),
+                    "energy_deposit": np.full(4, 0.140, dtype=np.float64),
+                },
+            })
+            handler.process_chunk({
+                "type": ChunkType.DEAD_PARTICLES,
+                "data": pids,
+            })
+
+            snap2 = handler.get_projection_snapshot()
+            assert snap2 is not None
+            self.assertEqual(float(np.sum(snap2[0])), 0.0)
+            self.assertEqual(float(np.sum(snap2[1])), 4.0)
+
+            det2_img = np.sum(snap2[1], axis=0)
+            nz_rows, nz_cols = np.nonzero(det2_img)
+            col_span = int(np.max(nz_cols) - np.min(nz_cols))
+            row_span = int(np.max(nz_rows) - np.min(nz_rows))
+            # Изотропность: диаметр окружности в пикселях по горизонтали и вертикали идентичен
+            self.assertEqual(col_span, row_span)
+
+            # 3. Проверка разрешения кристалла через GammaCameraNode.slots['crystal'] и отсечения хитов в коллиматоре
+            cam_world = Volume(geometry=Box(2000.0, 2000.0, 2000.0), material=Material(name="Air"), name="CamWorld")
+            camera_node, _ = create_default_gamma_camera(name="Head1", detector_size=(540.0, 400.0), detector_thickness=9.5)
+            camera_node.translate(0.0, 0.0, 250.0)
+            cam_world.add_child(camera_node)
+
+            cam_shm_name = f"test_4d_cam_proj_{os.getpid()}"
+            cam_handler = GuiStreamDataHandler(
+                shm_name=cam_shm_name,
+                projection_shape=(1, 256, 128, 128),
+                create_shm=True,
+                detector_volume=camera_node,
+                sensitive_volumes=[camera_node],
+                max_energy=0.3,
+                energy_bins=256,
+            )
+            try:
+                self.assertEqual(cam_handler.detector_size, (540.0, 400.0))
+                resolved_cryst = cam_handler._resolve_crystal_volume_for_node(camera_node)
+                self.assertIsNotNone(resolved_cryst)
+                assert resolved_cryst is not None
+                self.assertEqual(resolved_cryst.name, "Detector_Head1")
+
+                flat_cam = FlattenedScene(cam_world).flat_list
+                cryst_vid = next(idx for idx, (v_node, _, _) in enumerate(flat_cam) if v_node is resolved_cryst)
+                coll_vid = next(idx for idx, (v_node, _, _) in enumerate(flat_cam) if "Collimator" in (v_node.name or ""))
+                coll_node = flat_cam[coll_vid][0]
+
+                # Хит в свинцовом коллиматоре (вне Z-габаритов кристалла) должен отсекаться,
+                # а хит внутри кристалла — регистрироваться в 4D кубе
+                g_coll_hit = _local_to_global(coll_node, 0.0, 0.0, 0.0)
+                g_cryst_hit = _local_to_global(resolved_cryst, 50.0, -50.0, 0.0)
+                cam_handler.process_chunk({
+                    "type": ChunkType.INTERACTIONS,
+                    "data": {
+                        "particle_ID": np.array([3001, 3002], dtype=np.uint64),
+                        "volume_id": np.array([coll_vid, cryst_vid], dtype=np.uint32),
+                        "pos_x": np.array([g_coll_hit[0], g_cryst_hit[0]], dtype=np.float64),
+                        "pos_y": np.array([g_coll_hit[1], g_cryst_hit[1]], dtype=np.float64),
+                        "pos_z": np.array([g_coll_hit[2], g_cryst_hit[2]], dtype=np.float64),
+                        "process_id": np.array([1, 1], dtype=np.uint16),
+                        "energy_deposit": np.array([0.080, 0.140], dtype=np.float64),
+                    },
+                })
+                cam_snap = cam_handler.get_projection_snapshot()
+                assert cam_snap is not None
+                self.assertEqual(float(np.sum(cam_snap)), 1.0)
+            finally:
+                cam_handler.close()
+        finally:
+            handler.close()
+            telem_ring.close(unlink=True)
+            try:
+                shm_cleanup = shared_memory.SharedMemory(name=shm_proj_name, create=False)
+                shm_cleanup.close()
+                shm_cleanup.unlink()
+            except (FileNotFoundError, OSError):
+                pass
+
+    def test_stream_handlers_shm_resize_fallback_when_locked(self) -> None:
+        """
+        Проверка устойчивости TelemetryRingBufferSHM и GuiStreamDataHandler при создании буфера
+        большего размера поверх удерживаемого в ОС сегмента меньшего размера (защита от WinError 183).
+        """
+        ring_name = f"test_locked_ring_{os.getpid()}"
+        proj_name = f"test_locked_proj_{os.getpid()}"
+
+        small_ring = TelemetryRingBufferSHM(
+            shm_name=ring_name,
+            create=True,
+            track_capacity=16,
+            spectrum_capacity=16,
+        )
+        small_proj = shared_memory.SharedMemory(name=proj_name, create=True, size=1024)
+        large_ring = None
+        large_handler = None
+        try:
+            large_ring = TelemetryRingBufferSHM(
+                shm_name=ring_name,
+                create=True,
+                track_capacity=512,
+                spectrum_capacity=512,
+            )
+            self.assertEqual(large_ring.track_capacity, 512)
+            self.assertEqual(large_ring.spectrum_capacity, 512)
+            cur = large_ring.write_spectrum(np.array([0.140, 0.280], dtype=np.float32))
+            self.assertEqual(cur, 2)
+
+            large_handler = GuiStreamDataHandler(
+                shm_name=proj_name,
+                projection_shape=(2, 64, 32, 32),
+                create_shm=True,
+            )
+            snap = large_handler.get_projection_snapshot()
+            self.assertIsNotNone(snap)
+            assert snap is not None
+            self.assertEqual(snap.shape, (2, 64, 32, 32))
+
+            # Проверка отсутствия ложного добавления вспомогательных дочерних объемов GammaCameraNode
+            # при явно разрешенном слоте crystal, а также возврата [] для сцены без детекторов
+            cam = GammaCameraNode(name="CameraHead")
+            main_crystal = Volume(name="Main_Scintillator", geometry=Box(400.0, 400.0, 10.0), material=Material("NaI"))
+            shield_vol = Volume(name="Detector_Shield_Back", geometry=Box(420.0, 420.0, 20.0), material=Material("Lead"))
+            cam.add_child(main_crystal)
+            cam.add_child(shield_vol)
+            cam.slots["crystal"] = "Main_Scintillator"
+            found_detectors = _find_all_detector_nodes(cam)
+            self.assertEqual([det_node.name for det_node in found_detectors], ["Main_Scintillator"])
+
+            phantom_only_scene = CompositeNode(name="World")
+            phantom_only_scene.add_child(
+                Volume(name="WaterPhantom", geometry=Box(100.0, 100.0, 100.0), material=Material("Water"))
+            )
+            self.assertEqual(_find_all_detector_nodes(phantom_only_scene), [])
+        finally:
+            if large_handler is not None:
+                large_handler.close()
+            if large_ring is not None:
+                large_ring.close(unlink=True)
+            small_ring.close(unlink=True)
+            try:
+                small_proj.close()
+                small_proj.unlink()
+            except (FileNotFoundError, OSError):
+                pass
+
 
 if __name__ == '__main__':
     unittest.main()
+
 

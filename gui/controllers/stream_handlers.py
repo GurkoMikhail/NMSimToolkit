@@ -1,13 +1,14 @@
+import gc
 import logging
 import queue
 import time
-from multiprocessing import Queue as MpQueue
 from multiprocessing import shared_memory
 from collections.abc import Mapping
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
 
+from core.config.models import GammaCameraSlotsConfig
 from core.data.data_handlers import BaseDataHandler, SensitiveVolumeHandler
 from core.geometry.volumes import Volume
 from core.physics.interaction_buffers import ChunkType
@@ -43,6 +44,92 @@ def get_task_dose_shm_name(
     return task_prefix
 
 
+def safe_close_shm(shm: Optional[shared_memory.SharedMemory], unlink: bool = False) -> None:
+    """Безопасно закрывает и при необходимости освобождает сегмент SharedMemory с защитой от BufferError."""
+    if shm is None:
+        return
+    try:
+        shm.close()
+    except BufferError:
+        gc.collect()
+        try:
+            shm.close()
+        except (FileNotFoundError, OSError, ValueError, BufferError) as err:
+            _logger.debug(f"Ошибка при повторном закрытии SharedMemory '{shm.name}': {err}")
+    except (FileNotFoundError, OSError, ValueError) as err:
+        _logger.debug(f"Ошибка при закрытии SharedMemory '{shm.name}': {err}")
+    if unlink:
+        try:
+            shm.unlink()
+        except (FileNotFoundError, OSError, ValueError):
+            pass
+
+
+def is_shm_name_conflicting(shm_name: str, required_nbytes: int) -> bool:
+    """
+    Проверяет, удерживается ли в ОС сегмент SharedMemory с именем shm_name меньшего размера,
+    чем required_nbytes, который невозможно пересоздать под тем же именем (актуально для Windows).
+    """
+    try:
+        probe = shared_memory.SharedMemory(name=shm_name, create=False)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+    existing_size = probe.size
+    safe_close_shm(probe, unlink=(existing_size < required_nbytes))
+    del probe
+    if existing_size >= required_nbytes:
+        return False
+
+    gc.collect()
+    try:
+        reprobe = shared_memory.SharedMemory(name=shm_name, create=False)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+    still_small = reprobe.size < required_nbytes
+    safe_close_shm(reprobe, unlink=still_small)
+    del reprobe
+    return still_small
+
+
+def create_or_reuse_shm(shm_name: str, nbytes: int) -> Tuple[shared_memory.SharedMemory, bool]:
+    """
+    Создает или переиспользует сегмент SharedMemory размера не менее nbytes.
+    Если в ОС (Windows) старый сегмент меньшего размера удерживается открытым дескриптором,
+    выполняет сборку мусора и при сохранении конфликта выбирает уникальное имя поколения.
+    Возвращает кортеж (shm, owns_shm).
+    """
+    target_bytes = max(1, int(nbytes))
+    try:
+        return shared_memory.SharedMemory(name=shm_name, create=True, size=target_bytes), True
+    except FileExistsError:
+        existing_shm = shared_memory.SharedMemory(name=shm_name, create=False)
+        if existing_shm.size >= target_bytes:
+            return existing_shm, False
+        safe_close_shm(existing_shm, unlink=True)
+        del existing_shm
+        gc.collect()
+        try:
+            return shared_memory.SharedMemory(name=shm_name, create=True, size=target_bytes), True
+        except FileExistsError:
+            for gen in range(1, 1024):
+                alt_name = f"{shm_name}_g{gen}"
+                try:
+                    return shared_memory.SharedMemory(name=alt_name, create=True, size=target_bytes), True
+                except FileExistsError:
+                    alt_existing = shared_memory.SharedMemory(name=alt_name, create=False)
+                    if alt_existing.size >= target_bytes:
+                        return alt_existing, False
+                    safe_close_shm(alt_existing, unlink=True)
+                    del alt_existing
+            raise
+
+
 class ControlBufferSHM:
     """
     Легковесный буфер управления фокусом и двухуровневой паузой в SharedMemory.
@@ -66,21 +153,8 @@ class ControlBufferSHM:
         self._shm: Optional[shared_memory.SharedMemory] = None
 
         if create:
-            try:
-                self._shm = shared_memory.SharedMemory(name=shm_name, create=True, size=self.BYTE_SIZE)
-            except FileExistsError:
-                existing_shm = shared_memory.SharedMemory(name=shm_name, create=False)
-                if existing_shm.size >= self.BYTE_SIZE:
-                    self._shm = existing_shm
-                    self._owns_shm = False
-                else:
-                    try:
-                        existing_shm.close()
-                        existing_shm.unlink()
-                    except (FileNotFoundError, OSError, ValueError, BufferError):
-                        pass
-                    self._shm = shared_memory.SharedMemory(name=shm_name, create=True, size=self.BYTE_SIZE)
-                    self._owns_shm = True
+            self._shm, self._owns_shm = create_or_reuse_shm(shm_name, self.BYTE_SIZE)
+            self.shm_name = self._shm.name
             self.flags: Optional[np.ndarray] = np.ndarray((4,), dtype=np.int64, buffer=self._shm.buf)
             self.flags[0] = int(initial_focused_job)
             self.flags[1] = 1
@@ -99,18 +173,6 @@ class ControlBufferSHM:
 
     @focused_job_index.setter
     def focused_job_index(self, value: int) -> None:
-        if self.flags is not None:
-            self.flags[0] = int(value)
-
-    @property
-    def focused_task_id(self) -> int:
-        """Синоним индекса текущей сфокусированной задачи."""
-        if self.flags is None:
-            return 0
-        return int(self.flags[0])
-
-    @focused_task_id.setter
-    def focused_task_id(self, value: int) -> None:
         if self.flags is not None:
             self.flags[0] = int(value)
 
@@ -166,17 +228,9 @@ class ControlBufferSHM:
         """Закрывает сегмент SharedMemory и при необходимости удаляет его."""
         self.flags = None
         if self._shm is not None:
-            try:
-                self._shm.close()
-                if unlink:
-                    try:
-                        self._shm.unlink()
-                    except FileNotFoundError:
-                        pass
-            except (FileNotFoundError, OSError, ValueError, BufferError) as err:
-                _logger.debug(f"Ошибка при закрытии ControlBufferSHM '{self.shm_name}': {err}")
-            finally:
-                self._shm = None
+            shm_ref = self._shm
+            self._shm = None
+            safe_close_shm(shm_ref, unlink=unlink)
 
 
 class TelemetryRingBufferSHM:
@@ -221,21 +275,8 @@ class TelemetryRingBufferSHM:
         total_bytes = self.compute_byte_size(self.track_capacity, self.spectrum_capacity)
 
         if create:
-            try:
-                self._shm = shared_memory.SharedMemory(name=shm_name, create=True, size=total_bytes)
-            except FileExistsError:
-                existing_shm = shared_memory.SharedMemory(name=shm_name, create=False)
-                if existing_shm.size >= total_bytes:
-                    self._shm = existing_shm
-                    self._owns_shm = False
-                else:
-                    try:
-                        existing_shm.close()
-                        existing_shm.unlink()
-                    except (FileNotFoundError, OSError, ValueError, BufferError):
-                        pass
-                    self._shm = shared_memory.SharedMemory(name=shm_name, create=True, size=total_bytes)
-                    self._owns_shm = True
+            self._shm, self._owns_shm = create_or_reuse_shm(shm_name, total_bytes)
+            self.shm_name = self._shm.name
         else:
             self._shm = shared_memory.SharedMemory(name=shm_name, create=False)
             header_preview = np.ndarray((self.HEADER_LONGS,), dtype=np.int64, buffer=self._shm.buf, offset=0)
@@ -459,42 +500,37 @@ class TelemetryRingBufferSHM:
         self.detector_energies = None
         self.process_id = None
         if self._shm is not None:
-            try:
-                self._shm.close()
-                if unlink:
-                    try:
-                        self._shm.unlink()
-                    except FileNotFoundError:
-                        pass
-            except (FileNotFoundError, OSError, ValueError, BufferError) as err:
-                _logger.debug(f"Ошибка при закрытии TelemetryRingBufferSHM '{self.shm_name}': {err}")
-            finally:
-                self._shm = None
+            shm_ref = self._shm
+            self._shm = None
+            safe_close_shm(shm_ref, unlink=unlink)
 
 
 class GuiStreamDataHandler(SensitiveVolumeHandler):
     """
     Обработчик потоковых данных для передачи телеметрии в реальном времени в GUI.
     Наследуется от SensitiveVolumeHandler для единого сопоставления чувствительных объемов
-    через FlattenedScene. Передает пакеты 3D-треков через TelemetryRingBufferSHM (или multiprocessing.Queue)
-    и обновляет накопленную 2D-проекцию детектора в multiprocessing.shared_memory.SharedMemory.
+    через FlattenedScene. Передает пакеты 3D-треков через TelemetryRingBufferSHM (или multiprocessing.Queue),
+    выполняет сцинтилляционную интеграцию вспышек по particle_ID (центроид Ангера)
+    и обновляет накопленный 4D гиперспектральный куб (или 2D-проекцию) в SharedMemory.
     """
 
     _CONSUMED_WITH_ESCAPED: FrozenSet[ChunkType] = frozenset({
         ChunkType.INITIAL_STATES,
         ChunkType.INTERACTIONS,
         ChunkType.ESCAPED_PARTICLES,
+        ChunkType.DEAD_PARTICLES,
     })
     _CONSUMED_WITHOUT_ESCAPED: FrozenSet[ChunkType] = frozenset({
         ChunkType.INITIAL_STATES,
         ChunkType.INTERACTIONS,
+        ChunkType.DEAD_PARTICLES,
     })
 
     def __init__(
         self,
         track_queue: Optional[Any] = None,
         shm_name: Optional[str] = None,
-        projection_shape: Tuple[int, int] = (128, 128),
+        projection_shape: Union[Tuple[int, int], Tuple[int, int, int, int], Tuple[int, ...]] = (128, 128),
         projection_dtype: Any = np.float32,
         create_shm: bool = False,
         sensitive_volume_ids: Optional[Set[int]] = None,
@@ -507,14 +543,16 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
         telemetry_shm_name: Optional[str] = None,
         max_points_per_batch: Optional[int] = None,
         pause_proxy: Optional[Any] = None,
+        max_energy: float = 0.3,
+        energy_bins: int = 256,
     ) -> None:
         """
         Инициализация обработчика потоковых данных GUI.
 
         :param track_queue: Очередь для отправки 3D треков в UI (legacy/fallback).
-        :param shm_name: Имя блока разделяемой памяти SharedMemory для 2D-проекции.
-        :param projection_shape: Разрешение матрицы проекции (высота, ширина).
-        :param projection_dtype: Тип данных матрицы проекции.
+        :param shm_name: Имя блока разделяемой памяти SharedMemory для проекционного буфера (4D или 2D).
+        :param projection_shape: Форма буфера проекции: 4D (N_det, E_bins, Rows, Cols) или 2D (Rows, Cols).
+        :param projection_dtype: Тип данных буфера проекции.
         :param create_shm: Создавать ли блок разделяемой памяти (True) или подключаться к существующему (False).
         :param sensitive_volume_ids: Множество ID чувствительных объемов для физического отбора проекций.
         :param max_tracks_per_batch: Максимальное число точек треков в одном пакете.
@@ -526,6 +564,8 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
         :param telemetry_shm_name: Имя сегмента SharedMemory кольцевого буфера треков и спектра.
         :param max_points_per_batch: Синоним max_tracks_per_batch для настройки лимита точек в батче.
         :param pause_proxy: Опциональная ссылка на FocusedPauseProxy для закрытия при завершении.
+        :param max_energy: Верхняя граница энергетической шкалы куба в МэВ (по умолчанию 0.3 МэВ = 300 кэВ).
+        :param energy_bins: Число энергетических каналов при 4D-биннинге (по умолчанию 256).
         """
         if sensitive_volumes:
             initial_sensitive_volumes: List[SpatialNode] = [
@@ -541,13 +581,18 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
         self.track_queue = track_queue
         self.shm_name = shm_name
         self.telemetry_shm_name = telemetry_shm_name
-        self.projection_shape = projection_shape
+        self.projection_shape: Tuple[int, ...] = tuple(int(dim) for dim in projection_shape)
         self.projection_dtype = np.dtype(projection_dtype)
         self.max_tracks_per_batch = (
             int(max_points_per_batch) if max_points_per_batch is not None else int(max_tracks_per_batch)
         )
         self.show_escaped_tracks = show_escaped_tracks
         self._pause_proxy = pause_proxy
+        self.max_energy: float = max(1e-9, float(max_energy))
+        self.energy_bins: int = (
+            int(self.projection_shape[1]) if len(self.projection_shape) == 4 else max(1, int(energy_bins))
+        )
+
         self.detector_volume: Optional[SpatialNode] = (
             detector_volume
             if detector_volume is not None
@@ -555,6 +600,16 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
         )
         self.detector_inv_matrix = detector_inv_matrix
         self._explicit_detector_size: Optional[Tuple[float, float]] = None
+
+        self._node_to_det_idx: Dict[SpatialNode, int] = {
+            node: idx for idx, node in enumerate(self.sensitive_volumes)
+        }
+        if self.detector_volume is not None and self.detector_volume not in self._node_to_det_idx:
+            self._node_to_det_idx[self.detector_volume] = 0
+
+        # Аккумулятор активных историй в кристаллах:
+        # ключ (particle_id, det_idx) -> [e_sum, wx, wy, size_x, size_y, prev_proj_index]
+        self._pending_histories: Dict[Tuple[int, int], List[Any]] = {}
 
         if sensitive_volume_ids is not None:
             self.sensitive_volume_ids: Optional[Set[int]] = set(sensitive_volume_ids) | set(self.target_volumes)
@@ -568,8 +623,9 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
                 self.detector_size = (float(detector_size[0]), float(detector_size[1]))
             self._explicit_detector_size = self.detector_size
         elif self.detector_volume is not None:
-            if isinstance(self.detector_volume, Volume):
-                vol_size = self.detector_volume.local_bound
+            resolved_crystal = self._resolve_crystal_volume_for_node(self.detector_volume)
+            if resolved_crystal is not None:
+                vol_size = resolved_crystal.local_bound
                 self.detector_size = (float(vol_size[0]), float(vol_size[1]))
             else:
                 self.detector_size = (400.0, 400.0)
@@ -588,12 +644,10 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
         self._owns_shm = create_shm
 
         if shm_name is not None:
-            nbytes = int(np.prod(projection_shape) * self.projection_dtype.itemsize)
+            nbytes = int(np.prod(self.projection_shape) * self.projection_dtype.itemsize)
             if create_shm:
-                try:
-                    self._shm = shared_memory.SharedMemory(name=shm_name, create=True, size=nbytes)
-                except FileExistsError:
-                    self._shm = shared_memory.SharedMemory(name=shm_name, create=False)
+                self._shm, self._owns_shm = create_or_reuse_shm(shm_name, nbytes)
+                self.shm_name = self._shm.name
             else:
                 try:
                     self._shm = shared_memory.SharedMemory(name=shm_name, create=False)
@@ -602,8 +656,14 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
                     self._shm = None
 
             if self._shm is not None:
+                effective_shape = self.projection_shape
+                if self._shm.size < nbytes and len(self.projection_shape) == 4:
+                    fallback_2d = (self.projection_shape[2], self.projection_shape[3])
+                    if int(np.prod(fallback_2d) * self.projection_dtype.itemsize) <= self._shm.size:
+                        effective_shape = fallback_2d
+                        self.projection_shape = fallback_2d
                 self._projection_array = np.ndarray(
-                    projection_shape,
+                    effective_shape,
                     dtype=self.projection_dtype,
                     buffer=self._shm.buf,
                 )
@@ -636,6 +696,13 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
         """
         chunk_type = chunk.get('type')
         data = chunk.get('data')
+
+        if data is None:
+            return
+
+        if chunk_type == ChunkType.DEAD_PARTICLES:
+            self._handle_dead_particles(data)
+            return
 
         if not isinstance(data, (dict, Mapping)):
             return
@@ -702,8 +769,6 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
             except queue.Full:
                 pass
 
-    _handle_born = _handle_initial_states
-
     def _handle_escaped_particles(self, data: Mapping[str, Any]) -> None:
         """
         Обработка вылетевших частиц: запись граничной точки выхода в кольцевой буфер SHM
@@ -759,40 +824,35 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
             except queue.Full:
                 pass
 
-    _handle_escaped = _handle_escaped_particles
-
-    def _project_points_for_node(
-        self,
-        coords: np.ndarray,
-        target_node: Optional[SpatialNode],
-    ) -> None:
-        """
-        Переводит мировые координаты точек в локальную систему координат целевого узла детектора,
-        проверяет попадание в 3D-габариты кристалла (lx, ly, lz) и инкрементирует матрицу проекции.
-        """
-        if self._projection_array is None or len(coords) == 0:
-            return
-
-        if isinstance(target_node, SpatialNode):
-            local_pos = target_node.convert_to_local_position(coords)
-            lx = local_pos[:, 0]
-            ly = local_pos[:, 1]
-            lz = local_pos[:, 2]
-        elif self.detector_inv_matrix is not None:
-            local_pos = np.ones((len(coords), 4), dtype=coords.dtype)
-            local_pos[:, :3] = coords
-            np.matmul(local_pos, self.detector_inv_matrix.T.astype(coords.dtype), out=local_pos)
-            lx = local_pos[:, 0]
-            ly = local_pos[:, 1]
-            lz = local_pos[:, 2]
-        else:
-            lx = coords[:, 0]
-            ly = coords[:, 1]
-            lz = coords[:, 2]
-
-        half_z: Optional[float] = None
+    @staticmethod
+    def _resolve_crystal_volume_for_node(target_node: Optional[SpatialNode]) -> Optional[Volume]:
+        """Находит физический объем сцинтилляционного кристалла для узла Volume или GammaCameraNode."""
         if isinstance(target_node, Volume):
-            vol_bound = target_node.local_bound
+            return target_node
+        if isinstance(target_node, GammaCameraNode):
+            crystal_slot_name = target_node.slots.get("crystal")
+            if isinstance(crystal_slot_name, Volume):
+                return crystal_slot_name
+            if isinstance(crystal_slot_name, str) and crystal_slot_name:
+                matched = _find_scene_nodes_by_names(target_node, [crystal_slot_name])
+                for node_item in matched:
+                    if isinstance(node_item, Volume):
+                        return node_item
+            detector_children = _find_all_detector_nodes(target_node)
+            for node_item in detector_children:
+                if isinstance(node_item, Volume):
+                    return node_item
+        return None
+
+    def _get_crystal_bounds_for_node(
+        self,
+        target_node: Optional[SpatialNode],
+    ) -> Tuple[float, float, Optional[float]]:
+        """Возвращает габариты кристалла (size_x, size_y, half_z) для указанного узла детектора."""
+        half_z: Optional[float] = None
+        resolved_crystal = self._resolve_crystal_volume_for_node(target_node)
+        if resolved_crystal is not None:
+            vol_bound = resolved_crystal.local_bound
             if self._explicit_detector_size is None:
                 size_x = float(vol_bound[0])
                 size_y = float(vol_bound[1])
@@ -801,33 +861,218 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
             half_z = float(vol_bound[2]) / 2.0
         else:
             size_x, size_y = self.detector_size
+        return max(1e-6, size_x), max(1e-6, size_y), half_z
+
+    def _convert_coords_to_local(
+        self,
+        coords: np.ndarray,
+        target_node: Optional[SpatialNode],
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Переводит массив мировых 3D-координат (N, 3) в локальную систему координат кристалла target_node."""
+        resolved_crystal = self._resolve_crystal_volume_for_node(target_node)
+        effective_node: Optional[SpatialNode] = resolved_crystal if resolved_crystal is not None else target_node
+        if isinstance(effective_node, SpatialNode):
+            local_pos = effective_node.convert_to_local_position(coords)
+            return local_pos[:, 0], local_pos[:, 1], local_pos[:, 2]
+        if self.detector_inv_matrix is not None:
+            local_pos = np.ones((len(coords), 4), dtype=coords.dtype)
+            local_pos[:, :3] = coords
+            np.matmul(local_pos, self.detector_inv_matrix.T.astype(coords.dtype), out=local_pos)
+            return local_pos[:, 0], local_pos[:, 1], local_pos[:, 2]
+        return coords[:, 0], coords[:, 1], coords[:, 2]
+
+    def _compute_projection_index(
+        self,
+        det_idx: int,
+        e_sum: float,
+        xc: float,
+        yc: float,
+        size_x: float,
+        size_y: float,
+    ) -> Tuple[int, ...]:
+        """
+        Вычисляет индексы в буфере проекции (4D куб или 2D матрица) по стандарту DICOM NM
+        с квадратным полем зрения fov = max(size_x, size_y) и ориентацией взгляда сквозь коллиматор
+        (F = +Z_local, U = +Y_local, R = -X_local).
+        """
+        assert self._projection_array is not None
+        fov = max(float(size_x), float(size_y), 1e-6)
+        if self._projection_array.ndim == 4:
+            n_det, e_bins, rows, cols = self._projection_array.shape
+            col = int(np.clip(np.floor((0.5 - xc / fov) * cols), 0, cols - 1))
+            row = int(np.clip(np.floor((0.5 - yc / fov) * rows), 0, rows - 1))
+            e_bin = int(np.clip(np.floor((e_sum / self.max_energy) * e_bins), 0, e_bins - 1))
+            d_idx = min(max(0, int(det_idx)), n_det - 1)
+            return (d_idx, e_bin, row, col)
+
+        rows, cols = self._projection_array.shape[-2], self._projection_array.shape[-1]
+        col = int(np.clip(np.floor((0.5 - xc / fov) * cols), 0, cols - 1))
+        row = int(np.clip(np.floor((0.5 - yc / fov) * rows), 0, rows - 1))
+        return (row, col)
+
+    def _accumulate_hits_for_detector(
+        self,
+        coords: np.ndarray,
+        edep: np.ndarray,
+        pids: Optional[np.ndarray],
+        target_node: Optional[SpatialNode],
+        det_idx: int,
+        touched_keys: Set[Tuple[int, int]],
+        immediate_energies: List[float],
+    ) -> None:
+        """
+        Переводит координаты взаимодействий в локальную систему target_node, отбирает попадания
+        внутри кристалла с energy_deposit > 0 и аккумулирует сцинтилляционную вспышку по (particle_id, det_idx).
+        """
+        if len(coords) == 0:
+            return
+
+        lx, ly, lz = self._convert_coords_to_local(coords, target_node)
+        size_x, size_y, half_z = self._get_crystal_bounds_for_node(target_node)
 
         half_x = size_x / 2.0
         half_y = size_y / 2.0
-
         eps = 1e-3
+
         in_crystal = (
             (lx >= -half_x - eps)
             & (lx <= half_x + eps)
             & (ly >= -half_y - eps)
             & (ly <= half_y + eps)
+            & (edep > 0.0)
         )
         if half_z is not None:
             in_crystal = in_crystal & (np.abs(lz) <= half_z + eps)
 
-        lx = lx[in_crystal]
-        ly = ly[in_crystal]
+        if not np.any(in_crystal):
+            return
 
-        if len(lx) > 0:
-            height, width = self.projection_shape
-            ix = np.clip(((lx / size_x) + 0.5) * (width - 1), 0, width - 1).astype(np.int32)
-            iy = np.clip(((ly / size_y) + 0.5) * (height - 1), 0, height - 1).astype(np.int32)
-            np.add.at(self._projection_array, (iy, ix), 1.0)
+        lx_in = np.asarray(lx[in_crystal], dtype=np.float64)
+        ly_in = np.asarray(ly[in_crystal], dtype=np.float64)
+        edep_in = np.asarray(edep[in_crystal], dtype=np.float64)
+
+        if pids is None:
+            for hit_idx in range(len(edep_in)):
+                de_val = float(edep_in[hit_idx])
+                xc_val = float(lx_in[hit_idx])
+                yc_val = float(ly_in[hit_idx])
+                if self._projection_array is not None:
+                    proj_idx = self._compute_projection_index(det_idx, de_val, xc_val, yc_val, size_x, size_y)
+                    self._projection_array[proj_idx] += 1.0
+                immediate_energies.append(de_val)
+            return
+
+        pids_in = np.asarray(pids[in_crystal], dtype=np.int64)
+        for hit_idx in range(len(edep_in)):
+            pid_val = int(pids_in[hit_idx])
+            de_val = float(edep_in[hit_idx])
+            lx_val = float(lx_in[hit_idx])
+            ly_val = float(ly_in[hit_idx])
+            key = (pid_val, int(det_idx))
+            entry = self._pending_histories.get(key)
+            if entry is None:
+                self._pending_histories[key] = [
+                    de_val,
+                    de_val * lx_val,
+                    de_val * ly_val,
+                    size_x,
+                    size_y,
+                    None,
+                ]
+            else:
+                entry[0] += de_val
+                entry[1] += de_val * lx_val
+                entry[2] += de_val * ly_val
+            touched_keys.add(key)
+
+    def _commit_touched_histories_to_projection(self, touched_keys: Set[Tuple[int, int]]) -> None:
+        """
+        Обновляет отсчеты в _projection_array для затронутых в текущем батче историй (particle_id, det_idx).
+        Если история уже имела предварительный отсчет из предыдущего чанка INTERACTIONS до гибели частицы,
+        предыдущий отсчет откатывается и переносится в обновленный центроид Ангера и суммарный бин энергии.
+        """
+        if self._projection_array is None or not touched_keys:
+            return
+
+        for key in touched_keys:
+            entry = self._pending_histories.get(key)
+            if entry is None:
+                continue
+            e_sum, wx, wy, size_x, size_y, prev_idx = entry
+            if e_sum <= 0.0:
+                continue
+            if prev_idx is not None:
+                self._projection_array[prev_idx] -= 1.0
+            xc = wx / e_sum
+            yc = wy / e_sum
+            new_idx = self._compute_projection_index(key[1], e_sum, xc, yc, size_x, size_y)
+            self._projection_array[new_idx] += 1.0
+            entry[5] = new_idx
+
+    def _handle_dead_particles(self, data: Any) -> None:
+        """
+        Финализирует сцинтилляционные импульсы для завершивших свою историю частиц (ChunkType.DEAD_PARTICLES).
+        """
+        if not self._pending_histories:
+            return
+
+        if isinstance(data, Mapping):
+            raw_ids = data.get("particle_ID") if "particle_ID" in data else data.get("particle_id")
+        else:
+            raw_ids = data
+
+        if raw_ids is None:
+            return
+
+        dead_arr = np.asarray(raw_ids, dtype=np.int64).ravel()
+        if len(dead_arr) == 0:
+            return
+
+        dead_set = set(dead_arr.tolist())
+        flushed_energies: List[float] = []
+
+        for key in list(self._pending_histories.keys()):
+            if key[0] in dead_set:
+                entry = self._pending_histories.pop(key)
+                e_sum, wx, wy, size_x, size_y, prev_idx = entry
+                if e_sum > 0.0:
+                    if prev_idx is None and self._projection_array is not None:
+                        xc = wx / e_sum
+                        yc = wy / e_sum
+                        proj_idx = self._compute_projection_index(key[1], e_sum, xc, yc, size_x, size_y)
+                        self._projection_array[proj_idx] += 1.0
+                    flushed_energies.append(float(e_sum))
+
+        if flushed_energies and self._telemetry_ring is not None:
+            self._telemetry_ring.write_spectrum(np.asarray(flushed_energies, dtype=np.float32))
+
+    def flush_pending_histories(self) -> None:
+        """
+        Принудительно финализирует все накопленные незавершенные истории частиц,
+        записывая центроиды Ангера в буфер проекции и суммарные энергии импульсов в кольцо спектра.
+        """
+        if not self._pending_histories:
+            return
+
+        flushed_energies: List[float] = []
+        for key, entry in list(self._pending_histories.items()):
+            self._pending_histories.pop(key, None)
+            e_sum, wx, wy, size_x, size_y, prev_idx = entry
+            if e_sum > 0.0:
+                if prev_idx is None and self._projection_array is not None:
+                    xc = wx / e_sum
+                    yc = wy / e_sum
+                    proj_idx = self._compute_projection_index(key[1], e_sum, xc, yc, size_x, size_y)
+                    self._projection_array[proj_idx] += 1.0
+                flushed_energies.append(float(e_sum))
+
+        if flushed_energies and self._telemetry_ring is not None:
+            self._telemetry_ring.write_spectrum(np.asarray(flushed_energies, dtype=np.float32))
 
     def _handle_interactions(self, data: Mapping[str, Any]) -> None:
         """
-        Обработка взаимодействий: запись треков и спектра в кольцевой буфер SHM
-        (или очередь треков) и проецирование на детектор.
+        Обработка взаимодействий: запись треков в кольцевой буфер SHM (или очередь треков)
+        и накопление сцинтилляционных вспышек по частицам (particle_ID) и детекторам.
         """
         pos_x = data.get('pos_x')
         pos_y = data.get('pos_y')
@@ -889,11 +1134,6 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
                     particle_id=sub_pids,
                     process_id=sub_procs,
                 )
-                if det_edep is not None:
-                    if len(det_edep) > 0:
-                        self._telemetry_ring.write_spectrum(det_edep)
-                elif energy_deposit is not None:
-                    self._telemetry_ring.write_spectrum(np.asarray(energy_deposit, dtype=np.float32))
             elif self.track_queue is not None:
                 track_payload = {
                     'type': 'tracks',
@@ -910,30 +1150,44 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
                 except (queue.Full, OSError, RuntimeError, ValueError, BufferError):
                     pass
 
-        if self._projection_array is not None:
+        if self._projection_array is not None or self._telemetry_ring is not None:
+            if energy_deposit is None:
+                return
+            edep_arr = np.asarray(energy_deposit, dtype=np.float64)
+            pids_arr = np.asarray(particle_id, dtype=np.int64) if particle_id is not None else None
             filtered_vids: Optional[np.ndarray] = None
+
             if self.sensitive_volume_ids is not None:
                 if volume_id is None:
                     return
                 volume_id_arr = np.asarray(volume_id)
-                mask = np.isin(volume_id_arr, list(self.sensitive_volume_ids))
+                mask = np.isin(volume_id_arr, list(self.sensitive_volume_ids)) & (edep_arr > 0.0)
                 if not np.any(mask):
                     return
                 px = pos_x[mask]
                 py = pos_y[mask]
                 pz = pos_z[mask] if pos_z is not None else np.zeros_like(px)
+                filtered_edep = edep_arr[mask]
+                filtered_pids = pids_arr[mask] if pids_arr is not None else None
                 filtered_vids = volume_id_arr[mask]
             else:
-                px = pos_x
-                py = pos_y
-                pz = pos_z if pos_z is not None else np.zeros_like(px)
+                mask = edep_arr > 0.0
+                if not np.any(mask):
+                    return
+                px = pos_x[mask]
+                py = pos_y[mask]
+                pz = pos_z[mask] if pos_z is not None else np.zeros_like(px)
+                filtered_edep = edep_arr[mask]
+                filtered_pids = pids_arr[mask] if pids_arr is not None else None
                 if volume_id is not None:
-                    filtered_vids = np.asarray(volume_id)
+                    filtered_vids = np.asarray(volume_id)[mask]
 
             if len(px) == 0:
                 return
 
             coords = np.column_stack((px, py, pz))
+            touched_keys: Set[Tuple[int, int]] = set()
+            immediate_energies: List[float] = []
 
             if filtered_vids is not None and self.volume_mapping:
                 for unique_vid in np.unique(filtered_vids):
@@ -943,23 +1197,59 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
                         self.sensitive_volumes and mapped_node not in self.sensitive_volumes
                     ):
                         mapped_node = self.detector_volume
+                    det_idx = self._node_to_det_idx.get(mapped_node, 0) if mapped_node is not None else 0
                     vid_mask = filtered_vids == unique_vid
-                    self._project_points_for_node(coords[vid_mask], mapped_node)
+                    self._accumulate_hits_for_detector(
+                        coords=coords[vid_mask],
+                        edep=filtered_edep[vid_mask],
+                        pids=filtered_pids[vid_mask] if filtered_pids is not None else None,
+                        target_node=mapped_node,
+                        det_idx=det_idx,
+                        touched_keys=touched_keys,
+                        immediate_energies=immediate_energies,
+                    )
             else:
-                self._project_points_for_node(coords, self.detector_volume)
+                det_idx = (
+                    self._node_to_det_idx.get(self.detector_volume, 0)
+                    if self.detector_volume is not None
+                    else 0
+                )
+                self._accumulate_hits_for_detector(
+                    coords=coords,
+                    edep=filtered_edep,
+                    pids=filtered_pids,
+                    target_node=self.detector_volume,
+                    det_idx=det_idx,
+                    touched_keys=touched_keys,
+                    immediate_energies=immediate_energies,
+                )
+
+            if touched_keys:
+                self._commit_touched_histories_to_projection(touched_keys)
+            if immediate_energies and self._telemetry_ring is not None:
+                self._telemetry_ring.write_spectrum(np.asarray(immediate_energies, dtype=np.float32))
 
     def get_projection_snapshot(self) -> Optional[np.ndarray]:
         """
-        Возвращает локальную копию текущей проекции из SharedMemory.
+        Финализирует накопленные незавершенные истории частиц и возвращает локальную копию
+        текущего буфера проекции из SharedMemory.
         """
+        self.flush_pending_histories()
         if self._projection_array is not None:
             return self._projection_array.copy()
         return None
 
+    def finalize(self) -> None:
+        """
+        Финализация оставшихся активных историй частиц при завершении симуляции.
+        """
+        self.flush_pending_histories()
+
     def clear(self) -> None:
         """
-        Сброс накопленной матрицы 2D-проекции в ноль.
+        Сброс накопленного буфера проекции и активных историй в ноль.
         """
+        self._pending_histories.clear()
         if self._projection_array is not None:
             self._projection_array.fill(0.0)
 
@@ -967,6 +1257,11 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
         """
         Закрытие дескрипторов SharedMemory проекции, кольцевого буфера телеметрии и прокси паузы.
         """
+        try:
+            self.flush_pending_histories()
+        except (OSError, ValueError, BufferError):
+            pass
+
         if self._telemetry_ring is not None:
             try:
                 self._telemetry_ring.close(unlink=False)
@@ -985,14 +1280,9 @@ class GuiStreamDataHandler(SensitiveVolumeHandler):
 
         self._projection_array = None
         if self._shm is not None:
-            try:
-                self._shm.close()
-                if self._owns_shm:
-                    self._shm.unlink()
-            except (OSError, ValueError, BufferError) as err:
-                _logger.debug(f"Ошибка при закрытии SharedMemory: {err}")
-            finally:
-                self._shm = None
+            shm_ref = self._shm
+            self._shm = None
+            safe_close_shm(shm_ref, unlink=self._owns_shm)
 
     def __del__(self) -> None:
         self.close()
@@ -1120,31 +1410,66 @@ class FocusedPauseProxy:
 
 
 def _find_scene_nodes_by_names(node: Any, target_names: Sequence[str]) -> List[SpatialNode]:
-    found: List[SpatialNode] = []
+    found_by_name: Dict[str, List[SpatialNode]] = {}
     target_set = set(target_names)
 
     def _traverse(current: Any) -> None:
-        if isinstance(current, SpatialNode) and current.name in target_set:
-            found.append(current)
+        if isinstance(current, SpatialNode) and current.name in target_set and current.name is not None:
+            found_by_name.setdefault(current.name, []).append(current)
         if isinstance(current, CompositeNode):
             for child_item in current.childs:
                 _traverse(child_item)
 
     _traverse(node)
-    return found
+    ordered: List[SpatialNode] = []
+    seen: Set[SpatialNode] = set()
+    for name in target_names:
+        for matched_node in found_by_name.get(name, ()):
+            if matched_node not in seen:
+                ordered.append(matched_node)
+                seen.add(matched_node)
+    return ordered
 
 
-def _find_all_detector_nodes(node: Any) -> List[SpatialNode]:
+def _find_all_detector_nodes(
+    node: Any,
+    slots_registry: Optional[Mapping[Any, Any]] = None,
+) -> List[SpatialNode]:
     found: List[SpatialNode] = []
+    seen: Set[SpatialNode] = set()
+
+    def _add(candidate: SpatialNode) -> None:
+        if candidate not in seen:
+            found.append(candidate)
+            seen.add(candidate)
 
     def _traverse(current: Any) -> None:
-        if isinstance(current, Volume):
+        if isinstance(current, GammaCameraNode):
+            crystal_slot: Any = current.slots.get("crystal")
+            if not crystal_slot and slots_registry is not None and current in slots_registry:
+                reg_entry = slots_registry[current]
+                if isinstance(reg_entry, Mapping):
+                    crystal_slot = reg_entry.get("crystal")
+                elif isinstance(reg_entry, GammaCameraSlotsConfig):
+                    crystal_slot = reg_entry.crystal
+            resolved_crystal = False
+            if isinstance(crystal_slot, Volume):
+                _add(crystal_slot)
+                resolved_crystal = True
+            elif isinstance(crystal_slot, str) and crystal_slot:
+                for matched_node in _find_scene_nodes_by_names(current, [crystal_slot]):
+                    if isinstance(matched_node, Volume):
+                        _add(matched_node)
+                        resolved_crystal = True
+            if resolved_crystal:
+                return
+        elif isinstance(current, Volume):
             node_name_lower = (current.name or "").lower()
             if (
                 ("detector" in node_name_lower or "crystal" in node_name_lower)
                 and "detector_box" not in node_name_lower
             ):
-                found.append(current)
+                _add(current)
         if isinstance(current, CompositeNode):
             for child_item in current.childs:
                 _traverse(child_item)
@@ -1160,7 +1485,7 @@ def create_gui_stream_handler(
     telemetry_queue: Optional[Any] = None,
     focused_job_index: Optional[int] = None,
     focused_shm_name: Optional[str] = None,
-    projection_shape: Tuple[int, int] = (128, 128),
+    projection_shape: Union[Tuple[int, int], Tuple[int, int, int, int], Tuple[int, ...]] = (128, 128),
     global_pause_event: Optional[Any] = None,
     focused_pause_event: Optional[Any] = None,
     step_trigger_event: Optional[Any] = None,
@@ -1253,6 +1578,12 @@ def create_gui_stream_handler(
             merged_extra.get("max_tracks_per_batch", task_dict.get("_max_points_per_batch", 2000)),
         )
     )
+    max_energy: float = float(
+        merged_extra.get("max_energy", task_dict.get("_max_energy", 0.3))
+    )
+    energy_bins: int = int(
+        merged_extra.get("energy_bins", task_dict.get("_energy_bins", 256))
+    )
 
     proj_shape = task_dict.get('_projection_shape', projection_shape)
     show_escaped = bool(merged_extra.get("show_escaped_tracks", task_dict.get('_show_escaped_tracks', False)))
@@ -1306,6 +1637,8 @@ def create_gui_stream_handler(
             sensitive_volumes=sensitive_volumes,
             max_points_per_batch=max_points_per_batch,
             pause_proxy=proxy_event,
+            max_energy=max_energy,
+            energy_bins=energy_bins,
         )
         return [stream_handler]
 
@@ -1357,6 +1690,8 @@ def create_gui_stream_handler(
             sensitive_volumes=sensitive_volumes,
             max_points_per_batch=max_points_per_batch,
             pause_proxy=legacy_proxy,
+            max_energy=max_energy,
+            energy_bins=energy_bins,
         )
         return [stream_handler]
     return []
@@ -1367,6 +1702,9 @@ __all__ = [
     'get_task_projection_shm_name',
     'get_task_telemetry_shm_name',
     'get_task_dose_shm_name',
+    'safe_close_shm',
+    'is_shm_name_conflicting',
+    'create_or_reuse_shm',
     'ControlBufferSHM',
     'TelemetryRingBufferSHM',
     'GuiStreamDataHandler',

@@ -38,6 +38,7 @@ class SceneViewModel(QObject):
     node_added = Signal(object)
     node_removed = Signal(object)
     node_renamed = Signal(str, str)
+    node_property_changed = Signal(object, str, object)
 
     def __init__(
         self,
@@ -48,6 +49,7 @@ class SceneViewModel(QObject):
         self.root_vm: Optional[NodeViewModel] = None
         self.selected_node: Optional[NodeViewModel] = None
         self._node_map: Dict[int, NodeViewModel] = {}
+        self._prop_connections: Dict[int, Any] = {}
         self.distribution_registry: Dict[Any, Any] = {}
         self.slots_registry: Dict[Any, Any] = {}
         self.bindings_registry: Dict[Any, Dict[str, str]] = {}
@@ -66,6 +68,7 @@ class SceneViewModel(QObject):
         """
         Загружает граф сцены из ядра и строит иерархию ViewModel.
         """
+        self._clear_all_prop_connections()
         self._node_map.clear()
         self.distribution_registry = dict(distribution_registry) if distribution_registry is not None else {}
         self.slots_registry = dict(slots_registry) if slots_registry is not None else {}
@@ -228,8 +231,22 @@ class SceneViewModel(QObject):
         """
         pass
 
+    def _clear_all_prop_connections(self) -> None:
+        for conn in list(self._prop_connections.values()):
+            try:
+                QObject.disconnect(conn)
+            except (RuntimeError, TypeError):
+                pass
+        self._prop_connections.clear()
+
     def _register_node_recursive(self, vm: NodeViewModel) -> None:
-        self._node_map[id(vm.core_node)] = vm
+        core_id = id(vm.core_node)
+        self._node_map[core_id] = vm
+        vm_id = id(vm)
+        if vm_id not in self._prop_connections:
+            self._prop_connections[vm_id] = vm.property_changed.connect(
+                lambda prop_name, prop_val, node_ref=vm: self.node_property_changed.emit(node_ref, prop_name, prop_val)
+            )
         for child in vm.children:
             self._register_node_recursive(child)
 
@@ -390,6 +407,13 @@ class SceneViewModel(QObject):
         core_id = id(vm.core_node)
         if core_id in self._node_map:
             del self._node_map[core_id]
+        vm_id = id(vm)
+        conn = self._prop_connections.pop(vm_id, None)
+        if conn is not None:
+            try:
+                QObject.disconnect(conn)
+            except (RuntimeError, TypeError):
+                pass
         for child in vm.children:
             self._unregister_node_recursive(child)
 

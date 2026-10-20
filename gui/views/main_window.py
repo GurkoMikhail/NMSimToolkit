@@ -5,7 +5,7 @@
 """
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import hepunits as units
@@ -21,6 +21,8 @@ from gui.viewport_3d.transform_gizmo import GizmoMode, GizmoSpace
 
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
+from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
+from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.views.scene_tree_widget import SceneTreeWidget
 from gui.views.property_inspector import PropertyInspector
 from gui.views.results_viewer import ResultsViewer
@@ -34,7 +36,10 @@ from gui.viewmodels.procedure_viewmodel import (
     SpectProcedureViewModel,
     procedure_from_config,
 )
-from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
+from gui.viewmodels.data_handler_viewmodel import (
+    DataManagerViewModel,
+    SensitiveVolumeHandlerViewModel,
+)
 from gui.viewport_3d.vtk_viewport import VTKViewport
 from gui.controllers.orchestrator_session import OrchestratorSession
 from gui.controllers.viewport_controller import SceneViewportController
@@ -119,6 +124,7 @@ class MainWindow(QMainWindow):
         self._scene_vm = vm
         if self.viewport_controller is not None:
             self.viewport_controller.set_scene_viewmodel(vm)
+        self._sync_detector_metadata()
 
     def _init_components(self) -> None:
         # Центральный 3D вьюпорт
@@ -446,6 +452,7 @@ class MainWindow(QMainWindow):
         self.orchestrator_session.projection_received.connect(self.results_viewer.set_projection_data)
         self.orchestrator_session.projection_stack_updated.connect(self._on_projection_stack_updated)
         self.orchestrator_session.spectrum_received.connect(self.results_viewer.set_spectrum_data)
+        self.orchestrator_session.detector_metadata_updated.connect(self.results_viewer.set_detector_metadata)
         self.orchestrator_session.dose_volume_received.connect(self._on_dose_volume_received)
         self.orchestrator_session.stats_updated.connect(
             lambda cnt, cps: self.lbl_status.setText(f"Моделирование: {cnt:,} отсчетов ({cps:.1f} CPS)")
@@ -455,7 +462,15 @@ class MainWindow(QMainWindow):
         self.scene_vm.scene_loaded.connect(self._on_scene_loaded_sync)
         self.scene_vm.node_added.connect(self._on_node_added)
         self.scene_vm.node_removed.connect(self._on_node_removed)
-        self.scene_vm.node_renamed.connect(self.data_manager_vm.on_node_renamed)
+        self.scene_vm.node_renamed.connect(self._on_node_renamed_sync)
+
+        # Синхронизация списка чувствительных детекторов и шкалы спектра с панелью результатов
+        self.data_manager_vm.changed.connect(self._sync_detector_metadata)
+        self.data_manager_vm.handlers_changed.connect(self._sync_detector_metadata)
+        self.scene_vm.scene_loaded.connect(lambda _root: self._sync_detector_metadata())
+        self.scene_vm.node_added.connect(lambda _node: self._sync_detector_metadata())
+        self.scene_vm.node_removed.connect(lambda _node: self._sync_detector_metadata())
+        self.scene_vm.node_property_changed.connect(self._on_scene_node_property_changed)
 
         # Автоматическая генерация задач при изменении сцены и параметров процедуры
         self.scene_vm.node_added.connect(lambda _node: self._on_generate_jobs())
@@ -481,8 +496,10 @@ class MainWindow(QMainWindow):
             lambda tid: self.jobs_widget.on_job_resumed(tid)
         )
 
-        # Сброс накопления из панели результатов
+        # Сброс накопления и управление параметрами энергетического спектра из панели результатов
         self.results_viewer.accumulation_cleared.connect(self._on_clear_accumulation)
+        self.results_viewer.spectrum_settings_changed.connect(self._on_spectrum_settings_changed)
+        self.results_viewer.auto_max_energy_requested.connect(self._on_auto_max_energy_requested)
 
         # Синхронизация состояния манипулятора Gizmo с панелью инструментов
         if self.viewport_controller is not None and self.viewport_controller.transform_gizmo is not None:
@@ -493,12 +510,132 @@ class MainWindow(QMainWindow):
         # Начальная отрисовка сцены во вьюпорте и генерация задач
         if self.viewport_controller is not None:
             self.viewport_controller.sync_viewport_scene()
+        self._sync_detector_metadata()
         self._on_generate_jobs()
 
+    def _on_scene_node_property_changed(self, _node_vm: NodeViewModel, prop_name: str, _value: Any) -> None:
+        """Реактивный пересчет авто-предела спектра при изменении спектра энергии источника в сцене."""
+        if prop_name in ("spectrum", "energy"):
+            self._sync_detector_metadata()
+
+    def _on_spectrum_settings_changed(self, max_energy: float, energy_bins: int, auto_max_energy: bool) -> None:
+        """Синхронизация параметров энергетического спектра и числа бинов из ResultsViewer в OrchestratorSession."""
+        if self.orchestrator_session is None:
+            return
+        resolved_energy = self.orchestrator_session.set_spectrum_parameters(
+            max_energy=float(max_energy) * float(units.keV),
+            energy_bins=int(energy_bins),
+            auto_max_energy=bool(auto_max_energy),
+        )
+        if auto_max_energy and self.results_viewer is not None:
+            self.results_viewer.set_spectrum_configuration(
+                max_energy=float(resolved_energy / units.keV),
+                energy_bins=self.orchestrator_session.energy_bins,
+                auto_max_energy=True,
+            )
+
+    def _on_auto_max_energy_requested(self) -> None:
+        """Принудительный пересчет верхней границы спектра по источникам сцены по запросу пользователя."""
+        if self.orchestrator_session is not None:
+            self.orchestrator_session.auto_max_energy = True
+        self._sync_detector_metadata()
+
+    def _on_node_renamed_sync(self, old_name: str, new_name: str) -> None:
+        """Обновляет привязки слотов GammaCamera, чувствительные объемы и метаданные детекторов при переименовании узла."""
+        if self.scene_vm is not None:
+            for node_vm in self.scene_vm.all_nodes():
+                if isinstance(node_vm, GammaCameraViewModel):
+                    slots_cfg = node_vm.slots
+                    cam_core = node_vm.core_node
+                    if slots_cfg.casing == old_name:
+                        slots_cfg.casing = new_name
+                        cam_core.slots["casing"] = new_name
+                    if slots_cfg.detector_box == old_name:
+                        slots_cfg.detector_box = new_name
+                        cam_core.slots["detector_box"] = new_name
+                    if slots_cfg.collimator == old_name:
+                        slots_cfg.collimator = new_name
+                        cam_core.slots["collimator"] = new_name
+                    if slots_cfg.crystal == old_name:
+                        slots_cfg.crystal = new_name
+                        cam_core.slots["crystal"] = new_name
+                    if slots_cfg.glass_backend == old_name:
+                        slots_cfg.glass_backend = new_name
+                        cam_core.slots["glass_backend"] = new_name
+            for _cam_core, reg_slots in self.scene_vm.slots_registry.items():
+                if reg_slots.casing == old_name:
+                    reg_slots.casing = new_name
+                if reg_slots.detector_box == old_name:
+                    reg_slots.detector_box = new_name
+                if reg_slots.collimator == old_name:
+                    reg_slots.collimator = new_name
+                if reg_slots.crystal == old_name:
+                    reg_slots.crystal = new_name
+                if reg_slots.glass_backend == old_name:
+                    reg_slots.glass_backend = new_name
+
+        self.data_manager_vm.on_node_renamed(old_name, new_name)
+        self._sync_detector_metadata()
+
+    def _sync_detector_metadata(self) -> None:
+        """
+        Собирает имена активных чувствительных объемов детекторов из DataManagerViewModel
+        и дерева сцены SceneViewModel, рассчитывает актуальный max_energy и передает их в ResultsViewer.
+        """
+        if self.results_viewer is None:
+            return
+
+        det_names: List[str] = []
+        if self.data_manager_vm is not None:
+            for handler_vm in self.data_manager_vm.handlers:
+                if isinstance(handler_vm, SensitiveVolumeHandlerViewModel) and handler_vm.enabled:
+                    for vol_name in handler_vm.sensitive_volumes:
+                        clean_name = str(vol_name).strip()
+                        if clean_name and clean_name not in det_names:
+                            det_names.append(clean_name)
+
+        if not det_names and self.scene_vm is not None:
+            for node_vm in self.scene_vm.all_nodes():
+                if isinstance(node_vm, GammaCameraViewModel):
+                    crystal_vm = node_vm.crystal_vm
+                    c_name = str(crystal_vm.name if crystal_vm is not None else (node_vm.slots.crystal or "")).strip()
+                    if c_name and c_name not in det_names:
+                        det_names.append(c_name)
+            if not det_names:
+                for node_vm in self.scene_vm.all_nodes():
+                    if isinstance(node_vm, VolumeViewModel):
+                        name_lower = (node_vm.name or "").lower()
+                        if ("detector" in name_lower or "crystal" in name_lower) and "detector_box" not in name_lower:
+                            if node_vm.name not in det_names:
+                                det_names.append(node_vm.name)
+
+        if self.orchestrator_session is not None:
+            self.orchestrator_session.scene_vm = self.scene_vm
+            resolved_energy = self.orchestrator_session.resolve_effective_max_energy()
+            display_max_energy = float(resolved_energy / units.keV)
+            energy_bins = int(self.orchestrator_session.energy_bins)
+            auto_max_energy = bool(self.orchestrator_session.auto_max_energy)
+        else:
+            display_max_energy = 300.0
+            energy_bins = 256
+            auto_max_energy = True
+
+        self.results_viewer.set_detector_metadata(
+            det_names,
+            max_energy=display_max_energy,
+            energy_bins=energy_bins,
+            auto_max_energy=auto_max_energy,
+        )
+
     def _on_scene_loaded_sync(self, _root_vm: Any = None) -> None:
-        """Синхронизация 3D-вьюпорта после полной перезагрузки сцены."""
+        """Синхронизация 3D-вьюпорта и автошкалы энергетического спектра после полной перезагрузки сцены."""
         if self.viewport_controller is not None:
             self.viewport_controller.sync_viewport_scene()
+        if self.orchestrator_session is not None:
+            self.orchestrator_session.auto_max_energy = True
+        self._sync_detector_metadata()
+        if self.results_viewer is not None:
+            self.results_viewer.reset_energy_window()
 
     def _on_node_transform_changed(self, node_vm: NodeViewModel) -> None:
         """Инкрементальное обновление матрицы трансформации актора без пересоздания меша."""
@@ -516,10 +653,14 @@ class MainWindow(QMainWindow):
             self.viewport_controller.on_node_added(node_vm)
 
     def _on_node_removed(self, node_vm: NodeViewModel) -> None:
-        """Точечное удаление актора из сцены."""
+        """Точечное удаление актора из сцены и очистка удаленных узлов поддерева из обработчиков."""
         if self.viewport_controller is not None:
             self.viewport_controller.on_node_removed(node_vm)
-        self.data_manager_vm.on_node_removed(node_vm.name)
+        stack: List[NodeViewModel] = [node_vm]
+        while stack:
+            curr_vm = stack.pop()
+            self.data_manager_vm.on_node_removed(curr_vm.name)
+            stack.extend(curr_vm.children)
 
     def _on_sensitive_volume_selected_in_editor(self, volume_name: str) -> None:
         """
@@ -796,6 +937,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            self._sync_detector_metadata()
             self.orchestrator_session.start()
             self._update_action_states(running=True, paused=False)
             self.lbl_status.setText(f"Моделирование запущено ({len(self.orchestrator_session.jobs)} задач)")
@@ -905,6 +1047,7 @@ class MainWindow(QMainWindow):
             for handler in list(self.data_manager_vm.handlers):
                 self.data_manager_vm.remove_handler(handler)
             self.data_handler_list.rebuild_list()
+        self._sync_detector_metadata()
         self.viewport.clear_actors()
         self.current_config = None
         self.current_config_path = None
@@ -997,6 +1140,7 @@ class MainWindow(QMainWindow):
                     self.orchestrator_session.pool_size = int(cfg.pool_size)
                     self.jobs_widget.spin_pool_size.setValue(int(cfg.pool_size))
 
+                self._sync_detector_metadata()
                 self._on_generate_jobs()
                 self.viewport.reset_camera()
                 self.lbl_status.setText(f"Загружена сцена и конфигурация из {filepath.name}")

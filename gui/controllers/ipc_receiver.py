@@ -3,7 +3,7 @@ import queue
 import threading
 import time
 from multiprocessing import shared_memory
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import hepunits as units
@@ -14,6 +14,7 @@ from gui.controllers.stream_handlers import (
     get_task_dose_shm_name,
     get_task_projection_shm_name,
     get_task_telemetry_shm_name,
+    safe_close_shm,
 )
 
 _logger = logging.getLogger(__name__)
@@ -24,7 +25,8 @@ class IPCReceiver(QThread):
     Контроллер фонового приема данных межпроцессного взаимодействия (IPC Receiver).
     Поддерживает как одиночный режим (через очередь треков), так и пер-тасковый режим
     разделяемой памяти (SharedMemory) с мгновенным переключением фокуса между задачами
-    без сброса накопленной статистики.
+    без сброса накопленной статистики. Поддерживает как 4D гиперспектральный куб
+    (N_detectors, E_bins, Rows, Cols), так и 2D-буферы проекций (Rows, Cols).
     """
 
     tracks_received = Signal(dict)
@@ -40,7 +42,7 @@ class IPCReceiver(QThread):
         self,
         track_queue: Optional[Any] = None,
         shm_name: Optional[str] = None,
-        projection_shape: Tuple[int, int] = (128, 128),
+        projection_shape: Union[Tuple[int, int], Tuple[int, int, int, int], Tuple[int, ...]] = (128, 128),
         projection_dtype: Any = np.float32,
         fps: float = 30.0,
         dose_shm_name: Optional[str] = None,
@@ -69,7 +71,6 @@ class IPCReceiver(QThread):
         self.dose_fps = dose_fps
         self.dose_poll_interval = 1.0 / max(0.5, dose_fps)
         self.dose_grids_info = dose_grids_info or []
-        self._dose_grids_info = self.dose_grids_info
 
         self._focused_job_index: int = max(0, int(focused_job_index))
         self._num_tasks: int = max(1, int(num_tasks))
@@ -140,60 +141,52 @@ class IPCReceiver(QThread):
         self._projection_buf = None
         self._telem_ring = None
         self._dose_buf = None
-        self._multi_dose_bufs.clear()
-
+        self._multi_dose_bufs = {}
         self._task_proj_bufs.clear()
-        for t_shm in list(self._task_proj_shms.values()):
-            try:
-                t_shm.close()
-            except (OSError, BufferError, ValueError):
-                pass
+        self._task_dose_bufs.clear()
+        for m_buf_dict in self._task_multi_dose_bufs.values():
+            m_buf_dict.clear()
+        self._task_multi_dose_bufs.clear()
+
+        proj_shms = list(self._task_proj_shms.values())
         self._task_proj_shms.clear()
+        single_shm = self._shm
+        self._shm = None
+        for t_shm in proj_shms:
+            safe_close_shm(t_shm, unlink=False)
+        if single_shm is not None and single_shm not in proj_shms:
+            safe_close_shm(single_shm, unlink=False)
 
-        if self._shm is not None:
-            try:
-                self._shm.close()
-            except (OSError, BufferError, ValueError):
-                pass
-            self._shm = None
-
-        for t_ring in list(self._task_telem_rings.values()):
+        telem_rings = list(self._task_telem_rings.values())
+        self._task_telem_rings.clear()
+        for t_ring in telem_rings:
             try:
                 t_ring.close(unlink=False)
             except (OSError, BufferError, ValueError):
                 pass
-        self._task_telem_rings.clear()
 
-        self._task_dose_bufs.clear()
-        for t_dshm in list(self._task_dose_shms.values()):
-            try:
-                t_dshm.close()
-            except (OSError, BufferError, ValueError):
-                pass
+        dose_shms = list(self._task_dose_shms.values())
         self._task_dose_shms.clear()
+        single_dose_shm = self._dose_shm
+        self._dose_shm = None
+        for t_dshm in dose_shms:
+            safe_close_shm(t_dshm, unlink=False)
+        if single_dose_shm is not None and single_dose_shm not in dose_shms:
+            safe_close_shm(single_dose_shm, unlink=False)
 
-        if self._dose_shm is not None:
-            try:
-                self._dose_shm.close()
-            except (OSError, BufferError, ValueError):
-                pass
-            self._dose_shm = None
-
-        self._task_multi_dose_bufs.clear()
+        seen_multi_shms: List[shared_memory.SharedMemory] = []
         for m_dict in list(self._task_multi_dose_shms.values()):
             for m_shm in list(m_dict.values()):
-                try:
-                    m_shm.close()
-                except (OSError, BufferError, ValueError):
-                    pass
+                if m_shm not in seen_multi_shms:
+                    seen_multi_shms.append(m_shm)
+            m_dict.clear()
         self._task_multi_dose_shms.clear()
-
         for multi_shm in list(self._multi_dose_shms.values()):
-            try:
-                multi_shm.close()
-            except (OSError, BufferError, ValueError):
-                pass
-        self._multi_dose_shms.clear()
+            if multi_shm not in seen_multi_shms:
+                seen_multi_shms.append(multi_shm)
+        self._multi_dose_shms = {}
+        for m_shm in seen_multi_shms:
+            safe_close_shm(m_shm, unlink=False)
 
     def _bind_focused_task_shm(self, task_id: int) -> None:
         """
@@ -232,10 +225,10 @@ class IPCReceiver(QThread):
             else (self.dose_shm_name or self._base_dose_shm_name)
         )
 
-        if len(self._dose_grids_info) > 1:
+        if len(self.dose_grids_info) > 1:
             t_shms = self._task_multi_dose_shms.setdefault(task_id, {})
             t_bufs = self._task_multi_dose_bufs.setdefault(task_id, {})
-            for info in self._dose_grids_info:
+            for info in self.dose_grids_info:
                 name = info["name"]
                 if name not in t_bufs:
                     shape = info["grid_shape"]
@@ -254,21 +247,21 @@ class IPCReceiver(QThread):
             self._multi_dose_bufs = t_bufs
             self._dose_shm = None
             self._dose_buf = None
-        elif len(self._dose_grids_info) == 1 or self.dose_shm_name is not None or bool(effective_base_dose):
+        elif len(self.dose_grids_info) == 1 or self.dose_shm_name is not None or bool(effective_base_dose):
             if task_id not in self._task_dose_bufs:
                 grid_shape = (
-                    self._dose_grids_info[0]["grid_shape"]
-                    if len(self._dose_grids_info) == 1
+                    self.dose_grids_info[0]["grid_shape"]
+                    if len(self.dose_grids_info) == 1
                     else self.dose_grid_shape
                 )
                 grid_dtype = (
-                    np.dtype(self._dose_grids_info[0].get("dtype", self.dose_dtype))
-                    if len(self._dose_grids_info) == 1
+                    np.dtype(self.dose_grids_info[0].get("dtype", self.dose_dtype))
+                    if len(self.dose_grids_info) == 1
                     else self.dose_dtype
                 )
                 grid_name = (
-                    self._dose_grids_info[0].get("name")
-                    if len(self._dose_grids_info) == 1
+                    self.dose_grids_info[0].get("name")
+                    if len(self.dose_grids_info) == 1
                     else None
                 )
                 t_dose_name = get_task_dose_shm_name(
@@ -431,8 +424,7 @@ class IPCReceiver(QThread):
     def _on_shm_poll_in_main_thread(self) -> None:
         """
         Слот, выполняющийся в главном потоке GUI по триггеру _shm_poll_requested.
-        Читает буферы SharedMemory напрямую без копирования и синхронно (Qt::DirectConnection)
-        доставляет ссылки на представления SharedMemory в виджеты и рендереры.
+        Читает сегменты SharedMemory в главном потоке и передает снимки в виджеты и рендереры.
         """
         self._shm_poll_pending = False
         self._poll_shm_buffers(direct_call=False)
@@ -440,7 +432,7 @@ class IPCReceiver(QThread):
     def _poll_shm_buffers(self, direct_call: bool = False) -> None:
         """
         Читает сегменты SharedMemory в главном потоке с троттлингом, dirty-check и backpressure,
-        передавая прямые zero-copy представления np.ndarray поверх SharedMemory.buf без копирования.
+        передавая безопасные локальные копии снимков без удержания буферов SharedMemory.buf.
         """
         if self._per_task_shm:
             with self._lock:
@@ -501,7 +493,7 @@ class IPCReceiver(QThread):
                     except (OSError, RuntimeError, ValueError, BufferError, TypeError) as spec_err:
                         _logger.debug(f"Ошибка чтения спектра из кольца SHM: {spec_err}")
 
-                # Чтение 2D-проекции (прямое zero-copy представление поверх SharedMemory.buf)
+                # Чтение 2D-проекции / 4D-куба (копия снимка без экспорта указателей на SharedMemory.buf)
                 if self._projection_buf is not None and (
                     switched
                     or direct_call
@@ -511,9 +503,10 @@ class IPCReceiver(QThread):
                         current_proj_sum = float(np.sum(self._projection_buf))
                         if switched or current_proj_sum != self._last_proj_sum:
                             self._last_proj_sum = current_proj_sum
+                            proj_snapshot = self._projection_buf.copy()
                             if not direct_call:
                                 self._proj_in_flight = True
-                            self.projection_received.emit(self._projection_buf)
+                            self.projection_received.emit(proj_snapshot)
                             self._last_proj_emit_time = now
 
                         if switched:
@@ -530,18 +523,21 @@ class IPCReceiver(QThread):
                     except (OSError, RuntimeError, ValueError, BufferError, TypeError) as proj_err:
                         _logger.debug(f"Ошибка чтения снимка проекции: {proj_err}")
 
-                # Чтение 3D-карты дозы (прямое zero-copy представление поверх SharedMemory.buf без копирования!)
+                # Чтение 3D-карты дозы (копия снимка без экспорта указателей на SharedMemory.buf)
                 if (
                     switched
                     or direct_call
                     or ((now - self._last_dose_emit_time) >= self.dose_poll_interval and not self._dose_in_flight)
                 ):
-                    if self._dose_grids_info and len(self._multi_dose_bufs) > 0:
+                    if self.dose_grids_info and len(self._multi_dose_bufs) > 0:
                         try:
                             current_dose_sum = sum(float(np.sum(buf)) for buf in self._multi_dose_bufs.values())
                             if switched or (current_dose_sum != self._last_dose_sum and current_dose_sum > 0.0):
                                 self._last_dose_sum = current_dose_sum
-                                dose_views = dict(self._multi_dose_bufs)
+                                dose_views = {
+                                    grid_key: grid_buf.copy(order="F")
+                                    for grid_key, grid_buf in self._multi_dose_bufs.items()
+                                }
                                 if not direct_call:
                                     self._dose_in_flight = True
                                 self.dose_volume_received.emit(dose_views)
@@ -553,9 +549,10 @@ class IPCReceiver(QThread):
                             current_dose_sum = float(np.sum(self._dose_buf))
                             if switched or (current_dose_sum != self._last_dose_sum and current_dose_sum > 0.0):
                                 self._last_dose_sum = current_dose_sum
+                                dose_snapshot = self._dose_buf.copy(order="F")
                                 if not direct_call:
                                     self._dose_in_flight = True
-                                self.dose_volume_received.emit(self._dose_buf)
+                                self.dose_volume_received.emit(dose_snapshot)
                                 self._last_dose_emit_time = now
                         except (OSError, RuntimeError, ValueError, BufferError, TypeError) as single_dose_err:
                             _logger.debug(f"Ошибка чтения снимка дозы: {single_dose_err}")
@@ -578,7 +575,7 @@ class IPCReceiver(QThread):
                     all_energies = (
                         np.concatenate(self._accumulated_energies)
                         if len(self._accumulated_energies) > 1
-                        else self._accumulated_energies[0]
+                        else self._accumulated_energies[0].copy()
                     )
                     self._last_spec_emit_time = now
                     self._spectrum_dirty = False
@@ -589,7 +586,7 @@ class IPCReceiver(QThread):
             direct_call or (now - self._last_proj_emit_time) >= self.poll_interval
         ):
             try:
-                self.projection_received.emit(self._projection_buf)
+                self.projection_received.emit(self._projection_buf.copy())
                 self._last_proj_emit_time = now
 
                 if (now - self._last_stats_time) >= 1.0:
@@ -604,13 +601,16 @@ class IPCReceiver(QThread):
         if direct_call or (now - self._last_dose_emit_time) >= self.dose_poll_interval:
             if self.dose_grids_info and len(self._multi_dose_bufs) > 0:
                 try:
-                    self.dose_volume_received.emit(dict(self._multi_dose_bufs))
+                    self.dose_volume_received.emit({
+                        grid_key: grid_buf.copy(order="F")
+                        for grid_key, grid_buf in self._multi_dose_bufs.items()
+                    })
                     self._last_dose_emit_time = now
                 except (OSError, RuntimeError, ValueError, BufferError, TypeError) as multi_dose_err:
                     _logger.debug(f"Ошибка чтения снимков дозы: {multi_dose_err}")
             elif self._dose_buf is not None:
                 try:
-                    self.dose_volume_received.emit(self._dose_buf)
+                    self.dose_volume_received.emit(self._dose_buf.copy(order="F"))
                     self._last_dose_emit_time = now
                 except (OSError, RuntimeError, ValueError, BufferError, TypeError) as single_dose_err:
                     _logger.debug(f"Ошибка чтения снимка дозы: {single_dose_err}")
