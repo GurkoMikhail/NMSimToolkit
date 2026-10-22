@@ -1,7 +1,7 @@
 from typing import Any, List, Literal, Optional, Union, Annotated, Tuple
 from pydantic import BaseModel, Field, model_validator, field_serializer, field_validator
 from core.config.units import (
-    LengthConfig, EnergyConfig, TimeConfig, ActivityConfig, AngleConfig, CountConfig
+    LengthConfig, EnergyConfig, TimeConfig, ActivityConfig, AngleConfig, CountConfig, DataSizeConfig, format_data_size
 )
 import hepunits as units
 
@@ -246,15 +246,26 @@ AnyDataHandlerConfig = Annotated[
 class DataManagerConfig(BaseModel):
     filename: str
     handlers: List[AnyDataHandlerConfig] = Field(default_factory=list)
-    buffer_capacity: Optional[int] = None
+    buffer_size: DataSizeConfig = Field(default="3 MiB", validate_default=True)
     floating_point_precision: Literal['float32', 'float64'] = 'float32'
     compression: Optional[Literal['gzip', 'lzf']] = None
     compression_opts: int = Field(default=4, ge=0, le=9)
+
+    @field_serializer('buffer_size')
+    def serialize_buffer_size(self, value: Any) -> Any:
+        """
+        Выгружает объём буфера в читаемом виде: '3 MiB' при кратности двоичному префиксу
+        (GiB, MiB, KiB), иначе '<N> B'. Строковые макросы ${var} выгружаются без изменений.
+        """
+        if isinstance(value, str):
+            return value
+        return format_data_size(value)
 
 class SimulationManagerConfig(BaseModel):
     start_time: TimeConfig = 0.0 * units.ns
     stop_time: TimeConfig = 1.0 * units.s
     particles_number: CountConfig = 10_000
+    buffer_capacity: Optional[CountConfig] = None
     min_energy: EnergyConfig = 1.0 * units.keV
     physics_list: Optional[str] = None
     seed: Optional[int] = None

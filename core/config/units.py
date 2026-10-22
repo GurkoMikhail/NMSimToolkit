@@ -549,6 +549,80 @@ def integer_count_validator(input_value: Any) -> Any:
 
 CountConfig = Annotated[Any, BeforeValidator(integer_count_validator)]
 
+# Канонические имена Pint для единиц объёма данных (байт и его десятичные/двоичные производные).
+# Байт в Pint безразмерен, поэтому принадлежность к информационным единицам проверяется по имени единицы.
+_DATA_SIZE_CANONICAL_UNITS: frozenset[str] = frozenset({
+    "byte",
+    "kilobyte",
+    "megabyte",
+    "gigabyte",
+    "terabyte",
+    "kibibyte",
+    "mebibyte",
+    "gibibyte",
+    "tebibyte",
+})
+
+
+def data_size_validator(input_value: Any) -> Any:
+    """
+    Pydantic-валидатор объёма данных. Внутреннее представление — целое положительное число байт.
+    - int > 0 — уже в байтах;
+    - float с целым значением — приводится к int (результат подстановки макроса протокола);
+    - str с единицей ('3 MiB', '512 KiB', '1 GiB', '4 MB', '4096 B') — перевод через Pint в байты,
+      размерность обязана быть информационной, результат — целым положительным числом;
+    - строгий макрос ${var} пропускается для отложенной подстановки оркестратором.
+    """
+    if isinstance(input_value, bool):
+        raise ValueError("Булево значение не является допустимым объёмом данных")
+    if isinstance(input_value, int):
+        if input_value <= 0:
+            raise ValueError(f"Объём данных должен быть положительным (> 0) числом байт, получено {input_value}")
+        return int(input_value)
+    if isinstance(input_value, float):
+        # Макросы протокола подставляют числа как float: целые значения допустимы, как в CountConfig
+        if not math.isfinite(input_value) or not input_value.is_integer():
+            raise ValueError(f"Объём данных должен составлять целое число байт, получено {input_value}")
+        return data_size_validator(int(input_value))
+    if isinstance(input_value, str):
+        trimmed = input_value.strip()
+        # Пропуск строгих шаблонов интерполяции вида ${var} для отложенной подстановки в оркестраторе
+        if _STRICT_MACRO_FULLMATCH_PATTERN.fullmatch(trimmed):
+            return trimmed
+        if not trimmed:
+            raise ValueError("Пустая строка не является допустимым объёмом данных")
+        try:
+            quantity = ureg(trimmed)
+        except (pint.PintError, ValueError, TypeError, ArithmeticError) as parse_err:
+            raise ValueError(f"Ошибка парсинга объёма данных '{input_value}': {parse_err}") from parse_err
+        if not isinstance(quantity, pint.Quantity) or str(quantity.units) not in _DATA_SIZE_CANONICAL_UNITS:
+            raise ValueError(f"Ожидалась единица объёма данных (B, KiB, MiB, GiB, kB, MB, GB), получено '{input_value}'")
+        byte_count = float(quantity.to("byte").magnitude)
+        if not math.isfinite(byte_count) or not byte_count.is_integer():
+            raise ValueError(f"Объём данных должен составлять целое число байт, получено '{input_value}'")
+        if byte_count <= 0:
+            raise ValueError(f"Объём данных должен быть положительным (> 0), получено '{input_value}'")
+        return int(byte_count)
+    raise ValueError(f"Ожидалось целое число байт, строка с единицей или макрос ${{var}}, получено {type(input_value)}")
+
+
+DataSizeConfig = Annotated[Any, BeforeValidator(data_size_validator)]
+
+
+def format_data_size(byte_count: int) -> str:
+    """
+    Форматирует объём данных в читаемую строку с единицей: '3 MiB' при кратности
+    двоичному префиксу (GiB, MiB, KiB), иначе '<N> B'. Обратна `data_size_validator`.
+    """
+    if isinstance(byte_count, bool) or not isinstance(byte_count, int):
+        raise TypeError(f"Ожидалось целое число байт, получено {type(byte_count).__name__}")
+    if byte_count <= 0:
+        raise ValueError(f"Объём данных должен быть положительным (> 0) числом байт, получено {byte_count}")
+    for prefix_name, prefix_bytes in (("GiB", 1024 ** 3), ("MiB", 1024 ** 2), ("KiB", 1024)):
+        if byte_count % prefix_bytes == 0:
+            return f"{byte_count // prefix_bytes} {prefix_name}"
+    return f"{byte_count} B"
+
 
 def convert_from_hepunits(value: float, target_unit: str) -> float:
     """
@@ -577,6 +651,7 @@ __all__ = [
     "parse_unit_value",
     "parse_unit_tokens",
     "unit_validator_factory",
+    "data_size_validator",
     "integer_count_validator",
     "convert_from_hepunits",
     "LengthConfig",
@@ -584,6 +659,8 @@ __all__ = [
     "TimeConfig",
     "ActivityConfig",
     "AngleConfig",
+    "DataSizeConfig",
+    "format_data_size",
     "CountConfig",
 ]
 

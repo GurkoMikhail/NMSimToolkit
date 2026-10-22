@@ -10,9 +10,26 @@ from core.config.models import (
     DoseMapHandlerConfig,
     DataManagerConfig,
 )
+from core.config.units import data_size_validator, format_data_size
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 
 _logger = logging.getLogger(__name__)
+
+# Размер выходного буфера записи по умолчанию (совпадает со значением DataManagerConfig.buffer_size), байт
+_DEFAULT_BUFFER_SIZE: int = data_size_validator("3 MiB")
+
+
+def _parse_buffer_size(value: Union[int, str]) -> int:
+    """
+    Переводит введённый объём буфера ('3 MiB', '512 KiB', целое число байт) в целое число байт.
+    Строковые макросы ${var} в GUI не поддерживаются.
+    Raises:
+        ValueError: значение не является положительным объёмом данных.
+    """
+    parsed_size = data_size_validator(value)
+    if not isinstance(parsed_size, int):
+        raise ValueError(f"Макрос '{value}' недопустим для объёма буфера в GUI")
+    return parsed_size
 
 
 class BaseDataHandlerViewModel(QObject):
@@ -305,7 +322,7 @@ class DoseMapHandlerViewModel(BaseDataHandlerViewModel):
 class DataManagerViewModel(QObject):
     """
     Модель представления диспетчера данных DataManager.
-    Управляет путем к итоговому HDF5-файлу, емкостью буфера и списком активных обработчиков данных.
+    Управляет путем к итоговому HDF5-файлу, объёмом выходного буфера записи и списком активных обработчиков данных.
     """
 
     changed = Signal()
@@ -314,14 +331,13 @@ class DataManagerViewModel(QObject):
     def __init__(
         self,
         filename: str = "simulation_results.h5",
-        buffer_capacity: Optional[int] = None,
+        buffer_size: Union[int, str] = _DEFAULT_BUFFER_SIZE,
         handlers: Optional[List[BaseDataHandlerViewModel]] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
         self._filename: str = filename
-        self._min_buffer_capacity: int = 1
-        self._buffer_capacity: int = buffer_capacity if buffer_capacity is not None else 1
+        self._buffer_size: int = _parse_buffer_size(buffer_size)
         self._floating_point_precision: Literal["float32", "float64"] = "float64"
         self._compression: Optional[Literal["gzip", "lzf"]] = "gzip"
         self._compression_opts: int = 4
@@ -349,25 +365,26 @@ class DataManagerViewModel(QObject):
             self.changed.emit()
 
     @property
-    def min_buffer_capacity(self) -> int:
-        return self._min_buffer_capacity
+    def buffer_size(self) -> int:
+        """Объём выходного буфера записи на группу датасетов, байт."""
+        return self._buffer_size
 
-    @min_buffer_capacity.setter
-    def min_buffer_capacity(self, value: int) -> None:
-        self._min_buffer_capacity = max(1, int(value))
-        if self._buffer_capacity < self._min_buffer_capacity:
-            self.buffer_capacity = self._min_buffer_capacity
+    @buffer_size.setter
+    def buffer_size(self, value: Union[int, str]) -> None:
+        """
+        Принимает целое число байт или строку с единицей ('3 MiB', '512 KiB').
+        Raises:
+            ValueError: значение не является положительным объёмом данных (состояние не меняется).
+        """
+        parsed_size = _parse_buffer_size(value)
+        if self._buffer_size != parsed_size:
+            self._buffer_size = parsed_size
+            self.changed.emit()
 
     @property
-    def buffer_capacity(self) -> int:
-        return self._buffer_capacity
-
-    @buffer_capacity.setter
-    def buffer_capacity(self, cap: int) -> None:
-        clamped_capacity = max(self._min_buffer_capacity, int(cap))
-        if self._buffer_capacity != clamped_capacity:
-            self._buffer_capacity = clamped_capacity
-            self.changed.emit()
+    def buffer_size_text(self) -> str:
+        """Объём выходного буфера в читаемом виде со строкой единицы ('3 MiB')."""
+        return format_data_size(self._buffer_size)
 
     @property
     def handlers(self) -> List[BaseDataHandlerViewModel]:
@@ -400,7 +417,7 @@ class DataManagerViewModel(QObject):
         configs = self.to_core_handlers()
         return DataManagerConfig(
             filename=self._filename,
-            buffer_capacity=self._buffer_capacity,
+            buffer_size=self._buffer_size,
             floating_point_precision=self._floating_point_precision,
             compression=self._compression,
             compression_opts=self._compression_opts,
@@ -420,9 +437,9 @@ class DataManagerViewModel(QObject):
         """
         Загрузка диспетчера обработчиков данных из конфигурационной модели ядра.
         """
+        # Предусловие проверяется до изменения состояния: макросы ${var} недопустимы для объёма буфера в GUI
+        self.buffer_size = config.buffer_size
         self._filename = config.filename
-        raw_capacity = config.buffer_capacity
-        self.buffer_capacity = self._min_buffer_capacity if raw_capacity is None else max(self._min_buffer_capacity, int(raw_capacity))
         self._floating_point_precision = config.floating_point_precision
         self._compression = config.compression
         self._compression_opts = int(config.compression_opts) if config.compression_opts is not None else 4

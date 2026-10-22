@@ -147,7 +147,6 @@ class MainWindow(QMainWindow):
         # Инспектор свойств
         self.property_inspector = PropertyInspector(self)
         self.property_inspector.set_scene_viewmodel(self.scene_vm)
-        self.property_inspector.data_manager_section.set_min_buffer_capacity(self.sim_settings.particles_number)
 
         # Панель результатов
         self.results_viewer = ResultsViewer(self)
@@ -157,7 +156,6 @@ class MainWindow(QMainWindow):
         self.property_inspector.set_procedure_viewmodel(self.procedure_vm)
         self.viewport_controller.procedure_vm = self.procedure_vm
         self.data_manager_vm = DataManagerViewModel()
-        self.data_manager_vm.min_buffer_capacity = self.sim_settings.particles_number
         self.viewport_controller.data_manager_vm = self.data_manager_vm
 
         # Диспетчер параллельной оркестрации (OrchestratorSession)
@@ -913,6 +911,11 @@ class MainWindow(QMainWindow):
             raw_particles = cfg_mgr.particles_number
             if isinstance(raw_particles, (int, float)) and not isinstance(raw_particles, bool):
                 self.orchestrator_session.particles_number = int(raw_particles)
+            raw_buffer_capacity = cfg_mgr.buffer_capacity
+            if raw_buffer_capacity is None:
+                self.orchestrator_session.buffer_capacity = None
+            elif isinstance(raw_buffer_capacity, (int, float)) and not isinstance(raw_buffer_capacity, bool):
+                self.orchestrator_session.buffer_capacity = int(raw_buffer_capacity)
             if not isinstance(
                 self.current_config.protocol,
                 (StepAndShootProtocolConfig, CustomSweepProtocolConfig),
@@ -925,6 +928,7 @@ class MainWindow(QMainWindow):
                 self.orchestrator_session.min_energy = float(raw_min_energy) / float(units.keV)
         else:
             self.orchestrator_session.particles_number = int(self.sim_settings.particles_number)
+            self.orchestrator_session.buffer_capacity = self.sim_settings.buffer_capacity
             self.orchestrator_session.min_energy = float(self.sim_settings.min_energy)
 
         self.orchestrator_session.pool_size = int(self.sim_settings.pool_size)
@@ -1115,10 +1119,19 @@ class MainWindow(QMainWindow):
                         parsed_particles = int(raw_particles)
                         self.sim_settings.particles_number = parsed_particles
                         self.orchestrator_session.particles_number = parsed_particles
-                        self.property_inspector.data_manager_section.set_min_buffer_capacity(parsed_particles)
-                        self.data_manager_vm.min_buffer_capacity = parsed_particles
-                        if self.data_manager_vm.buffer_capacity < parsed_particles:
-                            self.data_manager_vm.buffer_capacity = parsed_particles
+
+                    # Ёмкость каналов телеметрии: None — авто (= particles_number), иначе не менее particles_number
+                    raw_buffer_capacity = cfg.simulation_manager.buffer_capacity
+                    if raw_buffer_capacity is None:
+                        parsed_buffer_capacity = None
+                    elif isinstance(raw_buffer_capacity, (int, float)) and not isinstance(raw_buffer_capacity, bool):
+                        parsed_buffer_capacity = max(int(raw_buffer_capacity), self.sim_settings.particles_number)
+                    else:
+                        raise ValueError(
+                            f"Ёмкость буфера телеметрии должна быть числом, получено: {raw_buffer_capacity!r}"
+                        )
+                    self.sim_settings.buffer_capacity = parsed_buffer_capacity
+                    self.orchestrator_session.buffer_capacity = parsed_buffer_capacity
 
                     if not isinstance(self.procedure_vm, StepAndShootProcedureViewModel) or cfg.protocol is None:
                         raw_start_time = cfg.simulation_manager.start_time
@@ -1183,6 +1196,7 @@ class MainWindow(QMainWindow):
                 sim_mgr = SimulationManagerConfig(
                     start_time=start_time_cfg,
                     particles_number=int(self.sim_settings.particles_number),
+                    buffer_capacity=self.sim_settings.buffer_capacity,
                     min_energy=float(self.sim_settings.min_energy) * units.keV,
                     stop_time=stop_time_cfg,
                     physics_list=prev_sim_mgr.physics_list if prev_sim_mgr is not None else None,
@@ -1243,6 +1257,7 @@ class MainWindow(QMainWindow):
             self.sim_settings.update(new_settings)
             # Применение параметров к вычислительной сессии
             self.orchestrator_session.particles_number = new_settings.particles_number
+            self.orchestrator_session.buffer_capacity = new_settings.buffer_capacity
             self.orchestrator_session.min_energy = new_settings.min_energy
             self.orchestrator_session.pool_size = new_settings.pool_size
             self.jobs_widget.spin_pool_size.setValue(new_settings.pool_size)
@@ -1250,6 +1265,7 @@ class MainWindow(QMainWindow):
             # Актуализация current_config при его наличии
             if self.current_config is not None and self.current_config.simulation_manager is not None:
                 self.current_config.simulation_manager.particles_number = new_settings.particles_number
+                self.current_config.simulation_manager.buffer_capacity = new_settings.buffer_capacity
                 self.current_config.simulation_manager.min_energy = new_settings.min_energy * units.keV
             if self.current_config is not None:
                 self.current_config.pool_size = new_settings.pool_size
@@ -1262,12 +1278,6 @@ class MainWindow(QMainWindow):
                         self.procedure_vm.bind_property("simulation_manager", prop_name, new_bindings[prop_name])
                     else:
                         self.procedure_vm.unbind_property("simulation_manager", prop_name)
-
-            # Обеспечение инварианта buffer_capacity >= particles_number
-            self.property_inspector.data_manager_section.set_min_buffer_capacity(new_settings.particles_number)
-            self.data_manager_vm.min_buffer_capacity = new_settings.particles_number
-            if self.data_manager_vm.buffer_capacity < new_settings.particles_number:
-                self.data_manager_vm.buffer_capacity = new_settings.particles_number
 
             # Передача параметров снаппинга в 3D Gizmo
             if self.viewport_controller is not None and self.viewport_controller.transform_gizmo is not None:

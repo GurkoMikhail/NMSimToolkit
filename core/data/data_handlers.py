@@ -7,11 +7,12 @@
 import abc
 import json
 import logging
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set
 
 import h5py
 import numpy as np
 
+from core.data.dataset_write_buffer import DEFAULT_BUFFER_SIZE, DatasetWriteBuffer
 from core.geometry.flattened_scene import FlattenedScene
 from core.geometry.volumes import Volume
 from core.physics.interaction_buffers import ChunkType
@@ -19,6 +20,15 @@ from core.physics.processes import get_process_mapping, get_species_mapping
 from core.scene.nodes import CompositeNode, SpatialNode
 
 _logger = logging.getLogger(__name__)
+
+# Атрибуты датасетов группы 'initial_states': имя поля -> {имя атрибута -> значение}.
+_INITIAL_STATES_ATTRS: Mapping[str, Mapping[str, str]] = {
+    'emission_position': {'units': 'mm'},
+    'emission_energy': {'units': 'MeV'},
+    'energy': {'units': 'MeV'},
+    'emission_time': {'units': 'ns'},
+    'time': {'units': 'ns'},
+}
 
 
 class BaseDataHandler(abc.ABC):
@@ -91,12 +101,35 @@ class DirectStreamHandler(BaseDataHandler):
         floating_point_precision: str = "float32",
         compression: Optional[str] = None,
         compression_opts: int = 4,
+        *,
+        buffer_size: int = DEFAULT_BUFFER_SIZE,
     ) -> None:
+        """
+        :param buffer_size: Объём буфера записи на группу датасетов в байтах;
+            задаёт и порог сброса в файл, и размер чанка HDF5.
+        """
         super().__init__(
             floating_point_precision=floating_point_precision,
             compression=compression,
             compression_opts=compression_opts,
         )
+        self._write_buffer = DatasetWriteBuffer(buffer_size, compression, compression_opts)
+        self._interactions_attrs: Mapping[str, Mapping[str, str]] = self._build_interactions_attrs()
+
+    @staticmethod
+    def _build_interactions_attrs() -> Mapping[str, Mapping[str, str]]:
+        """
+        Схема атрибутов датасетов групп 'interactions/<объём>': имя поля -> {имя атрибута -> значение}.
+        Вычисляется один раз при создании обработчика.
+        """
+        return {
+            'process_code': {'mapping': json.dumps(get_process_mapping())},
+            'species_code': {'mapping': json.dumps(get_species_mapping())},
+            'global_position': {'units': 'mm'},
+            'energy_deposit': {'units': 'MeV'},
+            'distance_traveled': {'units': 'mm'},
+            'scattering_angles': {'units': 'rad'},
+        }
 
     @property
     def consumed_chunk_types(self) -> FrozenSet[ChunkType]:
@@ -213,67 +246,29 @@ class DirectStreamHandler(BaseDataHandler):
             else:
                 prepared_states[state_key] = state_arr
 
-        def write_func(h5_file: h5py.File) -> None:
-            group = h5_file.require_group('initial_states')
-            for state_key, state_arr in prepared_states.items():
-                if state_key not in group:
-                    kwargs: Dict[str, Any] = {'maxshape': (None, *state_arr.shape[1:])}
-                    if self.compression is not None:
-                        kwargs['compression'] = self.compression
-                        if self.compression == 'gzip':
-                            kwargs['compression_opts'] = self.compression_opts
-                        kwargs['chunks'] = True
-                    dataset = group.create_dataset(state_key, data=state_arr, **kwargs)
-                    if state_key == 'emission_position':
-                        dataset.attrs['units'] = 'mm'
-                    elif state_key in ('emission_energy', 'energy'):
-                        dataset.attrs['units'] = 'MeV'
-                    elif state_key in ('emission_time', 'time'):
-                        dataset.attrs['units'] = 'ns'
-                else:
-                    dataset = group[state_key]
-                    curr_size = dataset.shape[0]
-                    new_size = curr_size + state_arr.shape[0]
-                    dataset.resize(new_size, axis=0)
-                    dataset[curr_size:] = state_arr
-        if self.writer_callback is not None:
-            self.writer_callback(write_func)
+        self._write_buffer.append('initial_states', prepared_states, _INITIAL_STATES_ATTRS)
+        self._flush_full_chunks()
 
     def _write_interactions(self, volume_data_map: Dict[str, Dict[str, np.ndarray]]) -> None:
-        def write_func(h5_file: h5py.File) -> None:
-            group = h5_file.require_group('interactions')
-            for volume_name, volume_data in volume_data_map.items():
-                volume_group = group.require_group(volume_name)
-                for field_name, field_array in volume_data.items():
-                    if field_name not in volume_group:
-                        kwargs: Dict[str, Any] = {'maxshape': (None, *field_array.shape[1:])}
-                        if self.compression is not None:
-                            kwargs['compression'] = self.compression
-                            if self.compression == 'gzip':
-                                kwargs['compression_opts'] = self.compression_opts
-                            kwargs['chunks'] = True
-                        dataset = volume_group.create_dataset(field_name, data=field_array, **kwargs)
-                        if field_name == 'process_code':
-                            dataset.attrs['mapping'] = json.dumps(get_process_mapping())
-                        elif field_name == 'species_code':
-                            dataset.attrs['mapping'] = json.dumps(get_species_mapping())
-                        elif field_name == 'global_position':
-                            dataset.attrs['units'] = 'mm'
-                        elif field_name == 'energy_deposit':
-                            dataset.attrs['units'] = 'MeV'
-                        elif field_name == 'distance_traveled':
-                            dataset.attrs['units'] = 'mm'
-                        elif field_name == 'scattering_angles':
-                            dataset.attrs['units'] = 'rad'
-                    else:
-                        dataset = volume_group[field_name]
-                        curr_size = dataset.shape[0]
-                        new_size = curr_size + field_array.shape[0]
-                        dataset.resize(new_size, axis=0)
-                        dataset[curr_size:] = field_array
+        for volume_name, volume_data in volume_data_map.items():
+            self._write_buffer.append(f'interactions/{volume_name}', volume_data, self._interactions_attrs)
+        self._flush_full_chunks()
 
+    def _flush_full_chunks(self) -> None:
+        """
+        Передаёт в писатель сброс целых чанков, если хотя бы в одной группе накоплено их достаточно.
+        Без зарегистрированного writer_callback запись не выполняется.
+        """
+        if self._write_buffer.has_full_chunks and self.writer_callback is not None:
+            self.writer_callback(self._write_buffer.write_full_chunks)
+
+    def finalize(self) -> None:
+        """
+        Сбрасывает в файл всё накопленное в буфере записи, включая неполные хвосты групп.
+        """
         if self.writer_callback is not None:
-            self.writer_callback(write_func)
+            self.writer_callback(self._write_buffer.write_all)
+
 
 class SensitiveVolumeHandler(DirectStreamHandler):
     """
@@ -288,11 +283,14 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         floating_point_precision: str = "float32",
         compression: Optional[str] = None,
         compression_opts: int = 4,
+        *,
+        buffer_size: int = DEFAULT_BUFFER_SIZE,
     ) -> None:
         super().__init__(
             floating_point_precision=floating_point_precision,
             compression=compression,
             compression_opts=compression_opts,
+            buffer_size=buffer_size,
         )
         self.sensitive_volumes = self._filter_topmost_nodes(sensitive_volumes)
 
@@ -532,12 +530,15 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
         floating_point_precision: str = "float32",
         compression: Optional[str] = None,
         compression_opts: int = 4,
+        *,
+        buffer_size: int = DEFAULT_BUFFER_SIZE,
     ) -> None:
         super().__init__(
             sensitive_volumes=sensitive_volumes,
             floating_point_precision=floating_point_precision,
             compression=compression,
             compression_opts=compression_opts,
+            buffer_size=buffer_size,
         )
         self.save_initial_states = save_initial_states
 
@@ -644,7 +645,7 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
     def finalize(self) -> None:
         """
         Принудительный сброс оставшихся в буферах историй частиц при завершении симуляции
-        и очистка внутренних накопителей.
+        и очистка внутренних накопителей; затем запись всего накопленного в буфере записи в файл.
         """
         if self.scored_particles or self.initial_states_chunks or self.interactions_chunks:
             id_arrays: List[np.ndarray] = []
@@ -665,6 +666,8 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
         self.initial_states_chunks.clear()
         self.interactions_chunks.clear()
         self.scored_particles.clear()
+
+        super().finalize()
 
 
 __all__ = [

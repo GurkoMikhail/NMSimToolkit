@@ -221,7 +221,7 @@ class TestReviewFixesTemplateBinder(unittest.TestCase):
         dm_vm.filename = raw_dict["data_manager"]["filename"]
         roundtripped_dm = dm_vm.to_config()
         self.assertEqual(roundtripped_dm.filename, "output_tb161_dual_cam/${gantry_angle deg}_deg.hdf")
-        self.assertEqual(roundtripped_dm.buffer_capacity, 100000)
+        self.assertEqual(roundtripped_dm.buffer_size, 3 * 1024**2)
         self.assertEqual(roundtripped_dm.floating_point_precision, "float32")
         self.assertEqual(roundtripped_dm.compression, "gzip")
         self.assertEqual(roundtripped_dm.compression_opts, 4)
@@ -381,7 +381,7 @@ class TestReviewFixesSimulationWorker(unittest.TestCase):
                 },
                 "data_manager": {
                     "filename": "output.root",
-                    "buffer_capacity": 5000,
+                    "buffer_size": "3 MiB",
                 },
                 "scene": {
                     "type": "Volume",

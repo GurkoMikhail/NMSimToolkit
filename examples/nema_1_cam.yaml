@@ -121,7 +121,7 @@ scene:
                       z: -2.23 cm
 data_manager:
   filename: "nema_4.2/${current_angle}_deg.hdf"
-  buffer_capacity: 100000
+  buffer_size: 3 MiB
   handlers:
     - type: HistoryAssemblerHandler
       sensitive_volumes:
@@ -131,3 +131,4 @@ simulation_manager:
   start_time: ${start_time} s
   stop_time: ${stop_time} s
   particles_number: 1000
+  buffer_capacity: 100000

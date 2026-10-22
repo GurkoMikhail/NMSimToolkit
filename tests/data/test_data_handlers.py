@@ -230,6 +230,248 @@ class TestDataHandlers(unittest.TestCase):
             self.assertEqual(len(inter_group["Simulation_volume/particle_ID"]), 2)
             np.testing.assert_array_equal(inter_group["Simulation_volume/volume_id"], [1, 1])
 
+    def _build_history_handler(
+        self,
+        buffer_size: int,
+    ) -> tuple[HistoryAssemblerHandler, int]:
+        """
+        Создаёт HistoryAssemblerHandler с чувствительным кристаллом и заданным буфером записи.
+        Возвращает обработчик и индекс кристалла в плоском списке сцены.
+        """
+        world = Volume(geometry=Box(1000.0, 1000.0, 1000.0), material=Material(name="Air"), name="World")
+        crystal = Volume(geometry=Box(400.0, 400.0, 10.0), material=Material(name="NaI"), name="Crystal")
+        world.add_child(crystal)
+        handler = HistoryAssemblerHandler(
+            sensitive_volumes=[crystal],
+            save_initial_states=True,
+            buffer_size=buffer_size,
+        )
+        return handler, handler.target_volumes[0]
+
+    def _attach_counting_writer(self, handler: BaseDataHandler) -> list[int]:
+        """
+        Подключает к обработчику реальный писатель DataManager._write_with_retry
+        со счётчиком сеансов записи (каждый вызов = один сеанс «открытие файла → запись»).
+        Возвращает список-счётчик: длина списка равна числу сеансов.
+        """
+        data_manager = DataManager(filename=self.h5_path, handlers=[handler], swmr=False)
+        write_sessions: list[int] = []
+        original_writer = data_manager._write_with_retry
+
+        def counting_writer(write_func) -> None:
+            write_sessions.append(1)
+            original_writer(write_func)
+
+        handler.set_writer_callback(counting_writer)
+        return write_sessions
+
+    @staticmethod
+    def _feed_histories(
+        handler: HistoryAssemblerHandler,
+        crystal_id: int,
+        first_particle_id: int,
+        portion_sizes: list[int],
+    ) -> int:
+        """
+        Подаёт в обработчик порции полных историй: каждая частица имеет начальное состояние
+        и по одному взаимодействию в мире (volume_id 0) и в кристалле, после порции — чанк dead_particles.
+        Возвращает ID следующей свободной частицы.
+        """
+        next_particle_id = first_particle_id
+        for portion_size in portion_sizes:
+            particle_ids = np.arange(next_particle_id, next_particle_id + portion_size, dtype=np.uint64)
+            next_particle_id += portion_size
+            handler.process_chunk({
+                'type': ChunkType.INITIAL_STATES,
+                'data': {
+                    'particle_ID': particle_ids,
+                    'emission_time': np.zeros(portion_size, dtype=np.float32),
+                    'emission_energy': np.full(portion_size, 140.5, dtype=np.float32),
+                    'pos_x': np.zeros(portion_size, dtype=np.float32),
+                    'pos_y': np.zeros(portion_size, dtype=np.float32),
+                    'pos_z': np.zeros(portion_size, dtype=np.float32),
+                    'dir_x': np.zeros(portion_size, dtype=np.float32),
+                    'dir_y': np.zeros(portion_size, dtype=np.float32),
+                    'dir_z': np.ones(portion_size, dtype=np.float32),
+                },
+            })
+            interactions_count = 2 * portion_size
+            handler.process_chunk({
+                'type': ChunkType.INTERACTIONS,
+                'data': {
+                    'particle_ID': np.repeat(particle_ids, 2),
+                    'volume_id': np.tile(np.array([0, crystal_id], dtype=np.uint32), portion_size),
+                    'pos_x': np.zeros(interactions_count, dtype=np.float32),
+                    'pos_y': np.zeros(interactions_count, dtype=np.float32),
+                    'pos_z': np.zeros(interactions_count, dtype=np.float32),
+                    'dir_x': np.zeros(interactions_count, dtype=np.float32),
+                    'dir_y': np.zeros(interactions_count, dtype=np.float32),
+                    'dir_z': np.ones(interactions_count, dtype=np.float32),
+                    'energy_deposit': np.ones(interactions_count, dtype=np.float32),
+                    'process_id': np.ones(interactions_count, dtype=np.uint16),
+                    'scattering_theta': np.zeros(interactions_count, dtype=np.float32),
+                    'scattering_phi': np.zeros(interactions_count, dtype=np.float32),
+                    'material_id': np.zeros(interactions_count, dtype=np.uint32),
+                    'Z': np.ones(interactions_count, dtype=np.uint32),
+                    'species': np.zeros(interactions_count, dtype=np.uint8),
+                    'distance_traveled': np.ones(interactions_count, dtype=np.float32),
+                },
+            })
+            handler.process_chunk({'type': ChunkType.DEAD_PARTICLES, 'data': particle_ids})
+        return next_particle_id
+
+    @staticmethod
+    def _group_row_bytes(group: h5py.Group) -> int:
+        """Суммарный размер одной строки по всем датасетам группы HDF5."""
+        return sum(
+            int(dataset.dtype.itemsize * int(np.prod(dataset.shape[1:], dtype=np.int64)))
+            for dataset in group.values()
+        )
+
+    def test_history_assembler_write_buffer_keeps_histories_consistent(self) -> None:
+        """
+        Проверка согласованности историй при малом буфере записи: после finalize() все particle_ID
+        из interactions/* присутствуют в initial_states/particle_ID, а поля каждой группы одной длины.
+        """
+        handler, crystal_id = self._build_history_handler(buffer_size=2048)
+        self._attach_counting_writer(handler)
+
+        total_particles = self._feed_histories(handler, crystal_id, 0, [2] * 50)
+        handler.finalize()
+
+        with h5py.File(self.h5_path, 'r') as h5_file:
+            initial_ids = set(h5_file["initial_states/particle_ID"][:].tolist())
+            self.assertEqual(initial_ids, set(range(total_particles)))
+            self.assertEqual(
+                {dataset.shape[0] for dataset in h5_file["initial_states"].values()},
+                {total_particles},
+            )
+
+            interaction_groups = h5_file["interactions"]
+            self.assertEqual(set(interaction_groups.keys()), {"World", "Crystal"})
+            for volume_name, volume_group in interaction_groups.items():
+                volume_ids = set(volume_group["particle_ID"][:].tolist())
+                self.assertTrue(volume_ids.issubset(initial_ids), f"Группа {volume_name}: частицы вне initial_states")
+                self.assertEqual(volume_ids, set(range(total_particles)))
+                self.assertEqual(
+                    {dataset.shape[0] for dataset in volume_group.values()},
+                    {total_particles},
+                    f"Длины полей группы {volume_name} различаются",
+                )
+
+    def test_writer_callback_sessions_much_fewer_than_portions(self) -> None:
+        """
+        Проверка: число сеансов записи (вызовов writer_callback) существенно меньше числа поданных порций,
+        а данные при этом записаны полностью.
+        """
+        handler, crystal_id = self._build_history_handler(buffer_size=2048)
+        write_sessions = self._attach_counting_writer(handler)
+
+        portions_count = 100
+        total_particles = self._feed_histories(handler, crystal_id, 0, [2] * portions_count)
+        handler.finalize()
+
+        self.assertGreaterEqual(len(write_sessions), 1)
+        self.assertLess(len(write_sessions) * 5, portions_count)
+        with h5py.File(self.h5_path, 'r') as h5_file:
+            self.assertEqual(h5_file["initial_states/particle_ID"].shape[0], total_particles)
+            self.assertEqual(h5_file["interactions/Crystal/particle_ID"].shape[0], total_particles)
+
+    def test_chunk_rows_follow_buffer_size_and_not_first_portion(self) -> None:
+        """
+        Проверка: chunks[0] датасетов initial_states/* и interactions/<объём>/* равен
+        buffer_size // row_bytes группы и не зависит от размера первой порции.
+        """
+        buffer_size = 2048
+        observed_chunk_rows: dict[str, set[int]] = {}
+        for first_portion_size in (3, 40):
+            with self.subTest(first_portion_size=first_portion_size):
+                handler, crystal_id = self._build_history_handler(buffer_size=buffer_size)
+                h5_path = os.path.join(self.temp_dir.name, f"chunks_{first_portion_size}.h5")
+                data_manager = DataManager(filename=h5_path, handlers=[handler], swmr=False)
+                self.assertIsNotNone(data_manager)
+
+                self._feed_histories(handler, crystal_id, 0, [first_portion_size] + [5] * 30)
+                handler.finalize()
+
+                with h5py.File(h5_path, 'r') as h5_file:
+                    for group_path in ("initial_states", "interactions/World", "interactions/Crystal"):
+                        group = h5_file[group_path]
+                        expected_chunk_rows = buffer_size // self._group_row_bytes(group)
+                        self.assertGreater(expected_chunk_rows, 1)
+                        for field_name, dataset in group.items():
+                            self.assertIsNotNone(dataset.chunks, f"{group_path}/{field_name} не чанкирован")
+                            self.assertEqual(
+                                dataset.chunks[0],
+                                expected_chunk_rows,
+                                f"{group_path}/{field_name}: chunks[0] не равен buffer_size // row_bytes",
+                            )
+                            observed_chunk_rows.setdefault(group_path, set()).add(int(dataset.chunks[0]))
+
+        for group_path, chunk_rows_values in observed_chunk_rows.items():
+            self.assertEqual(len(chunk_rows_values), 1, f"chunks[0] группы {group_path} зависит от первой порции")
+
+    def test_resume_appends_to_existing_file_with_aligned_groups(self) -> None:
+        """
+        Проверка досчёта: второй экземпляр обработчика дописывает в существующий файл,
+        итог равен конкатенации двух запусков, длины полей каждой группы равны.
+        """
+        buffer_size = 2048
+
+        first_handler, crystal_id = self._build_history_handler(buffer_size=buffer_size)
+        self._attach_counting_writer(first_handler)
+        next_particle_id = self._feed_histories(first_handler, crystal_id, 0, [7] * 10)
+        first_handler.finalize()
+
+        with h5py.File(self.h5_path, 'r') as h5_file:
+            first_run_rows = h5_file["initial_states/particle_ID"].shape[0]
+            chunk_rows = h5_file["initial_states/particle_ID"].chunks[0]
+        self.assertEqual(first_run_rows, next_particle_id)
+        self.assertNotEqual(first_run_rows % chunk_rows, 0, "Для проверки досчёта хвост должен быть неполным чанком")
+
+        second_handler, _ = self._build_history_handler(buffer_size=buffer_size)
+        self._attach_counting_writer(second_handler)
+        total_particles = self._feed_histories(second_handler, crystal_id, next_particle_id, [5] * 20)
+        second_handler.finalize()
+
+        with h5py.File(self.h5_path, 'r') as h5_file:
+            np.testing.assert_array_equal(
+                h5_file["initial_states/particle_ID"][:],
+                np.arange(total_particles, dtype=np.uint64),
+            )
+            self.assertEqual(
+                {dataset.shape[0] for dataset in h5_file["initial_states"].values()},
+                {total_particles},
+            )
+            for volume_name in ("World", "Crystal"):
+                volume_group = h5_file[f"interactions/{volume_name}"]
+                np.testing.assert_array_equal(
+                    volume_group["particle_ID"][:],
+                    np.arange(total_particles, dtype=np.uint64),
+                )
+                self.assertEqual(
+                    {dataset.shape[0] for dataset in volume_group.values()},
+                    {total_particles},
+                    f"Длины полей группы {volume_name} различаются после досчёта",
+                )
+
+    def test_finalize_without_accumulated_data_creates_no_groups(self) -> None:
+        """
+        Проверка: finalize() без накопленных данных не падает и не создаёт группы данных
+        ни у HistoryAssemblerHandler, ни у DirectStreamHandler.
+        """
+        history_handler, _ = self._build_history_handler(buffer_size=2048)
+        stream_handler = DirectStreamHandler(buffer_size=2048)
+        data_manager = DataManager(filename=self.h5_path, handlers=[history_handler, stream_handler], swmr=False)
+        self.assertIsNotNone(data_manager)
+
+        history_handler.finalize()
+        stream_handler.finalize()
+
+        with h5py.File(self.h5_path, 'a') as h5_file:
+            self.assertNotIn("initial_states", h5_file)
+            self.assertNotIn("interactions", h5_file)
+
     def test_data_manager_metadata_and_context(self) -> None:
         """
         Проверка DataManager: запись метаданных задачи и процедурного контекста в HDF5

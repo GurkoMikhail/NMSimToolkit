@@ -6,7 +6,7 @@ from typing import Callable, Dict, List, Optional
 import hepunits as units
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QGroupBox, QFormLayout,
+    QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
     QSpinBox, QDoubleSpinBox, QCheckBox, QDialogButtonBox, QWidget, QLabel
 )
 
@@ -69,6 +69,27 @@ class SimulationSettingsDialog(QDialog):
         if "particles_number" in self._initial_bindings:
             self.spin_particles.bind_variable(self._initial_bindings["particles_number"])
         form_calc.addRow("Число частиц на задачу:", self.spin_particles)
+
+        # Ёмкость каналов телеметрии: None (авто) = числу частиц, иначе не менее числа частиц
+        buffer_row = QHBoxLayout()
+        self.chk_buffer_auto = QCheckBox("Авто (= числу частиц)", grp_calc)
+        self.chk_buffer_auto.setChecked(self._settings.buffer_capacity is None)
+        self.spin_buffer_capacity = QSpinBox(grp_calc)
+        self.spin_buffer_capacity.setRange(1, 2_147_483_647)
+        self.spin_buffer_capacity.setSingleStep(1000)
+        self.spin_buffer_capacity.setToolTip(
+            "Ёмкость каналов телеметрии SimulationManager, элементов. Не может быть меньше числа частиц на задачу."
+        )
+        self.spin_buffer_capacity.setMinimum(int(self._settings.particles_number))
+        self.spin_buffer_capacity.setValue(
+            int(self._settings.particles_number if self._settings.buffer_capacity is None else self._settings.buffer_capacity)
+        )
+        self.spin_buffer_capacity.setEnabled(not self.chk_buffer_auto.isChecked())
+        self.chk_buffer_auto.toggled.connect(self._on_buffer_auto_toggled)
+        self.spin_particles.valueChanged.connect(self._on_particles_changed)
+        buffer_row.addWidget(self.chk_buffer_auto)
+        buffer_row.addWidget(self.spin_buffer_capacity, 1)
+        form_calc.addRow("Ёмкость буфера телеметрии:", buffer_row)
 
         self.spin_pool = QSpinBox(grp_calc)
         cpu_cnt = os.cpu_count() or 4
@@ -157,6 +178,14 @@ class SimulationSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
 
+    def _on_buffer_auto_toggled(self, is_auto: bool) -> None:
+        """Переключает ручной ввод ёмкости буфера телеметрии (в авто-режиме она равна числу частиц)."""
+        self.spin_buffer_capacity.setEnabled(not is_auto)
+
+    def _on_particles_changed(self, particles_number: float) -> None:
+        """Поддерживает инвариант: ёмкость буфера телеметрии не меньше числа частиц на задачу."""
+        self.spin_buffer_capacity.setMinimum(max(1, int(particles_number)))
+
     def get_bindings(self) -> Dict[str, str]:
         """
         Возвращает словарь активных привязок параметров расчета к переменным протокола.
@@ -175,6 +204,7 @@ class SimulationSettingsDialog(QDialog):
         updated_dict = self._settings.to_dict()
         updated_dict.update({
             "particles_number": int(self.spin_particles.value()),
+            "buffer_capacity": None if self.chk_buffer_auto.isChecked() else self.spin_buffer_capacity.value(),
             "pool_size": self.spin_pool.value(),
             "min_energy": float(self.spin_min_energy.value()),
             "max_tracks_per_batch": self.spin_max_batch.value(),

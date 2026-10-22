@@ -235,7 +235,7 @@ scene:
 
 data_manager:
   filename: "output_tb161_dual_cam/${gantry_angle deg}_deg.hdf"
-  buffer_capacity: 100000
+  buffer_size: 3 MiB
   floating_point_precision: "float32"
   compression: "gzip"
   compression_opts: 4
@@ -248,5 +248,6 @@ data_manager:
 
 simulation_manager:
   particles_number: 10000
+  buffer_capacity: 100000
   min_energy: 1.0 keV
   physics_list: "emstandard_opt4"

@@ -32,7 +32,7 @@ from gui.controllers.orchestrator_session import OrchestratorSession
 from gui.views.scene_tree_widget import SceneTreeWidget
 from gui.views.results_viewer import ResultsViewer
 from gui.viewmodels.procedure_viewmodel import SpectProcedureViewModel
-from gui.viewmodels.data_handler_viewmodel import DirectStreamHandlerViewModel
+from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel, DirectStreamHandlerViewModel
 from gui.views.property_inspector import PropertyInspector
 from gui.controllers.stream_handlers import GuiStreamDataHandler
 
@@ -277,12 +277,16 @@ class TestAll14GUIFixes(unittest.TestCase):
         self.assertEqual(proc.particles_number, 10000)
 
         stream_vm = DirectStreamHandlerViewModel()
-        stream_vm.buffer_capacity = 25000
         stream_vm.max_tracks_per_batch = 1500
         stream_vm.show_escaped_tracks = True
-        self.assertEqual(stream_vm.buffer_capacity, 25000)
         self.assertEqual(stream_vm.max_tracks_per_batch, 1500)
         self.assertTrue(stream_vm.show_escaped_tracks)
+
+        # Объём выходного буфера записи задаётся диспетчером данных (data_manager.buffer_size)
+        data_manager_vm = DataManagerViewModel()
+        data_manager_vm.buffer_size = "5 MiB"
+        self.assertEqual(data_manager_vm.buffer_size, 5 * 1024 ** 2)
+        self.assertEqual(data_manager_vm.buffer_size_text, "5 MiB")
 
     # 12. Настройка чувствительного объема детектора
     def test_12_sensitive_volume_detection(self):

@@ -189,6 +189,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                         floating_point_precision=dm_cfg.floating_point_precision,
                         compression=dm_cfg.compression,
                         compression_opts=dm_cfg.compression_opts,
+                        buffer_size=dm_cfg.buffer_size,
                     )
                 )
             elif handler_config.type == "SensitiveVolumeHandler":
@@ -199,6 +200,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                         floating_point_precision=dm_cfg.floating_point_precision,
                         compression=dm_cfg.compression,
                         compression_opts=dm_cfg.compression_opts,
+                        buffer_size=dm_cfg.buffer_size,
                     )
                 )
             elif handler_config.type == "HistoryAssemblerHandler":
@@ -210,6 +212,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                         floating_point_precision=dm_cfg.floating_point_precision,
                         compression=dm_cfg.compression,
                         compression_opts=dm_cfg.compression_opts,
+                        buffer_size=dm_cfg.buffer_size,
                     )
                 )
             elif handler_config.type == "DoseMapHandler":
@@ -270,7 +273,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
             start_time=effective_start_time,
             particles_number=int(sim_config.particles_number),
             min_energy=float(sim_config.min_energy),
-            buffer_capacity=final_config.data_manager.buffer_capacity,
+            buffer_capacity=None if sim_config.buffer_capacity is None else int(sim_config.buffer_capacity),
             name=f"Task_seed_{effective_seed}",
             seed=effective_seed,
             initial_particle_id=initial_particle_id,

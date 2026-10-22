@@ -156,6 +156,7 @@ class OrchestratorSession(QObject):
         particles_number: int = 5000,
         stop_time: Optional[float] = None,
         min_energy: float = 1.0,
+        buffer_capacity: Optional[int] = None,
         shm_name: str = "nmsim_gui_proj_shm",
         projection_shape: Union[Tuple[int, int], Tuple[int, int, int, int], Tuple[int, ...]] = (128, 128),
         focused_job_index: int = 0,
@@ -174,6 +175,7 @@ class OrchestratorSession(QObject):
         self.pool_size = max(1, int(pool_size))
         self.particles_number = int(particles_number)
         self.min_energy = float(min_energy)
+        self.buffer_capacity: Optional[int] = None if buffer_capacity is None else int(buffer_capacity)
         self.shm_name = shm_name
         self.projection_shape = projection_shape
         self.energy_bins: int = max(1, int(energy_bins))
@@ -829,6 +831,7 @@ class OrchestratorSession(QObject):
 
         sim_mgr_cfg = SimulationManagerConfig(
             particles_number=self.particles_number,
+            buffer_capacity=self.buffer_capacity,
             start_time=start_time_cfg,
             stop_time=stop_time_cfg,
             min_energy=self.min_energy * units.keV,

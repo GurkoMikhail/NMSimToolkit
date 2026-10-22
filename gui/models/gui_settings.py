@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterator, Optional
 import hepunits as units
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,6 +12,11 @@ class GuiSimulationSettings(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     particles_number: int = Field(default=5000, ge=1, description="Число частиц на задачу")
+    buffer_capacity: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Ёмкость каналов телеметрии, элементов (None — равна числу частиц; не менее particles_number)",
+    )
     pool_size: int = Field(default=1, ge=1, description="Размер пула параллельных процессов")
     min_energy: float = Field(default=1.0, ge=0.0, description="Порог энергии частиц (кэВ)")
     max_tracks_per_batch: int = Field(default=2000, ge=1, description="Максимум треков в пачке")
@@ -33,6 +38,8 @@ class GuiSimulationSettings(BaseModel):
         for param_key, param_value in source_data.items():
             if param_key == 'particles_number':
                 self.particles_number = int(param_value)
+            elif param_key == 'buffer_capacity':
+                self.buffer_capacity = None if param_value is None else int(param_value)
             elif param_key == 'pool_size':
                 self.pool_size = int(param_value)
             elif param_key == 'min_energy':
@@ -55,6 +62,9 @@ class GuiSimulationSettings(BaseModel):
                 self.pseudo_xray_mode = bool(param_value)
             else:
                 raise KeyError(f"Неизвестный параметр конфигурации: {param_key}")
+        # Инвариант: ёмкость каналов телеметрии не меньше числа частиц на задачу
+        if self.buffer_capacity is not None and self.buffer_capacity < self.particles_number:
+            self.buffer_capacity = self.particles_number
 
     def to_dict(self) -> Dict[str, Any]:
         """Экспорт настроек в плоский словарь."""

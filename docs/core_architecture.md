@@ -105,5 +105,7 @@ sequenceDiagram
 ```
 
 * Обработчики `DirectStreamHandler`, `SensitiveVolumeHandler`, `HistoryAssemblerHandler` и `DoseMapHandler` поддерживают детерминированную финализацию (`finalize()`) и освобождение ресурсов разделяемой памяти (`close()`).
+* Обработчики `DirectStreamHandler`, `SensitiveVolumeHandler`, `HistoryAssemblerHandler` пишут в HDF5 через [`DatasetWriteBuffer`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/dataset_write_buffer.py): дозаписи накапливаются по группам датасетов (`initial_states`, `interactions/<объём>`) и сбрасываются целыми чанками за один сеанс `_write_with_retry`; неполный хвост дописывается в `finalize()`. Объём буфера на группу задаёт поле `data_manager.buffer_size` (строка с единицей, по умолчанию `3 MiB`); он определяет размер чанка HDF5 (`chunk_rows = buffer_size // row_bytes`) и порог сброса.
+* Ёмкость каналов телеметрии `SimulationDataBuffer` задаёт отдельное поле `simulation_manager.buffer_capacity` (`Optional[int]`, элементы; `None` → `particles_number`), не связанное с выходным буфером записи.
 * Все модульные и интеграционные тесты расчетного ядра сгруппированы по доменным подпакетам внутри `tests/`: `tests/config/`, `tests/data/`, `tests/geometry/`, `tests/materials/`, `tests/other/`, `tests/particles/`, `tests/physics/`, `tests/source/` и `tests/transport/`.
 

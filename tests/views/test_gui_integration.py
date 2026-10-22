@@ -162,6 +162,18 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         # Закрытие окна
         win.close()
 
+    def test_open_yaml_loads_buffer_fields_into_gui_state(self):
+        """Загрузка YAML переносит simulation_manager.buffer_capacity и data_manager.buffer_size в состояние GUI."""
+        win = MainWindow()
+        try:
+            win._on_open_yaml("examples/nema_1_cam.yaml")
+            self.assertEqual(win.sim_settings.buffer_capacity, 100000)
+            self.assertEqual(win.orchestrator_session.buffer_capacity, 100000)
+            self.assertEqual(win.data_manager_vm.buffer_size, 3 * 1024 ** 2)
+            self.assertEqual(win.data_manager_vm.to_config().buffer_size, 3 * 1024 ** 2)
+        finally:
+            win.close()
+
     def test_nema_time_step_and_source_activity(self):
         """
         Критерий приемки 1: Проверка расчета шага по времени для nema_1_cam.yaml.
@@ -254,32 +266,66 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         finally:
             handler.close()
 
-    def test_data_manager_buffer_capacity_gui_constraints(self):
-        """Проверка ограничения емкости буфера данных в GUI (buffer_capacity >= particles_number)."""
-        from gui.views.property_inspector import PropertyInspector
+    def test_data_manager_buffer_size_gui_input(self):
+        """Проверка ввода объёма выходного буфера (data_manager.buffer_size) с единицей и отката при ошибке."""
         from gui.viewmodels.data_handler_viewmodel import DataManagerViewModel
 
-        dm_vm = DataManagerViewModel(buffer_capacity=5000)
-        dm_vm.min_buffer_capacity = 10000
-
-        # Емкость буфера автоматически поднимается до min_buffer_capacity
-        self.assertEqual(dm_vm.buffer_capacity, 10000)
-
-        # Попытка установить меньшее значение ограничивается снизу
-        dm_vm.buffer_capacity = 2000
-        self.assertEqual(dm_vm.buffer_capacity, 10000)
-
-        # Проверка связывания через PropertyInspector
+        dm_vm = DataManagerViewModel(buffer_size="1 MiB")
         inspector = PropertyInspector()
-        inspector.data_manager_section.set_min_buffer_capacity(25000)
         inspector.set_target_viewmodel(dm_vm)
+        buffer_field = inspector.data_manager_section.txt_dm_buffer_size
 
-        self.assertEqual(inspector.data_manager_section.spin_dm_buffer.minimum(), 25000)
-        self.assertEqual(dm_vm.buffer_capacity, 25000)
+        # Начальное значение отображается строкой с единицей
+        self.assertEqual(buffer_field.text(), "1 MiB")
 
-        # Изменение значения в spinbox ниже минимума не позволяет задать небезопасную емкость
-        inspector.data_manager_section.spin_dm_buffer.setValue(1000)
-        self.assertGreaterEqual(dm_vm.buffer_capacity, 25000)
+        # Корректный ввод с единицей передаётся в ViewModel в байтах
+        buffer_field.setText("512 KiB")
+        buffer_field.editingFinished.emit()
+        self.assertEqual(dm_vm.buffer_size, 512 * 1024)
+        self.assertEqual(buffer_field.text(), "512 KiB")
+
+        # Недопустимые значения (нулевой объём, единица времени, мусор) откатываются к текущему состоянию модели
+        for invalid_text in ("0 B", "4 s", "abc"):
+            buffer_field.setText(invalid_text)
+            buffer_field.editingFinished.emit()
+            self.assertEqual(dm_vm.buffer_size, 512 * 1024, msg=invalid_text)
+            self.assertEqual(buffer_field.text(), "512 KiB", msg=invalid_text)
+
+    def test_simulation_buffer_capacity_not_below_particles_number(self):
+        """Проверка ограничения simulation_manager.buffer_capacity >= particles_number в настройках симуляции GUI."""
+        from gui.models.gui_settings import GuiSimulationSettings
+        from gui.views.simulation_settings_dialog import SimulationSettingsDialog
+
+        settings = GuiSimulationSettings(particles_number=1000, buffer_capacity=1500)
+        self.assertEqual(settings.buffer_capacity, 1500)
+
+        # Увеличение числа частиц поднимает ёмкость буфера до particles_number
+        settings.update({"particles_number": 5000})
+        self.assertEqual(settings.buffer_capacity, 5000)
+
+        # None (авто) сохраняется как None
+        auto_settings = GuiSimulationSettings(particles_number=1000)
+        auto_settings.update({"particles_number": 7000})
+        self.assertIsNone(auto_settings.buffer_capacity)
+
+        dialog = SimulationSettingsDialog(settings)
+        self.assertFalse(dialog.chk_buffer_auto.isChecked())
+        self.assertEqual(dialog.spin_buffer_capacity.minimum(), 5000)
+        self.assertEqual(dialog.spin_buffer_capacity.value(), 5000)
+
+        # Минимум поля следует за числом частиц, значение поднимается автоматически
+        dialog.spin_particles.setValue(20000.0)
+        self.assertEqual(dialog.spin_buffer_capacity.minimum(), 20000)
+        self.assertEqual(dialog.get_settings().buffer_capacity, 20000)
+
+        dialog.spin_buffer_capacity.setValue(10000)
+        self.assertEqual(dialog.spin_buffer_capacity.value(), 20000)
+        dialog.spin_buffer_capacity.setValue(30000)
+        self.assertEqual(dialog.get_settings().buffer_capacity, 30000)
+
+        # Авто-режим возвращает None
+        dialog.chk_buffer_auto.setChecked(True)
+        self.assertIsNone(dialog.get_settings().buffer_capacity)
 
     def test_property_inspector_kinematic_locking(self) -> None:
         """Верификация динамической блокировки полей инспектора свойств по кинематическому контракту."""

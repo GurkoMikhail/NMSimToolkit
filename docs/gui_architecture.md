@@ -93,7 +93,7 @@ flowchart LR
 
     subgraph D3 ["3. Домен данных (DataManagerViewModel)"]
         M1["HDF5 filename"]
-        M2["buffer_capacity (емкость буфера)"]
+        M2["buffer_size (объём выходного буфера записи, строка с единицей: 3 MiB)"]
         M3["Активные обработчики (Handlers)"]
         M4["show_escaped_tracks (в DirectStreamHandler)"]
     end
@@ -101,6 +101,7 @@ flowchart LR
     subgraph D4 ["4. Домен вычислительных ресурсов (ExecutionSettings)"]
         E1["pool_size (число процессов CPU)"]
         E2["particles_number (число частиц на задачу)"]
+        E4["buffer_capacity (ёмкость каналов телеметрии, None = particles_number)"]
         E3["min_energy (физический порог отсечки)"]
     end
 
@@ -110,6 +111,10 @@ flowchart LR
         R3["grid_snap_step, angle_snap_step"]
     end
 ```
+
+### Поля буферизации: `simulation_manager.buffer_capacity` и `data_manager.buffer_size`
+* **`simulation_manager.buffer_capacity`** (`Optional[int]`, элементы; `None` → `particles_number`) — ёмкость каналов телеметрии `SimulationManager`. Всегда не меньше `particles_number`: ограничение поддерживают `GuiSimulationSettings.update` и диалог `SimulationSettingsDialog` (флажок «Авто» + поле, минимум которого следует за числом частиц).
+* **`data_manager.buffer_size`** (байты в `DataManagerViewModel.buffer_size`; в YAML и в инспекторе — строка с единицей, по умолчанию `3 MiB`) — объём выходного буфера записи на группу датасетов. Определяет размер чанка HDF5 и порог сброса: данные появляются в файле порциями и дописываются в `finalize()`. Ввод в `DataManagerInspectorSection` проверяется через `data_size_validator`; при ошибке значение откатывается к текущему состоянию модели и показывается подсказка. Форматирование — `format_data_size` ([`core/config/units.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/config/units.py)).
 
 ### Физическая модель ОФЭКТ: отказ от `views_number` в пользу `steps`
 * Первичным кинематическим параметром протокола ОФЭКТ является **`steps`** (число дискретных угловых шагов поворота штатива гантри).

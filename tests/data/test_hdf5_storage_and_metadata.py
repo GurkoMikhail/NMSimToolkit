@@ -147,6 +147,8 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             },
         })
 
+        handler.finalize()
+
         with h5py.File(self.h5_path, "w") as h5_file:
             for op in written_ops:
                 op(h5_file)
@@ -235,6 +237,8 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             },
         })
 
+        handler.finalize()
+
         with h5py.File(self.h5_path, "w") as h5_file:
             for op in written_ops:
                 op(h5_file)
@@ -271,6 +275,8 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
                 "emission_time": np.zeros(100, dtype=np.float32),
             },
         })
+
+        stream_handler.finalize()
 
         with h5py.File(self.h5_path, "w") as h5_file:
             for op in written_ops:
@@ -503,6 +509,8 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
                 "scattering_phi": np.array([0.35, 0.45], dtype=np.float64),
             },
         })
+
+        handler.finalize()
 
         with h5py.File(self.h5_path, "w") as h5_file:
             for op in written_ops:

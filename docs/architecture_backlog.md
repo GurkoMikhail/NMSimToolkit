@@ -410,3 +410,20 @@
 5. **Лимит потоков BLAS и опциональная привязка воркеров к ядрам:**
    * Дополнительно к установке в точках входа (необходимой для собственного процесса и режима `pool_size == 1`, т. к. к моменту вызова оркестратора `numpy` уже импортирован) выставлять `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS` в [`Orchestrator.run`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/config/orchestrator.py#L72-L143) до создания `Pool` (наследуется spawn-воркерами независимо от точки входа) либо применять `threadpoolctl.threadpool_limits(1)` в воркере. Установка переменных окружения в инициализаторе пула неэффективна: на Windows модули с `numpy` импортируются при распаковке задачи до вызова инициализатора.
    * Привязку воркеров к физическим ядрам равномерно по узлам NUMA реализовать как опцию конфигурации (`cpu_binding: Literal["none", "physical_cores"] = "none"`), выполняемую в начале воркера до построения сцены (NUMA-локальность по first-touch). Соседние SMT-потоки определять по топологии ОС (`GetLogicalProcessorInformationEx` / `os.sched_getaffinity`), а не по формуле `[2*k, 2*k+1]`. По умолчанию выключено, чтобы не лишать GUI процессорного времени на рабочих станциях.
+---
+
+## 29. Атомарность сброса группы в `DatasetWriteBuffer` при частичной записи
+
+> **Статус: отложено.**
+
+### Проблема:
+* [`DatasetWriteBuffer`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/dataset_write_buffer.py) сбрасывает группу датасетов (`initial_states`, `interactions/<объём>`) поле за полем внутри одного вызова `write_func`, который выполняется через `DataManager._write_with_retry`.
+* Если `write_func` падает на середине группы (например, `OSError` на записи второго поля), ретрай `_write_with_retry` повторно вызывает запись, а в файле часть полей группы уже стала длиннее (после `resize` и частичной записи).
+* Результат: проверка согласованности длин полей группы бросает `RuntimeError` «длины различаются» (Fail-Fast). Тихой порчи данных нет, но прогон завершается ошибкой вместо успешного ретрая.
+
+### Согласованное архитектурное решение:
+1. Фиксировать длину $L$ датасетов группы до начала сброса; при исключении откатывать `resize` всех уже изменённых полей до $L$ (`try/finally` без широкого `except`), чтобы повторный вызов `write_func` стартовал из согласованного состояния.
+2. Покрыть откат тестом: инъекция `OSError` на записи второго поля группы, затем успешный ретрай и проверка равенства длин всех полей.
+
+### План реализации:
+* Доработка `DatasetWriteBuffer.write_full_chunks` / `write_all` (откат `resize` по `try/finally`) и тест в `tests/data/test_dataset_write_buffer.py`; выполняется отдельной задачей после этапов 1–4 плана [`docs/plans/data_manager_write_buffer_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/data_manager_write_buffer_plan.md).
