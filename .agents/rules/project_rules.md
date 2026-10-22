@@ -42,4 +42,4 @@ trigger: always_on
    * Ведение архитектурного бэклога в [`docs/architecture_backlog.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/architecture_backlog.md);
    * Консолидированная структура каталога `docs/` и изоляция планов в `docs/plans/`;
    * Стандарты Result-Oriented Git-коммитов на русском языке;
-   * Ограничения моделей Claude, актуализация `codebase-memory` и инварианты Handoff Spec.
+   * Актуализация `codebase-memory` и инварианты Handoff Spec.
