@@ -526,6 +526,11 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             self.assertIn("emission_direction", init_grp)
             self.assertEqual(init_grp["emission_direction"].shape, (2, 3))
             self.assertEqual(init_grp["emission_direction"].dtype, np.float32)
+            self.assertIn("emission_time", init_grp)
+            self.assertEqual(init_grp["emission_time"].dtype, np.float64)
+            self.assertEqual(init_grp["emission_time"].attrs["units"], "ns")
+            self.assertIn("emission_energy", init_grp)
+            self.assertEqual(init_grp["emission_energy"].dtype, np.float32)
 
             # Проверка interactions/All_Volumes
             self.assertIn("interactions/All_Volumes", h5_file)

@@ -1675,6 +1675,47 @@ class TestDataHandlers(unittest.TestCase):
                 pass
 
 
+    def test_initial_states_time_fields_always_float64(self) -> None:
+        """
+        Проверка сохранения полей времени ('emission_time', 'time') строго в float64
+        независимо от параметра floating_point_precision='float32' (Zero-Compromise Physics).
+        """
+        written_ops = []
+        handler = DirectStreamHandler(
+            floating_point_precision="float32",
+            buffer_size=1024 * 1024,
+        )
+        handler.set_writer_callback(lambda op: written_ops.append(op))
+
+        handler.process_chunk({
+            'type': ChunkType.INITIAL_STATES,
+            'data': {
+                'particle_ID': np.array([1, 2, 3], dtype=np.uint64),
+                'emission_time': np.array([0.0, 1e9 + 0.123, 2.5e9], dtype=np.float64),
+                'emission_energy': np.array([140.5, 140.5, 140.5], dtype=np.float64),
+                'pos_x': np.array([1.0, 2.0, 3.0], dtype=np.float64),
+                'pos_y': np.array([4.0, 5.0, 6.0], dtype=np.float64),
+                'pos_z': np.array([7.0, 8.0, 9.0], dtype=np.float64),
+                'dir_x': np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                'dir_y': np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                'dir_z': np.array([1.0, 1.0, 1.0], dtype=np.float64),
+            },
+        })
+        handler.finalize()
+
+        with h5py.File(self.h5_path, "w") as h5_file:
+            for op in written_ops:
+                op(h5_file)
+
+        with h5py.File(self.h5_path, "r") as h5_file:
+            init_grp = h5_file["initial_states"]
+            self.assertEqual(init_grp["emission_time"].dtype, np.float64)
+            self.assertAlmostEqual(init_grp["emission_time"][1], 1e9 + 0.123, delta=1e-6)
+            self.assertEqual(init_grp["emission_position"].dtype, np.float32)
+            self.assertEqual(init_grp["emission_direction"].dtype, np.float32)
+            self.assertEqual(init_grp["emission_energy"].dtype, np.float32)
+
+
 if __name__ == '__main__':
     unittest.main()
 

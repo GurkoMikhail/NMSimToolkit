@@ -31,6 +31,10 @@ _INITIAL_STATES_ATTRS: Mapping[str, Mapping[str, str]] = {
 }
 
 
+# Поля физического времени, всегда сохраняемые строго в float64 для исключения потери точности наносекунд
+_TIME_FIELDS: FrozenSet[str] = frozenset({'emission_time', 'time'})
+
+
 class BaseDataHandler(abc.ABC):
     """
     Базовый абстрактный класс потребителя потоковых данных симуляции (Data Handler).
@@ -242,7 +246,10 @@ class DirectStreamHandler(BaseDataHandler):
         prepared_states: Dict[str, np.ndarray] = {}
         for state_key, state_arr in states_copy.items():
             if isinstance(state_arr, np.ndarray) and state_arr.dtype.kind == "f":
-                prepared_states[state_key] = state_arr.astype(target_float_dtype)
+                if state_key in _TIME_FIELDS:
+                    prepared_states[state_key] = state_arr.astype(np.float64, copy=False)
+                else:
+                    prepared_states[state_key] = state_arr.astype(target_float_dtype, copy=False)
             else:
                 prepared_states[state_key] = state_arr
 
