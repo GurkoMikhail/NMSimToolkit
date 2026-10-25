@@ -1,6 +1,6 @@
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, Callable, Optional, List, Tuple
+from typing import Dict, Any, Callable, Optional
 import re
 
 import settings.database_setting as database_setting
@@ -10,7 +10,7 @@ from core.config.models import (
     AnyNodeConfig, VolumeConfig, GammaCameraConfig, GammaCameraSlotsConfig, WoodcockVoxelVolumeConfig,
     ParametricParallelCollimatorConfig,
     DirectParallelCollimatorConfig,
-    SourceMetadataConfig, SourceConfig, BoxConfig, GeometryConfig, SimulationConfig, TranslateConfig, RotateConfig,
+    SourceMetadataConfig, SourceConfig, BoxConfig, GeometryConfig, TranslateConfig, RotateConfig,
     MatrixTransformConfig,
     NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig,
     DoseGridNodeConfig, GantryConfig, CompositeNodeConfig, BaseSpatialNodeConfig, BaseCompositeNodeConfig
@@ -41,8 +41,8 @@ class SceneBuilder:
             'Volume': self._build_volume,
             'GammaCamera': self._build_gamma_camera,
             'WoodcockVoxelVolume': self._build_woodcock_voxel_volume,
-            'ParametricParallelCollimator': self._build_parametric_parallel_collimator,
-            'DirectParallelCollimator': self._build_direct_parallel_collimator,
+            'ParametricParallelCollimator': self._build_parallel_collimator,
+            'DirectParallelCollimator': self._build_parallel_collimator,
             'Source': self._build_source,
             'DoseGridNode': self._build_dose_grid_node,
             'Gantry': self._build_gantry,
@@ -87,7 +87,7 @@ class SceneBuilder:
     def _build_node(self, config: AnyNodeConfig) -> SpatialNode:
         node_type = config.type
         if node_type not in self.factory_map:
-            raise ValueError(f"Unknown node type: {node_type}")
+            raise ValueError(f"Неизвестный тип узла сцены: {node_type}")
 
         node = self.factory_map[node_type](config)
         if config.tags:
@@ -134,7 +134,7 @@ class SceneBuilder:
             size_y = Float(self._to_float(config.y, check_positive=True))
             size_z = Float(self._to_float(config.z, check_positive=True))
             return Box(size_x, size_y, size_z)
-        raise ValueError(f"Unknown geometry type: {config.type}")
+        raise ValueError(f"Неизвестный тип геометрии: {config.type}")
 
     def _build_volume(self, config: VolumeConfig) -> Volume:
         geometry = self._build_geometry(config.geometry)
@@ -192,7 +192,7 @@ class SceneBuilder:
                 raise ValueError(f"Количество элементов в файле {resolved_path} ({data.size}) не совпадает с требуемой формой {dist_config.shape} ({expected_elements})")
 
             return data.reshape(dist_config.shape, order=dist_config.order)
-        raise ValueError(f"Unknown distribution format: {type(dist_config)}")
+        raise ValueError(f"Неизвестный формат распределения: {type(dist_config)}")
 
     def _build_woodcock_voxel_volume(self, config: WoodcockVoxelVolumeConfig) -> WoodcockVoxelVolume:
         dist_config = config.distribution
@@ -206,14 +206,14 @@ class SceneBuilder:
 
         if dist_config.mapping is not None:
             if not dist_config.mapping:
-                raise ValueError("WoodcockVoxelVolumeConfig mapping cannot be empty if specified.")
+                raise ValueError("Словарь сопоставления материалов (mapping) в WoodcockVoxelVolumeConfig не может быть пустым.")
             for map_val, mat_name in dist_config.mapping.items():
                 mask = np.isclose(raw_distribution, map_val)
                 mat = self._get_material(str(mat_name))
                 indices = np.nonzero(mask)
                 mat_arr[indices] = mat
         else:
-            raise ValueError("WoodcockVoxelVolumeConfig mapping requires an explicit mapping, raw IDs are not currently supported by MaterialArray.")
+            raise ValueError("Для WoodcockVoxelVolumeConfig необходимо явно задать словарь сопоставления материалов (mapping).")
 
         v_size_raw = config.voxel_size if config.voxel_size is not None else 1.0
         voxel_size = Float(self._to_float(v_size_raw, check_positive=True))
@@ -231,8 +231,9 @@ class SceneBuilder:
         self.slots_registry[camera_node] = config.slots
         return camera_node
 
-
-    def _build_parametric_parallel_collimator(self, config: ParametricParallelCollimatorConfig) -> ParametricParallelCollimator:
+    def _build_parallel_collimator(
+        self, config: ParametricParallelCollimatorConfig | DirectParallelCollimatorConfig
+    ) -> ParametricParallelCollimator | DirectParallelCollimator:
         material = self._get_material(config.material)
         size = (
             [Float(self._to_float(dimension_value, check_positive=True)) for dimension_value in config.size]
@@ -242,32 +243,22 @@ class SceneBuilder:
         hole_diameter = Float(self._to_float(config.hole_diameter, check_positive=True))
         septa = Float(self._to_float(config.septa, check_positive=True))
         hole_shape = CollimatorHoleShape(config.hole_shape.lower())
+        if isinstance(config, DirectParallelCollimatorConfig):
+            hole_material = self._get_material(config.hole_material) if config.hole_material is not None else None
+            return DirectParallelCollimator(
+                size=size,
+                hole_diameter=hole_diameter,
+                septa=septa,
+                material=material,
+                hole_material=hole_material,
+                hole_shape=hole_shape,
+                name=config.name,
+            )
         return ParametricParallelCollimator(
             size=size,
             hole_diameter=hole_diameter,
             septa=septa,
             material=material,
-            hole_shape=hole_shape,
-            name=config.name
-        )
-
-    def _build_direct_parallel_collimator(self, config: DirectParallelCollimatorConfig) -> DirectParallelCollimator:
-        material = self._get_material(config.material)
-        hole_material = self._get_material(config.hole_material) if config.hole_material is not None else None
-        size = (
-            [Float(self._to_float(dimension_value, check_positive=True)) for dimension_value in config.size]
-            if isinstance(config.size, (list, tuple))
-            else [Float(self._to_float(config.size, check_positive=True))] * 3
-        )
-        hole_diameter = Float(self._to_float(config.hole_diameter, check_positive=True))
-        septa = Float(self._to_float(config.septa, check_positive=True))
-        hole_shape = CollimatorHoleShape(config.hole_shape.lower())
-        return DirectParallelCollimator(
-            size=size,
-            hole_diameter=hole_diameter,
-            septa=septa,
-            material=material,
-            hole_material=hole_material,
             hole_shape=hole_shape,
             name=config.name,
         )

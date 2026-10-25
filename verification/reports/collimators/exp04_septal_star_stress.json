@@ -6,63 +6,63 @@
       "emitted_count": 2500000,
       "solid_angle_fraction": 0.030313643576310556,
       "total": {
-        "count": 351579,
-        "sensitivity": 0.004263056197966276,
-        "sensitivity_error": 7.1896805528738565e-06,
+        "count": 351040,
+        "sensitivity": 0.004256520576411223,
+        "sensitivity_error": 7.184167248291531e-06,
         "fraction_of_total": 1.0
       },
       "geometric": {
-        "count": 8280,
-        "sensitivity": 0.00010039878752474057,
-        "sensitivity_error": 1.1033500007737745e-06,
-        "fraction_of_total": 0.02355089467800978
+        "count": 8173,
+        "sensitivity": 9.910136357967448e-05,
+        "sensitivity_error": 1.0961976853616534e-06,
+        "fraction_of_total": 0.023282247037374658
       },
       "septal_penetration": {
-        "count": 276364,
-        "sensitivity": 0.0033510399173293966,
-        "sensitivity_error": 6.374393450797103e-06,
-        "fraction_of_total": 0.7860651517866539
+        "count": 275793,
+        "sensitivity": 0.003344116281136567,
+        "sensitivity_error": 6.367804928673964e-06,
+        "fraction_of_total": 0.7856455104831358
       },
       "collimator_scatter": {
-        "count": 66935,
-        "sensitivity": 0.0008116174931121388,
-        "sensitivity_error": 3.1370740129298873e-06,
-        "fraction_of_total": 0.1903839535353363
+        "count": 67074,
+        "sensitivity": 0.0008133029316949817,
+        "sensitivity_error": 3.1403296126980133e-06,
+        "fraction_of_total": 0.1910722424794895
       }
     },
     "sensitivity_direct": {
       "emitted_count": 2500000,
       "solid_angle_fraction": 0.030313643576310556,
       "total": {
-        "count": 352973,
-        "sensitivity": 0.004279959085624427,
-        "sensitivity_error": 7.203919884141158e-06,
+        "count": 351337,
+        "sensitivity": 0.004260121837268089,
+        "sensitivity_error": 7.1872057147851874e-06,
         "fraction_of_total": 1.0
       },
       "geometric": {
-        "count": 8038,
-        "sensitivity": 9.74644268265537e-05,
-        "sensitivity_error": 1.0871065994077213e-06,
-        "fraction_of_total": 0.02277228003275038
+        "count": 8258,
+        "sensitivity": 0.00010013202746126904,
+        "sensitivity_error": 1.1018832226754795e-06,
+        "fraction_of_total": 0.02350449852990149
       },
       "septal_penetration": {
-        "count": 277358,
-        "sensitivity": 0.0033630926220153375,
-        "sensitivity_error": 6.38584657059321e-06,
-        "fraction_of_total": 0.7857768157904429
+        "count": 276293,
+        "sensitivity": 0.003350179009851829,
+        "sensitivity_error": 6.3735745832769655e-06,
+        "fraction_of_total": 0.7864045062148308
       },
       "collimator_scatter": {
-        "count": 67577,
-        "sensitivity": 0.0008194020367825355,
-        "sensitivity_error": 3.1520825680003174e-06,
-        "fraction_of_total": 0.1914509041768067
+        "count": 66786,
+        "sensitivity": 0.0008098107999549908,
+        "sensitivity_error": 3.1335804412258207e-06,
+        "fraction_of_total": 0.19009099525526774
       }
     },
-    "anisotropy_contrast_parametric": 0.1774577279293058,
-    "anisotropy_contrast_direct": 0.1778886466543686,
-    "harmonic6_ratio_parametric": 0.10057404951075005,
-    "harmonic6_ratio_direct": 0.10902911841821729,
-    "azimuthal_profile_correlation": 0.983858329456771,
+    "anisotropy_contrast_parametric": 0.18096842105263158,
+    "anisotropy_contrast_direct": 0.17683456591299188,
+    "harmonic6_ratio_parametric": 0.10438070107276523,
+    "harmonic6_ratio_direct": 0.10103097408671094,
+    "azimuthal_profile_correlation": 0.9847913216810967,
     "passed": true
   },
   {
@@ -72,63 +72,63 @@
       "emitted_count": 2500000,
       "solid_angle_fraction": 0.030313643576310556,
       "total": {
-        "count": 14722,
-        "sensitivity": 0.00017851098429217763,
-        "sensitivity_error": 1.4712332720937826e-06,
+        "count": 14655,
+        "sensitivity": 0.0001776985786443325,
+        "sensitivity_error": 1.4678816542271093e-06,
         "fraction_of_total": 1.0
       },
       "geometric": {
-        "count": 9957,
-        "sensitivity": 0.0001207331796357297,
-        "sensitivity_error": 1.2099359611669019e-06,
-        "fraction_of_total": 0.6763347371281075
+        "count": 10047,
+        "sensitivity": 0.00012182447080447687,
+        "sensitivity_error": 1.215391885251759e-06,
+        "fraction_of_total": 0.6855680655066531
       },
       "septal_penetration": {
-        "count": 3272,
-        "sensitivity": 3.9674496712675256e-05,
-        "sensitivity_error": 6.935931235003827e-07,
-        "fraction_of_total": 0.22225241135715257
+        "count": 3168,
+        "sensitivity": 3.841344913990074e-05,
+        "sensitivity_error": 6.824812395263871e-07,
+        "fraction_of_total": 0.21617195496417604
       },
       "collimator_scatter": {
-        "count": 1493,
-        "sensitivity": 1.8103307943772664e-05,
-        "sensitivity_error": 4.6851989266613476e-07,
-        "fraction_of_total": 0.10141285151473985
+        "count": 1440,
+        "sensitivity": 1.746065869995488e-05,
+        "sensitivity_error": 4.601287578224332e-07,
+        "fraction_of_total": 0.09825997952917093
       }
     },
     "sensitivity_direct": {
       "emitted_count": 2500000,
       "solid_angle_fraction": 0.030313643576310556,
       "total": {
-        "count": 14560,
-        "sensitivity": 0.00017654666018843268,
-        "sensitivity_error": 1.4631161992870101e-06,
+        "count": 14711,
+        "sensitivity": 0.00017837760426044186,
+        "sensitivity_error": 1.4706835305458764e-06,
         "fraction_of_total": 1.0
       },
       "geometric": {
-        "count": 9881,
-        "sensitivity": 0.00011981164487100984,
-        "sensitivity_error": 1.2053095036398394e-06,
-        "fraction_of_total": 0.6786401098901099
+        "count": 10068,
+        "sensitivity": 0.0001220791054105179,
+        "sensitivity_error": 1.2166614137925614e-06,
+        "fraction_of_total": 0.6843858337298621
       },
       "septal_penetration": {
-        "count": 3232,
-        "sensitivity": 3.9189478415454287e-05,
-        "sensitivity_error": 6.893405198093601e-07,
-        "fraction_of_total": 0.22197802197802197
+        "count": 3222,
+        "sensitivity": 3.9068223841149046e-05,
+        "sensitivity_error": 6.882732633714928e-07,
+        "fraction_of_total": 0.21901978111617157
       },
       "collimator_scatter": {
-        "count": 1447,
-        "sensitivity": 1.754553690196855e-05,
-        "sensitivity_error": 4.6124577049606806e-07,
-        "fraction_of_total": 0.09938186813186813
+        "count": 1421,
+        "sensitivity": 1.723027500877492e-05,
+        "sensitivity_error": 4.5708310637686635e-07,
+        "fraction_of_total": 0.09659438515396641
       }
     },
-    "anisotropy_contrast_parametric": 0.7296511627906976,
-    "anisotropy_contrast_direct": 0.7805255023183926,
-    "harmonic6_ratio_parametric": 0.6185197313542996,
-    "harmonic6_ratio_direct": 0.6431973218550655,
-    "azimuthal_profile_correlation": 0.9498717572830798,
+    "anisotropy_contrast_parametric": 0.7737003058103975,
+    "anisotropy_contrast_direct": 0.7108792846497765,
+    "harmonic6_ratio_parametric": 0.6869076744784502,
+    "harmonic6_ratio_direct": 0.6568971973754409,
+    "azimuthal_profile_correlation": 0.9331623801616442,
     "passed": true
   }
 ]

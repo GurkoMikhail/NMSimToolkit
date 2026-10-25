@@ -123,6 +123,16 @@ class SceneExporter:
 
         return transforms
 
+    @staticmethod
+    def _extract_material_mapping(node: WoodcockVoxelVolume) -> Optional[Dict[float, Union[float, str]]]:
+        """Извлекает словарь сопоставления индексов и канонических имен материалов из воксельного объема."""
+        if node.material_distribution is not None and len(node.material_distribution.element_list) > 0:
+            return {
+                float(element_idx): material_item.name
+                for element_idx, material_item in enumerate(node.material_distribution.element_list)
+            }
+        return None
+
     @classmethod
     def export_node(
         cls,
@@ -137,18 +147,23 @@ class SceneExporter:
         node_name = node.name
         node_tags = list(node.tags) if node.tags else []
         transforms = cls.decompose_matrix(node.local_matrix)
+        child_nodes: Sequence[SpatialNode] = (
+            [c for c in node.childs if c is not node.lead_body and c is not node.channels]
+            if isinstance(node, DirectParallelCollimator)
+            else (node.childs if isinstance(node, CompositeNode) else ())
+        )
+        children_cfgs = [
+            cls.export_node(
+                child_node,
+                distribution_registry=distribution_registry,
+                slots_registry=slots_registry,
+                source_metadata_registry=source_metadata_registry,
+            )
+            for child_node in child_nodes
+        ]
 
         # 1. GammaCameraNode
         if isinstance(node, GammaCameraNode):
-            children_cfgs = [
-                cls.export_node(
-                    child_node,
-                    distribution_registry=distribution_registry,
-                    slots_registry=slots_registry,
-                    source_metadata_registry=source_metadata_registry,
-                )
-                for child_node in node.childs
-            ]
             slots_cfg = None
             if slots_registry is not None:
                 slots_cfg = slots_registry.get(node)
@@ -168,21 +183,11 @@ class SceneExporter:
                 children=children_cfgs,
             )
 
-
         # 2. ParametricParallelCollimator
         if isinstance(node, ParametricParallelCollimator):
             size_tuple = (float(node.size[0]), float(node.size[1]), float(node.size[2]))
             mat_name = node.material.name
             hole_shape_val = node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape)
-            children_cfgs = [
-                cls.export_node(
-                    child_node,
-                    distribution_registry=distribution_registry,
-                    slots_registry=slots_registry,
-                    source_metadata_registry=source_metadata_registry,
-                )
-                for child_node in node.childs
-            ]
             return ParametricParallelCollimatorConfig(
                 name=node_name,
                 tags=node_tags,
@@ -201,16 +206,6 @@ class SceneExporter:
             mat_name = node.material.name
             hole_mat_name = node.explicit_hole_material.name if node.explicit_hole_material is not None else None
             hole_shape_val = node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape)
-            children_cfgs = [
-                cls.export_node(
-                    child_node,
-                    distribution_registry=distribution_registry,
-                    slots_registry=slots_registry,
-                    source_metadata_registry=source_metadata_registry,
-                )
-                for child_node in node.childs
-                if child_node is not node.lead_body and child_node is not node.channels
-            ]
             return DirectParallelCollimatorConfig(
                 name=node_name,
                 tags=node_tags,
@@ -227,40 +222,17 @@ class SceneExporter:
         # 4. WoodcockVoxelVolume
         if isinstance(node, WoodcockVoxelVolume):
             v_size = float(np.mean(node.voxel_size)) if isinstance(node.voxel_size, (list, tuple, np.ndarray, Sequence)) else float(node.voxel_size)
-            dist_cfg = None
-            if distribution_registry is not None:
-                dist_cfg = distribution_registry.get(node)
+            dist_cfg = distribution_registry.get(node) if distribution_registry is not None else None
+            actual_mapping = cls._extract_material_mapping(node)
 
             if dist_cfg is None:
-                actual_mapping: Optional[Dict[float, Union[float, str]]] = None
-                if node.material_distribution is not None and len(node.material_distribution.element_list) > 0:
-                    actual_mapping = {
-                        float(element_idx): material_item.name
-                        for element_idx, material_item in enumerate(node.material_distribution.element_list)
-                    }
                 dist_cfg = NumpyDistributionConfig(
                     path=f"{node_name or 'phantom'}.npy",
                     mapping=actual_mapping if actual_mapping is not None else {0.0: 'Vacuum'},
                 )
-            elif isinstance(dist_cfg, (NumpyDistributionConfig, RawDistributionConfig)) and dist_cfg.mapping is None:
-                actual_mapping = None
-                if node.material_distribution is not None and len(node.material_distribution.element_list) > 0:
-                    actual_mapping = {
-                        float(element_idx): material_item.name
-                        for element_idx, material_item in enumerate(node.material_distribution.element_list)
-                    }
-                if actual_mapping is not None:
-                    dist_cfg = dist_cfg.model_copy(update={'mapping': actual_mapping})
+            elif isinstance(dist_cfg, (NumpyDistributionConfig, RawDistributionConfig)) and dist_cfg.mapping is None and actual_mapping is not None:
+                dist_cfg = dist_cfg.model_copy(update={'mapping': actual_mapping})
 
-            children_cfgs = [
-                cls.export_node(
-                    child_node,
-                    distribution_registry=distribution_registry,
-                    slots_registry=slots_registry,
-                    source_metadata_registry=source_metadata_registry,
-                )
-                for child_node in node.childs
-            ]
             return WoodcockVoxelVolumeConfig(
                 name=node_name,
                 tags=node_tags,
@@ -283,23 +255,12 @@ class SceneExporter:
                     z=float(bounds[1, 2] - bounds[0, 2]),
                 )
 
-            mat_name = node.material.name
-            children_cfgs = [
-                cls.export_node(
-                    child_node,
-                    distribution_registry=distribution_registry,
-                    slots_registry=slots_registry,
-                    source_metadata_registry=source_metadata_registry,
-                )
-                for child_node in node.childs
-            ]
-
             return VolumeConfig(
                 name=node_name,
                 tags=node_tags,
                 transformations=transforms,
                 geometry=geo_cfg,
-                material=mat_name,
+                material=node.material.name,
                 children=children_cfgs,
             )
 
@@ -312,25 +273,14 @@ class SceneExporter:
                 act_val = f"{scaled_activity:.6g} MBq"
 
             v_sz = float(np.mean(node.voxel_size)) if isinstance(node.voxel_size, (list, tuple, np.ndarray, Sequence)) else float(node.voxel_size)
-            dist_cfg = None
-            if distribution_registry is not None:
-                dist_cfg = distribution_registry.get(node)
+            dist_cfg = distribution_registry.get(node) if distribution_registry is not None else None
             is_point = (
                 isinstance(node, PointSource)
                 and v_sz == 0.0
-                and tuple(node.distribution.shape) == (1, 1, 1)
+                and node.distribution.shape == (1, 1, 1)
             )
             if dist_cfg is None and not is_point:
                 dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'source_dist'}.npy")
-            children_cfgs = [
-                cls.export_node(
-                    child_node,
-                    distribution_registry=distribution_registry,
-                    slots_registry=slots_registry,
-                    source_metadata_registry=source_metadata_registry,
-                )
-                for child_node in node.childs
-            ]
             half_life = 0.0 if np.isinf(node.half_life) else float(node.half_life)
             rad_type = node.radiation_type
             source_meta: Optional[SourceMetadataConfig] = None
@@ -362,15 +312,6 @@ class SceneExporter:
 
         # 7. DoseGridNode
         if isinstance(node, DoseGridNode):
-            children_cfgs = [
-                cls.export_node(
-                    child_item,
-                    distribution_registry=distribution_registry,
-                    slots_registry=slots_registry,
-                    source_metadata_registry=source_metadata_registry,
-                )
-                for child_item in node.childs
-            ]
             return DoseGridNodeConfig(
                 name=node_name,
                 tags=node_tags,
@@ -384,15 +325,6 @@ class SceneExporter:
 
         # 7.1. GantryNode
         if isinstance(node, GantryNode):
-            children_cfgs = [
-                cls.export_node(
-                    child_item,
-                    distribution_registry=distribution_registry,
-                    slots_registry=slots_registry,
-                    source_metadata_registry=source_metadata_registry,
-                )
-                for child_item in node.childs
-            ]
             gantry_transforms: List[TransformConfig] = []
             trans_x = float(node.local_matrix[0, 3])
             trans_y = float(node.local_matrix[1, 3])
@@ -420,15 +352,6 @@ class SceneExporter:
 
         # 8. CompositeNode
         if isinstance(node, CompositeNode):
-            children_cfgs = [
-                cls.export_node(
-                    child_item,
-                    distribution_registry=distribution_registry,
-                    slots_registry=slots_registry,
-                    source_metadata_registry=source_metadata_registry,
-                )
-                for child_item in node.childs
-            ]
             return BaseCompositeNodeConfig(
                 name=node_name,
                 tags=node_tags,
@@ -555,10 +478,7 @@ class SceneExporter:
                     actual_mapping: Optional[Dict[float, Union[float, str]]] = (
                         dict(existing_orig.mapping)
                         if (existing_orig is not None and existing_orig.mapping is not None)
-                        else {
-                            float(element_idx): material_item.name
-                            for element_idx, material_item in enumerate(curr_node.material_distribution.element_list)
-                        }
+                        else cls._extract_material_mapping(curr_node)
                     )
                     adjusted_registry[curr_node] = NumpyDistributionConfig(
                         path=raw_name,
@@ -573,7 +493,7 @@ class SceneExporter:
                     is_point = (
                         isinstance(curr_node, PointSource)
                         and v_sz == 0.0
-                        and tuple(curr_node.distribution.shape) == (1, 1, 1)
+                        and curr_node.distribution.shape == (1, 1, 1)
                     )
                     if not is_point and curr_node.distribution.size > 0:
                         raw_name = (

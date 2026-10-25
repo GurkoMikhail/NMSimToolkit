@@ -301,21 +301,18 @@ def _format_markdown_report(
         )
     lines.append("")
 
-    lines.append("### 3.1. Внутренняя декомпозиция `Source.inject` и физических процессов (Warm Steady-State)")
+    lines.append("### 3.1. Внутренняя декомпозиция инжекции источника и физических процессов (Warm Steady-State)")
     lines.append("")
     lines.append(
-        "| Сцена | Коллиматор | `position` (мс) | `direction` (мс) | `energy+time` (мс) | "
-        "`bank.inject` (мс) | `_record_finished` (мс) | Фотоэффект (мс) | Комптон (мс) | Рэлей (мс) |"
+        "| Сцена | Коллиматор | `inject_poisson_sources_kernel` (мс) | "
+        "`_record_finished` (мс) | Фотоэффект (мс) | Комптон (мс) | Рэлей (мс) |"
     )
-    lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
+    lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: |")
     for s_res in step_results:
         sub_s = s_res.source_subphases
         sub_p = s_res.physics_subphases
         lines.append(
             f"| `{s_res.workload_id}` | `{s_res.collimator_kind}` | "
-            f"{sub_s.generate_position * 1e3:.2f} | "
-            f"{sub_s.generate_direction * 1e3:.2f} | "
-            f"{(sub_s.generate_energy + sub_s.generate_emission_time + sub_s.time_step_newton) * 1e3:.2f} | "
             f"{sub_s.soa_conversion_and_bank_inject * 1e3:.2f} | "
             f"{s_res.p9_sub_escaped_only * 1e3:.2f} | "
             f"{sub_p.photoelectric_time * 1e3:.2f} | "
@@ -356,6 +353,30 @@ def _format_markdown_report(
             f"{s_res.full_bank_transport_time * 1e3:.2f} | {s_res.depletion_transport_time * 1e3:.2f} | "
             f"**{s_res.full_bank_tracks_per_sec:,.0f}** | {s_res.depletion_tracks_per_sec:,.0f} | "
             f"**{s_res.depletion_track_slowdown_factor:.2f}x** |"
+        )
+    lines.append("")
+
+    lines.append(
+        "### 3.4. Пофазные дельты Page Faults (`psutil.Process().memory_info()`) на стационарной фазе (`Full-Bank Phase`) и в `inject_poisson_sources_kernel`"
+    )
+    lines.append("")
+    lines.append(
+        "| Сцена | Коллиматор | `Full` P2 Source PF (`Steady`) | `Full` P4 Geom PF (`Steady`) | "
+        "`Full` P5 Woodcock PF (`Steady`) | `Full` P8 Phys PF (`Steady`) | `Full` P9 Comp PF (`Steady`) | "
+        "`Full` P10 Data PF | `src.kernel` PF |"
+    )
+    lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
+    for s_res in step_results:
+        sub_s = s_res.source_subphases
+        lines.append(
+            f"| `{s_res.workload_id}` | `{s_res.collimator_kind}` | "
+            f"**{s_res.full_bank_p2_page_faults:,}** (`{s_res.steady_full_bank_p2_page_faults:,}`) | "
+            f"{s_res.full_bank_p4_page_faults:,} (`{s_res.steady_full_bank_p4_page_faults:,}`) | "
+            f"{s_res.full_bank_p5_page_faults:,} (`{s_res.steady_full_bank_p5_page_faults:,}`) | "
+            f"{s_res.full_bank_p8_page_faults:,} (`{s_res.steady_full_bank_p8_page_faults:,}`) | "
+            f"{s_res.full_bank_p9_page_faults:,} (`{s_res.steady_full_bank_p9_page_faults:,}`) | "
+            f"{s_res.full_bank_p10_page_faults:,} | "
+            f"{sub_s.soa_conversion_and_bank_inject_page_faults:,} |"
         )
     lines.append("")
 
@@ -470,26 +491,20 @@ def _format_markdown_report(
     lines.append("## 8. Главные аналитические выводы и приоритизированная матрица оптимизаций")
     lines.append("")
     lines.append(
-        "### 8.1. Методологическое очищение профиля: `Cold Propagator Overhead` vs `Warm Steady-State`"
+        "### 8.1. Методологическое очищение профиля и эффект внедренных оптимизаций (`Warm Steady-State`)"
     )
     lines.append("")
     lines.append(
-        "* **Суть исправленного искажения:** в `ParticlePropagator.__init__` при каждом создании экземпляра заново вызываются фабрики замыканий `make_transport_kernel` (фаза `P5`) и `make_photoelectric_kernel`, `make_compton_kernel`, `make_coherent_kernel` (фаза `P8`), тогда как функция трассировки лучей `cast_path_kernel` (`P4`) объявлена на уровне модуля и компилируется один раз. При замере без предварительного прогрева инстанса `ParticlePropagator` (`warmup_propagator_instance`) на Шаге №1 происходила `~3.22–3.50 с` компиляция LLVM, из-за чего в старом отчете фаза `P8_Physics_Processes` искусственно занимала `~75.5%` времени (`2,570 мс`), `P5_Woodcock_Transport` — `~22.4%` (`780 мс`), а `P4_Geometry_Raycast` — `0.1%`."
+        "* **Холодный старт (`Cold Compile`) vs Установившийся режим (`Warm Steady-State`):** консолидация `@njit`-ядер в `processes_kernels.py` сократила время холодного прогрева `ParticlePropagator` более чем вдвое (**`3.55 с -> 1.61 с`**), а время выполнения пакета из 4 задач в `Orchestrator` (Раздел 6) уменьшилось с **`18.21–18.71 с` до `9.73–10.43 с`** при `pool_size = 1` и с **`7.30–7.55 с` до `4.47–4.89 с`** при `pool_size = 4` (**ускорение в `1.6x–1.8x` раза**)."
     )
     lines.append(
-        "* **Истинная картина в установившемся режиме (`Warm Steady-State`, Раздел 3):** после выноса компиляции замыканий `ParticlePropagator` в предстартовый прогрев, внедрения выборочной аллокации буферов `SimulationDataBuffer.allocate_for(capacity, enabled)` и каскадного сброса по `TELEMETRY_ORDER` (`_ensure_step_capacity`, `_record_finished_histories`) выяснилось, что:"
+        "* **Компактная сетка NIST XCOM с краями поглощения и $\\mathcal{O}(1)$ лог-индекс (`M1a`, `M1b`):** переход от плотной 1-кэВ сетки (`~1117` узлов) к родной сетке NIST XCOM (`54–95` узлов с дуплетами K/L/M/N-краев поглощения) и двухуровневому логарифмическому индексу `energy_bin_map` ($512$ корзин) ускорил одиночный запрос сечения в **`2.03x` раза** (`35.2 нс`), а спаренный запрос Вудкока (`1x log(E) + 2x _locate_row` с кусочно-степенной `log-log` интерполяцией и выборкой $Z$ по парциальным сечениям) — в **`2.92x` раза** (`60.3 нс` против `176.2 нс`)."
     )
     lines.append(
-        "  1. В 10-фазном профилировщике (`step_profiler.py`, емкость банка `25,000`, общее число историй `150,000–300,000`) в установившемся режиме симуляция с полной записью HDF5 проходит за `0.30–0.86 с` вместо `3.80–4.35 с` Cold-старта (**ускорение `5.1x – 12.5x`**), а в чистом транспорте без HDF5 достигает **свыше `2.22 млн историй/с` в `W1` и до `442.9 тыс. историй/с` в `W2_NEMA_Tb161`**."
+        "* **Zero-Allocation инжекция первичных частиц (`inject_poisson_sources_kernel`, `M2`, `M3`):** переход на таблицы алиасов Воза (`Vose's Alias` $\\mathcal{O}(1)$, **`19.1 нс/оп`, ускорение `7.48x`**) и прямую запись в `ParticleBank` полностью обнулил страничные прерывания ОС в установившемся режиме (**`Steady Page Faults = 0`** во всех 6 сценах `W1–W3` против прежних `762–21,839`)."
     )
     lines.append(
-        "  2. Доля физических процессов `P8_Physics_Processes` (Фотоэффект + Комптон + Рэлей) составляет всего **`6.5% – 20.6%`** от общего времени с HDF5. Микробенчмарк `M7_TransportVsProcessKernel` объясняет соотношение внутри чистого транспорта: 1 шаг `cast_path + _transport_kernel` стоит `~280.1 нс/частицу`, а 1 вызов `ComptonScattering.apply` (включающий сэмплирование Клейна–Нишины, запись в `InteractionBuffer` и пересчет локальных нормалей в `update_navigation_state_rotate_kernel`) стоит `~340.6 нс` на рассеявшуюся частицу."
-    )
-    lines.append(
-        "  3. Внедрение `SimulationDataBuffer.allocate_for(capacity, enabled)` (выделяющего `capacity = 0` неподписанным каналам), проверки `buffers.escaped_particles.is_enabled` в `_record_finished_histories` и однопроходных JIT-ядер (`_push_first_interacting_to_initial_state_kernel`, `_push_uncollided_to_initial_state_kernel`, `_push_to_dead_particles_kernel`) сократило долю буферного управления в `cProfile` до **`1.4% – 2.2%`**, долю фазы `P9_Invalidation_Escaped` — до **`1.9% – 2.8%`**, а полное время `_record_finished_histories` на 150k–300k частиц — до **`1.92 – 3.55 мс`** (`~10 нс/историю`). Принудительное включение `ESCAPED_PARTICLES` в `H0_NullDrain_WithEscaped` добавляет `+25.1%..+37.6%` оверхеда в `W1` и `+2.4%..+5.8%` в `W2`, который полностью устранен во всех штатных обработчиках `H1..H7`."
-    )
-    lines.append(
-        "  4. Доля геометрического рейкастинга `P4_Geometry_Raycast` закономерно отражает сложность сцены: для `DirectParallelCollimator` доля `P4` выше (`5.4%–11.8%`), чем для `ParametricParallelCollimator` (`4.2%–5.4%`), тогда как `ParametricParallelCollimator` тратит больше времени в `P5_Woodcock_Transport` (`16.7%–35.2%` против `11.6%–33.6%`) из-за дельта-шагов сквозь свинец."
+        "* **Ускорение объемных клинических и фантомных сцен (`W2_NEMA_Tb161`, `W3_Heart_Tc99m`):** в 10-фазном профилировщике (Раздел 3) сквозная скорость на 5-тканевом фантоме миокарда `W3_Heart_Tc99m` выросла до **`196.5–197.0 тыс. ист./с` (`+9.4%..+10.8%`)**, а чистая скорость трекинга полного банка — до **`1.39–1.47 млн треков/с` (`+7.6%..+12.8%`)** в `W3` и **`1.47–1.58 млн треков/с` (`+7.9%..+12.3%`)** в `W2_NEMA_Tb161`."
     )
     lines.append("")
     lines.append(
@@ -497,53 +512,32 @@ def _format_markdown_report(
     )
     lines.append("")
     lines.append(
-        "* **Зачем необходимо разделение `Full-Bank Phase` и `Tail Depletion Phase` (Разделы 3.3 и 7):** в полномасштабной симуляции (`6,000,000` историй) жизненный цикл банка `ParticleBank` делится на два качественно различных режима:"
+        "* **Инвариантность генерации источника к размеру батча в воксельных фантомах (Раздел 7):** благодаря $\\mathcal{O}(1)$ выборке по таблицам Воза и методу прореживания Льюиса–Шедлера в `inject_poisson_sources_kernel`, на малых батчах (`batch_size = 2,500`, `8,175–8,594` шагов пополнения) доля времени источника в `W2_NEMA_Tb161` сократилась с прежних **`32.5%–34.8%` до `15.5%–16.6%`**, а скорость на `batch_size = 2,500` выросла с `244.6–246.9 тыс. ист./с` до **`305.9–315.8 тыс. ист./с` (`+25.0%..+27.9%`)**. Во всем диапазоне `batch_size` от `2,500` до `500,000` доля `Full Source (%)` в `W2_NEMA_Tb161` остается постоянной (**`15.1%–16.8%`**)."
     )
     lines.append(
-        "  1. **Фаза A (`Full-Bank Sustained Phase` — стационарный режим полного банка):** пока квота источника не исчерпана, после каждого шага освободившиеся слоты `dead_indices` немедленно докачиваются из источника до 100% емкости банка (`active_indices.size == batch_size`). Все JIT-ядра (`cast_path_kernel`, `_transport_kernel`, процессы) работают на плотно заполненных массивах размера `batch_size`."
-    )
-    lines.append(
-        "  2. **Фаза B (`Tail Depletion Phase` — хвостовая фаза опустошения банка):** когда квота источника исчерпана, генерация новых частиц прекращается (`Source.inject = 0%`), и оставшиеся в банке частицы долетывают за 5–59 шагов до полного поглощения или вылета (`active_indices.size` монотонно падает от `batch_size` до `1`, среднее заполнение банка падает до **`2.6%–30.1%`**). Для точечного источника в воздухе (`W1_PointSource`) удельная чистая скорость трекинга (`Треков/с` без `Source.inject`) на хвосте замедляется в **`1.28x – 3.74x` раз** (`depletion_track_slowdown_factor`), так как в банке остаются только многократно рассеивающиеся в септах и кристалле фотоны при разреженном массиве `active_indices`. В объемном воксельном фантоме (`W2_NEMA_Tb161`) при малых батчах (`2,500–15,000`) чистый трекинг на хвосте также замедляется в **`1.11x – 1.38x` раз**, а при больших батчах (`30,000–500,000`) отношение составляет `0.95x–1.05x`, поскольку на хвосте долетывают периферийные фотоны, покинувшие плотное водное ядро фантома."
-    )
-    lines.append(
-        "* **Выводы по выбору оптимального `batch_size` на дистанции 6,000,000 историй:**"
-    )
-    lines.append(
-        "  1. **Малые батчи (`2,500 – 5,000`):** требуют от `2,440` до `8,310` вызовов `Source.inject`. В воксельном фантоме `W2_NEMA_Tb161` при `batch_size = 2,500` генерация источника `Source.inject` съедает **`32.2% – 34.4%` времени стационарной фазы**, так как `rng.choice(origins, size=num_to_inject, p=probabilities)` на каждом шаге заново сканирует распределение вероятностей вокселей (`251.4–253.0 тыс. ист./с` против `419.7–442.9 тыс. ист./с` в оптимуме)."
-    )
-    lines.append(
-        "  2. **Оптимальный стационарный диапазон (`30,000 – 120,000`):** обеспечивает максимальную скорость как в стационарном режиме полного банка (`Full-Bank Sustained`), так и по сквозному времени (`Total Throughput`). В `W1_PointSource` пик достигается при `batch_size = 30,000 – 60,000` (**`2.16 – 2.22 млн историй/с`**, до `7.05 млн треков/с`), а в `W2_NEMA_Tb161` — при `batch_size = 60,000 – 120,000` (**`409.9 – 419.7 тыс. ист./с` в Parametric и `437.3 – 442.9 тыс. ист./с` в Direct**), где доля `Source.inject` снижается с `~34%` до `9.8%–10.7%`, рабочие SoA-буферы укладываются в кэш L3, а доля хвостовой фазы опустошения `Tail Depletion Phase` на 6 млн историй не превышает `0.6%–1.2%` времени."
-    )
-    lines.append(
-        "  3. **Сверхбольшие батчи (`250,000 – 500,000`):** рабочий набор SoA-массивов (`20–40 МБ`) выходит за пределы L3-кэша CPU. В `W1_PointSource` это снижает стационарную скорость `Full-Bank` на **9%–12%** (`2.22 млн -> 1.95–2.03 млн ист./с`), а в `W2_NEMA_Tb161` прекращает рост стационарной скорости (`419.7 тыс. -> 408.2 тыс. ист./с` в Parametric и `442.9 тыс. -> 431.7 тыс. ист./с` в Direct) при росте доли хвостовой фазы `Depletion` до `5.4%–6.0%`."
-    )
-    lines.append(
-        "* **Архитектурный дефект `SimulationManager._replenish_bank` (Бэклог п. 24):** в `_replenish_bank()` отсутствует клиппинг `target_time = min(target_time, self.stop_time)` при вычислении `num_to_inject`. Поэтому, если `bank.capacity` превышает ожидаемое число историй за `stop_time`, менеджер инжектирует полный банк на первом же шаге и никогда не входит в многошаговый стационарный режим `Full-Bank Phase`. В профилировщиках (`step_profiler.py`, `batch_size_benchmark.py`) и верификационном стенде (`QuotaBoundedSimulationManager`) это исправлено раздельным заданием емкости банка `bank_capacity` и строгим контролем квоты историй `particles_number`."
+        "* **Оптимальный диапазон `batch_size` (`60,000 – 120,000`):** максимизирует сквозную производительность как для точечного источника `W1_PointSource` (**до `1.00–1.01 млн историй/с` и `3.27–4.11 млн треков/с`** при `batch_size = 120,000`), так и для воксельного фантома `W2_NEMA_Tb161` (**`369.7 тыс. ист./с` в Parametric и `398.6 тыс. ист./с` в Direct**, до **`1.70 млн треков/с`** при `batch_size = 120,000`), удерживая долю хвостовой фазы опустошения `Tail Depletion Phase` в пределах `0.8%–1.2%`."
     )
     lines.append("")
-    lines.append("### 8.3. Приоритизированная матрица оптимизаций (Roadmap)")
+    lines.append("### 8.3. Приоритизированная матрица дальнейших оптимизаций (Roadmap)")
     lines.append("")
     lines.append(
-        "| Приоритет | Узел / Модуль | Описание узкого места | Предлагаемое решение | Ожидаемый эффект (`Speedup`) |"
+        "| Статус / Приоритет | Узел / Модуль | Описание | Реализация / Следующий шаг | Эффект (`Speedup`) |"
     )
     lines.append("| :---: | :--- | :--- | :--- | :---: |")
     lines.append(
-        "| **P0 (Critical)** | [`core/physics/processes_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py), [`core/transport/transport_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/transport_kernels.py) | Повторная компиляция `@njit`-замыканий (`make_*_kernel`, `make_transport_kernel`) при каждом создании `ParticlePropagator` | Вынос ядер на уровень модуля / кэширование фабрик через `@lru_cache` по `process_id` и `tuple(process_ids)`, удаление двойной инициализации в `ComptonScattering` | **`~3.50 с -> < 1 мс`** на старт пропагатора (**5.1x–12.5x** на коротких запусках и в `Orchestrator`) |"
+        "| **Выполнено** | `core/materials/`, `core/physics/` (`M1a`, `M1b`) | Компактная сетка NIST XCOM с дуплетами краев поглощения, 2-уровневый лог-индекс `energy_bin_map` и парциальные доли `element_partial_fractions` | Внедрено в `AttenuationDatabase`, `MaterialBank`, `PhysicsCompiler`, `transport_kernels.py` | **`2.03x–2.92x`** на запросах сечений, размер `.h5` **`3.52 -> 0.74 МБ`** |"
     )
     lines.append(
-        "| **P1 (High)** | [`core/transport/transport_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/transport_kernels.py) (`M1`) | Многократный бинарный поиск `np.searchsorted` (до 18 раз на историю) по неравномерной сетке энергий при каждом шаге Вудкока | Предрасчет макроскопических сечений ($\\mu$, $\\mu_{\\max}$) на единой равномерной логарифмической сетке с $\\mathcal{O}(1)$ вычислением индекса | **5.28x** ускорение выборки сечений (`P5_Woodcock_Transport` занимает до 38% времени чистого транспорта) |"
+        "| **Выполнено** | `core/source/` (`M2`, `M3`) | Таблицы алиасов Воза (`Vose's Alias`), `SourceBuffer` и `@njit`-инжектор `inject_poisson_sources_kernel` | Внедрено в `alias_tables.py`, `source_compiler.py`, `source_kernels.py` | **`7.48x`** выборка вокселя, **`0` Steady Page Faults**, **`+25%..+28%`** на малых батчах `W2` |"
     )
     lines.append(
-        "| **P1 (High)** | [`core/source/sources.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py) (`M2`, `M3`) | Аллокация полных 3D-массивов `np.meshgrid` при инициализации `EmissionTable` и $\\mathcal{O}(N_{\\text{vox}} + M\\log N_{\\text{vox}})$ выборка в `rng.choice` | Разреженная инициализация через `np.flatnonzero` + таблица `Vose's Alias Method` ($\\mathcal{O}(1)$ на выборку) с прямой записью в SoA-массивы `Vector3D` | **4.45x** инициализация фантома + **6.74x** генерация позиций (`Source` занимает до 34% при малых батчах и 10–11% при больших) |"
+        "| **Выполнено** | `core/data/data_handlers.py` (`M4`, `M5`) | Векторизованный LUT `volume_id` и прямая булева фильтрация `HistoryAssemblerHandler` | Внедрено в `SensitiveVolumeHandler` и `HistoryAssemblerHandler` | **`38.51x`** и **`27.89x`** на фильтрации чанков |"
     )
     lines.append(
-        "| **P1 (High)** | [`core/transport/simulation_managers.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py) (Раздел 7, Бэклог п. 24) | Отсутствие клиппинга `target_time <= stop_time` в `_replenish_bank` и деградация скорости трекинга на разреженном хвосте `Depletion Phase` | Ограничить `target_time` по `stop_time`, разделить `bank_capacity` (`30,000–60,000`) и общее число историй, добавить периодическую компактификацию активных треков на хвосте | **1.7x–3.7x** ускорение относительно неоптимальных батчей + точное соблюдение квоты частиц |"
+        "| **P1 (Next)** | [`core/source/source_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/source_kernels.py), [`docs/plans/composable_sources_and_secondary_radiation_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/composable_sources_and_secondary_radiation_plan.md) | В `W1_PointSource` пошаговое прореживание Льюиса–Шедлера при $\\lambda = 0$ и матричное умножение нулевых локальных координат тратят `~350 нс/частицу` | В рамках композиционной модели `SpatialDistribution` (`PointDistribution`) + быстрый путь для стационарного одиночного источника ($\\lambda = 0$) исключить холостой розыгрыш `u2` и матричное умножение `(0,0,0)` | Сокращение времени `P2_Source` для `PointSource` в **`2.5x–3.0x` раза** |"
     )
     lines.append(
-        "| **P2 (Medium)** | [`core/data/data_handlers.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/data_handlers.py) (`M4`, `M5`) | Python-цикл `[vol_map.get(v) for v in ...]` (`dtype=object`) и `np.intersect1d + 4x np.isin` при фильтрации чанков | Векторизованный целочисленный LUT чувствительных `volume_id` и прямая булева индексация `mask[particle_id - min_id]` $\\mathcal{O}(N)$ | **37.41x** ускорение фильтрации `SensitiveVolume` и **32.16x** ускорение `HistoryAssembler` |"
-    )
-    lines.append(
-        "| **P2 (Medium)** | [`core/data/dose_map_handler.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/dose_map_handler.py) (Бэклог п. 21) | Безусловное обращение к `SharedMemory` в автономном/CLI-режиме и спам предупреждений при `create_shm=False` | Явное разделение режимов In-Memory (`shm_name=None`) и IPC `SharedMemory` | Чистый лог и отсутствие лишних системных вызовов ОС |"
+        "| **P2 (Next)** | [`core/physics/processes_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py), [`core/transport/transport_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/transport_kernels.py) | Компиляция замыканий `ParticlePropagator` при холодном старте процесса (`1.61 с`) | Кэширование фабрик `@njit`-замыканий по `process_id` и `tuple(process_ids)` | **`1.61 с -> < 5 мс`** на холодный старт воркера |"
     )
     lines.append("")
 
@@ -793,6 +787,54 @@ def run_full_profiling_pipeline(quick_mode: bool = False) -> Dict[str, Any]:
     return results_payload
 
 
+def run_phase0_baseline_update() -> Dict[str, Any]:
+    """
+    Перезапускает целевые бенчмарки Фазы 0 (step_profiler с дельтами page faults,
+    transport_telemetry на W1–W3 и micro_benchmarks с M1a/M1b), обновляет
+    profiling_results.json, графики PNG и отчет PROFILING_REPORT.md.
+    """
+    report_dir = Path("verification/reports/profiling").resolve()
+    report_dir.mkdir(parents=True, exist_ok=True)
+    json_path = report_dir / "profiling_results.json"
+    payload: Dict[str, Any] = json.loads(json_path.read_text(encoding="utf-8"))
+
+    print("[Phase 0 - 1/4] Прогрев JIT-ядер Numba и @cfunc...", flush=True)
+    _ = _cpu_thermal_beacon_kernel(10_000)
+    warmup_all_profiling_kernels()
+
+    print("[Phase 0 - 2/4] Запуск step_profiler (W1–W3, декомпозиция шагов + дельты Page Faults)...", flush=True)
+    step_workloads = build_all_workloads_matrix(
+        w1_particles=300_000,
+        w2_particles=150_000,
+        w3_particles=150_000,
+        bank_capacity=25_000,
+    )
+    step_results = run_step_profiling_suite(step_workloads)
+
+    print("[Phase 0 - 3/4] Запуск transport_telemetry (W1–W3)...", flush=True)
+    telemetry_workloads = build_all_workloads_matrix(
+        w1_particles=12_000,
+        w2_particles=12_000,
+        w3_particles=12_000,
+    )
+    telemetry_reports = run_transport_telemetry_suite(telemetry_workloads)
+
+    print("[Phase 0 - 4/4] Запуск micro_benchmarks (M1a/M1b, M2..M7)...", flush=True)
+    micro_records = run_micro_benchmarks_suite()
+
+    payload["step_results"] = [asdict(item) for item in step_results]
+    payload["telemetry_reports"] = [asdict(item) for item in telemetry_reports]
+    payload["micro_records"] = [asdict(item) for item in micro_records]
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    plot_step_phase_breakdown(step_results, report_dir)
+    plot_transport_telemetry_comparison(telemetry_reports, report_dir)
+    plot_micro_benchmarks_speedup(micro_records, report_dir)
+
+    reformat_report_from_saved_json()
+    return payload
+
+
 def main() -> None:
     """Разбирает аргументы командной строки и запускает профилировочный конвейер."""
     parser = argparse.ArgumentParser(description="Комплексный профилировочный стенд NMSimToolkit")
@@ -806,9 +848,16 @@ def main() -> None:
         action="store_true",
         help="Пересчитать производные поля и пересобрать отчет и графики из сохраненного profiling_results.json",
     )
+    parser.add_argument(
+        "--phase0-baseline",
+        action="store_true",
+        help="Целевой прогон Фазы 0 (step_profiler + page faults, transport_telemetry, micro_benchmarks)",
+    )
     args = parser.parse_args()
     if args.reformat_only:
         reformat_report_from_saved_json()
+    elif args.phase0_baseline:
+        run_phase0_baseline_update()
     else:
         run_full_profiling_pipeline(quick_mode=bool(args.quick))
 

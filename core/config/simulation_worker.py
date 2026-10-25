@@ -19,7 +19,7 @@ from core.config.logging_setup import (
 )
 from core.config.builder import SceneBuilder
 from core.config.models import SimulationConfig
-from core.data.metadata_collector import ProcedureMetadataCollector
+from core.data.metadata_collector import ProcedureMetadataCollector, _find_nodes_recursive
 from core.data.data_handlers import (
     BaseDataHandler,
     DirectStreamHandler,
@@ -52,34 +52,17 @@ def _find_nodes_by_names(root_node: SpatialNode, target_names: List[str]) -> Lis
     return found_nodes
 
 
-def _find_dose_grids(root_node: SpatialNode) -> List[DoseGridNode]:
-    """Рекурсивный поиск всех узлов DoseGridNode в поддереве сцены."""
-    grids_list: List[DoseGridNode] = []
-    if isinstance(root_node, DoseGridNode):
-        grids_list.append(root_node)
-    if isinstance(root_node, CompositeNode):
-        for child_node in root_node.childs:
-            grids_list.extend(_find_dose_grids(child_node))
-    return grids_list
-
-
 def _is_per_task_shm_enabled(task_dict: Dict[str, Any], extra_handler_args: Any) -> bool:
     """Определяет, активирован ли режим пер-тасковых сегментов SharedMemory для задачи."""
     if bool(task_dict.get("_per_task_dose_shm", False)) or bool(task_dict.get("_per_task_shm", False)):
         return True
-    dict_extra = task_dict.get("_extra_handler_args")
-    if isinstance(dict_extra, Mapping) and bool(dict_extra.get("per_task_shm", False)):
-        return True
-    if isinstance(extra_handler_args, Mapping) and bool(extra_handler_args.get("per_task_shm", False)):
-        return True
+    for candidate in (task_dict.get("_extra_handler_args"), extra_handler_args):
+        if isinstance(candidate, Mapping) and bool(candidate.get("per_task_shm", False)):
+            return True
     if isinstance(extra_handler_args, (tuple, list)):
-        for arg_item in extra_handler_args:
-            if isinstance(arg_item, Mapping) and bool(arg_item.get("per_task_shm", False)):
-                return True
-        if len(extra_handler_args) >= 8:
-            for arg_item in extra_handler_args[7:]:
-                if isinstance(arg_item, bool) and arg_item:
-                    return True
+        if any(isinstance(item, Mapping) and bool(item.get("per_task_shm", False)) for item in extra_handler_args):
+            return True
+        return any(isinstance(item, bool) and item for item in extra_handler_args[7:])
     return False
 
 
@@ -121,35 +104,41 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
 
         # 3. Проверка параметров менеджера симуляции и предварительное сканирование чекпоинта HDF5
         sim_config = final_config.simulation_manager
-        if isinstance(sim_config.particles_number, str):
-            raise ValueError(
-                f"Неразрешенный шаблон интерполяции в particles_number: '{sim_config.particles_number}'. "
-                f"Все макросы обязаны быть разрешены протоколом перед запуском воркера."
-            )
-        if isinstance(sim_config.min_energy, str):
-            raise ValueError(
-                f"Неразрешенный шаблон интерполяции в min_energy: '{sim_config.min_energy}'. "
-                f"Все макросы обязаны быть разрешены протоколом перед запуском воркера."
-            )
-        if isinstance(sim_config.stop_time, str):
-            raise ValueError(
-                f"Неразрешенный шаблон интерполяции в stop_time: '{sim_config.stop_time}'. "
-                f"Все макросы обязаны быть разрешены протоколом перед запуском воркера."
-            )
+        for field_name, field_val in (
+            ("particles_number", sim_config.particles_number),
+            ("min_energy", sim_config.min_energy),
+            ("start_time", sim_config.start_time),
+            ("stop_time", sim_config.stop_time),
+            ("batch_capacity", sim_config.batch_capacity),
+            ("buffer_capacity", sim_config.buffer_capacity),
+        ):
+            if isinstance(field_val, str):
+                raise ValueError(
+                    f"Неразрешенный шаблон интерполяции в {field_name}: '{field_val}'. "
+                    f"Все макросы обязаны быть разрешены протоколом перед запуском воркера."
+                )
 
         requested_start_time = float(sim_config.start_time)
         requested_stop_time = float(sim_config.stop_time)
+        requested_batch_capacity: Optional[int] = (
+            None if sim_config.batch_capacity is None else int(sim_config.batch_capacity)
+        )
+        effective_batch_capacity = (
+            int(sim_config.particles_number)
+            if requested_batch_capacity is None
+            else requested_batch_capacity
+        )
         effective_start_time = requested_start_time
         effective_stop_time = requested_stop_time
         effective_seed = int(random_seed)
         initial_particle_id = 0
-        rng_state: Optional[Dict[str, Any]] = None
         effective_task_id: Any = task_id
 
         resume_state = DataManager.inspect_resume_state(
             final_config.data_manager.filename,
             lock=file_lock,
             context=context_data,
+            batch_capacity=requested_batch_capacity,
         )
         if resume_state is not None:
             initial_particle_id = int(resume_state["next_particle_id"])
@@ -170,10 +159,9 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                             )
                     return (context_data, final_config)
 
+                effective_batch_capacity = int(resume_state["batch_capacity"])
                 effective_start_time = saved_stop_time
-                effective_stop_time = requested_stop_time
                 effective_seed = int(resume_state["seed"])
-                rng_state = resume_state["rng_state"]
                 _logger.info(
                     f"Воркер {task_id}: обнаружен чекпоинт в '{final_config.data_manager.filename}'. "
                     f"Бесшовный досчёт на интервале [{effective_start_time}, {effective_stop_time}] нс "
@@ -216,7 +204,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                     )
                 )
             elif handler_config.type == "DoseMapHandler":
-                grid_nodes = _find_dose_grids(root_scene)
+                grid_nodes = _find_nodes_recursive(root_scene, DoseGridNode)
                 if handler_config.grid_names:
                     grid_nodes = [
                         grid_node for grid_node in grid_nodes if grid_node.name in handler_config.grid_names
@@ -229,7 +217,9 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                 handlers.append(DoseMapHandler(grid_nodes=grid_nodes, shm_name=effective_dose_shm))
 
         if not any(isinstance(handler, DoseMapHandler) for handler in handlers):
-            active_grids = [grid_node for grid_node in _find_dose_grids(root_scene) if grid_node.is_active]
+            active_grids = [
+                grid_node for grid_node in _find_nodes_recursive(root_scene, DoseGridNode) if grid_node.is_active
+            ]
             if active_grids:
                 use_per_task_dose = task_id is not None and _is_per_task_shm_enabled(task_dict, extra_handler_args)
                 base_dose_shm = "nmsim_dose_shm"
@@ -276,9 +266,9 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
             buffer_capacity=None if sim_config.buffer_capacity is None else int(sim_config.buffer_capacity),
             name=f"Task_seed_{effective_seed}",
             seed=effective_seed,
-            initial_particle_id=initial_particle_id,
-            rng_state=rng_state,
+            batch_capacity=effective_batch_capacity,
             consumed_chunk_types=consumed_chunk_types,
+            resume_state=resume_state,
         )
 
         ipc_pause_event = task_dict.get("_run_event", task_dict.get("_pause_event"))
@@ -310,17 +300,16 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
         )
 
         task_metadata: Dict[str, Any] = {
+            **collected_metadata,
             "task_id": effective_task_id,
             "seed": int(effective_seed),
             "status": "in_progress",
-            "simulation": collected_metadata["simulation"],
-            "gantry": collected_metadata["gantry"],
-            "geometry": collected_metadata["geometry"],
-            "source": collected_metadata["source"],
             "context": context_data,
-            "protocol": collected_metadata["protocol"],
-            "kinematics": collected_metadata["kinematics"],
-            "detectors": collected_metadata["detectors"],
+            "rng_state": json.dumps(dict(manager.rng.bit_generator.state)),
+            "t_ref": float(manager.t_ref),
+            "t_last": float(manager.t_last),
+            "pending_arrival_time": float(manager.pending_arrival_time),
+            "batch_capacity": int(manager.batch_capacity),
         }
 
         data_manager = DataManager(
@@ -350,6 +339,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
 
         actual_start_time = float(effective_start_time)
         actual_stop_time = float(manager.global_timer)
+        final_rng_json = json.dumps(manager.rng.bit_generator.state)
         runtime_summary: Dict[str, Any] = {
             "seed": int(effective_seed),
             "actual_start_time": actual_start_time,
@@ -358,7 +348,11 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
             "particle_id_start": int(initial_particle_id),
             "particle_id_end": int(manager.bank.count),
             "simulated_histories": int(manager.bank.count) - int(initial_particle_id),
-            "final_rng_state": json.dumps(manager.rng.bit_generator.state),
+            "rng_state": final_rng_json,
+            "t_ref": float(manager.t_ref),
+            "t_last": float(manager.t_last),
+            "pending_arrival_time": float(manager.pending_arrival_time),
+            "batch_capacity": int(manager.batch_capacity),
         }
         data_manager.finalize_metadata(status="completed", runtime_summary=runtime_summary)
 

@@ -17,7 +17,8 @@ from typing import List, Optional, Sequence
 import numpy as np
 
 from core.geometry.geometry_kernels import cast_path_kernel
-from core.other.typing_definitions import Float
+from core.other.typing_definitions import Float, Index
+from core.source.source_kernels import inject_poisson_sources_kernel
 from core.transport.propagator import ParticlePropagator
 from core.transport.simulation_managers import (
     DEFAULT_CONSUMED_CHUNK_TYPES,
@@ -123,52 +124,42 @@ class BatchSizeBenchmarkRecord:
 
     @property
     def source_pct(self) -> float:
-        """Доля фазы генерации и пополнения банка частиц Source по всему прогону [%]."""
         return 100.0 * self.source_time_sec / self.phase_sum_sec
 
     @property
     def geometry_raycast_pct(self) -> float:
-        """Доля фазы геометрического рейкастинга (cast_path_kernel) по всему прогону [%]."""
         return 100.0 * self.geometry_raycast_time_sec / self.phase_sum_sec
 
     @property
     def woodcock_pct(self) -> float:
-        """Доля фазы дельта-трекинга Вудкока (_transport_kernel) по всему прогону [%]."""
         return 100.0 * self.woodcock_time_sec / self.phase_sum_sec
 
     @property
     def processes_pct(self) -> float:
-        """Доля ядер физических процессов (Photoelectric, Compton, Coherent) по всему прогону [%]."""
         return 100.0 * self.processes_time_sec / self.phase_sum_sec
 
     @property
     def compaction_and_escaped_pct(self) -> float:
-        """Доля управления индексами, компактификации, инвалидации и сбора вылетевших частиц [%]."""
         return 100.0 * self.compaction_and_escaped_time_sec / self.phase_sum_sec
 
     @property
     def full_source_pct(self) -> float:
-        """Доля фазы Source в стационарном режиме полного банка (Full-Bank Phase) [%]."""
         return 100.0 * self.full_source_time_sec / self.full_phase_sum_sec
 
     @property
     def full_geometry_raycast_pct(self) -> float:
-        """Доля фазы Geometry Raycast в стационарном режиме полного банка (Full-Bank Phase) [%]."""
         return 100.0 * self.full_geometry_raycast_time_sec / self.full_phase_sum_sec
 
     @property
     def full_woodcock_pct(self) -> float:
-        """Доля фазы Woodcock в стационарном режиме полного банка (Full-Bank Phase) [%]."""
         return 100.0 * self.full_woodcock_time_sec / self.full_phase_sum_sec
 
     @property
     def full_processes_pct(self) -> float:
-        """Доля фазы Processes в стационарном режиме полного банка (Full-Bank Phase) [%]."""
         return 100.0 * self.full_processes_time_sec / self.full_phase_sum_sec
 
     @property
     def full_compaction_and_escaped_pct(self) -> float:
-        """Доля фазы Compaction+Escaped в стационарном режиме полного банка (Full-Bank Phase) [%]."""
         return 100.0 * self.full_compaction_and_escaped_time_sec / self.full_phase_sum_sec
 
 
@@ -191,7 +182,6 @@ def run_single_batch_size_benchmark(
     if effective_batch_size <= 0:
         raise ValueError(f"Размер батча должен быть положительным, получено: {batch_size}")
 
-    workload.source_node.rng = np.random.default_rng(seed)
     if propagator is None:
         propagator_inst = ParticlePropagator(
             processes_list=processes_list,
@@ -265,12 +255,23 @@ def run_single_batch_size_benchmark(
             free_slots = int(manager.bank.capacity - num_active)
             num_to_inject = min(free_slots, remaining_quota)
             if num_to_inject > 0:
-                delta_time = manager._calculate_time_step(num_to_inject)
-                target_time = Float(manager.global_timer + delta_time)
-                manager._distribute_quotas(target_time, num_to_inject)
-                manager.global_timer = target_time
-                replenish_steps += 1
-                did_inject = True
+                injected_cnt, _, new_t_last, new_pending = inject_poisson_sources_kernel(
+                    manager.bank,
+                    manager.source_buffer,
+                    Float(np.inf),
+                    manager.t_ref,
+                    manager.t_last,
+                    manager.pending_arrival_time,
+                    manager.rng_ctx,
+                    Index(num_to_inject),
+                    Index(0),
+                )
+                manager.t_last = Float(new_t_last)
+                manager.pending_arrival_time = Float(new_pending)
+                manager.global_timer = manager.t_last
+                if int(injected_cnt) > 0:
+                    replenish_steps += 1
+                    did_inject = True
         step_source_ns = time.perf_counter_ns() - t0
 
         # 2. Извлечение активных индексов и подготовка буферов

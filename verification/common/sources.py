@@ -10,7 +10,7 @@ import hepunits as units
 import numpy as np
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Activity, Energy, Float, Length, Time, Vector3D
+from core.other.typing_definitions import Activity, Energy, Float, Time
 from core.source.sources import PointSource
 
 
@@ -26,8 +26,6 @@ class ConePointSource(PointSource):
     """
 
     _max_polar_angle: Float
-    _cos_theta_min: Float
-    _cell_jitter_span: Optional[Tuple[Float, Float]]
 
     def __init__(
         self,
@@ -36,7 +34,6 @@ class ConePointSource(PointSource):
         max_polar_angle: Float | float = Float(np.pi),
         cell_jitter_span: Optional[Tuple[Float | float, Float | float]] = None,
         half_life: Time = Float(6.0 * units.hour),
-        rng: Optional[np.random.Generator] = None,
     ) -> None:
         angle_val = Float(max_polar_angle)
         if angle_val <= 0.0 or angle_val > Float(np.pi):
@@ -58,7 +55,6 @@ class ConePointSource(PointSource):
             energy=normalized_energy,
             size=Float(0.0),
             half_life=half_life,
-            rng=rng,
         )
         self._max_polar_angle = angle_val
         self._cos_theta_min = Float(np.cos(angle_val))
@@ -81,43 +77,8 @@ class ConePointSource(PointSource):
         """
         return Float(0.5 * (1.0 - self._cos_theta_min))
 
-    def generate_position(self, count: int) -> Vector3D:
-        """
-        Генерирует глобальные координаты рождения частиц.
-        Если задан cell_jitter_span = (pitch_x, pitch_y), равномерно распределяет начальные точки
-        в пределах одной элементарной ячейки [-pitch_x/2, +pitch_x/2] x [-pitch_y/2, +pitch_y/2]
-        для получения shift-invariant PSF Ангера (с сохранением точной точки рождения в birth_x, birth_y).
-        """
-        local_positions = np.zeros((count, 3), dtype=Float)
-        if self._cell_jitter_span is not None:
-            span_x, span_y = self._cell_jitter_span
-            if span_x > 0.0:
-                local_positions[:, 0] = self.rng.uniform(-0.5 * span_x, 0.5 * span_x, count)
-            if span_y > 0.0:
-                local_positions[:, 1] = self.rng.uniform(-0.5 * span_y, 0.5 * span_y, count)
-        global_positions = self.convert_to_global_position(local_positions)
-        return np.asarray(global_positions, dtype=Float)
-
-    def generate_direction(self, count: int) -> Vector3D:
-        """
-        Генерирует единичные векторы направления равномерно по телесному углу
-        внутри конуса с осью +Z и половинным углом раствора max_polar_angle.
-        """
-        rand_u1 = self.rng.random(count)
-        rand_u2 = self.rng.random(count)
-
-        cos_theta = 1.0 - rand_u1 * (1.0 - self._cos_theta_min)
-        sin_theta = np.sqrt(np.maximum(0.0, 1.0 - cos_theta * cos_theta))
-        phi_angle = 2.0 * np.pi * rand_u2
-
-        dir_x = sin_theta * np.cos(phi_angle)
-        dir_y = sin_theta * np.sin(phi_angle)
-        dir_z = cos_theta
-
-        direction = np.column_stack((dir_x, dir_y, dir_z))
-        return np.asarray(direction, dtype=Float)
-
 
 __all__ = [
     "ConePointSource",
 ]
+

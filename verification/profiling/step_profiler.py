@@ -12,8 +12,11 @@
 """
 from __future__ import annotations
 
+import ctypes
+from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 import tempfile
 import time
 from typing import Dict, List, Optional
@@ -23,8 +26,8 @@ import numpy as np
 from core.data.data_handlers import HistoryAssemblerHandler
 from core.data.data_manager import DataManager
 from core.geometry.geometry_kernels import cast_path_kernel
-from core.other.typing_definitions import Float, Length, Species
-from core.other.vectors import Vector3DSoA
+from core.other.typing_definitions import Float, Index
+from core.source.source_kernels import inject_poisson_sources_kernel
 from core.transport.propagator import ParticlePropagator
 from core.transport.simulation_managers import (
     DEFAULT_CONSUMED_CHUNK_TYPES,
@@ -43,28 +46,80 @@ from verification.profiling.workloads import (
 )
 
 
+class _Win32ProcessMemoryCounters(ctypes.Structure):
+    """Структура PROCESS_MEMORY_COUNTERS Win32 API, предоставляющая поле num_page_faults."""
+
+    _fields_ = [
+        ("cb", wintypes.DWORD),
+        ("PageFaultCount", wintypes.DWORD),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    ]
+
+    @property
+    def num_page_faults(self) -> int:
+        """Кумулятивное число page faults процесса (аналог psutil.Process().memory_info().num_page_faults)."""
+        return int(self.PageFaultCount)
+
+
+class _ProcessMemoryTracker:
+    """Легковесный трекер памяти процесса без внешних зависимостей (совместимый по memory_info() с psutil.Process)."""
+
+    def __init__(self) -> None:
+        self._is_win32 = sys.platform == "win32"
+        self._counters = _Win32ProcessMemoryCounters()
+        self._counters.cb = ctypes.sizeof(_Win32ProcessMemoryCounters)
+        if self._is_win32:
+            self._kernel32 = ctypes.windll.kernel32
+            self._kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            self._kernel32.K32GetProcessMemoryInfo.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(_Win32ProcessMemoryCounters),
+                wintypes.DWORD,
+            ]
+            self._kernel32.K32GetProcessMemoryInfo.restype = wintypes.BOOL
+            self._handle = self._kernel32.GetCurrentProcess()
+
+    def memory_info(self) -> _Win32ProcessMemoryCounters:
+        """Обновляет и возвращает структуру счетчиков памяти текущего процесса."""
+        if self._is_win32:
+            success = self._kernel32.K32GetProcessMemoryInfo(
+                self._handle,
+                ctypes.byref(self._counters),
+                self._counters.cb,
+            )
+            if not success:
+                raise OSError("Не удалось получить счетчики памяти процесса через K32GetProcessMemoryInfo.")
+        return self._counters
+
+
+def _get_process_page_faults(proc: _ProcessMemoryTracker) -> int:
+    """Возвращает кумулятивный счетчик page faults текущего процесса из ОС (Windows PageFaultCount)."""
+    return proc.memory_info().num_page_faults
+
+
 @dataclass(frozen=True)
 class SourceSubphaseBreakdown:
-    """Внутренняя декомпозиция времени инжекции первичных частиц в Source.inject."""
+    """Внутренняя декомпозиция времени и page faults инжекции первичных частиц."""
 
-    time_step_newton: float
-    generate_energy: float
-    generate_direction: float
-    generate_position: float
-    generate_emission_time: float
     soa_conversion_and_bank_inject: float
+    soa_conversion_and_bank_inject_page_faults: int = 0
 
     @property
     def total(self) -> float:
         """Суммарное время фазы пополнения банка частиц [с]."""
-        return (
-            self.time_step_newton
-            + self.generate_energy
-            + self.generate_direction
-            + self.generate_position
-            + self.generate_emission_time
-            + self.soa_conversion_and_bank_inject
-        )
+        return self.soa_conversion_and_bank_inject
+
+    @property
+    def total_page_faults(self) -> int:
+        """Суммарная дельта page faults фазы пополнения банка частиц."""
+        return self.soa_conversion_and_bank_inject_page_faults
 
 
 @dataclass(frozen=True)
@@ -91,7 +146,8 @@ class PhysicsProcessesBreakdown:
 class StepPhaseBreakdownResult:
     """
     Полный отчет 10-фазного пошагового профилирования для одной рабочей нагрузки
-    с разделением на стационарную фазу полного банка (Full-Bank Phase) и фазу опустошения (Depletion Phase).
+    с разделением на стационарную фазу полного банка (Full-Bank Phase) и фазу опустошения (Depletion Phase),
+    а также пофазными дельтами page faults.
     """
 
     workload_id: str
@@ -136,6 +192,29 @@ class StepPhaseBreakdownResult:
     depletion_p5_woodcock: float = 0.0
     depletion_p8_processes: float = 0.0
     depletion_p9_compaction: float = 0.0
+
+    # Пофазные дельты page faults (psutil.Process().memory_info().num_page_faults)
+    p2_page_faults: int = 0
+    p3_page_faults: int = 0
+    p4_page_faults: int = 0
+    p5_page_faults: int = 0
+    p6_page_faults: int = 0
+    p7_page_faults: int = 0
+    p8_page_faults: int = 0
+    p9_page_faults: int = 0
+    p10_page_faults: int = 0
+    full_bank_p2_page_faults: int = 0
+    full_bank_p4_page_faults: int = 0
+    full_bank_p5_page_faults: int = 0
+    full_bank_p8_page_faults: int = 0
+    full_bank_p9_page_faults: int = 0
+    full_bank_p10_page_faults: int = 0
+    steady_full_bank_p2_page_faults: int = 0
+    steady_full_bank_p4_page_faults: int = 0
+    steady_full_bank_p5_page_faults: int = 0
+    steady_full_bank_p8_page_faults: int = 0
+    steady_full_bank_p9_page_faults: int = 0
+    steady_full_bank_p10_page_faults: int = 0
 
     @property
     def cold_total_wall_time(self) -> float:
@@ -191,8 +270,6 @@ def run_step_phase_profiler(
     в режиме Warm Steady-State с раздельным сбором метрик для фазы полного банка (Full-Bank Phase)
     и фазы опустошения банка (Tail Depletion Phase).
     """
-    workload.source_node.rng = np.random.default_rng(seed)
-
     t_prop_init = time.perf_counter_ns()
     if propagator is None:
         propagator = ParticlePropagator(
@@ -228,9 +305,15 @@ def run_step_phase_profiler(
         seed=seed,
         consumed_chunk_types=DEFAULT_CONSUMED_CHUNK_TYPES,
     )
+    if propagator.transport_buffer.process_ids.size < manager.bank.capacity:
+        propagator.transport_buffer = TransportBuffer.allocate(
+            manager.bank.capacity, len(propagator.processes)
+        )
     p1_compiler_ns = (
         time.perf_counter_ns() - t_p1_start + prop_init_ns + int(workload.scene_build_duration * 1e9)
     )
+
+    proc_handle = _ProcessMemoryTracker()
 
     p2_ns = 0
     p3_ns = 0
@@ -243,12 +326,18 @@ def run_step_phase_profiler(
     p9_escaped_ns = 0
     p10_ns = 0
 
-    src_newton_ns = 0
-    src_energy_ns = 0
-    src_dir_ns = 0
-    src_pos_ns = 0
-    src_time_ns = 0
+    p2_pf = 0
+    p3_pf = 0
+    p4_pf = 0
+    p5_pf = 0
+    p6_pf = 0
+    p7_pf = 0
+    p8_pf = 0
+    p9_pf = 0
+    p10_pf = 0
+
     src_bank_ns = 0
+    src_bank_pf = 0
 
     phys_photo_ns = 0
     phys_compton_ns = 0
@@ -274,6 +363,20 @@ def run_step_phase_profiler(
     depl_p8_ns = 0
     depl_p9_ns = 0
 
+    full_p2_pf = 0
+    full_p4_pf = 0
+    full_p5_pf = 0
+    full_p8_pf = 0
+    full_p9_pf = 0
+    full_p10_pf = 0
+
+    steady_full_p2_pf = 0
+    steady_full_p4_pf = 0
+    steady_full_p5_pf = 0
+    steady_full_p8_pf = 0
+    steady_full_p9_pf = 0
+    steady_full_p10_pf = 0
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         h5_path = Path(tmp_dir) / f"{workload.workload_id}_step_prof.hdf5"
         handler = HistoryAssemblerHandler(
@@ -286,12 +389,15 @@ def run_step_phase_profiler(
             handlers=[handler],
             queue=None,
         )
+        pf_dm0 = _get_process_page_faults(proc_handle)
         t_dm_init = time.perf_counter_ns()
         data_manager.initialize_metadata()
         p10_ns += time.perf_counter_ns() - t_dm_init
+        p10_pf += max(0, _get_process_page_faults(proc_handle) - pf_dm0)
 
-        def _sync_drain_queue() -> None:
-            nonlocal p10_ns
+        def _sync_drain_queue() -> int:
+            nonlocal p10_ns, p10_pf
+            pf_drain0 = _get_process_page_faults(proc_handle)
             t_drain_0 = time.perf_counter_ns()
             while not manager.queue.empty():
                 raw_chunk = manager.queue.get_nowait()
@@ -300,99 +406,69 @@ def run_step_phase_profiler(
                     for h_inst in data_manager.handlers:
                         h_inst.process_chunk(frozen)
             p10_ns += time.perf_counter_ns() - t_drain_0
+            delta_pf = max(0, _get_process_page_faults(proc_handle) - pf_drain0)
+            p10_pf += delta_pf
+            return delta_pf
 
         wall_start = time.perf_counter()
 
         while True:
             # --- P2: Пополнение банка частиц из активных источников с контролем квоты ---
+            pf_p2_overhead_ns = 0
+            pf_p2_start = _get_process_page_faults(proc_handle)
             t0 = time.perf_counter_ns()
             emitted_so_far = int(manager.bank.count_array[0])
             remaining_quota = max(0, target_total_histories - emitted_so_far)
-            num_active = int(np.count_nonzero(manager.bank.state.is_active))
-            free_slots = int(manager.bank.capacity - num_active)
-            num_to_inject = min(free_slots, remaining_quota)
             did_inject = False
 
-            if num_to_inject > 0 and manager.active_sources and manager.global_timer < manager.stop_time:
-                t_newt0 = time.perf_counter_ns()
-                delta_time = manager._calculate_time_step(num_to_inject)
-                target_time = Float(manager.global_timer + delta_time)
-                expected = np.array(
-                    [
-                        src_node.get_expected_particles(manager.global_timer, target_time)
-                        for src_node in manager.active_sources
-                    ],
-                    dtype=Float,
+            if remaining_quota > 0 and manager.active_sources:
+                num_active = int(np.count_nonzero(manager.bank.state.is_active))
+                free_slots = int(manager.bank.capacity - num_active)
+                num_to_inject = min(free_slots, remaining_quota)
+            else:
+                num_to_inject = 0
+
+            if num_to_inject > 0:
+                t_pf0 = time.perf_counter_ns()
+                pf_s0 = _get_process_page_faults(proc_handle)
+                ts0 = time.perf_counter_ns()
+                pf_p2_overhead_ns += ts0 - t_pf0
+
+                injected_cnt, _, new_t_last, new_pending = inject_poisson_sources_kernel(
+                    manager.bank,
+                    manager.source_buffer,
+                    Float(np.inf),
+                    manager.t_ref,
+                    manager.t_last,
+                    manager.pending_arrival_time,
+                    manager.rng_ctx,
+                    Index(num_to_inject),
+                    Index(0),
                 )
-                src_newton_ns += time.perf_counter_ns() - t_newt0
+                ts1 = time.perf_counter_ns()
+                pf_s1 = _get_process_page_faults(proc_handle)
+                pf_p2_overhead_ns += time.perf_counter_ns() - ts1
 
-                if np.sum(expected) > 0.0:
-                    quotas = np.floor(expected).astype(int)
-                    remainders = expected - quotas
-                    shortfall = int(num_to_inject - np.sum(quotas))
-                    if shortfall > 0:
-                        indices = np.argsort(remainders)[::-1]
-                        for shortfall_idx in range(shortfall):
-                            quotas[indices[shortfall_idx % len(indices)]] += 1
-
-                    for source_obj, quota_count in zip(manager.active_sources, quotas):
-                        batch_cnt = int(quota_count)
-                        if batch_cnt <= 0:
-                            continue
-                        num_p = min(batch_cnt, manager.bank.capacity - int(np.count_nonzero(manager.bank.state.is_active)))
-                        if num_p <= 0:
-                            continue
-
-                        ts0 = time.perf_counter_ns()
-                        energy_arr = source_obj.generate_energy(num_p)
-                        ts1 = time.perf_counter_ns()
-                        direction_arr = source_obj.generate_direction(num_p)
-                        ts2 = time.perf_counter_ns()
-                        position_arr = source_obj.generate_position(num_p)
-                        ts3 = time.perf_counter_ns()
-                        emission_time_arr = source_obj.generate_emission_time(
-                            num_p, manager.global_timer, target_time
-                        )
-                        ts4 = time.perf_counter_ns()
-
-                        position_soa = Vector3DSoA(
-                            x=position_arr[:, 0].astype(Length),
-                            y=position_arr[:, 1].astype(Length),
-                            z=position_arr[:, 2].astype(Length),
-                        )
-                        direction_soa = Vector3DSoA(
-                            x=direction_arr[:, 0].astype(Float),
-                            y=direction_arr[:, 1].astype(Float),
-                            z=direction_arr[:, 2].astype(Float),
-                        )
-                        species_arr = np.zeros(num_p, dtype=Species)
-                        dist_arr = np.zeros(num_p, dtype=Length)
-                        manager.bank.inject_particles(
-                            species=species_arr,
-                            position=position_soa,
-                            direction=direction_soa,
-                            energy=energy_arr,
-                            emission_time=emission_time_arr,
-                            distance_traveled=dist_arr,
-                        )
-                        ts5 = time.perf_counter_ns()
-
-                        src_energy_ns += ts1 - ts0
-                        src_dir_ns += ts2 - ts1
-                        src_pos_ns += ts3 - ts2
-                        src_time_ns += ts4 - ts3
-                        src_bank_ns += ts5 - ts4
-                        did_inject = True
-
-                manager.global_timer = target_time
-            step_p2_ns = time.perf_counter_ns() - t0
+                src_bank_ns += ts1 - ts0
+                src_bank_pf += max(0, pf_s1 - pf_s0)
+                manager.t_last = Float(new_t_last)
+                manager.pending_arrival_time = Float(new_pending)
+                manager.global_timer = manager.t_last
+                if int(injected_cnt) > 0:
+                    did_inject = True
+            step_p2_ns = max(0, (time.perf_counter_ns() - t0) - pf_p2_overhead_ns)
+            step_p2_pf = max(0, _get_process_page_faults(proc_handle) - pf_p2_start)
             p2_ns += step_p2_ns
+            p2_pf += step_p2_pf
 
             # --- P3: Извлечение активных индексов ---
+            pf_p3_0 = _get_process_page_faults(proc_handle)
             t0 = time.perf_counter_ns()
             active_indices = manager.bank.active_indices
             step_p3_ns = time.perf_counter_ns() - t0
+            step_p3_pf = max(0, _get_process_page_faults(proc_handle) - pf_p3_0)
             p3_ns += step_p3_ns
+            p3_pf += step_p3_pf
 
             active_count = int(active_indices.size)
             if active_count == 0:
@@ -403,18 +479,17 @@ def run_step_phase_profiler(
             is_full_bank_step = (active_count == eff_bank_capacity) or (did_inject and full_steps == 0)
 
             # Предварительный сброс при переполнении буферов
+            pf_p9_pre0 = _get_process_page_faults(proc_handle)
             t0 = time.perf_counter_ns()
             manager._ensure_step_capacity(active_count)
             step_p9_pre_ns = time.perf_counter_ns() - t0
+            step_p9_pre_pf = max(0, _get_process_page_faults(proc_handle) - pf_p9_pre0)
             p9_ns += step_p9_pre_ns
-            _sync_drain_queue()
-
-            if propagator.transport_buffer.process_ids.size < manager.bank.capacity:
-                propagator.transport_buffer = TransportBuffer.allocate(
-                    manager.bank.capacity, len(propagator.processes)
-                )
+            p9_pf += step_p9_pre_pf
+            step_p10_pf = _sync_drain_queue()
 
             # --- P4: Геометрический рейкастинг (cast_path_kernel) ---
+            pf_p4_0 = _get_process_page_faults(proc_handle)
             t0 = time.perf_counter_ns()
             cast_path_kernel(
                 manager.bank.state.position,
@@ -424,9 +499,12 @@ def run_step_phase_profiler(
                 manager.bank.navigation_state,
             )
             step_p4_ns = time.perf_counter_ns() - t0
+            step_p4_pf = max(0, _get_process_page_faults(proc_handle) - pf_p4_0)
             p4_ns += step_p4_ns
+            p4_pf += step_p4_pf
 
             # --- P5: Дельта-трекинг Вудкока (transport_kernel) ---
+            pf_p5_0 = _get_process_page_faults(proc_handle)
             t0 = time.perf_counter_ns()
             propagator._transport_kernel(
                 manager.bank.state,
@@ -438,9 +516,12 @@ def run_step_phase_profiler(
                 manager.rng_ctx,
             )
             step_p5_ns = time.perf_counter_ns() - t0
+            step_p5_pf = max(0, _get_process_page_faults(proc_handle) - pf_p5_0)
             p5_ns += step_p5_ns
+            p5_pf += step_p5_pf
 
             # --- P6: Запись начальных состояний для частиц, провзаимодействовавших впервые ---
+            pf_p6_0 = _get_process_page_faults(proc_handle)
             t0 = time.perf_counter_ns()
             _push_first_interacting_to_initial_state_kernel(
                 manager.bank.initial_state,
@@ -450,20 +531,29 @@ def run_step_phase_profiler(
                 manager.data_buffer.initial_states,
             )
             step_p6_ns = time.perf_counter_ns() - t0
+            step_p6_pf = max(0, _get_process_page_faults(proc_handle) - pf_p6_0)
             p6_ns += step_p6_ns
+            p6_pf += step_p6_pf
 
             # --- P7 & P8: Stream Compaction и физические процессы ---
             step_p7_ns = 0
             step_p8_ns = 0
+            step_p7_pf = 0
+            step_p8_pf = 0
             for process_obj in propagator.processes:
+                pf_c0 = _get_process_page_faults(proc_handle)
                 t_comp0 = time.perf_counter_ns()
                 mask = propagator.transport_buffer.process_ids[active_indices] == process_obj.process_id
                 target_indices = active_indices[mask]
                 dt_comp = time.perf_counter_ns() - t_comp0
+                dpf_comp = max(0, _get_process_page_faults(proc_handle) - pf_c0)
                 p7_ns += dt_comp
+                p7_pf += dpf_comp
                 step_p7_ns += dt_comp
+                step_p7_pf += dpf_comp
 
                 if target_indices.size > 0:
+                    pf_ph0 = _get_process_page_faults(proc_handle)
                     t_phys0 = time.perf_counter_ns()
                     process_obj.apply(
                         manager.bank,
@@ -474,8 +564,11 @@ def run_step_phase_profiler(
                         manager.rng_ctx,
                     )
                     dt_phys = time.perf_counter_ns() - t_phys0
+                    dpf_phys = max(0, _get_process_page_faults(proc_handle) - pf_ph0)
                     p8_ns += dt_phys
+                    p8_pf += dpf_phys
                     step_p8_ns += dt_phys
+                    step_p8_pf += dpf_phys
 
                     proc_cls_name = process_obj.__class__.__name__
                     ev_count = int(target_indices.size)
@@ -493,6 +586,7 @@ def run_step_phase_profiler(
                         phys_coherent_events += ev_count
 
             # --- P9: Инвалидация, сбор вылетевших и обработка выбывших частиц ---
+            pf_p9_post0 = _get_process_page_faults(proc_handle)
             t0 = time.perf_counter_ns()
             dead_indices = manager._apply_invalidators(active_indices)
             if dead_indices.size > 0:
@@ -502,10 +596,16 @@ def run_step_phase_profiler(
             manager._check_no_overflow()
             manager.step_count += 1
             step_p9_post_ns = time.perf_counter_ns() - t0
+            step_p9_post_pf = max(0, _get_process_page_faults(proc_handle) - pf_p9_post0)
             p9_ns += step_p9_post_ns
+            p9_pf += step_p9_post_pf
+
+            step_p10_pf += _sync_drain_queue()
 
             step_compaction_total_ns = step_p3_ns + step_p6_ns + step_p7_ns + step_p9_pre_ns + step_p9_post_ns
+            step_compaction_total_pf = step_p3_pf + step_p6_pf + step_p7_pf + step_p9_pre_pf + step_p9_post_pf
             if is_full_bank_step:
+                is_steady_full_step = full_steps >= 1
                 full_steps += 1
                 full_tracks += active_count
                 full_p2_ns += step_p2_ns
@@ -513,6 +613,21 @@ def run_step_phase_profiler(
                 full_p5_ns += step_p5_ns
                 full_p8_ns += step_p8_ns
                 full_p9_ns += step_compaction_total_ns
+
+                full_p2_pf += step_p2_pf
+                full_p4_pf += step_p4_pf
+                full_p5_pf += step_p5_pf
+                full_p8_pf += step_p8_pf
+                full_p9_pf += step_compaction_total_pf
+                full_p10_pf += step_p10_pf
+
+                if is_steady_full_step:
+                    steady_full_p2_pf += step_p2_pf
+                    steady_full_p4_pf += step_p4_pf
+                    steady_full_p5_pf += step_p5_pf
+                    steady_full_p8_pf += step_p8_pf
+                    steady_full_p9_pf += step_compaction_total_pf
+                    steady_full_p10_pf += step_p10_pf
             else:
                 depl_steps += 1
                 depl_tracks += active_count
@@ -521,20 +636,22 @@ def run_step_phase_profiler(
                 depl_p8_ns += step_p8_ns
                 depl_p9_ns += step_compaction_total_ns + step_p2_ns
 
-            _sync_drain_queue()
-
         # Финальный сброс буферов
+        pf_flush0 = _get_process_page_faults(proc_handle)
         t0 = time.perf_counter_ns()
         manager.flush_all()
         p9_ns += time.perf_counter_ns() - t0
+        p9_pf += max(0, _get_process_page_faults(proc_handle) - pf_flush0)
 
         _sync_drain_queue()
 
+        pf_fin0 = _get_process_page_faults(proc_handle)
         t_fin0 = time.perf_counter_ns()
         for h_inst in data_manager.handlers:
             h_inst.finalize()
         data_manager.finalize_metadata(status="completed")
         p10_ns += time.perf_counter_ns() - t_fin0
+        p10_pf += max(0, _get_process_page_faults(proc_handle) - pf_fin0)
 
         total_wall = max(time.perf_counter() - wall_start, 1e-9)
 
@@ -547,12 +664,8 @@ def run_step_phase_profiler(
     slowdown = full_tps / max(depl_tps, 1e-9) if depl_steps > 0 else 1.0
 
     source_breakdown = SourceSubphaseBreakdown(
-        time_step_newton=float(src_newton_ns * 1e-9),
-        generate_energy=float(src_energy_ns * 1e-9),
-        generate_direction=float(src_dir_ns * 1e-9),
-        generate_position=float(src_pos_ns * 1e-9),
-        generate_emission_time=float(src_time_ns * 1e-9),
         soa_conversion_and_bank_inject=float(src_bank_ns * 1e-9),
+        soa_conversion_and_bank_inject_page_faults=int(src_bank_pf),
     )
     physics_breakdown = PhysicsProcessesBreakdown(
         photoelectric_time=float(phys_photo_ns * 1e-9),
@@ -607,6 +720,27 @@ def run_step_phase_profiler(
         depletion_p5_woodcock=float(depl_p5_ns * 1e-9),
         depletion_p8_processes=float(depl_p8_ns * 1e-9),
         depletion_p9_compaction=float(depl_p9_ns * 1e-9),
+        p2_page_faults=int(p2_pf),
+        p3_page_faults=int(p3_pf),
+        p4_page_faults=int(p4_pf),
+        p5_page_faults=int(p5_pf),
+        p6_page_faults=int(p6_pf),
+        p7_page_faults=int(p7_pf),
+        p8_page_faults=int(p8_pf),
+        p9_page_faults=int(p9_pf),
+        p10_page_faults=int(p10_pf),
+        full_bank_p2_page_faults=int(full_p2_pf),
+        full_bank_p4_page_faults=int(full_p4_pf),
+        full_bank_p5_page_faults=int(full_p5_pf),
+        full_bank_p8_page_faults=int(full_p8_pf),
+        full_bank_p9_page_faults=int(full_p9_pf),
+        full_bank_p10_page_faults=int(full_p10_pf),
+        steady_full_bank_p2_page_faults=int(steady_full_p2_pf),
+        steady_full_bank_p4_page_faults=int(steady_full_p4_pf),
+        steady_full_bank_p5_page_faults=int(steady_full_p5_pf),
+        steady_full_bank_p8_page_faults=int(steady_full_p8_pf),
+        steady_full_bank_p9_page_faults=int(steady_full_p9_pf),
+        steady_full_bank_p10_page_faults=int(steady_full_p10_pf),
     )
 
 

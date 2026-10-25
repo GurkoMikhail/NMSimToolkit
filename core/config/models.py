@@ -205,7 +205,7 @@ AnyNodeConfig = Annotated[
     Field(discriminator='type')
 ]
 
-# We must use model_rebuild to resolve forward references for Self or mutual recursion in pydantic V2
+# Пересборка моделей для разрешения рекурсивных ссылок в Pydantic V2
 VolumeConfig.model_rebuild()
 WoodcockVoxelVolumeConfig.model_rebuild()
 GammaCameraConfig.model_rebuild()
@@ -265,6 +265,7 @@ class SimulationManagerConfig(BaseModel):
     start_time: TimeConfig = 0.0 * units.ns
     stop_time: TimeConfig = 1.0 * units.s
     particles_number: CountConfig = 10_000
+    batch_capacity: Optional[CountConfig] = None
     buffer_capacity: Optional[CountConfig] = None
     min_energy: EnergyConfig = 1.0 * units.keV
     physics_list: Optional[str] = None

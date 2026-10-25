@@ -184,11 +184,15 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
 
         cfg = load_simulation_config("examples/nema_1_cam.yaml")
         root = SceneBuilder().build_scene(cfg.scene)
-        mgr = SimulationManager(scene=root, particles_number=1000)
+        mgr = SimulationManager(scene=root, stop_time=None, particles_number=1000, seed=42)
 
-        dt = mgr._calculate_time_step(1000)
-        # 1000 частиц / (100 MBq * 10^-9 ns^-1) = 10 000 нс = 10 мкс
-        self.assertAlmostEqual(dt / units.microsecond, 10.0, places=1)
+        total_activity = float(np.sum(mgr.source_buffer.initial_activity[: mgr.source_buffer.num_sources]))
+        self.assertAlmostEqual(total_activity, float(100.0 * units.MBq), places=9)
+
+        mgr._replenish_bank()
+        # 1000 частиц / (100 MBq * 10^-9 ns^-1) ~ 10 000 нс = 10 мкс (а не 10 фс)
+        self.assertEqual(int(mgr.bank.count_array[0]), 1000)
+        self.assertAlmostEqual(float(mgr.t_last / units.microsecond), 10.0, delta=1.5)
 
     def test_orchestrator_session_telemetry_setup(self):
         """

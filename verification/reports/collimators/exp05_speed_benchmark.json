@@ -7,11 +7,11 @@
     "emission_mode": "Cone (0.25 rad)",
     "num_particles": 1000000,
     "num_repeats": 3,
-    "median_time_parametric": 1.4921015999934752,
-    "median_time_direct": 0.912171700001636,
-    "throughput_parametric": 670.1956488783155,
-    "throughput_direct": 1096.2848332152887,
-    "speedup_factor": 1.6357683536891126
+    "median_time_parametric": 2.0795896999770775,
+    "median_time_direct": 1.5757039000745863,
+    "throughput_parametric": 480.864085839155,
+    "throughput_direct": 634.6370025184711,
+    "speedup_factor": 1.3197845736617393
   },
   {
     "scenario_label": "LEUHR / Tc-99m (Cone)",
@@ -21,11 +21,11 @@
     "emission_mode": "Cone (0.25 rad)",
     "num_particles": 1000000,
     "num_repeats": 3,
-    "median_time_parametric": 1.4023860999950557,
-    "median_time_direct": 0.948585500002082,
-    "throughput_parametric": 713.0703876796309,
-    "throughput_direct": 1054.2012290908992,
-    "speedup_factor": 1.4783971502747804
+    "median_time_parametric": 2.0407796000363305,
+    "median_time_direct": 1.656903599970974,
+    "throughput_parametric": 490.008818189969,
+    "throughput_direct": 603.5354138994678,
+    "speedup_factor": 1.231682760585517
   },
   {
     "scenario_label": "MEGP / In-111 (Cone)",
@@ -35,11 +35,11 @@
     "emission_mode": "Cone (0.25 rad)",
     "num_particles": 1000000,
     "num_repeats": 3,
-    "median_time_parametric": 1.1269736999965971,
-    "median_time_direct": 0.9740619999938644,
-    "throughput_parametric": 887.3321533617151,
-    "throughput_direct": 1026.6286950997974,
-    "speedup_factor": 1.156983539039297
+    "median_time_parametric": 1.8082589999539778,
+    "median_time_direct": 1.6382019999437034,
+    "throughput_parametric": 553.0181240770548,
+    "throughput_direct": 610.4253321839217,
+    "speedup_factor": 1.103807100721473
   },
   {
     "scenario_label": "HEGP / I-131 (Cone)",
@@ -49,11 +49,11 @@
     "emission_mode": "Cone (0.25 rad)",
     "num_particles": 1000000,
     "num_repeats": 3,
-    "median_time_parametric": 1.1973763999994844,
-    "median_time_direct": 1.1578146999963792,
-    "throughput_parametric": 835.159269884082,
-    "throughput_direct": 863.6960646665889,
-    "speedup_factor": 1.034169284604202
+    "median_time_parametric": 1.86387600004673,
+    "median_time_direct": 1.8555882000364363,
+    "throughput_parametric": 536.5163776854944,
+    "throughput_direct": 538.9126746873924,
+    "speedup_factor": 1.0044664004708217
   },
   {
     "scenario_label": "LEHR / I-131 (Star Cone)",
@@ -63,11 +63,11 @@
     "emission_mode": "Cone (0.25 rad)",
     "num_particles": 1000000,
     "num_repeats": 3,
-    "median_time_parametric": 1.3178900999992038,
-    "median_time_direct": 2.2552989999967394,
-    "throughput_parametric": 758.7886121920212,
-    "throughput_direct": 443.40018773628054,
-    "speedup_factor": 0.5843527177554325
+    "median_time_parametric": 2.0051795000908896,
+    "median_time_direct": 2.804310700041242,
+    "throughput_parametric": 498.7084697178844,
+    "throughput_direct": 356.5938681421047,
+    "speedup_factor": 0.7150347142566621
   },
   {
     "scenario_label": "LEHR / Tc-99m (4pi Iso)",
@@ -77,10 +77,10 @@
     "emission_mode": "Isotropic 4pi",
     "num_particles": 1000000,
     "num_repeats": 3,
-    "median_time_parametric": 0.5665798999980325,
-    "median_time_direct": 0.6308883000019705,
-    "throughput_parametric": 1764.9761313514168,
-    "throughput_direct": 1585.0666433295348,
-    "speedup_factor": 0.898066900267865
+    "median_time_parametric": 1.2039388000266626,
+    "median_time_direct": 1.2548423999687657,
+    "throughput_parametric": 830.6070042579023,
+    "throughput_direct": 796.9128234947202,
+    "speedup_factor": 0.959434268444093
   }
 ]

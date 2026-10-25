@@ -12,7 +12,7 @@
    * Data-Oriented Design (DoD) и упаковка частиц в Structure of Arrays (SoA);
    * Разделение горячих (`ParticleState`) и холодных данных (`InitialStateBuffer`);
    * Трассировка Вудкока (Woodcock Tracking) по мажорантному материалу объема (`majorant_material_map`, определяемому максимумом $Z_{\text{eff}} \cdot \rho$) и аналитический RayCasting периодических коллиматоров (`PeriodicHexPrism` в `DirectParallelCollimator`);
-   * Компиляция плоской геометрии (`GeometryCompiler`), источников (`SourceCompiler`, `Source`, `PointSource`) и физических таблиц (`PhysicsCompiler`, включая CSR-состав элементов `ElementCSR` с нормированными массовыми долями для выбора атомного номера $Z$);
+   * Компиляция плоской геометрии (`GeometryCompiler`), источников (`SourceCompiler`, `Source`, `PointSource`) и физических таблиц (`PhysicsCompiler`, включая CSR-состав элементов `ElementCSR` с нормированными парциальными долями сечений элементов `element_partial_fractions` на сетке `MaterialBank` для физически точного выбора атомного номера $Z$);
    * Реестр метаданных источников (`SourceMetadataConfig` / `source_metadata_registry`) и строгий `Roundtrip`-инвариант конфигурации;
    * Асинхронный конвейер записи взаимодействий (`DataManager`) в HDF5.
 
@@ -37,4 +37,7 @@
 
 * **[`plans/project_review_plan.md`](plans/project_review_plan.md)** — План и матрица инвариантов комплексного 8-этапного архитектурного и физического аудита проекта.
 * **[`plans/project_review_report.md`](plans/project_review_report.md)** — Сводный отчет результатов аудита, карта консолидации доменных пакетов `tests/` и выполненная 5-фазная дорожная карта исправлений.
+* **[`plans/cross_sections_and_source_sampling_plan.md`](plans/cross_sections_and_source_sampling_plan.md)** — План реализации точных сечений NIST XCOM с краями поглощения, $\mathcal{O}(1)$ лог-индекса, выбора элемента-мишени по парциальным сечениям и генерации первичных частиц (Vose's Alias, `@njit`-инжектор, пуассоновский поток).
+* **[`plans/simulation_resume_and_accumulation_plan.md`](plans/simulation_resume_and_accumulation_plan.md)** — План механизма предварительного сканирования HDF5 и побитово идентичного досчёта симуляции (`Stateful Resume`).
+* **[`plans/composable_sources_and_secondary_radiation_plan.md`](plans/composable_sources_and_secondary_radiation_plan.md)** — Архитектурная спецификация и план перехода к композиционной модели источников (`SpatialDistribution` + `RadiationChannel` для $\gamma, \beta^\pm, \alpha$) и буферизованному вторичному источнику (`SecondarySource`, `SecondaryActivationBuffer`, `AtomicRelaxationBank`).
 

@@ -762,8 +762,8 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
     def test_simulation_manager_unified_rng(self) -> None:
         """
         Проверка единства генератора случайных чисел (self.rng) в SimulationManager:
-        пропагатор, все физические процессы и все активные источники используют один и тот же
-        экземпляр генератора, а initial_particle_id и rng_state корректно инициализируют состояние.
+        пропагатор, все физические процессы и поток эмиссии используют один и тот же
+        экземпляр генератора, а rng, initial_particle_id и rng_state корректно инициализируют состояние.
         """
         world = Volume(
             geometry=Box(200.0, 200.0, 200.0),
@@ -775,6 +775,16 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
         world.add_child(src1)
         world.add_child(src2)
 
+        explicit_rng = np.random.default_rng(555)
+        mgr_explicit = SimulationManager(
+            scene=world,
+            stop_time=0.01 * units.s,
+            particles_number=50,
+            rng=explicit_rng,
+        )
+        self.assertIs(mgr_explicit.rng, explicit_rng)
+        self.assertIs(mgr_explicit.propagator.rng, explicit_rng)
+
         ref_rng = np.random.default_rng(777)
         _ = ref_rng.random(10)
         saved_state = ref_rng.bit_generator.state
@@ -785,18 +795,38 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             stop_time=0.01 * units.s,
             particles_number=50,
             seed=123,
-            initial_particle_id=420,
-            rng_state=saved_state,
+            resume_state={"initial_particle_id": 420, "rng_state": saved_state},
         )
 
         self.assertIs(mgr.propagator.rng, mgr.rng)
-        for proc in mgr.propagator.processes:
-            self.assertIs(proc.rng, mgr.rng)
-        for active_src in mgr.active_sources:
-            self.assertIs(active_src.rng, mgr.rng)
+        self.assertEqual(mgr.source_buffer.num_sources, 2)
+        self.assertEqual(len(mgr.active_sources), 2)
+        self.assertNotIn("emission_rng", mgr.__dict__)
+        self.assertNotIn("transport_rng", mgr.__dict__)
+        self.assertNotIn("emission_rng_ctx", mgr.__dict__)
+        self.assertNotIn("transport_rng_ctx", mgr.__dict__)
 
         self.assertEqual(mgr.bank.count, 420)
         np.testing.assert_array_equal(mgr.rng.random(5), expected_next_values)
+
+        mgr_resumed = SimulationManager(
+            scene=world,
+            start_time=100.0 * units.ns,
+            stop_time=0.01 * units.s,
+            particles_number=50,
+            seed=123,
+            resume_state={
+                "next_particle_id": 420,
+                "rng_state": saved_state,
+                "t_ref": 0.0,
+                "t_last": 95.0 * units.ns,
+                "pending_arrival_time": 105.0 * units.ns,
+            },
+        )
+        self.assertEqual(float(mgr_resumed.t_ref), 0.0)
+        self.assertEqual(float(mgr_resumed.t_last), float(95.0 * units.ns))
+        self.assertEqual(float(mgr_resumed.pending_arrival_time), float(105.0 * units.ns))
+        np.testing.assert_array_equal(mgr_resumed.rng.random(5), expected_next_values)
 
     @staticmethod
     def _build_resume_test_task_dict(h5_filename: str, stop_time_str: str) -> dict:
@@ -891,6 +921,17 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             self.assertEqual(int(task_1_group.attrs["seed"]), fixed_seed)
             self.assertEqual(float(task_1_group.attrs["actual_start_time"]), float(task_0_group.attrs["actual_stop_time"]))
             self.assertEqual(int(task_1_group.attrs["particle_id_start"]), int(task_0_group.attrs["particle_id_end"]))
+            for req_attr in ("rng_state", "t_ref", "t_last", "pending_arrival_time"):
+                self.assertIn(req_attr, task_0_group.attrs)
+                self.assertIn(req_attr, task_1_group.attrs)
+            self.assertNotIn("emission_rng_state", task_0_group.attrs)
+            self.assertNotIn("transport_rng_state", task_0_group.attrs)
+            self.assertEqual(float(task_0_group.attrs["t_ref"]), 0.0)
+            self.assertEqual(float(task_1_group.attrs["t_ref"]), 0.0)
+            self.assertGreaterEqual(float(task_0_group.attrs["pending_arrival_time"]), float(0.01 * units.s))
+            self.assertGreaterEqual(float(task_1_group.attrs["pending_arrival_time"]), float(0.02 * units.s))
+            self.assertTrue(np.all(ref_file["initial_states/emission_time"][:] < float(0.02 * units.s)))
+            self.assertTrue(np.all(res_file["initial_states/emission_time"][:] < float(0.02 * units.s)))
 
             stage1_particles = int(task_0_group.attrs["particle_id_end"])
             total_resumed_particles = int(task_1_group.attrs["particle_id_end"])
@@ -1014,6 +1055,48 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             self.assertEqual(int(task_2_group.attrs["particle_id_start"]), int(task_1_group.attrs["particle_id_end"]))
             stage2_pids = h5_stage2["initial_states/particle_ID"][:]
             self.assertEqual(len(np.unique(stage2_pids)), len(stage2_pids))
+
+    def test_inspect_resume_state_fail_fast_on_missing_attributes(self) -> None:
+        """
+        Проверка Fail-Fast валидации в DataManager.inspect_resume_state:
+        отсутствие любого из обязательных атрибутов возобновления (rng_state,
+        t_ref, t_last, pending_arrival_time) в завершенной задаче вызывает ValueError.
+        """
+        base_h5 = os.path.join(self.temp_dir.name, "fail_fast_base.h5")
+        task_cfg = self._build_resume_test_task_dict(base_h5, "0.005 s")
+        simulation_worker_task((task_cfg, 54321, None, None, None, None, (), 0))
+
+        resume_info = DataManager.inspect_resume_state(base_h5)
+        self.assertIsNotNone(resume_info)
+        assert resume_info is not None
+        self.assertEqual(resume_info["batch_capacity"], 50)
+
+        required_attrs = (
+            "rng_state",
+            "t_ref",
+            "t_last",
+            "pending_arrival_time",
+            "batch_capacity",
+        )
+        for missing_attr in required_attrs:
+            with h5py.File(base_h5, "a") as h5_file:
+                attrs = h5_file["metadata/tasks/task_0"].attrs
+                saved_attr_val = attrs[missing_attr]
+                del attrs[missing_attr]
+
+            with self.assertRaises(ValueError, msg=f"Ожидался ValueError при отсутствии {missing_attr}"):
+                DataManager.inspect_resume_state(base_h5)
+
+            with h5py.File(base_h5, "a") as h5_file:
+                h5_file["metadata/tasks/task_0"].attrs[missing_attr] = saved_attr_val
+
+        with self.assertRaises(ValueError):
+            DataManager.inspect_resume_state(base_h5, batch_capacity=999)
+
+        mismatch_task = self._build_resume_test_task_dict(base_h5, "0.01 s")
+        mismatch_task["simulation_manager"]["batch_capacity"] = 999
+        with self.assertRaises(ValueError):
+            simulation_worker_task((mismatch_task, 54321, None, None, None, None, (), 0))
 
 
 if __name__ == "__main__":

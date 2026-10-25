@@ -24,7 +24,10 @@ from core.particles.kinematic_state import KinematicState
 from core.particles.particles_kernels import _invalidate_navigation_state, _move_particle
 from core.physics.interaction_buffers import RNGContext
 from core.physics.physics_buffer import PhysicsBuffer
-from core.physics.physics_kernels import _get_macroscopic_cross_sections
+from core.physics.physics_kernels import (
+    _compute_log_energy_and_bin,
+    _get_macroscopic_cross_sections,
+)
 from core.transport.propagator import ParticlePropagator
 from core.transport.simulation_managers import SimulationManager
 from core.transport.transport_buffer import TransportBuffer
@@ -49,7 +52,7 @@ from verification.profiling.workloads import CollimatorKind, ProfilingWorkload
 # 5: real_interactions_count (число реальных взаимодействий)
 # 6: boundary_crossings_count (число пересечений границ объемов)
 # 7: cfunc_calls_count (число вызовов @cfunc воксельного фантома или параметрического коллиматора)
-# 8: cross_section_lookups_count (число вызовов _get_macroscopic_cross_sections / searchsorted)
+# 8: cross_section_lookups_count (число вызовов _get_macroscopic_cross_sections)
 
 
 @njit
@@ -134,19 +137,20 @@ def _telemetry_cast_path_kernel(
 
 
 def _make_telemetry_transport_kernel(mapped_process_ids: NDArray[Index]) -> Any:
-    """Создает диагностическое ядро дельта-трекинга с подсчетом шагов Вудкока, @cfunc и searchsorted."""
+    """Создает диагностическое ядро дельта-трекинга с подсчетом шагов Вудкока, @cfunc и запросов сечений."""
     num_processes = mapped_process_ids.shape[0]
 
     @njit(inline="always")
     def _sample_process_id(majorant_lac: Float, process_lacs: NDArray[Float], rng_ctx: RNGContext) -> Index:
         rnd = _get_random_double(rng_ctx) * majorant_lac
         p0 = 0.0
+        selected = Index(-1)
         for proc_idx in range(num_processes):
             p1 = p0 + process_lacs[proc_idx]
-            if p0 <= rnd < p1:
-                return Index(mapped_process_ids[proc_idx])
+            if selected == -1 and p0 <= rnd < p1:
+                selected = Index(mapped_process_ids[proc_idx])
             p0 = p1
-        return Index(-1)
+        return selected
 
     @njit
     def _telemetry_transport_kernel(
@@ -162,7 +166,10 @@ def _make_telemetry_transport_kernel(mapped_process_ids: NDArray[Index]) -> Any:
         num_particles = target_indices.shape[0]
         process_ids = transport_buffer.process_ids
         material_ids = transport_buffer.material_ids
-        process_lacs = transport_buffer.process_lacs[:num_processes]
+        process_lacs = transport_buffer.process_lacs
+        material_bank = physics_buffer.material_bank
+        majorant_material_map = physics_buffer.majorant_material_map
+        woodcock_function_pointers = physics_buffer.woodcock_function_pointers
 
         for particle_slot in range(num_particles):
             p_idx = target_indices[particle_slot]
@@ -171,12 +178,14 @@ def _make_telemetry_transport_kernel(mapped_process_ids: NDArray[Index]) -> Any:
                 process_ids[p_idx] = -1
                 continue
 
-            majorant_mat_id = physics_buffer.majorant_material_map[current_vol]
-            cfunc_addr = physics_buffer.woodcock_function_pointers[current_vol]
+            majorant_mat_id = majorant_material_map[current_vol]
+            cfunc_addr = woodcock_function_pointers[current_vol]
+            particle_energy = state.energy[p_idx]
+            log_e, log_bin = _compute_log_energy_and_bin(particle_energy, material_bank)
 
             counters[8] += 1
             _get_macroscopic_cross_sections(
-                state.energy[p_idx], majorant_mat_id, physics_buffer.material_bank, process_lacs
+                particle_energy, log_e, log_bin, majorant_mat_id, material_bank, process_lacs
             )
 
             majorant_lac = Float(0.0)
@@ -205,7 +214,7 @@ def _make_telemetry_transport_kernel(mapped_process_ids: NDArray[Index]) -> Any:
                     mat_id: Index = call_cfunc_ptr(cfunc_addr, loc_x, loc_y, loc_z)
                     counters[8] += 1
                     _get_macroscopic_cross_sections(
-                        state.energy[p_idx], mat_id, physics_buffer.material_bank, process_lacs
+                        particle_energy, log_e, log_bin, mat_id, material_bank, process_lacs
                     )
                 else:
                     mat_id = majorant_mat_id
@@ -289,7 +298,6 @@ def collect_transport_telemetry(
     Выполняет диагностический прогон рабочей нагрузки и собирает точные счетчики
     трассировки лучей, шагов Вудкока, холостых рассеяний, вызовов @cfunc и searchsorted.
     """
-    workload.source_node.rng = np.random.default_rng(seed)
     if propagator is None:
         propagator_inst = ParticlePropagator(
             processes_list=processes_list,
@@ -303,7 +311,7 @@ def collect_transport_telemetry(
     manager = SimulationManager(
         scene=workload.root_scene,
         propagator=propagator_inst,
-        stop_time=workload.stop_time,
+        stop_time=None,
         particles_number=workload.particles_number,
         min_energy=workload.min_energy,
         buffer_capacity=max(workload.particles_number * 2, 100_000),
@@ -381,7 +389,7 @@ def collect_transport_telemetry(
         workload_id=workload.workload_id,
         title=workload.title,
         collimator_kind=workload.collimator_kind,
-        histories_count=int(workload.particles_number),
+        histories_count=int(manager.bank.count_array[0]),
         total_raycast_traces=int(counters[0]),
         total_box_intersections=int(counters[1]),
         total_hex_prism_intersections=int(counters[2]),

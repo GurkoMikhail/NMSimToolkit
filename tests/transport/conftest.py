@@ -47,8 +47,10 @@ def mock_physics_buffer():
     mat_pointers = np.zeros(2, dtype=MaterialPointerDType)
     mat_pointers[0]['start_idx'] = 0
     mat_pointers[0]['length'] = 2
+    mat_pointers[0]['lookup_offset'] = 0
     mat_pointers[1]['start_idx'] = 2
     mat_pointers[1]['length'] = 2
+    mat_pointers[1]['lookup_offset'] = 4
 
     # 2 energy grid points for interpolation (e.g. 0.1 and 10.0 MeV)
     physics_energy_grid = np.array([0.1, 10.0, 0.1, 10.0], dtype=Float)
@@ -61,7 +63,23 @@ def mock_physics_buffer():
         [0.1, 0.4], [0.1, 0.4]  # mat 1
     ], dtype=Float)
 
-    material_bank = MaterialBank(mat_info, mat_pointers, physics_energy_grid, physics_lac_table)
+    log_e_min = Float(np.log(0.1))
+    log_e_max = Float(np.log(10.0))
+    lookup_num_bins = 4
+    material_bank = MaterialBank(
+        mat_info_buffer=mat_info,
+        mat_pointers=mat_pointers,
+        physics_energy_grid=physics_energy_grid,
+        physics_lac_table=physics_lac_table,
+        physics_log_energy_grid=np.log(physics_energy_grid).astype(Float),
+        physics_log_lac_table=np.log(physics_lac_table).astype(Float),
+        lookup_bin_start=np.zeros(2 * lookup_num_bins, dtype=Index),
+        lookup_log_e_min=log_e_min,
+        lookup_inv_dlog_e=Float(lookup_num_bins / (log_e_max - log_e_min)),
+        lookup_num_bins=lookup_num_bins,
+        lookup_max_advance=0,
+    )
+    material_bank._validate()
 
     majorant_material_map = np.array([0, 1], dtype=Index)
 
@@ -69,10 +87,15 @@ def mock_physics_buffer():
     # Set cfunc for volume 0 to point to material 1
     woodcock_function_pointers[0] = ctypes.cast(mock_woodcock_cfunc, ctypes.c_void_p).value
 
+    element_partial_fractions = np.zeros((4, 2, 2), dtype=Float)
+    element_partial_fractions[0:2, :, 0] = 1.0
+    element_partial_fractions[2:4, :, 0] = 0.5
+    element_partial_fractions[2:4, :, 1] = 0.5
+
     element_csr = ElementCSR(
         element_offsets=np.array([0, 1, 3], dtype=Index),
         element_Z=np.array([1, 6, 8], dtype=Charge),
-        element_fraction=np.array([1.0, 0.5, 0.5], dtype=Float)
+        element_partial_fractions=element_partial_fractions,
     )
 
     return PhysicsBuffer(

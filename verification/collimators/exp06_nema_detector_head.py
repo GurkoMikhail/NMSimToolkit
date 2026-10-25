@@ -502,7 +502,6 @@ def run_single_detector_head_simulation(
         max_polar_angle=Float(max_polar_angle),
         cell_jitter_span=(preset.pitch_x, preset.pitch_y),
         half_life=Float(np.inf),
-        rng=np.random.default_rng(seed),
     )
     source_node.translate(z=Float(z_enter_face - source_distance))
     world_volume.add_child(source_node)

@@ -185,7 +185,6 @@ def modeling(
         radiation_type="Gamma",
         energy=[[Float(140.511 * units.keV), 0.89]],
         half_life=Float(6.0067 * units.hour),
-        rng=rng,
     )
     phantom.add_child(source)
 

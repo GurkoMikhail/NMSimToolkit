@@ -7,6 +7,7 @@
 
 import json
 import logging
+import math
 import threading
 import time
 from pathlib import Path
@@ -130,13 +131,15 @@ class DataManager(threading.Thread):
         filename: Union[str, Path],
         lock: Optional[Any] = None,
         context: Optional[Dict[str, Any]] = None,
+        batch_capacity: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Инспектирует существующий HDF5-файл перед запуском задачи симуляции.
-        Если в группе /metadata/tasks присутствуют завершенные задачи с сохраненным
-        состоянием чекпоинта (actual_stop_time, final_rng_state), возвращает словарь
-        параметров для бесшовного досчёта с учетом контекста задачи (context) и
-        сквозного счетчика particle_ID по всему файлу.
+        Если в группе /metadata/tasks присутствуют завершенные задачи со статусом 'completed',
+        проверяет полноту обязательных полей чекпоинта (Fail-Fast без молчаливых дефолтов)
+        и возвращает словарь параметров для бесшовного досчёта с восстановлением единого ГСЧ
+        (rng_state), емкости батча (batch_capacity) и состояния пуассоновского потока эмиссии
+        (t_ref, t_last, pending_arrival_time).
         """
         filepath_obj = Path(filename)
         if filepath_obj.is_absolute():
@@ -147,6 +150,32 @@ class DataManager(threading.Thread):
 
         if not resolved_path.exists():
             return None
+
+        required_checkpoint_attrs = (
+            "seed",
+            "actual_start_time",
+            "actual_stop_time",
+            "particle_id_end",
+            "rng_state",
+            "t_ref",
+            "t_last",
+            "pending_arrival_time",
+            "batch_capacity",
+        )
+
+        def _decode_rng_state_attr(raw_attr: Any, attr_name: str, task_key: str) -> Dict[str, Any]:
+            json_str = (
+                raw_attr.decode("utf-8")
+                if isinstance(raw_attr, (bytes, np.bytes_))
+                else str(raw_attr)
+            )
+            parsed = json.loads(json_str)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"Поле '{attr_name}' в чекпоинте задачи '{task_key}' файла '{resolved_path}' "
+                    f"должно быть JSON-объектом словаря состояния ГСЧ."
+                )
+            return parsed
 
         def _read_checkpoint() -> Optional[Dict[str, Any]]:
             retries_count = 20
@@ -167,33 +196,43 @@ class DataManager(threading.Thread):
                         max_task_index = -1
 
                         best_key: Optional[tuple[float, int]] = None
-                        best_stop_time: Optional[float] = None
-                        best_seed: Optional[int] = None
-                        best_rng_state: Optional[Dict[str, Any]] = None
+                        best_checkpoint: Optional[Dict[str, Any]] = None
 
                         for task_group_key, task_item in tasks_group.items():
                             if not isinstance(task_item, h5py.Group):
                                 continue
                             if str(task_item.attrs.get("status", "")) != "completed":
                                 continue
-                            if (
-                                "actual_stop_time" not in task_item.attrs
-                                or "final_rng_state" not in task_item.attrs
-                            ):
-                                continue
+
+                            missing_attrs = [
+                                attr_name
+                                for attr_name in required_checkpoint_attrs
+                                if attr_name not in task_item.attrs
+                            ]
+                            if missing_attrs:
+                                raise ValueError(
+                                    f"В чекпоинте завершенной задачи '{task_group_key}' файла '{resolved_path}' "
+                                    f"отсутствуют обязательные поля состояния досчёта: {', '.join(missing_attrs)}."
+                                )
 
                             stop_time_val = float(task_item.attrs["actual_stop_time"])
-                            start_time_val = float(task_item.attrs.get("actual_start_time", 0.0))
+                            start_time_val = float(task_item.attrs["actual_start_time"])
+                            if not math.isfinite(stop_time_val) or not math.isfinite(start_time_val):
+                                raise ValueError(
+                                    f"Неконечные значения actual_start_time/actual_stop_time в задаче '{task_group_key}'."
+                                )
                             if stop_time_val <= start_time_val:
                                 continue
 
-                            has_completed_tasks = True
-                            particle_end_val = int(
-                                task_item.attrs.get(
-                                    "particle_id_end",
-                                    task_item.attrs.get("simulated_histories", 0),
+                            batch_capacity_val = int(task_item.attrs["batch_capacity"])
+                            if batch_capacity_val <= 0:
+                                raise ValueError(
+                                    f"Некорректный batch_capacity ({batch_capacity_val} <= 0) "
+                                    f"в задаче '{task_group_key}' файла '{resolved_path}'."
                                 )
-                            )
+
+                            has_completed_tasks = True
+                            particle_end_val = int(task_item.attrs["particle_id_end"])
                             max_particle_id_end = max(max_particle_id_end, particle_end_val)
 
                             raw_task_id = task_item.attrs.get("task_id")
@@ -208,45 +247,82 @@ class DataManager(threading.Thread):
                             if "context" in task_item and isinstance(task_item["context"], h5py.Group):
                                 saved_context = dict(task_item["context"].attrs)
 
+                            rng_state_dict = _decode_rng_state_attr(
+                                task_item.attrs["rng_state"],
+                                "rng_state",
+                                str(task_group_key),
+                            )
+                            seed_val = int(task_item.attrs["seed"])
+                            t_ref_val = float(task_item.attrs["t_ref"])
+                            t_last_val = float(task_item.attrs["t_last"])
+                            pending_arrival_val = float(task_item.attrs["pending_arrival_time"])
+
+                            if not math.isfinite(t_ref_val) or not math.isfinite(t_last_val):
+                                raise ValueError(
+                                    f"Неконечные параметры потока эмиссии (t_ref={t_ref_val}, t_last={t_last_val}) "
+                                    f"в задаче '{task_group_key}' файла '{resolved_path}'."
+                                )
+                            if t_last_val < t_ref_val:
+                                raise ValueError(
+                                    f"Некорректные параметры потока эмиссии (t_last={t_last_val} < t_ref={t_ref_val}) "
+                                    f"в задаче '{task_group_key}' файла '{resolved_path}'."
+                                )
+                            if not math.isnan(pending_arrival_val) and pending_arrival_val < t_last_val:
+                                raise ValueError(
+                                    f"Некорректный pending_arrival_time={pending_arrival_val} (< t_last={t_last_val}) "
+                                    f"в задаче '{task_group_key}' файла '{resolved_path}'."
+                                )
+
                             if not cls._contexts_match(saved_context, context):
                                 continue
-
-                            raw_rng = task_item.attrs["final_rng_state"]
-                            rng_json_str = (
-                                raw_rng.decode("utf-8")
-                                if isinstance(raw_rng, (bytes, np.bytes_))
-                                else str(raw_rng)
-                            )
-                            rng_state_dict = json.loads(rng_json_str)
-                            seed_val = int(task_item.attrs.get("seed", 0))
 
                             candidate_key = (stop_time_val, particle_end_val)
                             if best_key is None or candidate_key > best_key:
                                 best_key = candidate_key
-                                best_stop_time = stop_time_val
-                                best_seed = seed_val
-                                best_rng_state = rng_state_dict
+                                best_checkpoint = {
+                                    "seed": seed_val,
+                                    "actual_stop_time": stop_time_val,
+                                    "rng_state": rng_state_dict,
+                                    "t_ref": t_ref_val,
+                                    "t_last": t_last_val,
+                                    "pending_arrival_time": pending_arrival_val,
+                                    "batch_capacity": batch_capacity_val,
+                                }
 
                         if not has_completed_tasks:
                             return None
+
+                        if (
+                            batch_capacity is not None
+                            and best_checkpoint is not None
+                            and int(batch_capacity) != best_checkpoint["batch_capacity"]
+                        ):
+                            raise ValueError(
+                                f"Несовпадение batch_capacity ({batch_capacity}) с сохраненным в чекпоинте ({best_checkpoint['batch_capacity']})."
+                            )
 
                         next_task_id = max_task_index + 1
                         while f"task_{next_task_id}" in tasks_group:
                             next_task_id += 1
 
+                        checkpoint_fields = best_checkpoint or {
+                            "seed": None,
+                            "actual_stop_time": None,
+                            "rng_state": None,
+                            "t_ref": None,
+                            "t_last": None,
+                            "pending_arrival_time": None,
+                            "batch_capacity": None,
+                        }
                         return {
-                            "seed": best_seed,
-                            "actual_stop_time": best_stop_time,
+                            **checkpoint_fields,
                             "next_particle_id": max_particle_id_end,
-                            "rng_state": best_rng_state,
                             "next_task_id": next_task_id,
                         }
                 except (OSError, BlockingIOError):
                     if retry_index == retries_count - 1:
                         return None
                     time.sleep(0.05)
-                except (ValueError, KeyError, TypeError):
-                    return None
             return None
 
         if lock is not None:
@@ -322,34 +398,25 @@ class DataManager(threading.Thread):
             if unit is not None:
                 target_group.attrs[f"{item_key}_units"] = unit
 
-            # Создание датасета для массивов или числовых параметров
+            # Создание датасета для массивов, скаляров или строковых параметров
+            dset_data: Any = None
             if isinstance(item_value, np.ndarray):
-                if str(item_key) not in target_group:
-                    dset = target_group.create_dataset(str(item_key), data=item_value)
-                    if unit is not None:
-                        dset.attrs["units"] = unit
-                else:
-                    target_group[str(item_key)][...] = item_value
+                dset_data = item_value
             elif isinstance(item_value, (list, tuple)):
-                array_value = np.array(item_value)
-                if str(item_key) not in target_group:
-                    dset = target_group.create_dataset(str(item_key), data=array_value)
-                    if unit is not None:
-                        dset.attrs["units"] = unit
-                else:
-                    target_group[str(item_key)][...] = array_value
+                dset_data = np.array(item_value)
             elif isinstance(item_value, (int, float, np.integer, np.floating)):
-                if str(item_key) not in target_group:
-                    dset = target_group.create_dataset(str(item_key), data=item_value)
-                    if unit is not None:
+                dset_data = item_value
+            elif isinstance(item_value, str):
+                dset_data = np.bytes_(item_value.encode("utf-8"))
+
+            if dset_data is not None:
+                key_str = str(item_key)
+                if key_str not in target_group:
+                    dset = target_group.create_dataset(key_str, data=dset_data)
+                    if unit is not None and not isinstance(item_value, str):
                         dset.attrs["units"] = unit
                 else:
-                    target_group[str(item_key)][()] = item_value
-            elif isinstance(item_value, str):
-                if str(item_key) not in target_group:
-                    target_group.create_dataset(str(item_key), data=np.bytes_(item_value.encode("utf-8")))
-                else:
-                    target_group[str(item_key)][()] = np.bytes_(item_value.encode("utf-8"))
+                    target_group[key_str][()] = dset_data
 
     def initialize_metadata(self) -> None:
         """

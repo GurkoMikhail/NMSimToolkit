@@ -113,7 +113,7 @@
   1. **Временная шкала `StepAndShoot`, авто-подстановка макросов и запись в HDF5:**
      * В [`StepAndShootProtocolConfig`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/config/models.py), [`StepAndShootProcedureViewModel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/viewmodels/procedure_viewmodel.py) и [`ProcedureInspectorSection`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/views/inspectors/procedure_section.py) реализованы параметры и элементы управления `initial_time` и `sequential_time` для настройки начального смещения $t_0$ и последовательного хронологического отсчета времени между ракурсами.
      * В [`SweepCompiler.compile_protocol`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/config/sweep_compiler.py) реализована генерация переменных `start_time`, `stop_time` и `step_time` во внутренних единицах `hepunits`, а также автоматическая подстановка шаблонов `${start_time}` и `${stop_time}` в `simulation_manager` (`SweepCompiler.apply_protocol_defaults`, [`OrchestratorSession._get_start_time_cfg`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/controllers/orchestrator_session.py)).
-     * В [`DataManager`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/data_manager.py) и [`ProcedureMetadataCollector`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/metadata_collector.py) реализована запись фактических границ интервала каждой задачи (`actual_start_time`, `actual_stop_time`, `frame_duration` в `/metadata/tasks/task_{id}`), кумулятивное обновление `/metadata/gantry/frame_duration` и бесшовный досчёт симуляции (`inspect_resume_state`) с сохранением `final_rng_state` и `particle_id_end`.
+     * В [`DataManager`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/data_manager.py) и [`ProcedureMetadataCollector`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/metadata_collector.py) реализована запись фактических границ интервала каждой задачи (`actual_start_time`, `actual_stop_time`, `frame_duration` в `/metadata/tasks/task_{id}`), кумулятивное обновление `/metadata/gantry/frame_duration` и бесшовный досчёт симуляции (`inspect_resume_state`) с сохранением `rng_state`, `t_ref`, `t_last`, `pending_arrival_time`, `batch_capacity` и `particle_id_end`.
   2. **Интеграция `BindableDoubleField` для `start_time` и `stop_time` в GUI и полный Roundtrip:**
      * В [`BaseProcedureViewModel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/viewmodels/procedure_viewmodel.py) и [`CustomSweepProcedureViewModel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/viewmodels/procedure_viewmodel.py) добавлены свойства `start_time` и `stop_time` с двусторонней синхронизацией `bindings["start_time"]`, `bindings["stop_time"]` и `bindings_registry["simulation_manager"]`.
      * В [`ProcedureInspectorSection`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/views/inspectors/procedure_section.py) для `CustomSweep` добавлена секция временного интервала с полями [`BindableDoubleField`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/views/widgets/bindable_field.py) (`spin_start_time`, `spin_stop_time`, `unit="s"`), а в [`OrchestratorSession`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/controllers/orchestrator_session.py) и [`MainWindow`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/views/main_window.py) обеспечен полный Roundtrip численных значений и строковых макросов `"${var} s"`.
@@ -216,47 +216,23 @@
 
 ---
 
-## 14. $\mathcal{O}(1)$ поиск интервала энергетической сетки для интерполяции макроскопических сечений (двухуровневый лог-индекс)
+## 14. $\mathcal{O}(1)$ поиск интервала энергетической сетки для интерполяции макроскопических сечений (двухуровневый лог-индекс) [РЕАЛИЗОВАНО]
 
-### Проблема:
-* В [`_get_macroscopic_cross_sections`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_kernels.py#L14-L53) на каждом шаге трекинга выполняется бинарный поиск `np.searchsorted(mat_energy_grid, energy)` сложности $\mathcal{O}(\log K)$ по индивидуальной сетке материала ($K \approx 1110\text{–}1130$ узлов).
-* По телеметрии переноса (`verification/profiling/transport_telemetry.py`) на одну историю приходится до `17.82` вызовов (`W3_Heart_Tc99m`), что порождает промахи предсказателя переходов. В [`make_transport_kernel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/transport_kernels.py#L202-L294) поиск выполняется дважды на шаг Вудкока (мажоранта и реальный материал вокселя) при неизменной энергии частицы.
-* **Аудит данных `tables/NIST XCOM Elements MAC.h5`:** равномерный линейный шаг `1 кэВ` в диапазоне `1–1000 кэВ`, `22–51 кэВ` в диапазоне `1–10 МэВ`, верхняя граница `10 МэВ`. Края поглощения не представлены парами узлов (см. п. 26), поэтому точность на краях определяется данными, а не алгоритмом поиска интервала.
-
-### Отклоненные варианты:
-* **Пересэмплирование на равномерную лог-сетку $N = 1024 / 2048$:** шаг $\approx 1\%$ по $\ln E$ ($\sim 320$ эВ при 33 кэВ, $\sim 850$ эВ при 88 кэВ) размывает края поглощения; сверхплотная сетка ($N \geq 16384$) выводит таблицы за пределы L2/L3. Нарушает Zero-Compromise Physics.
-* **Кусочно-равномерная сетка по краям подоболочек:** края различны у разных элементов, поиск сегмента возвращает ветвления; номер сегмента определяет лишь энергетически доступные оболочки, но не оболочку поглощения (см. п. 28).
-
-### Согласованное архитектурное решение:
-1. Точные узлы таблицы сохраняются без изменений (включая пары узлов краев поглощения из п. 26).
-2. Вспомогательная общая для всех материалов равномерная сетка корзин по $\ln E$: `log_bin = int((log(E) - log_e_min) * inv_dlog_e)`. Число корзин выбирается при компиляции так, чтобы корзина покрывала не более 2–3 узлов точной сетки (проверяется предусловием).
-3. Для каждого материала сцены таблица `bin_start: int32` (первая строка точной таблицы для корзины), адресуемая через новое поле `lookup_offset` в `MaterialPointerDType` (только материалы сцены, десятки КБ).
-4. В ядре: корзина → `bin_start` → ограниченный досмотр вперед `while energy >= grid[idx + 1]` → прежняя линейная интерполяция. Результат побитово совпадает с бинарным поиском.
-5. Индекс корзины не зависит от материала: вычисляется один раз на шаг частицы и переиспользуется для мажоранты и реального материала.
-
-### План реализации:
-* Фаза 3 плана [`docs/plans/cross_sections_and_source_sampling_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/cross_sections_and_source_sampling_plan.md).
+### Статус:
+* **Завершено (Фаза 3 плана [`docs/plans/cross_sections_and_source_sampling_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/cross_sections_and_source_sampling_plan.md)):**
+  1. **Структуры данных и инварианты ([`core/materials/material_bank.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/materials/material_bank.py)):** в `MaterialPointerDType` добавлено поле `lookup_offset: Index`; в `MaterialBank` добавлены предвычисленные логарифмы сеток и сечений (`physics_log_energy_grid`, `physics_log_lac_table`), плоский массив начальных индексов лог-корзин `lookup_bin_start` длины `num_scene_materials * lookup_num_bins` и скалярные параметры индекса (`lookup_log_e_min`, `lookup_inv_dlog_e`, `lookup_num_bins = 512`, `lookup_max_advance`); в `MaterialBank._validate()` реализована проверка форм/типов всех буферов, границ указателей, а также положительности и монотонности `physics_energy_grid` и `lookup_bin_start` внутри каждого материала.
+  2. **Построение индекса и контроль `lookup_max_advance` ([`core/physics/physics_compiler.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_compiler.py)):** в `PhysicsCompiler._build_material_bank` формируются 512 равномерных по $\ln E$ корзин в диапазоне `[E_min, E_max]`, вычисляются `bin_start[b] = searchsorted(grid, E_b, side='right') - 1` с IEEE 754 `nextafter`-защитой от перескока границ корзин при округлении плавающей точки и контролируется жесткое предусловие `lookup_max_advance <= max_allowed_advance` (`MAX_LOOKUP_ADVANCE_LIMIT = 16`, на таблицах NIST XCOM `lookup_max_advance <= 5`).
+  3. **Ядра поиска интервала и интерполяции сечений ([`core/physics/physics_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_kernels.py), [`core/transport/transport_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/transport_kernels.py)):** реализованы `@njit(cache=True, inline='always')` функции `_compute_log_energy_and_bin`, `_locate_row_with_linear`, `_locate_row` и `_get_macroscopic_cross_sections`, обеспечивающие побитовое совпадение (`0 ULP`) с эталонным `np.searchsorted(..., side='right')` на всех 12 материалах базы данных, узлах сеток, парах/тройках краев поглощения, окрестностях $\pm 1\text{ ULP}$ и произвольных энергиях; за счет доминирования цикла `while` на верхнем уровне CFG и развернутой интерполяции без вложенного цикла `for` проход `RefCountPrunePass` в Numba полностью устраняет внутренние атомарные операции `NRT_incref`/`NRT_decref` в горячем цикле (`M1a`: `94.00 -> 47.66 нс/запрос`, ускорение `1.97x`; `M1b`: `191.91 -> 77.59 нс/шаг`, ускорение `2.47x`; доля `P5_Woodcock_Transport` на `W3`: `8.73%`).
 
 ---
 
-## 15. Генерация первичных частиц: Vose's Alias, `@njit`-инжектор и пуассоновский поток распадов
+## 15. Генерация первичных частиц: Vose's Alias, `@njit`-инжектор и пуассоновский поток распадов [РЕАЛИЗОВАНО]
 
-### Проблема:
-* **Хранение уже разреженное:** [`Source._generate_emission_table`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py#L186-L211) сохраняет координаты только ненулевых вокселей; полный `np.meshgrid` строится однократно при инициализации (`21.1 мс -> 4.7 мс` по `M2_EmissionTableInit`), что незначимо на фоне JIT-компиляции (п. 22) и не является целью оптимизации.
-* **Горячая цена — [`generate_position`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py#L252-L260):** `self.rng.choice(voxel_origins, count, p=probability)` при каждом вызове заново строит CDF длины $K$ (до `~12 МБ`), проверяет `p` и выполняет бинарный поиск (`125.8 нс/частицу`, до `32.5%–34.8%` времени шага при малых батчах в `W2_NEMA_Tb161` / `W3_Heart_Tc99m`); [`inject`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py#L286-L321) дополнительно создает около десятка временных массивов `(N, 3)` / `(N, 4)` (см. п. 25.3).
-* **Зависимость от разбиения на батчи:** блочная генерация (сначала $N$ энергий, затем $N$ направлений, позиций и времен) и розыгрыш времени эмиссии внутри окна батча `[time_start, time_end]` в [`generate_emission_time`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py#L262-L273) делают поток ГСЧ и времена эмиссии зависимыми от границ батчей, что блокирует точную обрезку по `stop_time` (п. 24).
-* **Детерминированное число распадов:** число частиц за окно задается ожиданием (`get_expected_particles` + метод Ньютона в [`_calculate_time_step`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L274-L303) + [`_distribute_quotas`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L305-L325)), без пуассоновской статистики счета.
-
-### Согласованное архитектурное решение:
-* **Совместимость потока ГСЧ с предыдущими версиями не сохраняется:** эталоны пересчитываются, корректность выборки подтверждается статистическими критериями. Сохраняется инвариант **независимости от разбиения внутри версии**: `[0, T1] + [T1, T2] ≡ [0, T2]` побитово.
-1. **Vose's Alias Method** для вокселей и линий спектра (`prob: float64`, `alias: int32`), построение за $\mathcal{O}(K)$ один раз в сеттерах `distribution` / `energy`. Таблица эмиссии хранит плоские индексы вокселей `int32` вместо координат `(K, 3)` в `float64`.
-2. **`SourceCompiler` → `SourceBuffer`:** плоские массивы всех источников сцены (CSR alias-таблиц, матрицы `local -> global`, параметры распада) по аналогии с `PhysicsCompiler` / `PhysicsBuffer`.
-3. **`@njit`-инжектор с по-частичной генерацией:** последовательность случайных чисел каждой частицы детерминирована и не зависит от границ батчей; запись напрямую в SoA [`ParticleBank`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/particles/particles.py) без промежуточных массивов (Zero-Allocation).
-4. **Пуассоновский поток распадов (суперпозиция источников, прореживание Льюиса–Шедлера):** кандидаты с постоянной мажорантой $A_{\max} = \sum_s A_s(t_{\text{ref}})$ ($t_{\text{ref}}$ фиксируется в начале первого сегмента и сохраняется в состоянии досчета), $t \leftarrow t + \text{Exp}(1)/A_{\max}$; принятие кандидата и выбор источника — одним равномерным числом по долям $A_s(t)/A_{\max}$. Число частиц за интервал — пуассоновская случайная величина; обрезка по `stop_time` точная; при остановке сохраняется отложенное время кандидата `pending_arrival_time`.
-5. **Удаление устаревшего кода (No Legacy Crutches):** `_calculate_time_step` (метод Ньютона), `_distribute_quotas`, `MIN_TIME_STEP`, блочные методы `generate_*` и поле `Source.rng`.
-
-### План реализации:
-* Фазы 4–5 плана [`docs/plans/cross_sections_and_source_sampling_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/cross_sections_and_source_sampling_plan.md).
+### Статус:
+* **Завершено (Фазы 4–5 плана [`docs/plans/cross_sections_and_source_sampling_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/cross_sections_and_source_sampling_plan.md)):**
+  1. **Таблицы Воза и компактный `SourceBuffer` ([`core/source/alias_tables.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/alias_tables.py), [`core/source/sources.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py), [`core/source/source_buffer.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/source_buffer.py), [`core/source/source_compiler.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/source_compiler.py)):** реализовано построение таблиц псевдонимов Уокера–Воза `build_alias_tables` за $\mathcal{O}(K)$ (`prob: float64`, `alias: int32`) для воксельных распределений и энергетических спектров, хранение разреженных ненулевых вокселей в виде плоских индексов `int32` и компиляция всех активных источников сцены в единый иммутабельный `NamedTuple` `SourceBuffer`.
+  2. **Zero-Allocation `@njit`-ядра выборки и пуассоновского потока ([`core/source/source_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/source_kernels.py)):** реализованы примитивы `_sample_alias`, `_sample_voxel_position`, `_sample_isotropic_direction`, `_sample_cone_direction`, `_write_primary`, `_emit_primary_from_source` и пуассоновское ядро `inject_poisson_sources_kernel` с прореживанием Льюиса–Шедлера ($A_{\max} = \sum_s A_s(t_{\text{ref}})$), проверкой наличия свободного слота в `ParticleBank` до обращения к ГСЧ, сохранением отложенного кандидата `pending_arrival_time` при достижении $t \ge \text{stop\_time}$ и точной обрезкой по `stop_time`.
+  3. **Единый ГСЧ симуляции и бесшовный досчёт ([`core/transport/simulation_managers.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py), [`core/data/data_manager.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/data_manager.py), [`core/data/metadata_collector.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/metadata_collector.py), [`core/config/simulation_worker.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/config/simulation_worker.py)):** в `SimulationManager` используется единый генератор `self.rng` (`self.rng_ctx`) на весь поток симуляции (и для `inject_poisson_sources_kernel`, и для `ParticlePropagator`), добавлен параметр `batch_capacity`, полностью удалены `_calculate_time_step` (метод Ньютона), `_distribute_quotas`, `MIN_TIME_STEP`, блочные методы `generate_*` и поле `Source.rng`; в паспортах задач HDF5 `/metadata/tasks/task_{id}` сохраняются и валидируются при досчёте единый `rng_state`, `t_ref`, `t_last`, `pending_arrival_time`, `batch_capacity`, что гарантирует побитовую независимость прямого потока `InitialState` от `batch_capacity` и побитовую идентичность `[0, T_1] + [T_1, T_2] ≡ [0, T_2]`.
 
 ---
 
@@ -348,9 +324,9 @@
   6. **Справочные метрики ядер (`M6_GeometryPrimitives`, `M7_TransportVsProcessKernel`):** аналитическое пересечение `_hex_prism_intersect` (Voronoi 6-slab) занимает `22.0 нс/луч` против `3.0 нс/луч` для `_box_intersect` (`7.33x`); один шаг `cast_path + _transport_kernel` занимает `275.0 нс/частицу` против `335.4 нс/частицу` для `_compton_kernel + rotate` (`0.82x`).
 
 ### Согласованное архитектурное решение / План реализации:
-1. **$\mathcal{O}(1)$ поиск интервала энергетической сетки (`M1`, см. Раздел 14):**
+1. **[РЕАЛИЗОВАНО — см. Разделы 14 и 15] $\mathcal{O}(1)$ поиск интервала энергетической сетки (`M1`, см. Раздел 14):**
    * Двухуровневый лог-индекс (общая сетка корзин по $\ln E$ + таблица `bin_start` поверх точных узлов NIST) вместо бинарного поиска `np.searchsorted`; побитовое совпадение результата интерполяции. Прототип `M1` (`5.44x`) измерен для чисто равномерной таблицы — ускорение двухуровневой схемы подлежит повторному замеру.
-2. **`Vose's Alias Method` и `@njit`-инжектор в `Source` (`M3` `6.44x`, см. Раздел 15):**
+2. **[РЕАЛИЗОВАНО — см. Разделы 14 и 15] `Vose's Alias Method` и `@njit`-инжектор в `Source` (`M3` `6.44x`, см. Раздел 15):**
    * Разреженная инициализация (`M2`) незначима: хранение таблицы эмиссии уже разреженное, полный `np.meshgrid` строится однократно.
    * Предрасчет таблиц `prob` и `alias` (метод псевдонимов Уокера–Воза) для выборки индекса вокселя за $\mathcal{O}(1)$ и прямая генерация `x, y, z` в SoA-массивы `ParticleBank`.
 3. **Векторизованные целочисленные LUT и булевы маски в [`core/data/data_handlers.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/data/data_handlers.py) (`M4` `34.63x`, `M5` `28.87x`):**
@@ -361,20 +337,18 @@
 
 ## 24. Клиппинг времени экспозиции в `SimulationManager._replenish_bank`, двухфазная динамика банка (`Full-Bank` vs `Tail Depletion`) и разделение `batch_capacity` и квоты историй
 
-### Проблема:
-* В [`SimulationManager.__init__`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L85-L150) аргумент `particles_number` задает емкость пула [`ParticleBank.allocate(self.particles_number)`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/particles/particles.py) (размер батча одновременно летящих в памяти частиц), тогда как полное число моделируемых историй определяется интегралом активности источника за интервал `[start_time, stop_time]`.
-* В методе [`SimulationManager._replenish_bank`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L327-L341) при вычислении `delta_time = self._calculate_time_step(num_to_inject)` **отсутствует ограничение целевого времени `target_time <= self.stop_time`**. В результате, если емкость банка `particles_number` превышает ожидаемое за `stop_time` число распадов ($N_{\text{expected}} = \int_{t_{\text{start}}}^{t_{\text{stop}}} A(t)\,dt$), на первом же шаге генерируется полный банк `particles_number` частиц, а модельное время `global_timer` перешагивает далеко за `stop_time`.
-* **Связь с инвариантом побитового досчёта (`Stateful Resume`, [`docs/plans/simulation_resume_and_accumulation_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/simulation_resume_and_accumulation_plan.md)):** в коммите `48f146c` инжекция полными батчами `num_to_inject = bank.capacity - num_active` без обрезки `delta_time` была сохранена намеренно, поскольку текущая блочно-векторизованная реализация [`Source.inject`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py) генерирует сначала массив из $K$ позиций, затем $K$ направлений, затем $K$ энергий и времен. Из-за этого разбиение батча на $K_1 + K_2$ на границе $T_1$ меняет порядок выборки из `self.rng` и нарушает побитовую идентичность двухэтапного расчёта `[0, T_1] + [T_1, T_2]` относительно непрерывного `[0, T_2]`.
+### Исходная проблема (устранена в п. 15) и динамика банка:
+* Ранее в [`SimulationManager.__init__`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py) аргумент `particles_number` задавал емкость пула [`ParticleBank.allocate(self.particles_number)`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/particles/particles.py) без отдельного параметра `batch_capacity`, а в `_replenish_bank` при вычислении шага методом Ньютона отсутствовало ограничение `target_time <= self.stop_time` из-за блочно-векторизованной генерации в `Source.inject` (при переходе на пуассоновский `@njit`-инжектор `inject_poisson_sources_kernel` и параметр `batch_capacity` обе проблемы полностью устранены).
 * **Двухфазная динамика банка на 6,000,000 историй ([`verification/profiling/batch_size_benchmark.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/verification/profiling/batch_size_benchmark.py), Разделы 3.3, 7 и 8.2 [`PROFILING_REPORT.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/verification/reports/profiling/PROFILING_REPORT.md)):**
   1. **Малые батчи (`2,500 – 5,000`):** требуют тысяч вызовов `Source.inject`; в воксельном фантоме `W2_NEMA_Tb161` генерация источника съедает **`32.5% – 34.8%`** времени стационарной фазы (`245–247 тыс. ист./с` против `413–437 тыс. ист./с` в оптимуме).
   2. **Оптимальный стационарный диапазон (`30,000 – 120,000`):** обеспечивает пик пропускной способности как в стационарной фазе `Full-Bank Sustained Phase`, так и по сквозному времени (**`2.13 – 2.16 млн ист./с`** в `W1_PointSource` при `30,000–60,000` и **`403.5 – 436.7 тыс. ист./с`** в `W2_NEMA_Tb161` при `60,000–120,000`), снижая долю `Source.inject` до `9.7%–10.8%` и удерживая долю хвостовой фазы `Tail Depletion Phase` в пределах `0.6%–1.1%`.
   3. **Сверхбольшие батчи (`250,000 – 500,000`) и замедление на хвосте (`Tail Depletion Phase`):** рабочий набор SoA-массивов (`20–40 МБ`) выходит за пределы L3-кэша CPU (снижая скорость `Full-Bank` в `W1` на `9%–14%`), а на хвостовой фазе долетывания последних частиц (когда среднее заполнение банка падает до `2.6%–30.1%`) удельная скорость чистого трекинга (`Треков/с`) падает в **`1.23x – 3.79x` раз** из-за разреженного массива `active_indices`.
 
 ### Согласованное архитектурное решение / План реализации:
-1. **Точная обрезка по `stop_time` через пуассоновский поток распадов (реализуется в п. 15.4):**
-   * `@njit`-инжектор генерирует кандидатов распада последовательно по времени и останавливается на первом кандидате с $t \geq$ `stop_time`, сохраняя его время как `pending_arrival_time` в состоянии досчета. Последовательность случайных чисел не зависит от границ батчей, поэтому досчет `Stateful Resume` побитово идентичен непрерывному расчету; метод Ньютона `_calculate_time_step` и `_distribute_quotas` удаляются.
-2. **Явная параметризация `batch_capacity` и компактификация хвоста:**
-   * Разделить емкость рабочего пула `ParticleBank` (оптимум `30,000 – 60,000` частиц) и квоту историй за время `stop_time`, а также рассмотреть периодическое уплотнение активных слотов на фазе `Tail Depletion Phase`.
+1. **[РЕАЛИЗОВАНО] Точная обрезка по `stop_time` через пуассоновский поток распадов (реализовано в п. 15):**
+   * В [`inject_poisson_sources_kernel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/source_kernels.py) и [`SimulationManager._replenish_bank`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py) кандидаты распада генерируются последовательно по времени и останавливаются на первом кандидате с $t \geq$ `stop_time`, сохраняя его время как `pending_arrival_time` в состоянии досчёта; при этом `global_timer` фиксируется строго на `stop_time`. Благодаря проверке наличия свободного слота до обращения к единому генератору `self.rng` (`self.rng_ctx`) последовательность `InitialState` на прямом цикле инжекции не зависит от `batch_capacity`, а досчёт `Stateful Resume` с фиксированным `batch_capacity` побитово идентичен непрерывному расчёту; метод Ньютона `_calculate_time_step`, `_distribute_quotas` и `MIN_TIME_STEP` удалены.
+2. **[ВЫПОЛНЕНО] Явная параметризация `batch_capacity` и компактификация хвоста:**
+   * В `SimulationManager.__init__` добавлен параметр `batch_capacity: Optional[int] = None` (емкость пула `ParticleBank`, по умолчанию `particles_number`), позволяющий разделять размер рабочего пула и квоту историй при `stop_time=None`; дальнейшее развитие — периодическое уплотнение активных слотов на фазе `Tail Depletion Phase`.
 
 ---
 
@@ -410,10 +384,10 @@
    * Из [`ParticleBank`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/particles/particles.py) и [`InitialState`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/particles/initial_state.py) удален телеметрический признак `has_interacted`; [`EscapedParticlesBuffer`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/interaction_buffers.py#L340-L404) минимизирован до `(particle_ID, position)`. Факт отсутствия рассеяния определяется на лету через `@njit`-предикат [`_is_uncollided`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/transport_kernels.py) по неизменности энергии и направления относительно начального состояния.
    * Через фабрику [`SimulationDataBuffer.allocate_for(capacity, enabled)`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/interaction_buffers.py#L448-L459) неподписанным каналам выделяется `capacity == 0` без затрат памяти и записи в `@njit`-ядрах (с полным сохранением потока ГСЧ в `_sample_Z_scalar`). Во всех `@njit`-ядрах записи (`_write_single_initial_state`, `_push_to_dead_particles_kernel`, `_push_to_escaped_particles_kernel`, `_push_to_interaction_buffer`) кольцевой оператор `% capacity` заменен на линейный инкремент курсора с граничной отсечкой `idx >= capacity`.
    * В [`SimulationManager`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py) внедрены предусловие шага [`_ensure_step_capacity`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L236-L242) (каскадный сброс [`_flush_through`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L222-L227) в порядке `TELEMETRY_ORDER`), постусловие [`_check_no_overflow`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L244-L252) (строгий `RuntimeError`), кооперативная отправка в очередь [`_put_to_queue`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L195-L207) с таймаутом и проверкой `is_stopped`, а также устранены избыточные сканирования `bank.state.is_active` в `SimulationManager`, `ParticlePropagator.step` и `Source.inject`. По замерам `PROFILING_REPORT.md` доля буферного управления в `cProfile` снижена до **`1.3% – 2.4%`**, а доля фазы `P9_Invalidation_Escaped` — до **`2.0% – 2.8%`**.
-3. **Устранение крупных временных аллокаций на шаге (реализация пп. 15 и 23.2):**
+3. **[ВЫПОЛНЕНО] Устранение крупных временных аллокаций на шаге (реализация пп. 15 и 23.2):**
    * Выборка вокселя методом `Vose's Alias Method` по таблицам, построенным один раз при инициализации источника: `alias: int32`, `prob: float64` (точность `float32` недопустима по принципу Zero-Compromise Physics).
-   * Генерация позиций, направлений и энергий в предвыделенные SoA-буферы (`out=`-аргументы или `@njit`-инжектор с явным `np.random.Generator`, пишущий напрямую в `ParticleBank`), без промежуточных `(N, 3)` / `(N, 4)` массивов.
-   * Смена потока случайных чисел требует замены побитовых эталонных тестов статистическими (критерий $\chi^2$ частот выборки вокселей).
+   * Генерация позиций, направлений и энергий напрямую в `ParticleBank` через `@njit`-инжектор `inject_poisson_sources_kernel` с единым `RNGContext` (`self.rng`), без промежуточных `(N, 3)` / `(N, 4)` массивов.
+   * Смена потока случайных чисел сопровождена статистическими тестами (критерий $\chi^2$ частот выборки вокселей и спектральных линий, критерий KS).
 4. **Компактная карта материалов в `WoodcockVoxelVolume`:**
    * Хранить в `mat_dist_1d` локальный индекс материала в `material_list` типа `uint8` и передавать в `@cfunc` малую таблицу отображения `local_to_global: int64[≤256]` (размещается в L1).
    * При компиляции проверять предусловие `len(material_list) <= 256` с немедленным отказом (Fail-Fast) при нарушении.
@@ -425,40 +399,26 @@
 
 ---
 
-## 26. Перегенерация таблиц NIST XCOM с краями поглощения и согласование энергетического диапазона
+## 26. Перегенерация таблиц NIST XCOM с краями поглощения и согласование энергетического диапазона [РЕАЛИЗОВАНО]
 
-### Проблема:
-* **Края поглощения размыты в самих данных** `tables/NIST XCOM Elements MAC.h5`: повторяющихся узлов на энергиях краев нет. Пример Pb: K-край `88.005 кэВ` лежит между узлами `88.0 кэВ` ($\mu_{pe} = 2.48 \cdot 10^{-20}$) и `89.0 кэВ` ($1.14 \cdot 10^{-19}$) — скачок в `4.6` раза линейно размазан на `1 кэВ`; для L3-края (`13.035 кэВ`) присутствует только узел `13.04 кэВ` со значением **ниже** края, значение над краем отсутствует.
-* Ветка сдвига дублирующихся узлов на `-1 эВ` в [`AttenuationDataBase._add_material`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/materials/attenuation_database.py#L82-L84) на текущих данных не срабатывает (мертвый код), а `np.unique` при смешивании сеток элементов схлопнул бы пары узлов краев.
-* **Рассогласование диапазона:** таблица ограничена `10 МэВ`, тогда как [`Process._energy_range`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes.py#L48) объявляет `20 МэВ`; выше `10 МэВ` [`_get_macroscopic_cross_sections`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_kernels.py#L40-L42) молча держит последнее значение.
-
-### Согласованное архитектурное решение:
-1. Воспроизводимый офлайн-скрипт генерации HDF5-таблицы: края поглощения кодируются парой узлов `(E_edge, μ_ниже)`, `(E_edge, μ_выше)`; дополнительно для каждого элемента сохраняется датасет энергий и меток краев (`K`, `L1`, `L2`, `L3`, `M1…`) для п. 28.
-2. Смешивание материалов с сохранением пар узлов: объединение сеток элементов без схлопывания пар краев, лево-/право-непрерывная интерполяция каждого элемента на краях; удаление сдвига `-1 эВ`.
-3. Согласование диапазона: либо данные до `20 МэВ`, либо `energy_range = [1 кэВ, E_max таблицы]`; предусловие (Fail-Fast) в `PhysicsCompiler`: все линии спектров источников лежат внутри диапазона таблицы.
-
-### План реализации:
-* Фаза 1 плана [`docs/plans/cross_sections_and_source_sampling_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/cross_sections_and_source_sampling_plan.md).
+### Статус:
+* **Завершено (Фаза 1 плана [`docs/plans/cross_sections_and_source_sampling_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/cross_sections_and_source_sampling_plan.md)):**
+  1. **Воспроизводимый генератор и новая схема HDF5 (`tables/scripts/generate_nist_xcom_mac.py`, `tables/NIST XCOM Elements MAC.h5`):** реализован прямой парсер официального веб-сервиса NIST XCOM v3.1 (`https://physics.nist.gov/cgi-bin/Xcom/xcom3_1`, флаг `--fetch-nist`), таблица перегенерирована на родной стандартной сетке NIST XCOM v3.1 (`1 кэВ – 20 МэВ`, `46` базовых регулярных узлов + пары узлов краев поглощения $(E_{\text{edge}}, \mu^-), (E_{\text{edge}}, \mu^+)$, всего `46–76` узлов на элемент), добавлены подгруппы `/<Element>/Edges/energy` и `/<Element>/Edges/label` (`K`, `L1..L3`, `M1..M5`, `N1..N3`) и атрибуты файла (`schema_version = "2.0"`, `data_source`, `energy_range`).
+  2. **Валидация схемы и смешивание материалов ([`core/materials/attenuation_database.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/materials/attenuation_database.py)):** в `AttenuationDataBase._load_elements_MAC` реализована Fail-Fast проверка монотонности, наличия `Edges` и строгого скачка фотоэффекта вверх на краях поглощения; в `_add_material` удален мертвый сдвиг `-1 эВ`, регулярные узлы дедуплицируются при сохранении краев элементов, а интерполяция каждого элемента выполняется кусочно в координатах $(\ln E, \ln(\mu/\rho))$ с учетом односторонних пределов на краях.
+  3. **Кусочная log-log интерполяция и контроль диапазона ([`core/materials/attenuation_functions.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/materials/attenuation_functions.py), [`core/physics/physics_compiler.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_compiler.py), [`core/physics/physics_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_kernels.py), [`core/physics/processes.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes.py), [`gui/viewport_3d/material_palette.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/gui/viewport_3d/material_palette.py)):** `AttenuationFunction` и `_get_macroscopic_cross_sections` переведены на кусочную log-log интерполяцию с право-непрерывным выбором ветви на краях (`searchsorted(..., side='right')`), `_build_material_bank` копирует узлы `attenuation_function[material]` напрямую по индексам без повторной интерполяции, а `PhysicsCompiler.compile_scene` проверяет вхождение всех спектральных линий источников в рабочий диапазон `[E_min, E_max]`.
 
 ---
 
-## 27. Выбор элемента-мишени взаимодействия по парциальным сечениям процесса
+## 27. Выбор элемента-мишени взаимодействия по парциальным сечениям процесса [РЕАЛИЗОВАНО]
 
-### Проблема:
-* [`_sample_Z_scalar`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py#L82-L104) выбирает атомный номер по **массовой доле** элемента (`ElementCSR.element_fraction`), тогда как физически вероятность выбора элемента $i$ для процесса $p$ равна $w_i (\mu/\rho)_{p,i}(E) / \sum_j w_j (\mu/\rho)_{p,j}(E)$.
-* Пример NaI при 140 кэВ: массовая доля Na `≈ 15.3%`, а его вклад в фотоэффект `≈ 0.1%` — около 15% событий фотоэффекта получают неверный $Z$.
-* Сейчас $Z$ используется как метка в `InteractionBuffer.Z`; при появлении атомной релаксации (п. 28) и функций $S(x, Z)$ / $F(x, Z)$ для рассеяния ошибка становится физической.
-
-### Согласованное архитектурное решение:
-1. Замена `ElementCSR.element_fraction` таблицей парциальных макроскопических сечений элементов `element_lac_table` на строках точной сетки материала (`[строка, слот элемента, процесс]`, дополнение нулями до максимального числа элементов в материале).
-2. В ядре процесса: та же строка и доля интерполяции, что и в поиске интервала (п. 14); кумулятивный проход по элементам с порогом $u \cdot \mu_p(E)$. Линейность интерполяции гарантирует согласованность суммы парциальных сечений с полным $\mu_p(E)$.
-
-### План реализации:
-* Фаза 2 плана [`docs/plans/cross_sections_and_source_sampling_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/cross_sections_and_source_sampling_plan.md).
+### Статус:
+* **Завершено (Фаза 2 плана [`docs/plans/cross_sections_and_source_sampling_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/cross_sections_and_source_sampling_plan.md)):**
+  1. **Предрасчет нормированных парциальных долей на сетке `MaterialBank` ([`core/physics/physics_buffer.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_buffer.py), [`core/physics/physics_compiler.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_compiler.py)):** устаревшее одномерное поле статических массовых долей в `ElementCSR` заменено трехмерной таблицей `element_partial_fractions` формы `(num_grid_rows, num_processes, max_elements)` с нормированными парциальными долями элементов $w_{p,i}(E_k) = \mu_{p,i}(E_k) / \mu_p(E_k)$ в порядке `element_Z`, вычисляемыми в `PhysicsCompiler._build_element_csr` непосредственно на финальной сетке `MaterialBank` с учетом односторонних пределов на парах узлов краев поглощения и Fail-Fast контролем инварианта суммы вкладов с относительной погрешностью `≤ 1e-12`.
+  2. **Выбор $Z$ во всех процессах и индексация по `process_col_idx` ([`core/physics/physics_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_kernels.py), [`core/physics/processes_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py), [`core/physics/processes.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes.py), [`core/transport/propagator.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/propagator.py)):** функция `_sample_Z_scalar(mat_id, process_col_idx, row, fraction, physics_buffer, rng_ctx)` выполняет линейную интерполяцию нормированных парциальных долей по найденным в `_locate_energy_interval` значениям `(row, fraction)` без вызовов `exp` (и без потребления случайных чисел для однокомпонентных материалов `count == 1`); во все три ядра (`PhotoelectricEffect`, `ComptonScattering`, `CoherentScattering`) передается порядковый индекс столбца процесса `process_col_idx`, а в `_photoelectric_device_func` выбор $Z$ выполняется до обнуления энергии фотона.
 
 ---
 
-## 28. Атомная релаксация после фотоэффекта: выбор оболочки и характеристическая флуоресценция
+## 28. Атомная релаксация после фотоэффекта: выбор оболочки и специализированный вторичный источник характеристической флуоресценции
 
 ### Проблема:
 * Фотоэффект ([`make_photoelectric_kernel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py#L107-L170)) депонирует всю энергию фотона локально; характеристическое излучение не моделируется.
@@ -467,8 +427,8 @@
 
 ### Согласованное архитектурное направление:
 1. **Выбор оболочки** (после выбора элемента по п. 27): либо метод скачков $P_K = 1 - 1/J_K$ с рекурсивным делением остатка по L1/L2/L3 (скачки $J$ извлекаются из пар узлов краев п. 26), либо точные сечения подоболочек (EPDL97 / Scofield) как дополнительные столбцы на той же сетке — выбор на этапе проектирования.
-2. **Релаксация:** выход флуоресценции $\omega_s$, энергии линий и радиационные вероятности (Kα1, Kα2, Kβ1, Kβ2, опционально L-линии); Оже- и Костер–Крониг-переходы депонируются локально; каскад вакансий K → L — опционально.
-3. **Вторичный фотон:** изотропная эмиссия из точки взаимодействия, что требует нового механизма инжекции вторичных частиц в `ParticleBank` во время переноса с идентификатором родителя (влияет на `InitialState`, `HistoryAssemblerHandler` и схему HDF5).
+2. **Релаксация и сохранение энергии:** выход флуоресценции $\omega_s$, энергии линий и радиационные вероятности (Kα1, Kα2, Kβ1, Kβ2, опционально L-линии); при испускании характеристического кванта локальный депозит фотоэффекта уменьшается до $E_\gamma - E_{\text{флуор}}$; Оже- и Костер–Крониг-переходы депонируются локально; каскад вакансий K → L — опционально.
+3. **Вторичный источник излучения:** генерация характеристических фотонов оформляется как специализированный вид вторичного источника (с заделом под будущие источники $\alpha$-, $\beta$- и других вторичных излучений), переиспользующий таблицы Воза (`SourceBuffer` / `alias_tables`) из п. 15 и наследующий координаты, время и контекст истории родительской частицы.
 4. **Данные атомной релаксации** запекаются офлайн в HDF5 (источник — EADL / `xraylib` только в скрипте генерации, без зависимости во время выполнения).
 
 ### План реализации:
@@ -491,3 +451,44 @@
 
 ### План реализации:
 * Доработка `DatasetWriteBuffer.write_full_chunks` / `write_all` (откат `resize` по `try/finally`) и тест в `tests/data/test_dataset_write_buffer.py`; выполняется отдельной задачей после этапов 1–4 плана [`docs/plans/data_manager_write_buffer_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/data_manager_write_buffer_plan.md).
+
+---
+
+## 30. Верификационное исследование точности линейной и логарифмической интерполяции сечений и парциальных долей элементов
+
+> **Статус: отложено.**
+
+### Постановка задачи:
+* При переходе на компактную родную сетку NIST XCOM (`46` базовых регулярных узлов в диапазоне `[1 кэВ, 20 МэВ]` + пары узлов краев поглощения) для полных макроскопических сечений $\mu_p(E)$ используется кусочная логарифмическая (log-log) интерполяция, а при выборе элемента-мишени в `_sample_Z_scalar` (`ElementCSR.element_partial_fractions`) между узлами сетки применяется линейная комбинация нормированных узловых долей $w_{p,i}(t) = (1 - t)\,w_{p,i}(E_0) + t\,w_{p,i}(E_1)$.
+* Требуется провести количественное верификационное исследование и визуализацию различий между линейной и логарифмической схемами интерполяции:
+  1. Для полных и парциальных массовых/линейных коэффициентов ослабления ($\mu_{\text{pe}}, \mu_{\text{comp}}, \mu_{\text{coh}}, \mu_{\text{tot}}$) на компактной сетке NIST XCOM относительно эталонных плотных выборок NIST XCOM и теоретических параметризаций;
+  2. Для вероятностей выбора элемента-мишени $w_{p,i}(E)$ в сложных сцинтилляторах, полупроводниках и тканях (`NaI`, `CZT`, костная и мягкая ткань ИКРП): линейная интерполяция узловых долей $w_{p,i}^{\text{lin}}(t)$ против точного отношения кусочно-степенных (log-log) парциальных сечений $w_{p,i}^{\text{log-log}}(E) = \mu_{p,i}^{\text{log-log}}(E) / \sum_j \mu_{p,j}^{\text{log-log}}(E)$.
+
+### План реализации:
+1. Подготовить скрипт в `verification/` для расчета абсолютной и относительной погрешностей во всем диапазоне `[1 кэВ, 20 МэВ]` (с отдельным анализом межканальных участков между краями поглощения и окрестностей K/L/M-краев).
+2. Построить сравнительные графики сечений, парциальных долей $w_{p,i}(E)$ и кривых относительной/абсолютной ошибки для репрезентативных материалов (`Pb`, `W`, `I`, `NaI`, `CZT`, `Water`, `Cortical Bone`).
+3. Зафиксировать в отчете верификации максимальную, медианную и среднюю погрешности по энергетическим поддиапазонам.
+
+---
+
+## 31. Композиционная архитектура источников частиц и модель вторичного излучения (`SecondarySource`)
+
+> **Статус: спроектировано (спецификация в [`docs/plans/composable_sources_and_secondary_radiation_plan.md`](plans/composable_sources_and_secondary_radiation_plan.md)).**
+
+### Постановка задачи:
+* Текущий класс [`Source(CompositeNode)`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py) совмещает узел 3D-сцены, воксельную сетку и модель дискретного $\gamma$-излучения, а [`PointSource`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py) наследует `Source` с фиктивным 3D-массивом `(1, 1, 1)`.
+* Для поддержки вторичного излучения (характеристический рентген $K_\alpha/K_\beta/L$ после фотоэффекта, аннигиляционные кванты, тормозное излучение) и других видов первичного излучения ($\beta^\pm, \alpha$ с непрерывными и дискретными спектрами) требуется:
+  1. Уйти от наследования `PointSource(VoxelSource)` к композиции пространственного распределения и физической модели излучения (по аналогии с `Volume = CompositeNode + Geometry + Material`);
+  2. Выделить `SecondarySource` вне иерархии `CompositeNode`, исключив переполнение `ParticleBank` внутри `processes_kernels.py` и обеспечив физически точный пуассоновский розыгрыш времени испускания и угловой анизотропии на этапе `_replenish_bank`.
+
+### Согласованное архитектурное решение:
+1. **Композиция первичного источника `Source(CompositeNode)`:**
+   * `spatial: SpatialDistribution` (`PointDistribution` без массивов и вызовов ГСЧ, `VoxelDistribution` с таблицами Воза, в перспективе `AnalyticDistribution`);
+   * `channels: tuple[RadiationChannel, ...]`, где каждый канал задаёт `species: ParticleSpecies` (`PHOTON`, `ELECTRON`, `POSITRON`, `ALPHA`), `spectrum: EnergySpectrum` (`DiscreteSpectrum` на таблицах Воза линий или `ContinuousSpectrum` на таблицах Воза трапеций с аналитическим обращением внутри бина за $\mathcal{O}(1)$) и `angular: AngularDistribution` (`IsotropicAngular`, `ConeAngular`, `AnisotropicMultipoleAngular` с полиномами Лежандра $P_2, P_4$ относительно опорного орта $\vec{n}_{\text{ref}}$).
+2. **Независимый `SecondarySource` в контуре симуляции (вне `CompositeNode`):**
+   * Владеет предвыделенным SoA-буфером `SecondaryActivationBuffer` (`pos_x/y/z`, `dir_x/y/z`, `activation_time`, `parent_energy`, `parent_id`, `target_z`, `process_id`, `cursor`) и банком атомной релаксации `AtomicRelaxationBank` ($Z = 1..100$);
+   * Ядра `processes_kernels.py` при взаимодействии записывают только затравку активации в `SecondaryActivationBuffer`, не модифицируя `ParticleBank`;
+   * На этапе `_replenish_bank` ядро `inject_secondary_sources_kernel` первым разряжает `SecondaryActivationBuffer` в свободные слоты `ParticleBank`, разыгрывая время испускания $t_{\text{emit}} = t_{\text{act}} - \ln(1 - u)/\lambda_{\text{sec}}(Z, s)$ по экспоненциальному (пуассоновскому) закону распада атомной вакансии и направление вылета относительно импульса родителя $\vec{n}_{\text{ref}} = \vec{d}_{\text{parent}}$, после чего оставшиеся слоты дозаполняются первичными источниками.
+
+### План реализации:
+* Подробная спецификация SoA-структур, математических инвариантов, YAML-схем (`Roundtrip`) и 4-фазный план работ зафиксированы в [`docs/plans/composable_sources_and_secondary_radiation_plan.md`](plans/composable_sources_and_secondary_radiation_plan.md).

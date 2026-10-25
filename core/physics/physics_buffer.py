@@ -12,12 +12,15 @@ from core.other.typing_definitions import CFuncAddress, Charge, Float, Index
 
 class ElementCSR(NamedTuple):
     """
-    CSR-массивы элементного состава материалов (атомные номера Z и массовые доли).
+    CSR-представление элементного состава материалов: смещения element_offsets,
+    атомные номера element_Z и таблица нормированных парциальных долей элементов
+    element_partial_fractions формы (num_grid_rows, num_processes, max_elements)
+    на строках финальной энергетической сетки MaterialBank.
     """
 
     element_offsets: NDArray[Index]
     element_Z: NDArray[Charge]
-    element_fraction: NDArray[Float]
+    element_partial_fractions: NDArray[Float]
 
 
 class PhysicsBuffer(NamedTuple):

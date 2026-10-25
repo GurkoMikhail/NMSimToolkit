@@ -42,8 +42,10 @@ class TestStep5TransportLogic(unittest.TestCase):
         mat_info = np.zeros(2, dtype=MaterialInfoDType)
         mat_pointers = np.zeros(2, dtype=MaterialPointerDType)
         mat_pointers[0]['length'] = 2
+        mat_pointers[0]['lookup_offset'] = 0
         mat_pointers[1]['start_idx'] = 2
         mat_pointers[1]['length'] = 2
+        mat_pointers[1]['lookup_offset'] = 4
 
         physics_energy_grid = np.array([0.1, 10.0, 0.1, 10.0], dtype=Float)
         physics_lac_table = np.array([
@@ -51,14 +53,35 @@ class TestStep5TransportLogic(unittest.TestCase):
             [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]
         ], dtype=Float)
 
-        material_bank = MaterialBank(mat_info, mat_pointers, physics_energy_grid, physics_lac_table)
+        log_e_min = Float(np.log(0.1))
+        log_e_max = Float(np.log(10.0))
+        lookup_num_bins = 4
+        material_bank = MaterialBank(
+            mat_info_buffer=mat_info,
+            mat_pointers=mat_pointers,
+            physics_energy_grid=physics_energy_grid,
+            physics_lac_table=physics_lac_table,
+            physics_log_energy_grid=np.log(physics_energy_grid).astype(Float),
+            physics_log_lac_table=np.log(physics_lac_table).astype(Float),
+            lookup_bin_start=np.zeros(2 * lookup_num_bins, dtype=Index),
+            lookup_log_e_min=log_e_min,
+            lookup_inv_dlog_e=Float(lookup_num_bins / (log_e_max - log_e_min)),
+            lookup_num_bins=lookup_num_bins,
+            lookup_max_advance=0,
+        )
+        material_bank._validate()
         majorant_material_map = np.array([0, 1], dtype=Index)
         woodcock_function_pointers = np.zeros(2, dtype=CFuncAddress)
+
+        element_partial_fractions = np.zeros((4, 3, 2), dtype=Float)
+        element_partial_fractions[0:2, :, 0] = 1.0
+        element_partial_fractions[2:4, :, 0] = 0.5
+        element_partial_fractions[2:4, :, 1] = 0.5
 
         element_csr = ElementCSR(
             element_offsets=np.array([0, 1, 3], dtype=Index),
             element_Z=np.array([1, 6, 8], dtype=Charge),
-            element_fraction=np.array([1.0, 0.5, 0.5], dtype=Float)
+            element_partial_fractions=element_partial_fractions,
         )
 
         physics_buffer = PhysicsBuffer(
@@ -294,6 +317,19 @@ class TestStep5TransportLogic(unittest.TestCase):
         self.assertTrue(finished_event.wait(timeout=1.0))
         sender_thread.join(timeout=1.0)
         self.assertFalse(sender_thread.is_alive())
+
+    def test_batch_capacity_and_bank_consistency(self):
+        """Проверка совпадения batch_capacity с емкостью ParticleBank и выброса ValueError при расхождении."""
+        scene = CompositeNode()
+        bank = ParticleBank.allocate(32)
+        mgr = SimulationManager(scene=scene, particles_number=100, batch_capacity=32, bank=bank)
+        self.assertEqual(mgr.batch_capacity, 32)
+        self.assertEqual(mgr.bank.capacity, 32)
+
+        with self.assertRaises(ValueError):
+            SimulationManager(scene=scene, particles_number=100, batch_capacity=64, bank=bank)
+        with self.assertRaises(ValueError):
+            SimulationManager(scene=scene, particles_number=100, batch_capacity=0)
 
 
 if __name__ == '__main__':

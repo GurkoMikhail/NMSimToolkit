@@ -16,21 +16,33 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import time
-from typing import List, Tuple
+from typing import List
 
 from numba import njit
 import numpy as np
 from numpy.typing import NDArray
 
+from core.geometry.flattened_scene import FlattenedScene
 from core.geometry.geometry_compiler import GeometryCompiler
 from core.geometry.geometry_kernels import _box_intersect, _hex_prism_intersect, cast_path_kernel
 from core.materials.material_bank import MaterialBank
-from core.other.typing_definitions import Float, Index, Length, Species
-from core.other.vectors import Vector3DSoA
+from core.materials.materials import Material
+from core.other.typing_definitions import Float, Index
 from core.particles.particles import ParticleBank
 from core.physics.interaction_buffers import RNGContext, SimulationDataBuffer
 from core.physics.physics_compiler import PhysicsCompiler
-from core.physics.physics_kernels import _get_macroscopic_cross_sections
+from core.physics.physics_kernels import (
+    _compute_log_energy_and_bin,
+    _get_macroscopic_cross_sections,
+)
+from core.scene.nodes import CompositeNode
+from core.source.source_buffer import SourceBuffer
+from core.source.source_compiler import SourceCompiler
+from core.source.source_kernels import (
+    _sample_alias,
+    _sample_voxel_position,
+    inject_source_particles_kernel,
+)
 from core.transport.propagator import ParticlePropagator
 from core.transport.transport_buffer import TransportBuffer
 from settings.processes_settings import processes_list
@@ -56,114 +68,217 @@ class MicroBenchmarkRecord:
     speedup_factor: float
 
 
+@njit(cache=True, inline='always')
+def _reference_searchsorted_cross_sections(
+    energy: Float,
+    material_id: Index,
+    material_bank: MaterialBank,
+    out_lacs_slice: NDArray[Float],
+) -> None:
+    """
+    Эталонная реализация поиска интервала через np.searchsorted(..., side='right')
+    и кусочной log-log интерполяции на реальном MaterialBank (база до Фазы 3).
+    """
+    mat_pointers = material_bank.mat_pointers
+    grid = material_bank.physics_energy_grid
+    lacs = material_bank.physics_lac_table
+
+    pointer = mat_pointers[material_id]
+    start_idx = Index(pointer['start_idx'])
+    length = Index(pointer['length'])
+    num_procs = min(len(out_lacs_slice), lacs.shape[1])
+
+    if length <= 0:
+        for proc_idx in range(len(out_lacs_slice)):
+            out_lacs_slice[proc_idx] = 0.0
+    else:
+        mat_energy_grid = grid[start_idx : start_idx + length]
+        if energy < mat_energy_grid[0]:
+            for proc_idx in range(num_procs):
+                out_lacs_slice[proc_idx] = lacs[start_idx, proc_idx]
+        elif energy >= mat_energy_grid[length - 1]:
+            for proc_idx in range(num_procs):
+                out_lacs_slice[proc_idx] = lacs[start_idx + length - 1, proc_idx]
+        else:
+            idx = np.searchsorted(mat_energy_grid, energy, side='right')
+            if idx <= 0:
+                for proc_idx in range(num_procs):
+                    out_lacs_slice[proc_idx] = lacs[start_idx, proc_idx]
+            elif idx >= length:
+                for proc_idx in range(num_procs):
+                    out_lacs_slice[proc_idx] = lacs[start_idx + length - 1, proc_idx]
+            else:
+                row0 = start_idx + idx - 1
+                row1 = start_idx + idx
+                energy_low = mat_energy_grid[idx - 1]
+                energy_high = mat_energy_grid[idx]
+
+                if energy <= energy_low or energy_high <= energy_low:
+                    for proc_idx in range(num_procs):
+                        out_lacs_slice[proc_idx] = lacs[row0, proc_idx]
+                else:
+                    lin_fraction = (energy - energy_low) / (energy_high - energy_low)
+                    log_fraction = (
+                        (math.log(energy) - math.log(energy_low))
+                        / (math.log(energy_high) - math.log(energy_low))
+                        if energy_low > 0.0
+                        else 0.0
+                    )
+
+                    for proc_idx in range(num_procs):
+                        val_low = lacs[row0, proc_idx]
+                        val_high = lacs[row1, proc_idx]
+                        if val_low > 0.0 and val_high > 0.0 and energy_low > 0.0:
+                            log_val_low = math.log(val_low)
+                            log_val_high = math.log(val_high)
+                            out_lacs_slice[proc_idx] = math.exp(
+                                log_val_low + log_fraction * (log_val_high - log_val_low)
+                            )
+                        else:
+                            out_lacs_slice[proc_idx] = val_low + lin_fraction * (val_high - val_low)
+
+
 @njit(cache=True)
-def _bench_current_cross_sections_loop(
+def _bench_binary_search_cross_sections_loop(
     energies: NDArray[Float],
     mat_ids: NDArray[Index],
     material_bank: MaterialBank,
 ) -> Float:
-    """Пакетный вызов текущей функции _get_macroscopic_cross_sections (np.searchsorted)."""
+    """Пакетный вызов эталонного бинарного поиска np.searchsorted на реальном MaterialBank."""
     out_lacs = np.zeros(3, dtype=Float)
     acc = Float(0.0)
     for idx in range(energies.shape[0]):
-        _get_macroscopic_cross_sections(energies[idx], mat_ids[idx], material_bank, out_lacs)
+        _reference_searchsorted_cross_sections(energies[idx], mat_ids[idx], material_bank, out_lacs)
         acc = Float(acc + out_lacs[0] + out_lacs[1] + out_lacs[2])
     return acc
 
 
 @njit(cache=True)
-def _bench_o1_log_grid_cross_sections_loop(
+def _bench_two_level_cross_sections_loop(
     energies: NDArray[Float],
     mat_ids: NDArray[Index],
-    uniform_lac_table: NDArray[Float],
-    log_e_min: Float,
-    inv_dlog_e: Float,
-    grid_len: int,
+    material_bank: MaterialBank,
 ) -> Float:
-    """Пакетный вызов O(1) интерполяции сечений по равномерной логарифмической сетке без searchsorted."""
+    """
+    Пакетный вызов реального двухуровневого лог-индекса MaterialBank
+    (_compute_log_energy_and_bin + _get_macroscopic_cross_sections) без внутренних NRT_incref.
+    """
+    out_lacs = np.zeros(3, dtype=Float)
     acc = Float(0.0)
-    max_idx = grid_len - 2
     for idx in range(energies.shape[0]):
         energy = energies[idx]
-        mat_id = mat_ids[idx]
-        scaled = (math.log(energy) - log_e_min) * inv_dlog_e
-        bin_idx = int(scaled)
-        if bin_idx < 0:
-            bin_idx = 0
-            frac = Float(0.0)
-        elif bin_idx > max_idx:
-            bin_idx = max_idx
-            frac = Float(1.0)
-        else:
-            frac = Float(scaled - bin_idx)
-
-        row0 = mat_id * grid_len + bin_idx
-        row1 = row0 + 1
-        lac0 = uniform_lac_table[row0, 0] + frac * (uniform_lac_table[row1, 0] - uniform_lac_table[row0, 0])
-        lac1 = uniform_lac_table[row0, 1] + frac * (uniform_lac_table[row1, 1] - uniform_lac_table[row0, 1])
-        lac2 = uniform_lac_table[row0, 2] + frac * (uniform_lac_table[row1, 2] - uniform_lac_table[row0, 2])
-        acc = Float(acc + lac0 + lac1 + lac2)
+        log_e, log_bin = _compute_log_energy_and_bin(energy, material_bank)
+        _get_macroscopic_cross_sections(energy, log_e, log_bin, mat_ids[idx], material_bank, out_lacs)
+        acc = Float(acc + out_lacs[0] + out_lacs[1] + out_lacs[2])
     return acc
 
 
-def _build_vose_alias_tables(probabilities: NDArray[np.float64]) -> Tuple[NDArray[np.float64], NDArray[np.int64]]:
-    """Строит таблицы prob и alias для алгоритма Воза (Vose's Alias Method) за O(M)."""
-    num_items = probabilities.shape[0]
-    prob_table = np.zeros(num_items, dtype=np.float64)
-    alias_table = np.zeros(num_items, dtype=np.int64)
-    scaled_probs = probabilities * float(num_items)
-
-    small_list: List[int] = []
-    large_list: List[int] = []
-    for item_idx in range(num_items):
-        if scaled_probs[item_idx] < 1.0:
-            small_list.append(item_idx)
-        else:
-            large_list.append(item_idx)
-
-    while small_list and large_list:
-        less_idx = small_list.pop()
-        more_idx = large_list.pop()
-        prob_table[less_idx] = scaled_probs[less_idx]
-        alias_table[less_idx] = more_idx
-        scaled_probs[more_idx] = (scaled_probs[more_idx] + scaled_probs[less_idx]) - 1.0
-        if scaled_probs[more_idx] < 1.0:
-            small_list.append(more_idx)
-        else:
-            large_list.append(more_idx)
-
-    while large_list:
-        prob_table[large_list.pop()] = 1.0
-    while small_list:
-        prob_table[small_list.pop()] = 1.0
-
-    return prob_table, alias_table
+@njit(cache=True)
+def _bench_woodcock_pair_binary_search_loop(
+    energies: NDArray[Float],
+    maj_mat_ids: NDArray[Index],
+    vox_mat_ids: NDArray[Index],
+    material_bank: MaterialBank,
+) -> Float:
+    """Пакетный вызов пары запросов Вудкока (мажоранта + материал вокселя) через бинарный поиск np.searchsorted."""
+    out_lacs = np.zeros(3, dtype=Float)
+    acc = Float(0.0)
+    for idx in range(energies.shape[0]):
+        energy = energies[idx]
+        _reference_searchsorted_cross_sections(energy, maj_mat_ids[idx], material_bank, out_lacs)
+        acc = Float(acc + out_lacs[0] + out_lacs[1] + out_lacs[2])
+        _reference_searchsorted_cross_sections(energy, vox_mat_ids[idx], material_bank, out_lacs)
+        acc = Float(acc + out_lacs[0] + out_lacs[1] + out_lacs[2])
+    return acc
 
 
 @njit(cache=True)
-def _sample_vose_alias_positions_kernel(
-    voxel_origins: NDArray[np.float64],
-    prob_table: NDArray[np.float64],
-    alias_table: NDArray[np.int64],
-    rand_u1: NDArray[np.float64],
-    rand_u2: NDArray[np.float64],
-    jitter_xyz: NDArray[np.float64],
-    voxel_size: float,
-    out_x: NDArray[np.float64],
-    out_y: NDArray[np.float64],
-    out_z: NDArray[np.float64],
+def _bench_woodcock_pair_two_level_loop(
+    energies: NDArray[Float],
+    maj_mat_ids: NDArray[Index],
+    vox_mat_ids: NDArray[Index],
+    material_bank: MaterialBank,
+) -> Float:
+    """
+    Пакетный вызов пары запросов Вудкока (мажоранта + материал вокселя) через реальный
+    двухуровневый лог-индекс MaterialBank с однократным расчетом (log_e, log_bin) на шаг частицы.
+    """
+    out_lacs = np.zeros(3, dtype=Float)
+    acc = Float(0.0)
+    for idx in range(energies.shape[0]):
+        energy = energies[idx]
+        log_e, log_bin = _compute_log_energy_and_bin(energy, material_bank)
+        _get_macroscopic_cross_sections(energy, log_e, log_bin, maj_mat_ids[idx], material_bank, out_lacs)
+        acc = Float(acc + out_lacs[0] + out_lacs[1] + out_lacs[2])
+        _get_macroscopic_cross_sections(energy, log_e, log_bin, vox_mat_ids[idx], material_bank, out_lacs)
+        acc = Float(acc + out_lacs[0] + out_lacs[1] + out_lacs[2])
+    return acc
+
+
+def _extract_scene_unique_materials(scene_root: CompositeNode) -> List[Material]:
+    """Извлекает уникальные материалы из всех объемов дерева сцены."""
+    flat_list = FlattenedScene(scene_root).flat_list
+    all_materials: List[Material] = []
+    for vol, _, _ in flat_list:
+        all_materials.extend(vol.material_list)
+    unique_materials: List[Material] = []
+    seen_ids = set()
+    for mat in all_materials:
+        if mat.ID not in seen_ids:
+            seen_ids.add(mat.ID)
+            unique_materials.append(mat)
+    return unique_materials
+
+
+@njit(cache=True)
+def _bench_source_buffer_voxel_positions_kernel(
+    source_buffer: SourceBuffer,
+    source_idx: Index,
+    num_samples: int,
+    rng_context: RNGContext,
+    out_x: NDArray[Float],
+    out_y: NDArray[Float],
+    out_z: NDArray[Float],
 ) -> None:
-    """Генерирует глобальные координаты в SoA-массивы за O(1) методом Воза без промежуточных аллокаций."""
-    num_samples = rand_u1.shape[0]
-    num_voxels = prob_table.shape[0]
+    """Генерирует глобальные координаты в SoA-массивы за O(1) реальными ядрами SourceBuffer без аллокаций."""
+    vox_start = source_buffer.voxel_offsets[source_idx]
+    vox_end = source_buffer.voxel_offsets[source_idx + 1]
+    vox_count = vox_end - vox_start
+
+    voxel_index = source_buffer.voxel_index
+    voxel_prob = source_buffer.voxel_prob
+    voxel_alias = source_buffer.voxel_alias
+
+    ny = source_buffer.grid_shape[source_idx, 1]
+    nz = source_buffer.grid_shape[source_idx, 2]
+    voxel_sz = source_buffer.voxel_size[source_idx]
+    half_x = source_buffer.half_size[source_idx, 0]
+    half_y = source_buffer.half_size[source_idx, 1]
+    half_z = source_buffer.half_size[source_idx, 2]
+    jitter_x = source_buffer.cell_jitter[source_idx, 0]
+    jitter_y = source_buffer.cell_jitter[source_idx, 1]
+    local_to_global = source_buffer.local_to_global
+
     for sample_idx in range(num_samples):
-        bin_idx = int(rand_u1[sample_idx] * num_voxels)
-        if bin_idx >= num_voxels:
-            bin_idx = num_voxels - 1
-        chosen_voxel = bin_idx if rand_u2[sample_idx] < prob_table[bin_idx] else alias_table[bin_idx]
-        out_x[sample_idx] = voxel_origins[chosen_voxel, 0] + jitter_xyz[sample_idx, 0] * voxel_size
-        out_y[sample_idx] = voxel_origins[chosen_voxel, 1] + jitter_xyz[sample_idx, 1] * voxel_size
-        out_z[sample_idx] = voxel_origins[chosen_voxel, 2] + jitter_xyz[sample_idx, 2] * voxel_size
+        chosen_vox = _sample_alias(voxel_prob, voxel_alias, vox_start, vox_count, rng_context)
+        flat_idx = Index(voxel_index[chosen_vox])
+        pos_x, pos_y, pos_z = _sample_voxel_position(
+            flat_idx,
+            ny,
+            nz,
+            voxel_sz,
+            half_x,
+            half_y,
+            half_z,
+            local_to_global,
+            source_idx,
+            rng_context,
+            jitter_x,
+            jitter_y,
+        )
+        out_x[sample_idx] = pos_x
+        out_y[sample_idx] = pos_y
+        out_z[sample_idx] = pos_z
 
 
 @njit(cache=True)
@@ -226,47 +341,67 @@ def run_micro_benchmarks_suite() -> List[MicroBenchmarkRecord]:
     physics_buffer = PhysicsCompiler().compile_scene(workload.root_scene, propagator.processes)
     material_bank = physics_buffer.material_bank
 
-    # --- M1: Интерполяция макроскопических сечений (np.searchsorted vs O(1) лог-сетка) ---
+    # --- M1: Интерполяция макроскопических сечений на реальном MaterialBank (np.searchsorted vs 2-ур. лог-индекс) ---
     n_ops_m1 = 5_000_000
     test_energies = rng.uniform(0.015, 0.300, size=n_ops_m1).astype(Float)
-    num_mats = len(material_bank.mat_pointers)
-    test_mat_ids = rng.integers(0, max(1, num_mats), size=n_ops_m1, dtype=Index)
+    unique_mats = _extract_scene_unique_materials(workload.root_scene)
+    valid_mat_ids = np.array([int(mat.ID) for mat in unique_mats], dtype=Index)
+    test_mat_ids = rng.choice(valid_mat_ids, size=n_ops_m1).astype(Index)
+    test_vox_mat_ids = rng.choice(valid_mat_ids, size=n_ops_m1).astype(Index)
+    curr_avg_nodes = float(np.mean(material_bank.mat_pointers[valid_mat_ids]["length"]))
 
-    grid_len = 1024
-    e_min = 0.001
-    e_max = 100.0
-    log_e_min = Float(math.log(e_min))
-    inv_dlog_e = Float((grid_len - 1) / (math.log(e_max) - math.log(e_min)))
-    uniform_lac_table = np.ones((max(1, num_mats) * grid_len, 3), dtype=Float)
-
-    # Прогрев M1
-    _bench_current_cross_sections_loop(test_energies[:1000], test_mat_ids[:1000], material_bank)
-    _bench_o1_log_grid_cross_sections_loop(
-        test_energies[:1000], test_mat_ids[:1000], uniform_lac_table, log_e_min, inv_dlog_e, grid_len
+    # Прогрев JIT-ядер M1 на реальном MaterialBank
+    _bench_binary_search_cross_sections_loop(test_energies[:1000], test_mat_ids[:1000], material_bank)
+    _bench_two_level_cross_sections_loop(test_energies[:1000], test_mat_ids[:1000], material_bank)
+    _bench_woodcock_pair_binary_search_loop(
+        test_energies[:1000], test_mat_ids[:1000], test_vox_mat_ids[:1000], material_bank
+    )
+    _bench_woodcock_pair_two_level_loop(
+        test_energies[:1000], test_mat_ids[:1000], test_vox_mat_ids[:1000], material_bank
     )
 
     t0 = time.perf_counter()
-    _bench_current_cross_sections_loop(test_energies, test_mat_ids, material_bank)
-    t_m1_curr = max(time.perf_counter() - t0, 1e-9)
+    _bench_binary_search_cross_sections_loop(test_energies, test_mat_ids, material_bank)
+    t_m1_bin_single = max(time.perf_counter() - t0, 1e-9)
 
     t0 = time.perf_counter()
-    _bench_o1_log_grid_cross_sections_loop(
-        test_energies, test_mat_ids, uniform_lac_table, log_e_min, inv_dlog_e, grid_len
-    )
-    t_m1_alt = max(time.perf_counter() - t0, 1e-9)
+    _bench_two_level_cross_sections_loop(test_energies, test_mat_ids, material_bank)
+    t_m1_log_single = max(time.perf_counter() - t0, 1e-9)
+
+    t0 = time.perf_counter()
+    _bench_woodcock_pair_binary_search_loop(test_energies, test_mat_ids, test_vox_mat_ids, material_bank)
+    t_m1_bin_pair = max(time.perf_counter() - t0, 1e-9)
+
+    t0 = time.perf_counter()
+    _bench_woodcock_pair_two_level_loop(test_energies, test_mat_ids, test_vox_mat_ids, material_bank)
+    t_m1_log_pair = max(time.perf_counter() - t0, 1e-9)
 
     records.append(
         MicroBenchmarkRecord(
-            benchmark_id="M1_CrossSections",
-            title="Интерполяция макроскопических сечений LAC (5 млн запросов)",
+            benchmark_id="M1a_LogIndexSingle",
+            title=f"Интерполяция LAC в MaterialBank (~{curr_avg_nodes:.0f} узлов, одиночный запрос, 5 млн зап.)",
             operations_count=n_ops_m1,
-            current_label="np.searchsorted O(log K)",
-            alternative_label="Равномерная лог-сетка O(1)",
-            current_time=t_m1_curr,
-            alternative_time=t_m1_alt,
-            current_ns_per_op=t_m1_curr * 1e9 / n_ops_m1,
-            alternative_ns_per_op=t_m1_alt * 1e9 / n_ops_m1,
-            speedup_factor=t_m1_curr / t_m1_alt,
+            current_label=f"np.searchsorted O(log K) (~{curr_avg_nodes:.0f} узлов)",
+            alternative_label=f"2-ур. лог-индекс O(1) ({material_bank.lookup_num_bins} корзин)",
+            current_time=t_m1_bin_single,
+            alternative_time=t_m1_log_single,
+            current_ns_per_op=t_m1_bin_single * 1e9 / n_ops_m1,
+            alternative_ns_per_op=t_m1_log_single * 1e9 / n_ops_m1,
+            speedup_factor=t_m1_bin_single / t_m1_log_single,
+        )
+    )
+    records.append(
+        MicroBenchmarkRecord(
+            benchmark_id="M1b_LogIndexWoodcockPair",
+            title=f"Пара запросов Вудкока (мажоранта + воксель, общий log(E), ~{curr_avg_nodes:.0f} узлов, 5 млн шагов)",
+            operations_count=n_ops_m1,
+            current_label="2x np.searchsorted + 2x log(E)",
+            alternative_label="1x log(E) + 2x _locate_row (MaterialBank)",
+            current_time=t_m1_bin_pair,
+            alternative_time=t_m1_log_pair,
+            current_ns_per_op=t_m1_bin_pair * 1e9 / n_ops_m1,
+            alternative_ns_per_op=t_m1_log_pair * 1e9 / n_ops_m1,
+            speedup_factor=t_m1_bin_pair / t_m1_log_pair,
         )
     )
 
@@ -322,32 +457,59 @@ def run_micro_benchmarks_suite() -> List[MicroBenchmarkRecord]:
 
     # --- M3: Генерация позиций первичных частиц в воксельном фантоме (rng.choice vs Vose's Alias) ---
     n_samples_m3 = 500_000
-    voxel_origins = np.ascontiguousarray(workload.source_node.emission_table[0], dtype=np.float64)
-    voxel_probs = np.ascontiguousarray(workload.source_node.emission_table[1], dtype=np.float64)
-    prob_table, alias_table = _build_vose_alias_tables(voxel_probs)
+    active_sources = SourceCompiler().compile_scene(workload.root_scene)
+    source_buffer = SourceCompiler().compile(active_sources)
 
-    out_x = np.empty(n_samples_m3, dtype=np.float64)
-    out_y = np.empty(n_samples_m3, dtype=np.float64)
-    out_z = np.empty(n_samples_m3, dtype=np.float64)
+    vox_indices = workload.source_node.voxel_indices
+    voxel_probs = np.ascontiguousarray(workload.source_node.voxel_probabilities, dtype=np.float64)
+    ix_ref, iy_ref, iz_ref = np.unravel_index(vox_indices, dist_3d.shape)
+    half_sz_ref = size_vec / 2.0
+    voxel_origins = np.ascontiguousarray(
+        np.column_stack(
+            (
+                ix_ref * voxel_sz - half_sz_ref[0],
+                iy_ref * voxel_sz - half_sz_ref[1],
+                iz_ref * voxel_sz - half_sz_ref[2],
+            )
+        ),
+        dtype=np.float64,
+    )
 
-    # Прогрев JIT для Воза
-    u1_warm = rng.random(100)
-    u2_warm = rng.random(100)
-    jit_warm = rng.random((100, 3))
-    _sample_vose_alias_positions_kernel(
-        voxel_origins, prob_table, alias_table, u1_warm, u2_warm, jit_warm, voxel_sz, out_x[:100], out_y[:100], out_z[:100]
+    out_x = np.empty(n_samples_m3, dtype=Float)
+    out_y = np.empty(n_samples_m3, dtype=Float)
+    out_z = np.empty(n_samples_m3, dtype=Float)
+    m3_rng_ctx = RNGContext.from_numpy_rng(rng)
+
+    # Прогрев JIT для боевого ядра Воза
+    _bench_source_buffer_voxel_positions_kernel(
+        source_buffer,
+        Index(0),
+        100,
+        m3_rng_ctx,
+        out_x[:100],
+        out_y[:100],
+        out_z[:100],
     )
 
     t0 = time.perf_counter()
-    _ = workload.source_node.generate_position(n_samples_m3)
+    chosen_origins = rng.choice(voxel_origins, size=n_samples_m3, p=voxel_probs)
+    local_positions = chosen_origins + rng.uniform(
+        (0.0, 0.0, 0.0),
+        (voxel_sz, voxel_sz, voxel_sz),
+        size=(n_samples_m3, 3),
+    )
+    _ = workload.source_node.convert_to_global_position(local_positions.astype(Float))
     t_m3_curr = max(time.perf_counter() - t0, 1e-9)
 
     t0 = time.perf_counter()
-    u1_arr = rng.random(n_samples_m3)
-    u2_arr = rng.random(n_samples_m3)
-    jitter_arr = rng.random((n_samples_m3, 3))
-    _sample_vose_alias_positions_kernel(
-        voxel_origins, prob_table, alias_table, u1_arr, u2_arr, jitter_arr, voxel_sz, out_x, out_y, out_z
+    _bench_source_buffer_voxel_positions_kernel(
+        source_buffer,
+        Index(0),
+        n_samples_m3,
+        m3_rng_ctx,
+        out_x,
+        out_y,
+        out_z,
     )
     t_m3_alt = max(time.perf_counter() - t0, 1e-9)
 
@@ -493,24 +655,15 @@ def run_micro_benchmarks_suite() -> List[MicroBenchmarkRecord]:
     m7_rng_ctx = RNGContext.from_numpy_rng(rng)
     propagator.transport_buffer = TransportBuffer.allocate(n_particles_m7, len(propagator.processes))
 
-    pos_m7 = workload.source_node.generate_position(n_particles_m7)
-    dir_m7 = workload.source_node.generate_direction(n_particles_m7)
-    en_m7 = workload.source_node.generate_energy(n_particles_m7)
-    m7_bank.inject_particles(
-        species=np.zeros(n_particles_m7, dtype=Species),
-        position=Vector3DSoA(
-            x=pos_m7[:, 0].astype(Length),
-            y=pos_m7[:, 1].astype(Length),
-            z=pos_m7[:, 2].astype(Length),
-        ),
-        direction=Vector3DSoA(
-            x=dir_m7[:, 0].astype(Float),
-            y=dir_m7[:, 1].astype(Float),
-            z=dir_m7[:, 2].astype(Float),
-        ),
-        energy=en_m7,
-        emission_time=np.zeros(n_particles_m7, dtype=Float),
-        distance_traveled=np.zeros(n_particles_m7, dtype=Length),
+    inject_source_particles_kernel(
+        m7_bank,
+        source_buffer,
+        Index(0),
+        Index(n_particles_m7),
+        Float(0.0),
+        Float(1.0),
+        m7_rng_ctx,
+        Index(0),
     )
     active_m7 = m7_bank.active_indices
 

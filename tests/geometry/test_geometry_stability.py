@@ -51,7 +51,7 @@ class TestCoreHotfixStability(unittest.TestCase):
     def test_source_zero_activity_and_normalization(self):
         """
         Проверка: Источник излучения с нулевой активностью должен выбрасывать ValueError (DbC-контракт),
-        а для ненулевого распределения вероятности в emission_table должны строго суммироваться к 1.0.
+        а для ненулевого распределения вероятности в voxel_probabilities должны строго суммироваться к 1.0.
         """
         # 1. Нулевое распределение
         zero_dist = np.zeros((4, 4, 4), dtype=np.float32)
@@ -61,12 +61,12 @@ class TestCoreHotfixStability(unittest.TestCase):
         # 2. Неоднородное распределение и динамическое обновление
         dist = np.array([[[0.0, 1.0], [2.0, 3.0]]], dtype=np.float32)
         src2 = Source(distribution=dist, voxel_size=1.0 * units.mm)
-        self.assertAlmostEqual(float(np.sum(src2.emission_table[1])), 1.0, places=6)
+        self.assertAlmostEqual(float(np.sum(src2.voxel_probabilities)), 1.0, places=6)
 
         # Проверка сеттера voxel_size
         src2.voxel_size = 2.5 * units.mm
         self.assertAlmostEqual(float(src2.voxel_size), 2.5 * units.mm)
-        self.assertAlmostEqual(float(np.sum(src2.emission_table[1])), 1.0, places=6)
+        self.assertAlmostEqual(float(np.sum(src2.voxel_probabilities)), 1.0, places=6)
 
     def test_scene_builder_square_collimator(self):
         """

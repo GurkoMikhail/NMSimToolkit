@@ -46,7 +46,10 @@ class ParticlePropagator:
         )
         self.rng = np.random.default_rng() if rng is None else rng
 
-        self.processes = [process_cls(resolved_database, self.rng) for process_cls in resolved_processes]
+        self.processes = [
+            process_cls(resolved_database, self.rng, process_col_idx=Index(col_idx))
+            for col_idx, process_cls in enumerate(resolved_processes)
+        ]
         self.process_ids = np.array(
             [proc.process_id if proc.process_id is not None else -1 for proc in self.processes],
             dtype=Index,
@@ -105,7 +108,7 @@ class ParticlePropagator:
         )
 
         # 4. Уплотнение потока (Stream Compaction) и диспетчеризация по ядрам процессов
-        for process in self.processes:
+        for col_idx, process in enumerate(self.processes):
             mask = self.transport_buffer.process_ids[active_indices] == process.process_id
             target_indices = active_indices[mask]
 
@@ -117,6 +120,7 @@ class ParticlePropagator:
                     physics_buffer,
                     self.transport_buffer.material_ids,
                     rng_ctx,
+                    process_col_idx=Index(col_idx),
                 )
 
 

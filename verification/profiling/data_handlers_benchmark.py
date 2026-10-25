@@ -314,7 +314,6 @@ def run_single_handler_benchmark(
         cold_compile_sec = float(measured_cold)
 
     # 1. Синхронный профилировочный прогон для точного разделения времени
-    workload.source_node.rng = np.random.default_rng(seed)
     propagator_inst.transport_buffer = TransportBuffer.allocate(0, len(propagator_inst.processes))
 
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -369,7 +368,6 @@ def run_single_handler_benchmark(
     transport_elapsed = max(0.0, total_sync_elapsed - float(sync_manager.handler_total_time))
 
     # 2. Штатный двухпоточный прогон (использует уже прогретый propagator_inst)
-    workload.source_node.rng = np.random.default_rng(seed)
     propagator_inst.transport_buffer = TransportBuffer.allocate(0, len(propagator_inst.processes))
 
     with tempfile.TemporaryDirectory() as tmp_dir_thread:

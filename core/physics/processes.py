@@ -6,10 +6,10 @@
 from abc import ABC
 from typing import Any, Optional
 
-import hepunits as units
 import numpy as np
 from numpy.typing import NDArray
 
+from core.materials.attenuation_database import AttenuationDataBase
 from core.materials.attenuation_functions import AttenuationFunction
 from core.other.typing_definitions import Float, Index, ProcessID
 from core.particles.particles import ParticleBank
@@ -28,24 +28,27 @@ class Process(ABC):
     """Абстрактный базовый класс физического процесса взаимодействия частиц с веществом."""
 
     process_id: Optional[ProcessID] = None
+    process_col_idx: Index = Index(0)
     invalidates_navigation: bool = False
     rng: np.random.Generator
     _energy_range: NDArray[Float]
     attenuation_function: AttenuationFunction
-    attenuation_database: Any
+    attenuation_database: AttenuationDataBase
     _kernel: Any = None
 
     def __init__(
         self,
-        attenuation_database: Optional[Any] = None,
+        attenuation_database: Optional[AttenuationDataBase] = None,
         rng: Optional[np.random.Generator] = None,
+        process_col_idx: Index = Index(0),
     ) -> None:
         """Инициализирует физический процесс и строит функцию ослабления на сетке энергий."""
         self.attenuation_database = (
             settings.attenuation_database if attenuation_database is None else attenuation_database
         )
         self.rng = np.random.default_rng() if rng is None else rng
-        self._energy_range = np.array([1.0 * units.keV, 20.0 * units.MeV], dtype=Float)
+        self.process_col_idx = Index(process_col_idx)
+        self._energy_range = np.copy(self.attenuation_database.energy_range)
         self._construct_attenuation_function()
 
     def _construct_attenuation_function(self) -> None:
@@ -63,7 +66,16 @@ class Process(ABC):
 
     @energy_range.setter
     def energy_range(self, value: NDArray[Float]) -> None:
-        self._energy_range = np.asarray(value, dtype=Float)
+        new_range = np.asarray(value, dtype=Float)
+        if new_range.shape != (2,) or new_range[0] <= 0.0 or new_range[0] >= new_range[1]:
+            raise ValueError(f"Некорректный энергетический диапазон процесса '{self.name}': {new_range}.")
+        db_range = self.attenuation_database.energy_range
+        if new_range[0] < db_range[0] or new_range[1] > db_range[1]:
+            raise ValueError(
+                f"Энергетический диапазон процесса '{self.name}' ({new_range}) выходит за границы "
+                f"диапазона таблиц базы данных ({db_range})."
+            )
+        self._energy_range = new_range
         self._construct_attenuation_function()
 
     def apply(
@@ -74,8 +86,10 @@ class Process(ABC):
         physics_buffer: PhysicsBuffer,
         material_ids: NDArray[Index],
         rng_ctx: RNGContext,
+        process_col_idx: Optional[Index] = None,
     ) -> None:
         """Применяет Numba-ядро процесса к выбранным частицам и обновляет состояние навигации."""
+        col_idx = self.process_col_idx if process_col_idx is None else Index(process_col_idx)
         self._kernel(
             bank.state,
             bank.initial_state.ID,
@@ -85,6 +99,7 @@ class Process(ABC):
             interaction_buffer,
             physics_buffer,
             rng_ctx,
+            col_idx,
         )
         if self.invalidates_navigation:
             update_navigation_state_rotate_kernel(bank.navigation_state, target_indices)
@@ -99,8 +114,9 @@ class PhotoelectricEffect(Process):
         self,
         attenuation_database: Optional[Any] = None,
         rng: Optional[np.random.Generator] = None,
+        process_col_idx: Index = Index(0),
     ) -> None:
-        super().__init__(attenuation_database, rng)
+        super().__init__(attenuation_database, rng, process_col_idx=process_col_idx)
         self._kernel = make_photoelectric_kernel(self.process_id)
 
 
@@ -114,14 +130,10 @@ class CoherentScattering(Process):
         self,
         attenuation_database: Optional[Any] = None,
         rng: Optional[np.random.Generator] = None,
+        process_col_idx: Index = Index(0),
     ) -> None:
-        super().__init__(attenuation_database, rng)
+        super().__init__(attenuation_database, rng, process_col_idx=process_col_idx)
         self._kernel = make_coherent_kernel(self.process_id)
-
-    def generate_phi(self, size: int) -> NDArray[Float]:
-        """Генерирует азимутальный угол рассеяния phi равномерно на интервале [-pi, pi]."""
-        phi = np.pi * (self.rng.random(size) * 2.0 - 1.0)
-        return np.asarray(phi, dtype=Float)
 
 
 class ComptonScattering(CoherentScattering):
@@ -134,18 +146,10 @@ class ComptonScattering(CoherentScattering):
         self,
         attenuation_database: Optional[Any] = None,
         rng: Optional[np.random.Generator] = None,
+        process_col_idx: Index = Index(0),
     ) -> None:
-        super().__init__(attenuation_database, rng)
+        super().__init__(attenuation_database, rng, process_col_idx=process_col_idx)
         self._kernel = make_compton_kernel(self.process_id)
-
-    def calculate_energy_deposit(
-        self, theta: NDArray[Float], particle_energy: NDArray[Float]
-    ) -> NDArray[Float]:
-        """Вычисляет потерю энергии фотона при комптоновском рассеянии на угол theta."""
-        reduced_energy = particle_energy / (0.510998910 * units.MeV)
-        k1_cos = reduced_energy * (1.0 - np.cos(theta))
-        energy_deposit = particle_energy * k1_cos / (1.0 + k1_cos)
-        return np.asarray(energy_deposit, dtype=Float)
 
 
 class PairProduction(Process):

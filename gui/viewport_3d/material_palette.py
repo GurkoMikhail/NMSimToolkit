@@ -17,7 +17,9 @@ import numpy as np
 import hepunits as units
 import vtk
 
+from core.materials.attenuation_functions import fast_interp_scalar
 from core.materials.materials import Material
+from core.other.typing_definitions import Float
 import settings.database_setting as database_setting
 
 _logger = logging.getLogger(__name__)
@@ -263,23 +265,20 @@ def compute_material_linear_attenuation(
             f"Материал '{material_name}' отсутствует в базе данных ослабления NIST."
         )
 
-    energy_table_scale = float(energy / units.MeV)
+    energy_table_scale = Float(energy / units.MeV)
     mac_table = attenuations_db[target_material]
-    energy_array = mac_table['Energy']
+    energy_array = np.ascontiguousarray(mac_table['Energy'], dtype=Float)
     coefficients_table = mac_table['Coefficient']
 
     field_names = coefficients_table.dtype.names
     if not field_names:
         return 0.0
 
-    total_mass_attenuation_array = np.zeros_like(energy_array, dtype=np.float64)
+    interpolated_mass_coeff = 0.0
     for process_name in field_names:
-        total_mass_attenuation_array = total_mass_attenuation_array + np.asarray(
-            coefficients_table[process_name],
-            dtype=np.float64,
-        )
+        process_array = np.ascontiguousarray(coefficients_table[process_name], dtype=Float)
+        interpolated_mass_coeff += float(fast_interp_scalar(energy_table_scale, energy_array, process_array))
 
-    interpolated_mass_coeff = float(np.interp(energy_table_scale, energy_array, total_mass_attenuation_array))
     linear_attenuation_internal = interpolated_mass_coeff * target_material.density
     linear_attenuation = float(linear_attenuation_internal / (1.0 / units.mm))
     return max(0.0, linear_attenuation)

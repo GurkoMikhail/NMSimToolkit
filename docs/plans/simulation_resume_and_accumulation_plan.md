@@ -11,56 +11,54 @@
 
 ## 2. Декомпозиция изменений по компонентам
 
-### Этап 1. Унификация ГСЧ и возврат оригинальной логики полного батча (`core/transport/simulation_managers.py`, `core/config/simulation_worker.py`)
+### Этап 1. Единый ГСЧ симуляции и точное усечение по `stop_time` (`core/transport/simulation_managers.py`, `core/source/source_kernels.py`)
 
-1. **Единый генератор случайных чисел (`rng`) для транспорта и всех источников:**
-   * В [`SimulationManager.__init__()`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L104-L112) удалить вызов `base_rng.spawn(1 + len(self.active_sources))`.
-   * Использовать единый экземпляр `self.rng` (созданный из `seed` или переданный через `propagator.rng`):
-     * `self.propagator.rng = self.rng`
-     * для каждого физического процесса в `self.propagator.processes`: `process.rng = self.rng`
-     * для каждого источника в `self.active_sources`: `source_node.rng = self.rng`
-     * `self.rng_ctx = RNGContext.from_numpy_rng(self.rng)`
-   * Так как `_replenish_bank()` и `propagator.step()` выполняются строго последовательно в одном потоке, единый `self.rng` полностью детерминирован и описывается **одним-единственным состоянием `self.rng.bit_generator.state`**.
+1. **Единый детерминированный генератор случайных чисел (`self.rng` / `self.rng_ctx`):**
+   * В `SimulationManager` используется единый генератор `self.rng` и его контекст `self.rng_ctx = RNGContext.from_numpy_rng(self.rng)` на весь поток симуляции:
+     * `self.rng_ctx` передается и в `@njit`-ядро пуассоновской инжекции первичных частиц [`inject_poisson_sources_kernel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/source_kernels.py), и в `ParticlePropagator.step` / физические процессы (`PhotoelectricEffect`, `ComptonScattering`, `CoherentScattering`).
+   * Благодаря проверке наличия свободного слота в `ParticleBank` **до** генерации кандидата распада последовательность рожденных частиц (`InitialState`) на прямом цикле инжекции побитово не зависит от размера батча (`batch_capacity`).
 
-2. **Возврат оригинальной логики полного батча (Вариант А — без искусственной обрезки `delta_time` по `stop_time`):**
-   * В [`SimulationManager._calculate_time_step()`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L298-L300) убрать искусственный клиппинг `min(delta_time, Float(self.stop_time - self.global_timer))`.
-   * Шаг времени $\Delta t$ всегда вычисляется методом Ньютона-Рафсона ровно под заполнение всех свободных слотов банка `num_to_inject = self.bank.capacity - num_active`.
-   * В [`SimulationManager._distribute_quotas()`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py#L301-L320) распределять квоты строго на `num_to_inject` частиц.
-   * На последнем шаге перед завершением `self.global_timer` естественным образом слегка перескакивает за `self.stop_time` (например, останавливается на `10.00034 с` при `stop_time = 10.0 с`), после чего условие `self.global_timer < self.stop_time` прекращает генерацию новых частиц, а активные частицы в банке долетают до конца.
-   * *(Примечание для синтетических тестов с микро-активностью вроде `test_simulation_manager_termination_no_hang`: скорректировать параметры теста так, чтобы `particles_number` соответствовал активности и времени).*
+2. **Пуассоновский поток распадов (прореживание Льюиса–Шедлера) и точная обрезка по `stop_time`:**
+   * Методы `_calculate_time_step` (решатель Ньютона) и `_distribute_quotas` полностью удалены.
+   * На каждом вызове `_replenish_bank()` ядро `inject_poisson_sources_kernel` генерирует времена кандидатов $t \leftarrow t_{\text{last}} - \ln(1 - u_1) / A_{\max}$ с постоянной мажорантой $A_{\max} = \sum_s A_{0,s} e^{-\lambda_s t_{\text{ref}}}$ ($t_{\text{ref}}$ фиксируется в начале первого сегмента).
+   * Как только очередной кандидат удовлетворяет $t \ge \text{stop\_time}$, он **не** разыгрывает прореживание и параметры частицы, а сохраняется в `pending_arrival_time = t`; таймер `global_timer` устанавливается строго в `stop_time`, и генерация новых частиц на текущем этапе прекращается (все активные частицы в банке долетают до конца).
 
 3. **Поддержка старта `SimulationManager` с сохраненного состояния (Checkpoint State):**
-   * Добавить в `SimulationManager.__init__()` опциональные параметры восстановления:
-     * `initial_particle_id: int = 0` — записывается в `self.bank.count_array[0] = initial_particle_id`, чтобы сквозная нумерация `particle_ID` продолжалась без коллизий (`N, N+1, ...`);
-     * `rng_state: Optional[Dict[str, Any]] = None` — если передан, восстанавливает `self.rng.bit_generator.state = rng_state` до создания `self.rng_ctx`.
+   * В `SimulationManager.__init__(..., resume_state: Optional[Mapping[str, Any]] = None)` и методе `restore_checkpoint(resume_state)` поддерживается компактное восстановление состояния из словаря чекпоинта:
+     * `initial_particle_id: int` — записывается в `self.bank.count_array[0] = initial_particle_id` для сквозной нумерации `particle_ID` без коллизий;
+     * `rng_state: Dict[str, Any]` — восстанавливает состояние единого `self.rng`;
+     * `t_ref: Float | float` — опорное время мажоранты $A_{\max}$ первого сегмента;
+     * `t_last: Float | float` — время последнего кандидата $< \text{stop\_time}$;
+     * `pending_arrival_time: Float | float` — первый отложенный кандидат $t \ge \text{stop\_time}$ предыдущего сегмента.
 
 ---
 
-### Этап 2. Сохранение финального слепка состояния в HDF5 (`core/data/data_manager.py`, `core/config/simulation_worker.py`)
+### Этап 2. Сохранение финального слепка состояния в HDF5 (`core/data/data_manager.py`, `core/data/metadata_collector.py`, `core/config/simulation_worker.py`)
 
 1. **Фиксация фактических итогов работы `SimulationManager` при финализации:**
-   По завершении `manager.join()` в `simulation_worker_task` извлекать из `manager`:
+   По завершении `manager.join()` в `simulation_worker_task` извлекаются:
    * `actual_start_time = float(effective_start_time)`;
-   * `actual_stop_time = float(manager.global_timer)`;
+   * `actual_stop_time = float(manager.global_timer)` (в режиме `stop_time` в точности равен `stop_time`);
    * `actual_frame_duration = (actual_stop_time - actual_start_time) / float(units.s)`;
    * `emitted_particles_in_task = int(manager.bank.count) - int(initial_particle_id)`;
    * `next_particle_id = int(manager.bank.count)`;
-   * `final_rng_state_json = json.dumps(manager.rng.bit_generator.state)`.
+   * `rng_state = json.dumps(manager.rng.bit_generator.state)`;
+   * `t_ref = float(manager.t_ref)`, `t_last = float(manager.t_last)`, `pending_arrival_time = float(manager.pending_arrival_time)`;
+   * `batch_capacity = int(manager.batch_capacity)`.
 
 2. **Запись в `/metadata/tasks/task_{task_id}` при `finalize_metadata()`:**
-   * Сохранять в атрибутах завершенной задачи `task_{task_id}`:
+   * Сохраняются атрибуты завершенной задачи `task_{task_id}`:
      * `status = "completed"`
      * `seed` (исходный `uint32/uint64` seed первого запуска)
-     * `actual_start_time` (в нс)
-     * `actual_stop_time` (в нс)
+     * `actual_start_time` (в нс) и `actual_stop_time` (в нс)
      * `frame_duration` (в с)
-     * `particle_id_start = initial_particle_id`
-     * `particle_id_end = next_particle_id`
-     * `simulated_histories = emitted_particles_in_task`
-     * `final_rng_state = final_rng_state_json`
+     * `particle_id_start = initial_particle_id`, `particle_id_end = next_particle_id`, `simulated_histories = emitted_particles_in_task`
+     * `rng_state`
+     * `t_ref`, `t_last`, `pending_arrival_time`
+     * `batch_capacity`
 
 3. **Кумулятивное обновление корневых метаданных файла (`/metadata/gantry`, `/metadata/simulation`):**
-   * При финализации задачи обновлять корневые показатели всего HDF5-файла по совокупности всех завершенных задач:
+   * При финализации задачи обновляются корневые показатели всего HDF5-файла по совокупности всех завершенных задач:
      * `/metadata/gantry/frame_duration` = суммарное время экспозиции по завершенным задачам файла;
      * `/metadata/simulation/simulated_histories` = `next_particle_id` (общее число рожденных за все этапы частиц).
 
@@ -68,32 +66,13 @@
 
 ### Этап 3. Предварительное сканирование HDF5 перед запуском задачи (`core/data/data_manager.py` / `core/config/simulation_worker.py`)
 
-1. **Инспекция существующего файла перед стартом воркера:**
-   * Перед запуском расчёта проверять, существует ли целевой файл `final_config.data_manager.filename`.
-   * Если файл существует и содержит группу `/metadata/tasks`:
-     * Найти все подгруппы `task_*` со `status == "completed"`, вычислив сквозной `max_particle_id_end` и `max_task_index` по всему файлу, а кандидата на досчёт искать среди задач с совпадающим `context`.
-     * Если завершенных задач нет — начинать расчёт с нуля.
-     * Если есть последняя завершенная задача `last_task` для данного `context`:
-       * Считать:
-         * `saved_seed = int(last_task.attrs["seed"])`
-         * `saved_stop_time = float(last_task.attrs["actual_stop_time"])`
-         * `saved_next_particle_id = max_particle_id_end`
-         * `saved_rng_state = json.loads(last_task.attrs["final_rng_state"])`
-       * Вычислить `next_task_index` (например, если в файле есть `task_0`, следующая задача для этого файла получает имя `task_1`).
+1. **Инспекция существующего файла перед стартом воркера (`DataManager.inspect_resume_state`):**
+   * Проверяется наличие всех обязательных атрибутов досчёта в завершенных задачах `task_*` (`seed`, `actual_stop_time`, `particle_id_end`, `rng_state`, `t_ref`, `t_last`, `pending_arrival_time`, `batch_capacity`); при отсутствии любого из них немедленно возбуждается `ValueError` (Fail-Fast).
+   * Для совпадающего `context` извлекаются сохраненные `seed`, `actual_stop_time`, `max_particle_id_end`, `rng_state`, `t_ref`, `t_last`, `pending_arrival_time`, `batch_capacity`.
 
 2. **Логика принятия решения (Skip vs Resume):**
-   * Пусть в конфигурации запрошен интервал `[req_start_time, req_stop_time]`:
-   * **Случай 1 (`saved_stop_time >= req_stop_time`):**
-     * Вся запрошенная длительность (например, `10.0 с`) уже рассчитана в файле (`10.00034 с >= 10.0 с`).
-     * Воркер логирует: `"Задача уже полностью рассчитана (actual_stop_time >= stop_time), пропуск."` и мгновенно завершается без запуска `SimulationManager`.
-   * **Случай 2 (`saved_stop_time < req_stop_time`):**
-     * Режим досчёта (Resume):
-       * `effective_start_time = saved_stop_time` (стартуем ровно с `10.00034 с`, где остановился предыдущий батч!);
-       * `effective_stop_time = req_stop_time` (например, `20.0 с`);
-       * `effective_seed = saved_seed`;
-       * `initial_particle_id = saved_next_particle_id`;
-       * `rng_state = saved_rng_state`.
-     * `SimulationManager` запускается с этими параметрами, дописывает новые события в `interactions` и `initial_states`, а `DataManager` сохраняет паспорт нового этапа в `metadata/tasks/task_{next_task_index}` и обновляет кумулятивные `frame_duration` и `simulated_histories` в корне `/metadata`.
+   * **Случай 1 (`saved_stop_time >= req_stop_time`):** задача пропускается без запуска `SimulationManager`.
+   * **Случай 2 (`saved_stop_time < req_stop_time`):** проверяется совпадение `batch_capacity` с сохраненным, и `SimulationManager` запускается с `start_time = saved_stop_time`, `stop_time = req_stop_time`, восстановленными `rng_state`, `t_ref`, `t_last`, `pending_arrival_time` и продолжает пуассоновский поток ровно с отложенного кандидата `pending_arrival_time`.
 
 ---
 

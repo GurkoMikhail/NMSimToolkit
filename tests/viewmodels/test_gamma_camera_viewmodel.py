@@ -115,7 +115,6 @@ class TestGammaCameraViewModel(unittest.TestCase):
             distribution=np.ones((2, 2, 2), dtype=Float),
             activity=Float(500.0 * units.Bq),
             half_life=Float(6.0 * units.hour),
-            rng=np.random.default_rng(42),
         )
         source_vm = SourceViewModel(core_source)
 

@@ -139,7 +139,9 @@ class DirectStreamHandler(BaseDataHandler):
     def consumed_chunk_types(self) -> FrozenSet[ChunkType]:
         return self._CONSUMED_CHUNK_TYPES
 
-    def _format_raw_interactions(self, interactions: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    def _format_raw_interactions(
+        self, interactions: Dict[str, np.ndarray], fill_missing: bool = False
+    ) -> Dict[str, np.ndarray]:
         """
         Приводит необработанный SoA-пакет взаимодействий к канонической схеме датасетов HDF5:
         векторы (N, 3), process_code/species_code (uint8), volume_id/material_id (uint32),
@@ -212,6 +214,21 @@ class DirectStreamHandler(BaseDataHandler):
                 'global_position', 'global_direction',
             ):
                 result[key] = arr
+
+        if fill_missing:
+            n_events = len(next(iter(interactions.values()))) if interactions else 0
+            for def_key, def_arr in (
+                ('global_position', np.zeros((n_events, 3), dtype=target_float_dtype)),
+                ('global_direction', np.zeros((n_events, 3), dtype=target_float_dtype)),
+                ('process_code', np.zeros(n_events, dtype=np.uint8)),
+                ('species_code', np.zeros(n_events, dtype=np.uint8)),
+                ('energy_deposit', np.zeros(n_events, dtype=target_float_dtype)),
+                ('scattering_angles', np.zeros((n_events, 2), dtype=target_float_dtype)),
+                ('material_id', np.zeros(n_events, dtype=np.uint32)),
+                ('Z', np.zeros(n_events, dtype=np.int8)),
+                ('distance_traveled', np.zeros(n_events, dtype=target_float_dtype)),
+            ):
+                result.setdefault(def_key, def_arr)
 
         return result
 
@@ -392,125 +409,22 @@ class SensitiveVolumeHandler(DirectStreamHandler):
         return list(self.sensitive_volumes)
 
     def _format_and_write_interactions(self, interactions: Dict[str, np.ndarray]) -> None:
-        target_float_dtype = np.float32 if self.floating_point_precision == "float32" else np.float64
-
+        formatted = self._format_raw_interactions(interactions, fill_missing=True)
         volume_ids = interactions['volume_id']
-        total_events_count = len(volume_ids)
-
-        if 'pos_x' in interactions and 'pos_y' in interactions and 'pos_z' in interactions:
-            pos_x = interactions['pos_x']
-            pos_y = interactions['pos_y']
-            pos_z = interactions['pos_z']
-            global_position = np.column_stack((pos_x, pos_y, pos_z)).astype(target_float_dtype)
-        elif 'global_position' in interactions:
-            global_position = interactions['global_position'].astype(target_float_dtype)
-        else:
-            global_position = np.zeros((total_events_count, 3), dtype=target_float_dtype)
-
-        if 'dir_x' in interactions and 'dir_y' in interactions and 'dir_z' in interactions:
-            dir_x = interactions['dir_x']
-            dir_y = interactions['dir_y']
-            dir_z = interactions['dir_z']
-            global_direction = np.column_stack((dir_x, dir_y, dir_z)).astype(target_float_dtype)
-        elif 'global_direction' in interactions:
-            global_direction = interactions['global_direction'].astype(target_float_dtype)
-        else:
-            global_direction = np.zeros((total_events_count, 3), dtype=target_float_dtype)
-
-        events_saved = 0
+        root_vol_names = np.array(
+            [self.volume_mapping[vid].name if vid in self.volume_mapping else None for vid in volume_ids],
+            dtype=object,
+        )
         volume_data_map: Dict[str, Dict[str, np.ndarray]] = {}
-
-        mapped_vol_names_list: List[Optional[str]] = []
-        for vid in volume_ids:
-            if vid in self.volume_mapping:
-                mapped_vol_names_list.append(self.volume_mapping[vid].name)
-            else:
-                mapped_vol_names_list.append(None)
-
-        root_vol_names = np.array(mapped_vol_names_list, dtype=object)
-
         for top_volume in self._get_volumes_to_write():
-            top_volume_name = top_volume.name
-            if not top_volume_name:
+            if not top_volume.name:
                 continue
-            mask = root_vol_names == top_volume_name
+            mask = root_vol_names == top_volume.name
+            if np.any(mask):
+                volume_data_map[top_volume.name] = {field_key: field_arr[mask] for field_key, field_arr in formatted.items()}
 
-            if not np.any(mask):
-                continue
-
-            vol_global_pos = global_position[mask]
-            vol_global_dir = global_direction[mask]
-
-            if 'process_id' in interactions:
-                process_code = interactions['process_id'][mask].astype(np.uint8)
-            elif 'process_code' in interactions:
-                process_code = interactions['process_code'][mask].astype(np.uint8)
-            else:
-                process_code = np.zeros(np.count_nonzero(mask), dtype=np.uint8)
-
-            if 'species' in interactions:
-                species_code = interactions['species'][mask].astype(np.uint8)
-            elif 'species_code' in interactions:
-                species_code = interactions['species_code'][mask].astype(np.uint8)
-            else:
-                species_code = np.zeros(np.count_nonzero(mask), dtype=np.uint8)
-
-            particle_ID = interactions['particle_ID'][mask]
-            energy_deposit = (
-                interactions['energy_deposit'][mask].astype(target_float_dtype)
-                if 'energy_deposit' in interactions
-                else np.zeros(len(particle_ID), dtype=target_float_dtype)
-            )
-
-            if 'scattering_theta' in interactions and 'scattering_phi' in interactions:
-                scattering_theta = interactions['scattering_theta'][mask]
-                scattering_phi = interactions['scattering_phi'][mask]
-                scattering_angles = np.column_stack((scattering_theta, scattering_phi)).astype(target_float_dtype)
-            elif 'scattering_angles' in interactions:
-                scattering_angles = interactions['scattering_angles'][mask].astype(target_float_dtype)
-            else:
-                scattering_angles = np.zeros((len(particle_ID), 2), dtype=target_float_dtype)
-
-            material_id = (
-                interactions['material_id'][mask].astype(np.uint32)
-                if 'material_id' in interactions
-                else np.zeros(len(particle_ID), dtype=np.uint32)
-            )
-            volume_id = interactions['volume_id'][mask].astype(np.uint32)
-            atomic_number = (
-                interactions['Z'][mask].astype(np.int8)
-                if 'Z' in interactions
-                else np.zeros(len(particle_ID), dtype=np.int8)
-            )
-
-            n_events = len(process_code)
-            events_saved += n_events
-
-            distance_traveled = (
-                interactions['distance_traveled'][mask].astype(target_float_dtype)
-                if 'distance_traveled' in interactions
-                else np.zeros(len(particle_ID), dtype=target_float_dtype)
-            )
-
-            volume_data_map[top_volume_name] = {
-                'global_position': vol_global_pos,
-                'global_direction': vol_global_dir,
-                'process_code': process_code,
-                'species_code': species_code,
-                'particle_ID': particle_ID,
-                'energy_deposit': energy_deposit,
-                'volume_id': volume_id,
-                'material_id': material_id,
-                'Z': atomic_number,
-                'scattering_angles': scattering_angles,
-                'distance_traveled': distance_traveled,
-            }
-
-        if not volume_data_map:
-            return
-
-        self._write_interactions(volume_data_map)
-        _logger.debug(f'Interactions write task forwarded for {events_saved} events.')
+        if volume_data_map:
+            self._write_interactions(volume_data_map)
 
 
 class HistoryAssemblerHandler(SensitiveVolumeHandler):
@@ -603,18 +517,6 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
                 scored_mask = np.isin(mega_init['particle_ID'], scored_dead_ids)
                 if np.any(scored_mask):
                     initial_states_to_write = {key: val[scored_mask] for key, val in mega_init.items()}
-
-                    if 'pos_x' in initial_states_to_write:
-                        pos_x = initial_states_to_write.pop('pos_x')
-                        pos_y = initial_states_to_write.pop('pos_y')
-                        pos_z = initial_states_to_write.pop('pos_z')
-                        initial_states_to_write['emission_position'] = np.column_stack((pos_x, pos_y, pos_z))
-
-                    if 'dir_x' in initial_states_to_write:
-                        dir_x = initial_states_to_write.pop('dir_x')
-                        dir_y = initial_states_to_write.pop('dir_y')
-                        dir_z = initial_states_to_write.pop('dir_z')
-                        initial_states_to_write['emission_direction'] = np.column_stack((dir_x, dir_y, dir_z))
 
             survivor_mask = ~np.isin(mega_init['particle_ID'], dead_ids)
             if np.any(survivor_mask):

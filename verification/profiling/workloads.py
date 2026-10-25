@@ -25,8 +25,7 @@ from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.materials.materials import MaterialArray
-from core.other.typing_definitions import Float, Index, Length, Species
-from core.other.vectors import Vector3DSoA
+from core.other.typing_definitions import Float, Index
 from core.particles.particles import ParticleBank
 from core.physics.interaction_buffers import RNGContext, SimulationDataBuffer
 from core.physics.physics_compiler import PhysicsCompiler
@@ -34,6 +33,8 @@ from core.scene.dose_grid_node import DoseGridNode
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.scene.gantry_node import GantryNode
 from core.scene.nodes import CompositeNode, SpatialNode
+from core.source.source_compiler import SourceCompiler
+from core.source.source_kernels import inject_poisson_sources_kernel
 from core.source.sources import PointSource, Source
 from core.transport.propagator import ParticlePropagator
 from core.transport.simulation_managers import SimulationManager
@@ -47,7 +48,7 @@ from core.transport.transport_kernels import (
 )
 from settings.database_setting import attenuation_database, material_database
 from settings.processes_settings import processes_list
-from tb161_nema_simulation import TB161_ENERGY_SPECTRUM, TB161_HALF_LIFE
+from examples.tb161_nema_simulation import TB161_ENERGY_SPECTRUM, TB161_HALF_LIFE
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
 CollimatorKind = Literal["parametric", "direct"]
@@ -219,7 +220,6 @@ def build_point_source_workload(
         activity=activity_val,
         energy=Float(140.5 * units.keV),
         half_life=Float(np.inf),
-        rng=np.random.default_rng(seed),
     )
     source_node.name = "PointSource_Tc99m"
     root_scene.add_child(source_node)
@@ -306,7 +306,6 @@ def build_nema_tb161_workload(
         radiation_type="Gamma",
         energy=TB161_ENERGY_SPECTRUM,
         half_life=Float(TB161_HALF_LIFE),
-        rng=np.random.default_rng(seed),
     )
     source_node.name = "Source"
     phantom.add_child(source_node)
@@ -406,7 +405,6 @@ def build_heart_spect_workload(
         radiation_type="Gamma",
         energy=[[Float(140.511 * units.keV), 1.0]],
         half_life=Float(np.inf),
-        rng=np.random.default_rng(seed),
     )
     source_node.name = "HeartSource"
     phantom.add_child(source_node)
@@ -491,31 +489,24 @@ def warmup_propagator_instance(
     warm_rng = np.random.default_rng(77777) if rng is None else rng
     geom_buffer = GeometryCompiler().compile_scene(scene)
     physics_buffer = PhysicsCompiler().compile_scene(scene, propagator.processes)
+    active_sources = SourceCompiler().compile_scene(scene)
+    source_buffer = SourceCompiler().compile(active_sources)
 
     batch_n = 16
     warm_bank = ParticleBank.allocate(batch_n)
     warm_data_buf = SimulationDataBuffer.allocate(64, 64, 64, 64)
     warm_rng_ctx = RNGContext.from_numpy_rng(warm_rng)
 
-    pos_soa = Vector3DSoA(
-        x=np.zeros(batch_n, dtype=Length),
-        y=np.zeros(batch_n, dtype=Length),
-        z=np.zeros(batch_n, dtype=Length),
-    )
-    dirs = warm_rng.normal(size=(batch_n, 3))
-    dirs /= np.maximum(np.linalg.norm(dirs, axis=1, keepdims=True), 1e-12)
-    dir_soa = Vector3DSoA(
-        x=dirs[:, 0].astype(Float),
-        y=dirs[:, 1].astype(Float),
-        z=dirs[:, 2].astype(Float),
-    )
-    warm_bank.inject_particles(
-        species=np.zeros(batch_n, dtype=Species),
-        position=pos_soa,
-        direction=dir_soa,
-        energy=np.full(batch_n, Float(0.1405), dtype=Float),
-        emission_time=np.zeros(batch_n, dtype=Float),
-        distance_traveled=np.zeros(batch_n, dtype=Length),
+    inject_poisson_sources_kernel(
+        warm_bank,
+        source_buffer,
+        Float(np.inf),
+        Float(0.0),
+        Float(0.0),
+        Float(-1.0),
+        warm_rng_ctx,
+        Index(batch_n),
+        Index(0),
     )
     active_indices = warm_bank.active_indices
 

@@ -9,6 +9,7 @@ from core.config.orchestrator import Orchestrator
 
 class TestOrchestrator(unittest.TestCase):
     def setUp(self):
+        Path("output data/output.h5").unlink(missing_ok=True)
         self.raw_config = {
             "protocol": {
                 "type": "StepAndShoot",
@@ -48,6 +49,9 @@ class TestOrchestrator(unittest.TestCase):
                 "children": []
             }
         }
+
+    def tearDown(self):
+        Path("output data/output.h5").unlink(missing_ok=True)
 
     def test_invalid_zipped_lengths(self):
         with self.assertRaises(ValidationError):

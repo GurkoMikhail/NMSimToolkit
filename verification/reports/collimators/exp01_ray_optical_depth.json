@@ -7,8 +7,8 @@
     "max_abs_lead_path_error": 2.19999999213627e-05,
     "mean_abs_lead_path_error": 8.74074995616439e-06,
     "rms_lead_path_error": 1.0248454709777642e-05,
-    "max_transmission_error_tc99m": 1.574287865624413e-06,
-    "max_transmission_error_i131": 1.3194629670532088e-06,
+    "max_transmission_error_tc99m": 1.5736508274244443e-06,
+    "max_transmission_error_i131": 1.3187442760020929e-06,
     "mean_navigation_steps_direct": 13.6125,
     "passed": true
   },
@@ -20,8 +20,8 @@
     "max_abs_lead_path_error": 2.999999999708791e-05,
     "mean_abs_lead_path_error": 1.2332749940786036e-05,
     "rms_lead_path_error": 1.4454496199297536e-05,
-    "max_transmission_error_tc99m": 9.305449740620864e-08,
-    "max_transmission_error_i131": 1.7108423316369858e-06,
+    "max_transmission_error_tc99m": 9.329543137343022e-08,
+    "max_transmission_error_i131": 1.709500866642344e-06,
     "mean_navigation_steps_direct": 18.84,
     "passed": true
   },
@@ -33,8 +33,8 @@
     "max_abs_lead_path_error": 1.399999998596968e-05,
     "mean_abs_lead_path_error": 5.829187466588198e-06,
     "rms_lead_path_error": 6.8045926210639114e-06,
-    "max_transmission_error_tc99m": 1.4072156198086105e-06,
-    "max_transmission_error_i131": 2.893977629758737e-07,
+    "max_transmission_error_tc99m": 1.4066721689687256e-06,
+    "max_transmission_error_i131": 2.8983779354341266e-07,
     "mean_navigation_steps_direct": 9.30375,
     "passed": true
   },
@@ -46,8 +46,8 @@
     "max_abs_lead_path_error": 9.999999974752427e-06,
     "mean_abs_lead_path_error": 4.495562468599962e-06,
     "rms_lead_path_error": 5.182692917303487e-06,
-    "max_transmission_error_tc99m": 4.282955702039626e-07,
-    "max_transmission_error_i131": 2.5209049980823295e-07,
+    "max_transmission_error_tc99m": 4.2868779653870703e-07,
+    "max_transmission_error_i131": 2.5241651802065945e-07,
     "mean_navigation_steps_direct": 7.385,
     "passed": true
   }

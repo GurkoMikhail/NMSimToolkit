@@ -467,85 +467,51 @@ def run_dual_thread_cprofile(
     else:
         cold_compile_sec = float(measured_cold)
 
-    # Прогон 1: cProfile активен в потоке SimulationManager
-    workload.source_node.rng = np.random.default_rng(42)
-    propagator_inst.transport_buffer = TransportBuffer.allocate(0, len(propagator_inst.processes))
-    queue_sim = _InstrumentedQueue(maxsize=64)
+    def _execute_profiled_run(
+        profile_sim: bool,
+    ) -> Tuple[_ThreadProfiledSimulationManager, _ThreadProfiledDataManager, _InstrumentedQueue, float]:
+        propagator_inst.transport_buffer = TransportBuffer.allocate(0, len(propagator_inst.processes))
+        queue = _InstrumentedQueue(maxsize=64)
+        suffix = "sim" if profile_sim else "data"
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            h5_path = Path(tmp_dir) / f"{workload.workload_id}_dual_{suffix}.hdf5"
+            handler: BaseDataHandler = HistoryAssemblerHandler(
+                sensitive_volumes=workload.sensitive_detectors,
+                save_initial_states=True,
+                compression=compression,
+            )
+            dm = _ThreadProfiledDataManager(
+                enable_cprofile=not profile_sim,
+                filename=h5_path,
+                handlers=[handler],
+                queue=queue,
+            )
+            dm.initialize_metadata()
 
-    with tempfile.TemporaryDirectory() as tmp_dir_sim:
-        h5_path_sim = Path(tmp_dir_sim) / f"{workload.workload_id}_dual_sim.hdf5"
-        handler_sim: BaseDataHandler = HistoryAssemblerHandler(
-            sensitive_volumes=workload.sensitive_detectors,
-            save_initial_states=True,
-            compression=compression,
-        )
-        data_manager_plain = _ThreadProfiledDataManager(
-            enable_cprofile=False,
-            filename=h5_path_sim,
-            handlers=[handler_sim],
-            queue=queue_sim,
-        )
-        data_manager_plain.initialize_metadata()
+            sm = _ThreadProfiledSimulationManager(
+                enable_cprofile=profile_sim,
+                scene=workload.root_scene,
+                propagator=propagator_inst,
+                stop_time=workload.stop_time,
+                particles_number=workload.particles_number,
+                min_energy=workload.min_energy,
+                queue=queue,
+                buffer_capacity=buffer_capacity,
+                seed=42,
+                consumed_chunk_types=dm.consumed_chunk_types,
+            )
 
-        sim_manager = _ThreadProfiledSimulationManager(
-            enable_cprofile=True,
-            scene=workload.root_scene,
-            propagator=propagator_inst,
-            stop_time=workload.stop_time,
-            particles_number=workload.particles_number,
-            min_energy=workload.min_energy,
-            queue=queue_sim,
-            buffer_capacity=buffer_capacity,
-            seed=42,
-            consumed_chunk_types=data_manager_plain.consumed_chunk_types,
-        )
+            wall_start = time.perf_counter()
+            dm.start()
+            sm.start()
+            sm.join()
+            dm.join()
+            wall_elapsed = time.perf_counter() - wall_start
+            handler.close()
+        return sm, dm, queue, wall_elapsed
 
-        wall_start = time.perf_counter()
-        data_manager_plain.start()
-        sim_manager.start()
-        sim_manager.join()
-        data_manager_plain.join()
-        wall_elapsed = time.perf_counter() - wall_start
-        handler_sim.close()
-
-    # Прогон 2: cProfile активен в потоке DataManager (использует уже прогретый propagator_inst)
-    workload.source_node.rng = np.random.default_rng(42)
-    propagator_inst.transport_buffer = TransportBuffer.allocate(0, len(propagator_inst.processes))
-    queue_data = _InstrumentedQueue(maxsize=64)
-
-    with tempfile.TemporaryDirectory() as tmp_dir_data:
-        h5_path_data = Path(tmp_dir_data) / f"{workload.workload_id}_dual_data.hdf5"
-        handler_data: BaseDataHandler = HistoryAssemblerHandler(
-            sensitive_volumes=workload.sensitive_detectors,
-            save_initial_states=True,
-            compression=compression,
-        )
-        data_manager = _ThreadProfiledDataManager(
-            enable_cprofile=True,
-            filename=h5_path_data,
-            handlers=[handler_data],
-            queue=queue_data,
-        )
-        data_manager.initialize_metadata()
-
-        sim_manager_plain = _ThreadProfiledSimulationManager(
-            enable_cprofile=False,
-            scene=workload.root_scene,
-            propagator=propagator_inst,
-            stop_time=workload.stop_time,
-            particles_number=workload.particles_number,
-            min_energy=workload.min_energy,
-            queue=queue_data,
-            buffer_capacity=buffer_capacity,
-            seed=42,
-            consumed_chunk_types=data_manager.consumed_chunk_types,
-        )
-
-        data_manager.start()
-        sim_manager_plain.start()
-        sim_manager_plain.join()
-        data_manager.join()
-        handler_data.close()
+    sim_manager, data_manager_plain, queue_sim, wall_elapsed = _execute_profiled_run(profile_sim=True)
+    _, data_manager, queue_data, _ = _execute_profiled_run(profile_sim=False)
 
     sim_prof_file = stats_dir / f"{workload.workload_id}_sim_thread.prof"
     data_prof_file = stats_dir / f"{workload.workload_id}_data_thread.prof"
@@ -619,8 +585,7 @@ def run_end_to_end_cprofile(
         cold_compile_time_override=cold_compile_sec,
     )
 
-    # 2. Сбрасываем RNG и буфер пропагатора, затем запускаем сквозной однопоточный cProfile
-    workload.source_node.rng = np.random.default_rng(42)
+    # 2. Сбрасываем буфер пропагатора, затем запускаем сквозной однопоточный cProfile
     propagator_inst.transport_buffer = TransportBuffer.allocate(0, len(propagator_inst.processes))
 
     with tempfile.TemporaryDirectory() as tmp_dir:

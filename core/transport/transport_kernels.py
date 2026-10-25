@@ -25,7 +25,10 @@ from core.physics.interaction_buffers import (
     RNGContext,
 )
 from core.physics.physics_buffer import PhysicsBuffer
-from core.physics.physics_kernels import _get_macroscopic_cross_sections
+from core.physics.physics_kernels import (
+    _compute_log_energy_and_bin,
+    _get_macroscopic_cross_sections,
+)
 from core.transport.transport_buffer import TransportBuffer
 
 BOUNDARY_PUSH_EPSILON: Float = Float(1e-6)
@@ -199,20 +202,118 @@ def _push_to_escaped_particles_kernel(
         escaped_buffer.position.z[idx] = state.position.z[p_idx]
 
 
+@njit(cache=True, inline='always')
+def _sample_process_id(
+    majorant_lac: Float,
+    process_lacs: NDArray[Float],
+    mapped_process_ids: NDArray[Index],
+    num_processes: Index,
+    rng_ctx: RNGContext,
+) -> Index:
+    rnd = _get_random_double(rng_ctx) * majorant_lac
+    p0 = 0.0
+    selected = Index(-1)
+    for i in range(num_processes):
+        p1 = p0 + process_lacs[i]
+        if selected == -1 and p0 <= rnd < p1:
+            selected = Index(mapped_process_ids[i])
+        p0 = p1
+    return selected
+
+
+@njit(cache=True, inline='always')
+def _transport_kernel_impl(
+    state: KinematicState,
+    nav_state: NavigationState,
+    target_indices: NDArray[Index],
+    physics_buffer: PhysicsBuffer,
+    transport_buffer: TransportBuffer,
+    geom_buffer: NDArray[Any],
+    rng_ctx: RNGContext,
+    mapped_process_ids: NDArray[Index],
+) -> None:
+    """
+    Выполняет шаг дельта-трекинга ВудКока для всех активных частиц без аллокаций памяти
+    и без внутренних операций подсчета ссылок NRT в горячем цикле.
+    """
+    num_processes = Index(mapped_process_ids.shape[0])
+    num_particles = target_indices.shape[0]
+    process_ids = transport_buffer.process_ids
+    material_ids = transport_buffer.material_ids
+    process_lacs = transport_buffer.process_lacs
+    material_bank = physics_buffer.material_bank
+    majorant_material_map = physics_buffer.majorant_material_map
+    woodcock_function_pointers = physics_buffer.woodcock_function_pointers
+
+    for j in range(num_particles):
+        p_idx = target_indices[j]
+
+        current_vol = nav_state.current_volume[p_idx]
+        if current_vol < 0:
+            process_ids[p_idx] = -1
+            continue
+
+        majorant_mat_id = majorant_material_map[current_vol]
+        cfunc_addr = woodcock_function_pointers[current_vol]
+        particle_energy = state.energy[p_idx]
+        log_e, log_bin = _compute_log_energy_and_bin(particle_energy, material_bank)
+
+        _get_macroscopic_cross_sections(
+            particle_energy, log_e, log_bin, majorant_mat_id, material_bank, process_lacs
+        )
+
+        majorant_lac = Float(0.0)
+        for i in range(num_processes):
+            majorant_lac = Float(majorant_lac + process_lacs[i])
+
+        free_path = _generate_free_path(majorant_lac, rng_ctx)
+
+        while free_path < nav_state.boundary_distance[p_idx]:
+            _move_particle(state, p_idx, free_path)
+            nav_state.boundary_distance[p_idx] -= free_path
+
+            if cfunc_addr != 0:
+                vol_transform = geom_buffer[current_vol]['transform']
+                loc_x, loc_y, loc_z, _, _, _ = _transform_to_local(
+                    state.position.x[p_idx],
+                    state.position.y[p_idx],
+                    state.position.z[p_idx],
+                    Float(0.0),
+                    Float(0.0),
+                    Float(0.0),
+                    vol_transform,
+                )
+                mat_id: Index = call_cfunc_ptr(cfunc_addr, loc_x, loc_y, loc_z)
+                _get_macroscopic_cross_sections(
+                    particle_energy, log_e, log_bin, mat_id, material_bank, process_lacs
+                )
+            else:
+                mat_id = majorant_mat_id
+
+            selected_process = _sample_process_id(
+                majorant_lac, process_lacs, mapped_process_ids, num_processes, rng_ctx
+            )
+
+            if selected_process != -1:
+                material_ids[p_idx] = mat_id
+                process_ids[p_idx] = selected_process
+                break
+
+            # Фиктивное взаимодействие (дельта-рассеяние ВудКока)
+            free_path = _generate_free_path(majorant_lac, rng_ctx)
+
+        else:
+            # Достижение границы геометрического объема
+            shift = Float(nav_state.boundary_distance[p_idx] + BOUNDARY_PUSH_EPSILON)
+            _move_particle(state, p_idx, shift)
+
+            _invalidate_navigation_state(nav_state, p_idx)
+            process_ids[p_idx] = -1
+
+
 def make_transport_kernel(mapped_process_ids: NDArray[Index]) -> Any:
     """Создает скомпилированное Numba-ядро шага транспорта с запеченными кодами процессов."""
-    num_processes = mapped_process_ids.shape[0]
-
-    @njit(inline='always')
-    def _sample_process_id(majorant_lac: Float, process_lacs: NDArray[Float], rng_ctx: RNGContext) -> Index:
-        rnd = _get_random_double(rng_ctx) * majorant_lac
-        p0 = 0.0
-        for i in range(num_processes):
-            p1 = p0 + process_lacs[i]
-            if p0 <= rnd < p1:
-                return Index(mapped_process_ids[i])
-            p0 = p1
-        return Index(-1)
+    mapped_ids_arr = np.asarray(mapped_process_ids, dtype=Index)
 
     @njit
     def transport_kernel(
@@ -224,72 +325,16 @@ def make_transport_kernel(mapped_process_ids: NDArray[Index]) -> Any:
         geom_buffer: NDArray[Any],
         rng_ctx: RNGContext,
     ) -> None:
-        """Выполняет шаг дельта-трекинга ВудКока для всех активных частиц без аллокаций памяти."""
-        num_particles = target_indices.shape[0]
-        process_ids = transport_buffer.process_ids
-        material_ids = transport_buffer.material_ids
-        process_lacs = transport_buffer.process_lacs[:num_processes]
-
-        for j in range(num_particles):
-            p_idx = target_indices[j]
-
-            current_vol = nav_state.current_volume[p_idx]
-            if current_vol < 0:
-                process_ids[p_idx] = -1
-                continue
-
-            majorant_mat_id = physics_buffer.majorant_material_map[current_vol]
-            cfunc_addr = physics_buffer.woodcock_function_pointers[current_vol]
-
-            _get_macroscopic_cross_sections(
-                state.energy[p_idx], majorant_mat_id, physics_buffer.material_bank, process_lacs
-            )
-
-            majorant_lac = Float(0.0)
-            for i in range(num_processes):
-                majorant_lac = Float(majorant_lac + process_lacs[i])
-
-            free_path = _generate_free_path(majorant_lac, rng_ctx)
-
-            while free_path < nav_state.boundary_distance[p_idx]:
-                _move_particle(state, p_idx, free_path)
-                nav_state.boundary_distance[p_idx] -= free_path
-
-                if cfunc_addr != 0:
-                    vol_transform = geom_buffer[current_vol]['transform']
-                    loc_x, loc_y, loc_z, _, _, _ = _transform_to_local(
-                        state.position.x[p_idx],
-                        state.position.y[p_idx],
-                        state.position.z[p_idx],
-                        Float(0.0),
-                        Float(0.0),
-                        Float(0.0),
-                        vol_transform,
-                    )
-                    mat_id: Index = call_cfunc_ptr(cfunc_addr, loc_x, loc_y, loc_z)
-                    _get_macroscopic_cross_sections(
-                        state.energy[p_idx], mat_id, physics_buffer.material_bank, process_lacs
-                    )
-                else:
-                    mat_id = majorant_mat_id
-
-                selected_process = _sample_process_id(majorant_lac, process_lacs, rng_ctx)
-
-                if selected_process != -1:
-                    material_ids[p_idx] = mat_id
-                    process_ids[p_idx] = selected_process
-                    break
-
-                # Фиктивное взаимодействие (дельта-рассеяние ВудКока)
-                free_path = _generate_free_path(majorant_lac, rng_ctx)
-
-            else:
-                # Достижение границы геометрического объема
-                shift = Float(nav_state.boundary_distance[p_idx] + BOUNDARY_PUSH_EPSILON)
-                _move_particle(state, p_idx, shift)
-
-                _invalidate_navigation_state(nav_state, p_idx)
-                process_ids[p_idx] = -1
+        _transport_kernel_impl(
+            state,
+            nav_state,
+            target_indices,
+            physics_buffer,
+            transport_buffer,
+            geom_buffer,
+            rng_ctx,
+            mapped_ids_arr,
+        )
 
     return transport_kernel
 

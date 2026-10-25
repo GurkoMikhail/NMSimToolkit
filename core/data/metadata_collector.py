@@ -60,6 +60,16 @@ def _find_node_by_name(current_node: SpatialNode, target_name: str) -> Optional[
     return None
 
 
+def _resolve_camera_slot(
+    camera_node: GammaCameraNode, root_scene: SpatialNode, slot_key: str
+) -> Optional[SpatialNode]:
+    """Разрешает узел слота гамма-камеры по имени в поддереве камеры или корневой сцене."""
+    slot_name = camera_node.slots.get(slot_key)
+    if slot_name is None:
+        return None
+    return _find_node_by_name(camera_node, slot_name) or _find_node_by_name(root_scene, slot_name)
+
+
 def _find_source_config(current_config: Any) -> Optional[SourceConfig]:
     """
     Рекурсивно выполняет поиск SourceConfig в дереве конфигурации сцены
@@ -193,12 +203,7 @@ class DetectorMetadataProvider:
 
         for camera_node in camera_nodes:
             crystal_name: Optional[str] = camera_node.slots.get("crystal")
-            crystal_node: Optional[SpatialNode] = None
-
-            if crystal_name is not None:
-                crystal_node = _find_node_by_name(camera_node, crystal_name)
-                if crystal_node is None:
-                    crystal_node = _find_node_by_name(root_scene, crystal_name)
+            crystal_node = _resolve_camera_slot(camera_node, root_scene, "crystal")
 
             if crystal_node is not None:
                 target_matrix = np.array(crystal_node.global_matrix, dtype=np.float64)
@@ -303,19 +308,9 @@ class GantryMetadataProvider:
         # 4. Матрицы поз детекторов под каноническими ключами pose_matrix_detector_{i}
         camera_nodes: List[GammaCameraNode] = _find_nodes_recursive(root_scene, GammaCameraNode)
         for cam_index, camera_node in enumerate(camera_nodes):
-            crystal_name = camera_node.slots.get("crystal")
-            crystal_node = None
-            if crystal_name is not None:
-                crystal_node = _find_node_by_name(camera_node, crystal_name) or _find_node_by_name(
-                    root_scene, crystal_name
-                )
-
-            if crystal_node is not None:
-                pose_matrix = np.array(crystal_node.global_matrix, dtype=np.float64)
-            else:
-                pose_matrix = np.array(camera_node.global_matrix, dtype=np.float64)
-
-            gantry_data[f"pose_matrix_detector_{cam_index + 1}"] = pose_matrix
+            crystal_node = _resolve_camera_slot(camera_node, root_scene, "crystal")
+            target_node = crystal_node if crystal_node is not None else camera_node
+            gantry_data[f"pose_matrix_detector_{cam_index + 1}"] = np.array(target_node.global_matrix, dtype=np.float64)
             if camera_node.name:
                 gantry_data[f"detector_{cam_index + 1}_name"] = str(camera_node.name)
 
@@ -341,36 +336,15 @@ class GeometryMetadataProvider:
             for camera_node in camera_nodes:
                 head_dict: Dict[str, Any] = {}
 
-                # Разрешение кристалла
-                crystal_name = camera_node.slots.get("crystal")
-                crystal_node = None
-                if crystal_name is not None:
-                    crystal_node = _find_node_by_name(camera_node, crystal_name) or _find_node_by_name(
-                        root_scene, crystal_name
-                    )
-
+                crystal_node = _resolve_camera_slot(camera_node, root_scene, "crystal")
                 if isinstance(crystal_node, Volume) and isinstance(crystal_node.geometry, Box):
                     head_dict["crystal_dimensions"] = np.array(
                         [float(dim) / float(units.mm) for dim in crystal_node.geometry.size],
                         dtype=np.float64,
                     )
 
-                # Разрешение коллиматора
-                collimator_name = camera_node.slots.get("collimator")
-                collimator_node = None
-                if collimator_name is not None:
-                    collimator_node = _find_node_by_name(camera_node, collimator_name) or _find_node_by_name(
-                        root_scene, collimator_name
-                    )
-
-                if isinstance(collimator_node, ParametricParallelCollimator):
-                    head_dict["collimator_type"] = "Parallel Hole"
-                    head_dict["collimator_hole_diameter"] = float(collimator_node.hole_diameter) / float(units.mm)
-                    head_dict["collimator_hole_length"] = float(collimator_node.geometry.size[2]) / float(units.mm)
-                    head_dict["collimator_septa_thickness"] = float(collimator_node.septa) / float(units.mm)
-                    head_dict["collimator_hole_shape"] = str(collimator_node.hole_shape.value)
-                    head_dict["collimator_material"] = str(collimator_node.material.name)
-                elif isinstance(collimator_node, DirectParallelCollimator):
+                collimator_node = _resolve_camera_slot(camera_node, root_scene, "collimator")
+                if isinstance(collimator_node, (ParametricParallelCollimator, DirectParallelCollimator)):
                     head_dict["collimator_type"] = "Parallel Hole"
                     head_dict["collimator_hole_diameter"] = float(collimator_node.hole_diameter) / float(units.mm)
                     head_dict["collimator_hole_length"] = float(collimator_node.size[2]) / float(units.mm)
@@ -386,10 +360,8 @@ class GeometryMetadataProvider:
                 head_specs.append(head_dict)
 
             all_identical = all(_are_head_specs_equal(head_specs[0], spec) for spec in head_specs[1:])
-            if all_identical:
-                geometry_data.update(head_specs[0])
-            else:
-                geometry_data.update(head_specs[0])
+            geometry_data.update(head_specs[0])
+            if not all_identical:
                 for cam_index, spec in enumerate(head_specs):
                     geometry_data[f"detector_{cam_index + 1}"] = dict(spec)
 
@@ -524,46 +496,27 @@ class ProcedureMetadataCollector:
     ) -> Dict[str, Any]:
         """
         Собирает полный набор процедурных и канонических метаданных для текущей задачи симуляции.
-
-        :param root_scene: Корневой узел графа сцены.
-        :param protocol: Конфигурация протокола исследования.
-        :param context: Словарь контекстных переменных симуляции.
-        :param task_id: Идентификатор задачи.
-        :param sim_config: Конфигурация SimulationManager.
-        :param scene_config: Конфигурация сцены Pydantic.
-        :param random_seed: Числовое зерно генератора случайных чисел.
-        :param precision_mode: Режим точности float ('single' / 'double').
-        :param active_processes: Список активных процессов симулятора.
-        :return: Структурированный словарь процедурных и канонических метаданных.
         """
         context_dict: Dict[str, Any] = context if context is not None else {}
-        protocol_meta = self.protocol_provider.collect(protocol=protocol, context=context_dict, task_id=task_id)
-        kinematics_meta = self.kinematics_provider.collect(root_scene=root_scene, context=context_dict)
-        detectors_meta = self.detector_provider.collect(root_scene=root_scene)
-        geometry_meta = self.geometry_provider.collect(root_scene=root_scene)
-        gantry_meta = self.gantry_provider.collect(
-            root_scene=root_scene,
-            protocol=protocol,
-            context=context_dict,
-            task_id=task_id,
-            sim_config=sim_config,
-        )
-        source_meta = self.source_provider.collect(root_scene=root_scene, scene_config=scene_config)
-        simulation_meta = self.simulation_provider.collect(
-            sim_config=sim_config,
-            random_seed=random_seed,
-            precision_mode=precision_mode,
-            active_processes=active_processes,
-        )
-
         return {
-            "gantry": gantry_meta,
-            "geometry": geometry_meta,
-            "source": source_meta,
-            "simulation": simulation_meta,
-            "protocol": protocol_meta,
-            "kinematics": kinematics_meta,
-            "detectors": detectors_meta,
+            "gantry": self.gantry_provider.collect(
+                root_scene=root_scene,
+                protocol=protocol,
+                context=context_dict,
+                task_id=task_id,
+                sim_config=sim_config,
+            ),
+            "geometry": self.geometry_provider.collect(root_scene=root_scene),
+            "source": self.source_provider.collect(root_scene=root_scene, scene_config=scene_config),
+            "simulation": self.simulation_provider.collect(
+                sim_config=sim_config,
+                random_seed=random_seed,
+                precision_mode=precision_mode,
+                active_processes=active_processes,
+            ),
+            "protocol": self.protocol_provider.collect(protocol=protocol, context=context_dict, task_id=task_id),
+            "kinematics": self.kinematics_provider.collect(root_scene=root_scene, context=context_dict),
+            "detectors": self.detector_provider.collect(root_scene=root_scene),
         }
 
 
