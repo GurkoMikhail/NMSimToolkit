@@ -1,0 +1,228 @@
+pool_size: 24
+logging:
+  output_dir: "logs/tc99m_nema"
+  level: "INFO"
+  console: false
+  per_task_files: true
+  filename_pattern: "task_{task_id}.log"
+protocol:
+  # 60 положений гантри для сбора 120 ракурсов при 2 противоположных детекторах (под 180°)
+  # Шаг поворота гантри 3.0° (от 0.0° до 177.0° включительно при endpoint: false)
+  # Радиус орбиты до лицевой поверхности коллиматора: 270.0 мм
+  type: StepAndShoot
+  steps: 60
+  start_angle: 0.0 deg
+  end_angle: 180.0 deg
+  endpoint: false
+  rotation_direction: CW
+  time_per_step: 30.0 s
+  initial_time: 0.0 s
+  sequential_time: true
+  radius: 270.0 mm
+
+scene:
+  type: Volume
+  name: Simulation_volume
+  geometry:
+    type: Box
+    x: 120.0 cm
+    y: 120.0 cm
+    z: 80.0 cm
+  material: 'Air, Dry (near sea level)'
+  children:
+    - type: WoodcockVoxelVolume
+      name: Phantom
+      voxel_size: 4.2 mm
+      transformations:
+        - type: rotate
+          alpha: 270 deg
+      distribution:
+        format: raw
+        path: phantoms/nema/anema_voxel_size_4.2_mm.dat
+        shape: [128, 128, 92]
+        order: 'F'
+        mapping:
+          0.04: 'Air, Dry (near sea level)'
+          0.15: 'Water, Liquid'
+      children:
+        - type: Source
+          name: Source
+          radionuclide: '99mTc'
+          phantom_type: 'NEMA IEC Body Phantom'
+          radiation_type: Gamma
+          activity: 100 MBq
+          voxel_size: 4.2 mm
+          half_life: 6.0067 hour
+          # Основная изомерная гамма-линия 99mTc (140.511 кэВ)
+          energy:
+            - [140.511 keV, 1.0]
+          distribution:
+            format: raw
+            path: phantoms/nema/nema_voxel_size_4.2_mm.dat
+            shape: [128, 128, 92]
+            order: 'F'
+
+    - type: Gantry
+      name: Gantry
+      transformations:
+        - type: rotate
+          alpha: ${gantry_angle}
+      children:
+        # ---------------- ДЕТЕКТОРНАЯ ГОЛОВКА 1 (0°) ----------------
+        - type: GammaCamera
+          name: GammaCamera_1
+          transformations:
+            - type: rotate
+              gamma: 90 deg
+            - type: translate
+              y: 340.3 mm # 270.0 мм (радиус орбиты) + 70.3 мм (половина толщины корпуса 14.06 см)
+          slots:
+            casing: Casing_1
+            detector_box: Detector_box_1
+            collimator: Collimator_1
+            crystal: Detector_1
+            glass_backend: Glass_backend_1
+          children:
+            - type: Volume
+              name: Casing_1
+              geometry:
+                type: Box
+                x: 58.0 cm
+                y: 44.0 cm
+                z: 14.06 cm
+              material: 'Pb'
+              children:
+                - type: Volume
+                  name: Detector_box_1
+                  geometry:
+                    type: Box
+                    x: 54.0 cm
+                    y: 40.0 cm
+                    z: 12.06 cm
+                  material: 'Air, Dry (near sea level)'
+                  transformations:
+                    - type: translate
+                      z: 1.0 cm
+                  children:
+                    - type: DirectParallelCollimator
+                      name: Collimator_1
+                      size: [54.0 cm, 40.0 cm, 3.5 cm]
+                      hole_diameter: 1.5 mm
+                      septa: 0.2 mm
+                      hole_shape: hexagonal
+                      material: 'Pb'
+                      transformations:
+                        - type: translate
+                          z: 4.28 cm
+                    - type: Volume
+                      name: Detector_1
+                      geometry:
+                        type: Box
+                        x: 54.0 cm
+                        y: 40.0 cm
+                        z: 9.5 mm
+                      material: 'Sodium Iodide'
+                      transformations:
+                        - type: translate
+                          z: 2.045 cm
+                    - type: Volume
+                      name: Glass_backend_1
+                      geometry:
+                        type: Box
+                        x: 54.0 cm
+                        y: 40.0 cm
+                        z: 7.6 cm
+                      material: 'Glass, Borosilicate (Pyrex)'
+                      transformations:
+                        - type: translate
+                          z: -2.23 cm
+
+        # ---------------- ДЕТЕКТОРНАЯ ГОЛОВКА 2 (180°) ----------------
+        - type: GammaCamera
+          name: GammaCamera_2
+          transformations:
+            - type: rotate
+              gamma: 90 deg
+            - type: translate
+              y: 340.3 mm # 270.0 мм (радиус орбиты) + 70.3 мм (половина толщины корпуса 14.06 см)
+            - type: rotate
+              alpha: 180.0 deg
+          slots:
+            casing: Casing_2
+            detector_box: Detector_box_2
+            collimator: Collimator_2
+            crystal: Detector_2
+            glass_backend: Glass_backend_2
+          children:
+            - type: Volume
+              name: Casing_2
+              geometry:
+                type: Box
+                x: 58.0 cm
+                y: 44.0 cm
+                z: 14.06 cm
+              material: 'Pb'
+              children:
+                - type: Volume
+                  name: Detector_box_2
+                  geometry:
+                    type: Box
+                    x: 54.0 cm
+                    y: 40.0 cm
+                    z: 12.06 cm
+                  material: 'Air, Dry (near sea level)'
+                  transformations:
+                    - type: translate
+                      z: 1.0 cm
+                  children:
+                    - type: DirectParallelCollimator
+                      name: Collimator_2
+                      size: [54.0 cm, 40.0 cm, 3.5 cm]
+                      hole_diameter: 1.5 mm
+                      septa: 0.2 mm
+                      hole_shape: hexagonal
+                      material: 'Pb'
+                      transformations:
+                        - type: translate
+                          z: 4.28 cm
+                    - type: Volume
+                      name: Detector_2
+                      geometry:
+                        type: Box
+                        x: 54.0 cm
+                        y: 40.0 cm
+                        z: 9.5 mm
+                      material: 'Sodium Iodide'
+                      transformations:
+                        - type: translate
+                          z: 2.045 cm
+                    - type: Volume
+                      name: Glass_backend_2
+                      geometry:
+                        type: Box
+                        x: 54.0 cm
+                        y: 40.0 cm
+                        z: 7.6 cm
+                      material: 'Glass, Borosilicate (Pyrex)'
+                      transformations:
+                        - type: translate
+                          z: -2.23 cm
+
+data_manager:
+  filename: "output_tc99m_dual_cam/${gantry_angle deg}_deg.hdf"
+  buffer_size: 3 MiB
+  floating_point_precision: "float32"
+  compression: "gzip"
+  compression_opts: 4
+  handlers:
+    - type: HistoryAssemblerHandler
+      sensitive_volumes:
+        - Detector_1
+        - Detector_2
+      save_initial_states: true
+
+simulation_manager:
+  particles_number: 10000
+  buffer_capacity: 100000
+  min_energy: 1.0 keV
+  physics_list: "emstandard_opt4"
