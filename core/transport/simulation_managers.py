@@ -8,7 +8,7 @@ import logging
 import math
 from queue import Full, Queue
 import threading
-from typing import AbstractSet, Any, Callable, ClassVar, FrozenSet, List, Mapping, Optional, Union
+from typing import AbstractSet, Any, Callable, ClassVar, FrozenSet, List, Mapping, Optional, Tuple, Union
 
 import hepunits as units
 import numpy as np
@@ -17,14 +17,21 @@ from numpy.typing import NDArray
 from core.geometry.geometry_compiler import GeometryCompiler
 from core.other.typing_definitions import Float, Index
 from core.particles.particles import ParticleBank
-from core.physics.interaction_buffers import TELEMETRY_ORDER, ChunkType, RNGContext, SimulationDataBuffer
+from core.physics.interaction_buffers import (
+    TELEMETRY_ORDER,
+    ChunkType,
+    RNGContext,
+    SecondaryActivationBuffer,
+    SimulationDataBuffer,
+)
 from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.physics_compiler import PhysicsCompiler
 from core.scene.nodes import CompositeNode
+from core.source.primary_source import PrimarySource
+from core.source.secondary_source import SecondarySource
 from core.source.source_buffer import SourceBuffer
 from core.source.source_compiler import SourceCompiler
-from core.source.source_kernels import inject_poisson_sources_kernel
-from core.source.sources import Source
+from core.source.sources import ParticleSource, Source
 from core.transport.propagator import ParticlePropagator
 from core.transport.transport_kernels import (
     _push_to_dead_particles_kernel,
@@ -55,8 +62,9 @@ class SimulationState(Enum):
 class SimulationManager(threading.Thread):
     """
     Вычислительный менеджер симуляции, оптимизированный под Data-Oriented Design (SoA),
-    с поддержкой пуассоновского потока распадов (прореживание Льюиса–Шедлера),
-    единого генератора случайных чисел и точной обрезки по stop_time.
+    с поддержкой двухфазного пополнения банка (наведенные вторичные источники + пуассоновский
+    поток первичных распадов с прореживанием Льюиса–Шедлера), единого генератора случайных
+    чисел и точной обрезки по stop_time.
     """
 
     QUEUE_PUT_TIMEOUT: ClassVar[float] = 0.05
@@ -67,26 +75,27 @@ class SimulationManager(threading.Thread):
     propagator: ParticlePropagator
     start_time: Float
     stop_time: Float
-    t_ref: Float
-    t_last: Float
-    pending_arrival_time: Float
     initial_particle_id: int
     particles_number: int
     batch_capacity: int
     min_energy: Float
+    enable_atomic_relaxation: bool
+    photon_production_cut: Float
+    electron_production_cut: Float
     queue: Queue[Any]
     consumed_chunk_types: FrozenSet[ChunkType]
     step_count: int
     bank: ParticleBank
     data_buffer: SimulationDataBuffer
+    primary_source: PrimarySource
+    secondary_source: SecondarySource
+    sources: Tuple[ParticleSource, ...]
     geometry_buffer: NDArray[Any]
     physics_buffer: PhysicsBuffer
     rng: np.random.Generator
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
-    global_timer: Float
     _stop_by_time: bool
-    _emission_finished: bool
     _run_event: threading.Event
     _state: SimulationState
 
@@ -107,6 +116,9 @@ class SimulationManager(threading.Thread):
         consumed_chunk_types: Optional[AbstractSet[ChunkType]] = None,
         bank: Optional[ParticleBank] = None,
         resume_state: Optional[Mapping[str, Any]] = None,
+        enable_atomic_relaxation: bool = False,
+        photon_production_cut: Union[float, Float] = Float(1.0 * units.keV),
+        electron_production_cut: Union[float, Float] = Float(np.inf),
     ) -> None:
         super().__init__()
         if name is not None:
@@ -127,9 +139,6 @@ class SimulationManager(threading.Thread):
             self.stop_time = Float(stop_time)
             self._stop_by_time = bool(math.isfinite(float(self.stop_time)))
 
-        self.t_ref = self.start_time
-        self.t_last = self.start_time
-        self.pending_arrival_time = Float(np.nan)
         self.initial_particle_id = 0
         self.particles_number = int(particles_number)
         self.batch_capacity = self.particles_number if batch_capacity is None else int(batch_capacity)
@@ -143,6 +152,9 @@ class SimulationManager(threading.Thread):
             else max(int(buffer_capacity), self.batch_capacity)
         )
         self.min_energy = Float(min_energy)
+        self.enable_atomic_relaxation = bool(enable_atomic_relaxation)
+        self.photon_production_cut = Float(photon_production_cut)
+        self.electron_production_cut = Float(electron_production_cut)
         self.queue = Queue(maxsize=64) if queue is None else queue
         self.consumed_chunk_types = (
             DEFAULT_CONSUMED_CHUNK_TYPES
@@ -162,6 +174,23 @@ class SimulationManager(threading.Thread):
             capacity=effective_capacity,
             enabled=self.consumed_chunk_types,
         )
+        self.primary_source = PrimarySource(
+            source_buffer=self.source_buffer,
+            start_time=self.start_time,
+            stop_time=self.stop_time,
+            max_particles=-1 if self._stop_by_time else self.particles_number,
+        )
+        self.secondary_source = SecondarySource(
+            activation_buffer=SecondaryActivationBuffer.allocate(
+                capacity=2 * self.batch_capacity,
+                enable_atomic_relaxation=self.enable_atomic_relaxation,
+                photon_production_cut=self.photon_production_cut,
+                electron_production_cut=self.electron_production_cut,
+            ),
+            relaxation_bank=self.physics_buffer.relaxation_bank,
+            stop_time=self.stop_time,
+        )
+        self.sources = (self.secondary_source, self.primary_source)
 
         if rng is not None:
             self.rng = rng
@@ -173,14 +202,6 @@ class SimulationManager(threading.Thread):
         self.propagator.rng = self.rng
         self.rng_ctx = RNGContext.from_numpy_rng(self.rng)
         self.invalidators = [self._invalidate_by_energy, self._invalidate_by_volume]
-        self.global_timer = Float(self.start_time)
-
-        if not self.active_sources:
-            self._emission_finished = True
-        elif self._stop_by_time:
-            self._emission_finished = bool(self.start_time >= self.stop_time)
-        else:
-            self._emission_finished = bool(self.particles_number <= 0)
 
         self._state = SimulationState.IDLE
         self._run_event = threading.Event()
@@ -189,16 +210,65 @@ class SimulationManager(threading.Thread):
             self.restore_checkpoint(resume_state)
 
     def restore_checkpoint(self, resume_state: Mapping[str, Any]) -> None:
-        """Восстанавливает состояние ГСЧ, счетчика частиц и потока эмиссии из чекпоинта."""
+        """Восстанавливает состояние ГСЧ, счетчиков частиц, потока эмиссии и вторичных активаций из чекпоинта."""
         self.initial_particle_id = int(resume_state.get("next_particle_id", resume_state.get("initial_particle_id", 0)))
         self.bank.count_array[0] = Index(self.initial_particle_id)
-        self.t_ref = Float(self.start_time if resume_state.get("t_ref") is None else resume_state["t_ref"])
-        self.t_last = Float(self.start_time if resume_state.get("t_last") is None else resume_state["t_last"])
-        if resume_state.get("pending_arrival_time") is not None:
-            self.pending_arrival_time = Float(resume_state["pending_arrival_time"])
+        self.primary_source.restore_state(resume_state)
         if resume_state.get("rng_state") is not None:
             self.rng.bit_generator.state = resume_state["rng_state"]
             self.rng_ctx = RNGContext.from_numpy_rng(self.rng)
+        if "secondary_activations" in resume_state:
+            self.secondary_source.restore_state(resume_state.get("secondary_activations"))
+
+    @property
+    def t_ref(self) -> Float:
+        """Опорное время для мажоранты интенсивности первичного пуассоновского потока."""
+        return self.primary_source.t_ref
+
+    @t_ref.setter
+    def t_ref(self, value: Float) -> None:
+        self.primary_source.t_ref = Float(value)
+
+    @property
+    def t_last(self) -> Float:
+        """Текущее время последнего принятого/проверенного кандидата первичного потока."""
+        return self.primary_source.t_last
+
+    @t_last.setter
+    def t_last(self, value: Float) -> None:
+        self.primary_source.t_last = Float(value)
+
+    @property
+    def pending_arrival_time(self) -> Float:
+        """Отложенный кандидат времени вылета первичной частицы на границе батча или stop_time."""
+        return self.primary_source.pending_arrival_time
+
+    @pending_arrival_time.setter
+    def pending_arrival_time(self, value: Float) -> None:
+        self.primary_source.pending_arrival_time = Float(value)
+
+    @property
+    def emitted_primaries(self) -> int:
+        """Количество сгенерированных первичных частиц."""
+        return self.primary_source.emitted_particles
+
+    @emitted_primaries.setter
+    def emitted_primaries(self, value: int) -> None:
+        self.primary_source.emitted_particles = int(value)
+
+    @property
+    def global_timer(self) -> Float:
+        """Текущее глобальное время симуляции."""
+        return self.primary_source.t_last
+
+    @global_timer.setter
+    def global_timer(self, value: Float) -> None:
+        self.primary_source.t_last = Float(value)
+
+    @property
+    def activation_buffer(self) -> SecondaryActivationBuffer:
+        """Текущий предвыделенный буфер наведенных вторичных активаций."""
+        return self.secondary_source.activation_buffer
 
     @property
     def state(self) -> SimulationState:
@@ -217,13 +287,8 @@ class SimulationManager(threading.Thread):
 
     @property
     def has_pending_sources(self) -> bool:
-        """Проверяет наличие активных источников частиц до достижения лимита времени или числа частиц."""
-        if not self.active_sources or self._emission_finished:
-            return False
-        if self._stop_by_time:
-            return bool(self.global_timer < self.stop_time)
-        emitted_so_far = int(self.bank.count_array[0]) - self.initial_particle_id
-        return emitted_so_far < self.particles_number
+        """Проверяет наличие ожидающих эмиссии частиц хотя бы в одном рантайм-источнике."""
+        return any(source.has_pending for source in self.sources)
 
     def pause(self) -> None:
         """Приостанавливает выполнение моделирования."""
@@ -329,47 +394,18 @@ class SimulationManager(threading.Thread):
         return np.array([], dtype=Index)
 
     def _replenish_bank(self) -> None:
-        if not self.has_pending_sources:
-            return
-
-        if self._stop_by_time:
-            _, _, self.t_last, self.pending_arrival_time = inject_poisson_sources_kernel(
-                self.bank,
-                self.source_buffer,
-                self.stop_time,
-                self.t_ref,
-                self.t_last,
-                self.pending_arrival_time,
-                self.rng_ctx,
-            )
-            if not math.isnan(self.pending_arrival_time) and self.pending_arrival_time >= self.stop_time:
-                self.t_last = self.stop_time
-                self.global_timer = self.stop_time
-                self._emission_finished = True
-            else:
-                self.global_timer = self.t_last
-        else:
-            emitted_so_far = int(self.bank.count_array[0]) - self.initial_particle_id
-            remaining_particles = self.particles_number - emitted_so_far
-            if remaining_particles <= 0:
-                self._emission_finished = True
-                return
-            _, _, self.t_last, self.pending_arrival_time = inject_poisson_sources_kernel(
-                self.bank,
-                self.source_buffer,
-                Float(np.inf),
-                self.t_ref,
-                self.t_last,
-                self.pending_arrival_time,
-                self.rng_ctx,
-                max_particles=Index(remaining_particles),
-            )
-            self.global_timer = self.t_last
-            if (
-                int(self.bank.count_array[0]) - self.initial_particle_id >= self.particles_number
-                or math.isinf(float(self.pending_arrival_time))
-            ):
-                self._emission_finished = True
+        """
+        Последовательно опрашивает рантайм-источники ParticleSource (SecondarySource -> PrimarySource)
+        для заполнения свободных слотов ParticleBank с передачей эстафетного курсора slot_cursor.
+        """
+        slot_cursor = Index(0)
+        for source in self.sources:
+            if source.has_pending:
+                _, slot_cursor = source.replenish_bank(
+                    self.bank,
+                    self.rng_ctx,
+                    start_slot_cursor=slot_cursor,
+                )
 
     def next_step(self) -> None:
         """Выполняет один шаг пополнения банка частиц, переноса и сброса буферов."""
@@ -387,6 +423,7 @@ class SimulationManager(threading.Thread):
             self.physics_buffer,
             self.rng_ctx,
             active_indices=active_indices,
+            activation_buffer=self.activation_buffer,
         )
 
         dead_indices = self._apply_invalidators(active_indices)
@@ -460,4 +497,3 @@ __all__ = [
     "SimulationState",
     "SimulationManager",
 ]
-

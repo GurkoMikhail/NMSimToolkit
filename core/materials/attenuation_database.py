@@ -4,7 +4,7 @@
 
 from pathlib import Path
 import math
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable, NamedTuple, Tuple
 
 import h5py
 import hepunits as units
@@ -13,7 +13,86 @@ from numpy.typing import NDArray
 
 from core.materials.atomic_properties import element_symbol
 from core.materials.materials import Material
-from core.other.typing_definitions import Float
+from core.other.typing_definitions import Float, Index
+
+EADL_DESIGNATOR_TO_LABEL: Dict[int, str] = {
+    1: "K",
+    3: "L1",
+    5: "L2",
+    6: "L3",
+    8: "M1",
+    10: "M2",
+    11: "M3",
+    13: "M4",
+    14: "M5",
+    16: "N1",
+    18: "N2",
+    19: "N3",
+    21: "N4",
+    22: "N5",
+    24: "N6",
+    25: "N7",
+    27: "O1",
+    29: "O2",
+    30: "O3",
+    32: "O4",
+    33: "O5",
+    35: "O6",
+    36: "O7",
+    41: "P1",
+    43: "P2",
+    44: "P3",
+    46: "P4",
+    47: "P5",
+    58: "Q1",
+}
+EADL_LABEL_TO_DESIGNATOR: Dict[str, int] = {
+    label: designator for designator, label in EADL_DESIGNATOR_TO_LABEL.items()
+}
+
+RELAXATION_DATASET_NAMES: Tuple[str, ...] = (
+    "subshell_label",
+    "subshell_designator",
+    "binding_energy",
+    "jump_ratio",
+    "jump_cumulative_weight",
+    "fluorescence_yield",
+    "decay_constant",
+    "rad_offsets",
+    "rad_vacancy_designator",
+    "rad_energy",
+    "rad_probability",
+    "auger_offsets",
+    "auger_vacancy_primary",
+    "auger_vacancy_secondary",
+    "auger_energy",
+    "auger_probability",
+)
+
+
+class ElementRelaxationData(NamedTuple):
+    """
+    Табличные параметры атомной релаксации и скачков фотопоглощения химического элемента
+    (гибридная схема NIST XCOM Edges + ENDF/B-VIII.0 EADL).
+    Подоболочки упорядочены по строгому возрастанию энергии связи binding_energy (в МэВ).
+    """
+
+    subshell_label: NDArray[np.str_]
+    subshell_designator: NDArray[np.int32]
+    binding_energy: NDArray[Float]
+    jump_ratio: NDArray[Float]
+    jump_cumulative_weight: NDArray[Float]
+    fluorescence_yield: NDArray[Float]
+    decay_constant: NDArray[Float]
+    rad_offsets: NDArray[Index]
+    rad_vacancy_designator: NDArray[np.int32]
+    rad_energy: NDArray[Float]
+    rad_probability: NDArray[Float]
+    auger_offsets: NDArray[Index]
+    auger_vacancy_primary: NDArray[np.int32]
+    auger_vacancy_secondary: NDArray[np.int32]
+    auger_energy: NDArray[Float]
+    auger_probability: NDArray[Float]
 
 processes_names: Dict[str, str] = {
     'Photoelectric absorption': 'PhotoelectricEffect',
@@ -84,6 +163,7 @@ class AttenuationDataBase(Dict[Material, NDArray[Any]]):
     _base_name: str
     _elements_MAC: Dict[str, NDArray[Any]]
     _elements_edges: Dict[str, Tuple[NDArray[Float], NDArray[np.str_]]]
+    _elements_relaxation: Dict[str, ElementRelaxationData]
     _energy_range: NDArray[Float]
 
     def __init__(self, base_name: str = 'NIST XCOM Elements MAC') -> None:
@@ -91,6 +171,7 @@ class AttenuationDataBase(Dict[Material, NDArray[Any]]):
         self._base_name = base_name
         self._elements_MAC = {}
         self._elements_edges = {}
+        self._elements_relaxation = {}
         self._energy_range = np.array([1.0 * units.keV, 20.0 * units.MeV], dtype=Float)
         self._load_elements_MAC()
 
@@ -119,36 +200,100 @@ class AttenuationDataBase(Dict[Material, NDArray[Any]]):
         """Словарь краев поглощения химических элементов: {символ: (energies, labels)}."""
         return self._elements_edges
 
+    @property
+    def elements_relaxation(self) -> Dict[str, ElementRelaxationData]:
+        """Словарь таблиц атомной релаксации химических элементов: {символ: ElementRelaxationData}."""
+        return self._elements_relaxation
+
+    @staticmethod
+    def _resolve_element_symbol(element: int | str) -> str:
+        """Преобразует атомный номер Z или химический символ в каноническую строку символа элемента."""
+        if isinstance(element, (int, np.integer)):
+            atomic_z = int(element)
+            if atomic_z not in element_symbol:
+                raise ValueError(f"Неизвестный атомный номер элемента: Z={atomic_z}.")
+            return element_symbol[atomic_z]
+        if isinstance(element, str):
+            return element
+        raise TypeError(
+            f"Аргумент element должен быть атомным номером (int) или символом (str), получено: {type(element)}."
+        )
+
     def get_element_edges(self, element: int | str) -> Tuple[NDArray[Float], NDArray[np.str_]]:
         """
         Возвращает кортеж (edge_energies, edge_labels) краев поглощения для элемента
         по атомному номеру Z или химическому символу.
         """
-        if isinstance(element, (int, np.integer)):
-            atomic_z = int(element)
-            if atomic_z not in element_symbol:
-                raise ValueError(f"Неизвестный атомный номер элемента: Z={atomic_z}.")
-            symbol = element_symbol[atomic_z]
-        elif isinstance(element, str):
-            symbol = element
-        else:
-            raise TypeError(
-                f"Аргумент element должен быть атомным номером (int) или символом (str), получено: {type(element)}."
-            )
-
+        symbol = self._resolve_element_symbol(element)
         if symbol not in self._elements_edges:
             raise ValueError(f"Химический элемент '{symbol}' отсутствует в базе краев поглощения.")
         return self._elements_edges[symbol]
+
+    def get_element_relaxation(self, element: int | str) -> ElementRelaxationData:
+        """
+        Возвращает структуру ElementRelaxationData с параметрами атомной релаксации и скачков
+        фотопоглощения для элемента по атомному номеру Z или химическому символу.
+        """
+        symbol = self._resolve_element_symbol(element)
+        if symbol not in self._elements_relaxation:
+            raise ValueError(f"Химический элемент '{symbol}' отсутствует в базе атомной релаксации.")
+        return self._elements_relaxation[symbol]
+
+    @staticmethod
+    def _validate_and_extract_relaxation(
+        element: str,
+        element_group: Any,
+    ) -> ElementRelaxationData:
+        """
+        Проверяет наличие подгруппы 'Relaxation' и обязательных датасетов элемента в HDF5
+        и извлекает массивы в структуру ElementRelaxationData.
+        """
+        if 'Relaxation' not in element_group or not isinstance(element_group['Relaxation'], h5py.Group):
+            raise ValueError(f"В группе элемента '{element}' отсутствует обязательная подгруппа 'Relaxation'.")
+
+        rel_group = element_group['Relaxation']
+        for ds_name in RELAXATION_DATASET_NAMES:
+            if ds_name not in rel_group:
+                raise ValueError(
+                    f"В подгруппе 'Relaxation' элемента '{element}' отсутствует обязательный датасет '{ds_name}'."
+                )
+
+        raw_subshell_labels = rel_group['subshell_label'][:]
+        subshell_label = np.asarray(
+            [
+                lbl.decode('utf-8') if isinstance(lbl, (bytes, np.bytes_)) else str(lbl)
+                for lbl in raw_subshell_labels
+            ],
+            dtype=np.str_,
+        )
+        return ElementRelaxationData(
+            subshell_label=subshell_label,
+            subshell_designator=np.asarray(rel_group['subshell_designator'][:], dtype=np.int32),
+            binding_energy=np.asarray(rel_group['binding_energy'][:], dtype=Float),
+            jump_ratio=np.asarray(rel_group['jump_ratio'][:], dtype=Float),
+            jump_cumulative_weight=np.asarray(rel_group['jump_cumulative_weight'][:], dtype=Float),
+            fluorescence_yield=np.asarray(rel_group['fluorescence_yield'][:], dtype=Float),
+            decay_constant=np.asarray(rel_group['decay_constant'][:], dtype=Float),
+            rad_offsets=np.asarray(rel_group['rad_offsets'][:], dtype=Index),
+            rad_vacancy_designator=np.asarray(rel_group['rad_vacancy_designator'][:], dtype=np.int32),
+            rad_energy=np.asarray(rel_group['rad_energy'][:], dtype=Float),
+            rad_probability=np.asarray(rel_group['rad_probability'][:], dtype=Float),
+            auger_offsets=np.asarray(rel_group['auger_offsets'][:], dtype=Index),
+            auger_vacancy_primary=np.asarray(rel_group['auger_vacancy_primary'][:], dtype=np.int32),
+            auger_vacancy_secondary=np.asarray(rel_group['auger_vacancy_secondary'][:], dtype=np.int32),
+            auger_energy=np.asarray(rel_group['auger_energy'][:], dtype=Float),
+            auger_probability=np.asarray(rel_group['auger_probability'][:], dtype=Float),
+        )
 
     @staticmethod
     def _validate_and_extract_element(
         element: str,
         element_group: Any,
-    ) -> Tuple[NDArray[Any], NDArray[Float], NDArray[np.str_]]:
+    ) -> Tuple[NDArray[Any], NDArray[Float], NDArray[np.str_], ElementRelaxationData]:
         """
         Валидирует схему группы элемента в HDF5 (монотонность сетки, наличие и согласованность
-        подгруппы Edges, скачки фотоэффекта на краях) и возвращает структурированный массив MAC_dtype
-        вместе с метаданными краев.
+        подгрупп Edges и Relaxation, скачки фотоэффекта на краях) и возвращает структурированный
+        массив MAC_dtype вместе с метаданными краев и атомной релаксации.
         """
         if not isinstance(element_group, h5py.Group):
             raise ValueError(f"Объект '{element}' в HDF5-базе не является группой h5py.Group.")
@@ -230,12 +375,17 @@ class AttenuationDataBase(Dict[Material, NDArray[Any]]):
                     f"({pe_values[right_pos - 1]}) должно быть строго больше значения ниже края ({pe_values[left_pos]})."
                 )
 
+        relaxation_data = AttenuationDataBase._validate_and_extract_relaxation(
+            element=element,
+            element_group=element_group,
+        )
+
         mac_table: NDArray[Any] = np.zeros(energy.size, dtype=MAC_dtype)
         mac_table['Energy'] = energy
         for process_name, value in mapped_processes.items():
             mac_table['Coefficient'][process_name] = value
 
-        return mac_table, edge_energy, edge_label
+        return mac_table, edge_energy, edge_label, relaxation_data
 
     def _load_elements_MAC(self) -> None:
         candidate_path = Path(self._base_name)
@@ -248,6 +398,7 @@ class AttenuationDataBase(Dict[Material, NDArray[Any]]):
 
         loaded_mac: Dict[str, NDArray[Any]] = {}
         loaded_edges: Dict[str, Tuple[NDArray[Float], NDArray[np.str_]]] = {}
+        loaded_relaxation: Dict[str, ElementRelaxationData] = {}
         min_energies = []
         max_energies = []
 
@@ -257,11 +408,12 @@ class AttenuationDataBase(Dict[Material, NDArray[Any]]):
 
             for element, element_group in file.items():
                 element_name = str(element)
-                mac_table, edge_energy, edge_label = self._validate_and_extract_element(
+                mac_table, edge_energy, edge_label, relaxation_data = self._validate_and_extract_element(
                     element_name, element_group
                 )
                 loaded_mac[element_name] = mac_table
                 loaded_edges[element_name] = (edge_energy, edge_label)
+                loaded_relaxation[element_name] = relaxation_data
                 min_energies.append(float(mac_table['Energy'][0]))
                 max_energies.append(float(mac_table['Energy'][-1]))
 
@@ -275,6 +427,7 @@ class AttenuationDataBase(Dict[Material, NDArray[Any]]):
 
         self._elements_MAC = loaded_mac
         self._elements_edges = loaded_edges
+        self._elements_relaxation = loaded_relaxation
 
     def add_materials(self, materials: Iterable[Material]) -> None:
         """Пакетно добавляет коллекцию материалов в базу данных."""
@@ -331,6 +484,10 @@ class AttenuationDataBase(Dict[Material, NDArray[Any]]):
 __all__ = [
     "_interpolate_element_on_material_grid",
     "AttenuationDataBase",
+    "EADL_DESIGNATOR_TO_LABEL",
+    "EADL_LABEL_TO_DESIGNATOR",
+    "ElementRelaxationData",
+    "RELAXATION_DATASET_NAMES",
     "processes_names",
     "processes_dtype",
     "MAC_dtype",

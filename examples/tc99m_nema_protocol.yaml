@@ -49,18 +49,24 @@ scene:
           name: Source
           radionuclide: '99mTc'
           phantom_type: 'NEMA IEC Body Phantom'
-          radiation_type: Gamma
           activity: 100 MBq
-          voxel_size: 4.2 mm
           half_life: 6.0067 hour
-          # Основная изомерная гамма-линия 99mTc (140.511 кэВ)
-          energy:
-            - [140.511 keV, 1.0]
-          distribution:
-            format: raw
-            path: phantoms/nema/nema_voxel_size_4.2_mm.dat
-            shape: [128, 128, 92]
-            order: 'F'
+          spatial:
+            type: voxel
+            voxel_size: 4.2 mm
+            distribution:
+              format: raw
+              path: phantoms/nema/nema_voxel_size_4.2_mm.dat
+              shape: [128, 128, 92]
+              order: 'F'
+          channels:
+            - species: photon
+              branching_ratio: 1.0
+              spectrum:
+                type: discrete
+                # Основная изомерная гамма-линия 99mTc (140.511 кэВ)
+                lines:
+                  - [140.511 keV, 1.0]
 
     - type: Gantry
       name: Gantry

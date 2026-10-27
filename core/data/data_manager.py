@@ -287,6 +287,13 @@ class DataManager(threading.Thread):
                                     "t_last": t_last_val,
                                     "pending_arrival_time": pending_arrival_val,
                                     "batch_capacity": batch_capacity_val,
+                                    "emitted_primaries": int(task_item.attrs.get("emitted_primaries", 0)),
+                                    "secondary_activations": (
+                                        dict(task_item["secondary_activations"].attrs)
+                                        if "secondary_activations" in task_item
+                                        and isinstance(task_item["secondary_activations"], h5py.Group)
+                                        else None
+                                    ),
                                 }
 
                         if not has_completed_tasks:
@@ -355,6 +362,8 @@ class DataManager(threading.Thread):
                     target_group.attrs[str(item_key)] = item_value
                 else:
                     target_group.attrs[str(item_key)] = str(item_value)
+            elif str(item_key) in target_group:
+                del target_group[str(item_key)]
 
     @staticmethod
     def _write_canonical_section(target_group: h5py.Group, data_dict: Dict[str, Any]) -> None:

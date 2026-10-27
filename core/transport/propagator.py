@@ -11,7 +11,11 @@ from numpy.typing import NDArray
 from core.geometry.geometry_kernels import cast_path_kernel
 from core.other.typing_definitions import Index
 from core.particles.particles import ParticleBank
-from core.physics.interaction_buffers import RNGContext, SimulationDataBuffer
+from core.physics.interaction_buffers import (
+    RNGContext,
+    SecondaryActivationBuffer,
+    SimulationDataBuffer,
+)
 from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.processes import Process
 from core.transport.transport_buffer import TransportBuffer
@@ -66,6 +70,7 @@ class ParticlePropagator:
         physics_buffer: PhysicsBuffer,
         rng_ctx: RNGContext,
         active_indices: Optional[NDArray[Index]] = None,
+        activation_buffer: Optional[SecondaryActivationBuffer] = None,
     ) -> None:
         """
         Выполняет один полный шаг переноса и взаимодействий для всех активных частиц в банке.
@@ -121,8 +126,8 @@ class ParticlePropagator:
                     self.transport_buffer.material_ids,
                     rng_ctx,
                     process_col_idx=Index(col_idx),
+                    activation_buffer=activation_buffer,
                 )
 
 
 __all__ = ["ParticlePropagator"]
-

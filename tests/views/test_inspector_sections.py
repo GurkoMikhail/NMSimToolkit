@@ -265,7 +265,7 @@ class TestInspectorSections(unittest.TestCase):
 
     def test_source_section_spectrum_table_and_lbyl_validation(self) -> None:
         """Верификация операций с таблицей спектра источника и LBYL защиты от некорректного ввода."""
-        source_core = Source(
+        source_core = Source.from_voxels(
             distribution=np.ones((2, 2, 2)),
             activity=Float(10.0 * units.MBq),
             energy=Float(140.5 * units.keV),

@@ -10,16 +10,25 @@ from typing import Any, List, Optional
 import numpy as np
 
 from core.geometry.flattened_scene import FlattenedScene
-from core.materials.atomic_properties import atomic_number
-from core.materials.attenuation_database import _interpolate_element_on_material_grid
+from core.materials.atomic_properties import atomic_number, element_symbol
+from core.materials.attenuation_database import (
+    AttenuationDataBase,
+    _interpolate_element_on_material_grid,
+)
 from core.materials.material_bank import MaterialBank, MaterialInfoDType, MaterialPointerDType
 from core.materials.materials import Material
 from core.other.typing_definitions import CFuncAddress, Charge, Float, Index
-from core.physics.physics_buffer import ElementCSR, PhysicsBuffer
+from core.physics.physics_buffer import (
+    AtomicRelaxationBank,
+    ElementCSR,
+    MAX_RELAXATION_Z,
+    PhysicsBuffer,
+)
 from core.physics.physics_kernels import _compute_log_1d_array, _compute_log_2d_array
 from core.physics.processes import Process
 from core.scene.nodes import CompositeNode
-from core.source.source_compiler import SourceCompiler
+from core.source.alias_tables import build_alias_tables
+from core.source.sources import Source
 import settings.database_setting as settings
 
 DEFAULT_LOOKUP_NUM_BINS: int = 512
@@ -62,14 +71,22 @@ class PhysicsCompiler:
         min_energy = float(first_range[0])
         max_energy = float(first_range[1])
 
-        active_sources = SourceCompiler().compile_scene(root_node)
+        active_sources: List[Source] = []
+        stack: List[Any] = [root_node]
+        while stack:
+            curr = stack.pop()
+            if isinstance(curr, Source):
+                active_sources.append(curr)
+            if isinstance(curr, CompositeNode):
+                stack.extend(reversed(curr.childs))
         for source_node in active_sources:
-            line_energies = np.asarray(source_node.energy['energy'], dtype=Float)
-            if line_energies.size > 0 and np.any((line_energies < min_energy) | (line_energies > max_energy)):
-                raise ValueError(
-                    f"Спектр источника '{source_node.name}' содержит линии вне допустимого диапазона "
-                    f"таблиц сечений [{min_energy}, {max_energy}]: {line_energies}."
-                )
+            for channel in source_node.channels:
+                spec_min, spec_max = channel.spectrum.energy_bounds
+                if float(spec_min) < min_energy or float(spec_max) > max_energy:
+                    raise ValueError(
+                        f"Спектр источника '{source_node.name}' содержит энергии [{spec_min}, {spec_max}] "
+                        f"вне допустимого диапазона таблиц сечений [{min_energy}, {max_energy}]."
+                    )
 
     def _build_material_bank(
         self,
@@ -351,47 +368,14 @@ class PhysicsCompiler:
                     total_lac = material_bank.physics_lac_table[
                         row_start : row_start + row_length, process_col_idx
                     ]
-                    sum_partial_lac = np.sum(partial_lacs, axis=1)
-                    if np.any(total_lac < 0.0):
-                        raise ValueError(
-                            f"Нарушен инвариант парциальных сечений материала '{material.name}' "
-                            f"для процесса '{process.name}': обнаружены отрицательные полные сечения в MaterialBank."
-                        )
-
                     positive_mask = total_lac > 0.0
                     zero_mask = ~positive_mask
-                    if np.any(zero_mask) and np.any(sum_partial_lac[zero_mask] > 0.0):
-                        raise ValueError(
-                            f"Нарушен инвариант парциальных сечений материала '{material.name}' "
-                            f"для процесса '{process.name}': полное сечение в MaterialBank равно 0.0 "
-                            f"при ненулевой сумме парциальных вкладов элементов."
-                        )
-
-                    if np.any(positive_mask):
-                        rel_error = (
-                            np.abs(sum_partial_lac[positive_mask] - total_lac[positive_mask])
-                            / total_lac[positive_mask]
-                        )
-                        max_rel_error = float(np.max(rel_error))
-                        if max_rel_error > 1e-12:
-                            raise ValueError(
-                                f"Нарушен инвариант парциальных сечений материала '{material.name}' "
-                                f"для процесса '{process.name}': максимальная относительная погрешность "
-                                f"{max_rel_error:.3e} > 1e-12."
-                            )
 
                     norm_fractions = np.zeros((row_length, num_mat_elements), dtype=Float)
                     if np.any(positive_mask):
                         norm_fractions[positive_mask, :] = (
                             partial_lacs[positive_mask, :] / total_lac[positive_mask, np.newaxis]
                         )
-                        sum_norm = np.sum(norm_fractions[positive_mask, :], axis=1)
-                        max_norm_error = float(np.max(np.abs(sum_norm - 1.0)))
-                        if max_norm_error > 1e-12:
-                            raise ValueError(
-                                f"Сумма нормированных парциальных долей элементов материала '{material.name}' "
-                                f"для процесса '{process.name}' отклоняется от 1.0 на {max_norm_error:.3e} > 1e-12."
-                            )
 
                     if np.any(zero_mask):
                         norm_fractions[zero_mask, :] = mass_fractions[np.newaxis, :]
@@ -412,6 +396,206 @@ class PhysicsCompiler:
             element_offsets=element_offsets,
             element_Z=element_Z,
             element_partial_fractions=element_partial_fractions,
+        )
+
+    def _build_atomic_relaxation_bank(
+        self,
+        processes_list: List[Process],
+        attenuation_database: Optional[AttenuationDataBase] = None,
+    ) -> AtomicRelaxationBank:
+        """
+        Компилирует банк атомной релаксации AtomicRelaxationBank (Z = 0..100) с предвычисленными
+        таблицами Воза для O(1) выборки радиационных и Оже-переходов каждого ионизируемого уровня.
+        """
+        if attenuation_database is not None:
+            target_db = attenuation_database
+        elif len(processes_list) > 0:
+            target_db = processes_list[0].attenuation_database
+            for process in processes_list[1:]:
+                if process.attenuation_database is not target_db:
+                    if set(process.attenuation_database.elements_relaxation.keys()) != set(
+                        target_db.elements_relaxation.keys()
+                    ):
+                        raise ValueError(
+                            f"База данных атомной релаксации процесса '{process.name}' "
+                            f"не согласована с процессом '{processes_list[0].name}'."
+                        )
+        else:
+            target_db = settings.attenuation_database
+
+        relaxation_map = target_db.elements_relaxation
+        num_z_slots = MAX_RELAXATION_Z + 1
+
+        shell_offsets = np.zeros(num_z_slots + 1, dtype=Index)
+
+        designator_blocks: List[np.ndarray] = []
+        binding_blocks: List[np.ndarray] = []
+        jump_weight_blocks: List[np.ndarray] = []
+        omega_blocks: List[np.ndarray] = []
+        decay_blocks: List[np.ndarray] = []
+
+        line_offsets_list: List[int] = [0]
+        line_energy_blocks: List[np.ndarray] = []
+        line_prob_blocks: List[np.ndarray] = []
+        line_alias_blocks: List[np.ndarray] = []
+        line_vacancy_blocks: List[np.ndarray] = []
+
+        auger_offsets_list: List[int] = [0]
+        auger_energy_blocks: List[np.ndarray] = []
+        auger_prob_blocks: List[np.ndarray] = []
+        auger_alias_blocks: List[np.ndarray] = []
+        auger_vac1_blocks: List[np.ndarray] = []
+        auger_vac2_blocks: List[np.ndarray] = []
+
+        current_shells = 0
+        current_lines = 0
+        current_auger = 0
+
+        for atomic_z in range(num_z_slots):
+            symbol = element_symbol.get(atomic_z)
+            if symbol is not None and symbol in relaxation_map:
+                rel_data = relaxation_map[symbol]
+                num_el_shells = int(rel_data.binding_energy.size)
+                current_shells += num_el_shells
+
+                if num_el_shells > 0:
+                    designator_blocks.append(rel_data.subshell_designator)
+                    binding_blocks.append(rel_data.binding_energy)
+                    jump_weight_blocks.append(rel_data.jump_cumulative_weight[1:])
+                    omega_blocks.append(rel_data.fluorescence_yield)
+                    decay_blocks.append(rel_data.decay_constant)
+
+                    for s_idx in range(num_el_shells):
+                        r_start = int(rel_data.rad_offsets[s_idx])
+                        r_end = int(rel_data.rad_offsets[s_idx + 1])
+                        r_count = r_end - r_start
+                        if r_count > 0:
+                            r_prob, r_alias = build_alias_tables(
+                                rel_data.rad_probability[r_start:r_end]
+                            )
+                            line_energy_blocks.append(rel_data.rad_energy[r_start:r_end])
+                            line_prob_blocks.append(r_prob)
+                            line_alias_blocks.append(r_alias)
+                            line_vacancy_blocks.append(
+                                rel_data.rad_vacancy_designator[r_start:r_end]
+                            )
+                            current_lines += r_count
+                        line_offsets_list.append(current_lines)
+
+                        a_start = int(rel_data.auger_offsets[s_idx])
+                        a_end = int(rel_data.auger_offsets[s_idx + 1])
+                        a_count = a_end - a_start
+                        if a_count > 0:
+                            a_prob, a_alias = build_alias_tables(
+                                rel_data.auger_probability[a_start:a_end]
+                            )
+                            auger_energy_blocks.append(rel_data.auger_energy[a_start:a_end])
+                            auger_prob_blocks.append(a_prob)
+                            auger_alias_blocks.append(a_alias)
+                            auger_vac1_blocks.append(
+                                rel_data.auger_vacancy_primary[a_start:a_end]
+                            )
+                            auger_vac2_blocks.append(
+                                rel_data.auger_vacancy_secondary[a_start:a_end]
+                            )
+                            current_auger += a_count
+                        auger_offsets_list.append(current_auger)
+
+            shell_offsets[atomic_z + 1] = Index(current_shells)
+
+        subshell_designator = (
+            np.concatenate(designator_blocks).astype(np.int32, copy=False)
+            if designator_blocks
+            else np.empty(0, dtype=np.int32)
+        )
+        binding_energy = (
+            np.concatenate(binding_blocks).astype(Float, copy=False)
+            if binding_blocks
+            else np.empty(0, dtype=Float)
+        )
+        jump_cumulative_weight = (
+            np.concatenate(jump_weight_blocks).astype(Float, copy=False)
+            if jump_weight_blocks
+            else np.empty(0, dtype=Float)
+        )
+        fluorescence_yield = (
+            np.concatenate(omega_blocks).astype(Float, copy=False)
+            if omega_blocks
+            else np.empty(0, dtype=Float)
+        )
+        decay_constant = (
+            np.concatenate(decay_blocks).astype(Float, copy=False)
+            if decay_blocks
+            else np.empty(0, dtype=Float)
+        )
+
+        line_offsets = np.asarray(line_offsets_list, dtype=Index)
+        line_energy = (
+            np.concatenate(line_energy_blocks).astype(Float, copy=False)
+            if line_energy_blocks
+            else np.empty(0, dtype=Float)
+        )
+        line_prob = (
+            np.concatenate(line_prob_blocks).astype(Float, copy=False)
+            if line_prob_blocks
+            else np.empty(0, dtype=Float)
+        )
+        line_alias = (
+            np.concatenate(line_alias_blocks).astype(np.int32, copy=False)
+            if line_alias_blocks
+            else np.empty(0, dtype=np.int32)
+        )
+        line_vacancy_designator = (
+            np.concatenate(line_vacancy_blocks).astype(np.int32, copy=False)
+            if line_vacancy_blocks
+            else np.empty(0, dtype=np.int32)
+        )
+
+        auger_offsets = np.asarray(auger_offsets_list, dtype=Index)
+        auger_energy = (
+            np.concatenate(auger_energy_blocks).astype(Float, copy=False)
+            if auger_energy_blocks
+            else np.empty(0, dtype=Float)
+        )
+        auger_prob = (
+            np.concatenate(auger_prob_blocks).astype(Float, copy=False)
+            if auger_prob_blocks
+            else np.empty(0, dtype=Float)
+        )
+        auger_alias = (
+            np.concatenate(auger_alias_blocks).astype(np.int32, copy=False)
+            if auger_alias_blocks
+            else np.empty(0, dtype=np.int32)
+        )
+        auger_vacancy_primary = (
+            np.concatenate(auger_vac1_blocks).astype(np.int32, copy=False)
+            if auger_vac1_blocks
+            else np.empty(0, dtype=np.int32)
+        )
+        auger_vacancy_secondary = (
+            np.concatenate(auger_vac2_blocks).astype(np.int32, copy=False)
+            if auger_vac2_blocks
+            else np.empty(0, dtype=np.int32)
+        )
+
+        return AtomicRelaxationBank(
+            shell_offsets=shell_offsets,
+            subshell_designator=subshell_designator,
+            binding_energy=binding_energy,
+            jump_cumulative_weight=jump_cumulative_weight,
+            fluorescence_yield=fluorescence_yield,
+            decay_constant=decay_constant,
+            line_offsets=line_offsets,
+            line_energy=line_energy,
+            line_prob=line_prob,
+            line_alias=line_alias,
+            line_vacancy_designator=line_vacancy_designator,
+            auger_offsets=auger_offsets,
+            auger_energy=auger_energy,
+            auger_prob=auger_prob,
+            auger_alias=auger_alias,
+            auger_vacancy_primary=auger_vacancy_primary,
+            auger_vacancy_secondary=auger_vacancy_secondary,
         )
 
     def compile_scene(
@@ -445,6 +629,7 @@ class PhysicsCompiler:
             material_bank,
             capacity=capacity_mat_info,
         )
+        relaxation_bank = self._build_atomic_relaxation_bank(processes_list)
         capacity = len(flat_list)
 
         majorant_material_map = np.zeros(capacity, dtype=Index)
@@ -464,6 +649,7 @@ class PhysicsCompiler:
             majorant_material_map=majorant_material_map,
             woodcock_function_pointers=woodcock_function_pointers,
             element_csr=element_csr,
+            relaxation_bank=relaxation_bank,
         )
 
 

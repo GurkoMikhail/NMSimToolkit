@@ -35,7 +35,7 @@ from core.scene.gantry_node import GantryNode
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.source.source_compiler import SourceCompiler
 from core.source.source_kernels import inject_poisson_sources_kernel
-from core.source.sources import PointSource, Source
+from core.source.sources import Source
 from core.transport.propagator import ParticlePropagator
 from core.transport.simulation_managers import SimulationManager
 from core.transport.transport_buffer import TransportBuffer
@@ -216,12 +216,12 @@ def build_point_source_workload(
 
     stop_time = Float(1.0 * units.s)
     activity_val = Float(float(particles_number) * units.Bq)
-    source_node = PointSource(
+    source_node = Source.from_point(
         activity=activity_val,
         energy=Float(140.5 * units.keV),
         half_life=Float(np.inf),
+        name="PointSource_Tc99m",
     )
-    source_node.name = "PointSource_Tc99m"
     root_scene.add_child(source_node)
 
     dose_grid = DoseGridNode(
@@ -299,15 +299,14 @@ def build_nema_tb161_workload(
 
     stop_time = Float(1.0 * units.s)
     activity_val = Float(float(particles_number) * units.Bq)
-    source_node = Source(
+    source_node = Source.from_voxels(
         distribution=raw_activity,
         activity=activity_val,
         voxel_size=Float(4.2 * units.mm),
-        radiation_type="Gamma",
         energy=TB161_ENERGY_SPECTRUM,
         half_life=Float(TB161_HALF_LIFE),
+        name="Source",
     )
-    source_node.name = "Source"
     phantom.add_child(source_node)
 
     gantry = GantryNode(name="Gantry")
@@ -398,15 +397,14 @@ def build_heart_spect_workload(
 
     stop_time = Float(1.0 * units.s)
     activity_val = Float(float(particles_number) * units.Bq)
-    source_node = Source(
+    source_node = Source.from_voxels(
         distribution=activity_distribution,
         activity=activity_val,
         voxel_size=Float(4.0 * units.mm),
-        radiation_type="Gamma",
         energy=[[Float(140.511 * units.keV), 1.0]],
         half_life=Float(np.inf),
+        name="HeartSource",
     )
-    source_node.name = "HeartSource"
     phantom.add_child(source_node)
 
     gantry = GantryNode(name="Gantry")

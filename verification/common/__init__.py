@@ -56,7 +56,6 @@ from verification.common.scene_builders import (
     build_collimator_verification_scene,
     run_collimator_simulation,
 )
-from verification.common.sources import ConePointSource
 
 __all__ = [
     "AzimuthalStarMetrics",
@@ -68,7 +67,6 @@ __all__ = [
     "CollimatorSensitivityBreakdown",
     "ComponentComparisonMetrics",
     "ComponentSensitivity",
-    "ConePointSource",
     "GE_COLLIMATOR_PRESETS",
     "GE_FIELD_SIZE_X",
     "GE_FIELD_SIZE_Y",

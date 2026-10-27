@@ -60,7 +60,7 @@ from verification.common.scene_builders import (
     CollimatorImplementationKind,
     QuotaBoundedSimulationManager,
 )
-from verification.common.sources import ConePointSource
+from core.source.sources import Source
 
 
 @dataclass(frozen=True)
@@ -496,11 +496,11 @@ def run_single_detector_head_simulation(
     cavity_volume.add_child(pyrex_volume)
 
     # Точечный источник на расстоянии source_distance перед входным торцом коллиматора (z = -source_distance)
-    source_node = ConePointSource(
+    source_node = Source.from_point(
         activity=Float(float(num_particles) * units.Bq),
         energy=nuclide.primary_energy,
         max_polar_angle=Float(max_polar_angle),
-        cell_jitter_span=(preset.pitch_x, preset.pitch_y),
+        cell_jitter=(preset.pitch_x, preset.pitch_y),
         half_life=Float(np.inf),
     )
     source_node.translate(z=Float(z_enter_face - source_distance))
@@ -575,7 +575,7 @@ def run_single_detector_head_simulation(
         num_bins=121,
     )
 
-    solid_angle_frac = float(source_node.solid_angle_fraction)
+    solid_angle_frac = float(source_node.channels[0].angular.solid_angle_fraction)
     decays_per_unit_activity = 1.0e6
     gamma_yield = float(nuclide.gamma_yield_per_decay)
     norm_to_activity = (

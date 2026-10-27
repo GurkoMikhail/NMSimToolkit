@@ -35,6 +35,7 @@ from core.config.models import (
     SourceConfig,
     StepAndShootProtocolConfig,
     VolumeConfig,
+    VoxelSpatialConfig,
 )
 from core.data.data_handlers import (
     DirectStreamHandler,
@@ -63,7 +64,7 @@ from core.scene.dose_grid_node import DoseGridNode
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.scene.gantry_node import GantryNode
 from core.scene.nodes import CompositeNode
-from core.source.sources import PointSource, Source
+from core.source.sources import Source
 from core.transport.simulation_managers import SimulationManager
 
 
@@ -104,6 +105,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
         self.assertEqual(species_mapping[0], "Photon")
         self.assertEqual(species_mapping[1], "Electron")
         self.assertEqual(species_mapping[2], "Positron")
+        self.assertEqual(species_mapping[3], "Alpha")
 
     def test_uint32_ids_and_scattering_angles_preserved(self) -> None:
         """
@@ -325,12 +327,12 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
         gantry.add_child(camera)
         world.add_child(gantry)
 
-        source_node = Source(
+        source_node = Source.from_voxels(
             distribution=np.ones((2, 2, 2)),
             activity=50.0 * units.MBq,
             half_life=6.0 * units.hour,
+            name="Source_Nuclide",
         )
-        source_node.name = "Source_Nuclide"
         world.add_child(source_node)
 
         # Конфигурация
@@ -347,7 +349,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             physics_list="StandardEM_SPECT",
         )
         source_pydantic_cfg = SourceConfig(
-            distribution=NumpyDistributionConfig(path="source.npy"),
+            spatial=VoxelSpatialConfig(distribution=NumpyDistributionConfig(path="source.npy")),
             radionuclide="161Tb",
             phantom_type="NEMA IEC Body Phantom",
         )
@@ -709,7 +711,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             camera.add_child(collimator)
             gantry.add_child(camera)
 
-        tb_source = Source(
+        tb_source = Source.from_voxels(
             distribution=np.ones((2, 2, 2)),
             activity=100.0 * units.MBq,
             half_life=6.89 * units.day,
@@ -770,8 +772,8 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             material=Material(name="Air, Dry (near sea level)", density=0.0012),
             name="World",
         )
-        src1 = PointSource(activity=5000.0 * units.Bq, energy=140.5 * units.keV)
-        src2 = PointSource(activity=3000.0 * units.Bq, energy=140.5 * units.keV)
+        src1 = Source.from_point(activity=5000.0 * units.Bq, energy=140.5 * units.keV)
+        src2 = Source.from_point(activity=3000.0 * units.Bq, energy=140.5 * units.keV)
         world.add_child(src1)
         world.add_child(src2)
 
@@ -799,7 +801,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
         )
 
         self.assertIs(mgr.propagator.rng, mgr.rng)
-        self.assertEqual(mgr.source_buffer.num_sources, 2)
+        self.assertEqual(mgr.source_buffer.num_channels, 2)
         self.assertEqual(len(mgr.active_sources), 2)
         self.assertNotIn("emission_rng", mgr.__dict__)
         self.assertNotIn("transport_rng", mgr.__dict__)
@@ -866,9 +868,15 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
                     {
                         "type": "Source",
                         "name": "PointSrc",
+                        "spatial": {"type": "point"},
                         "activity": "10000 Bq",
-                        "energy": "140.5 keV",
                         "half_life": "6.0 h",
+                        "channels": [
+                            {
+                                "species": "photon",
+                                "spectrum": {"type": "discrete", "lines": "140.5 keV"},
+                            }
+                        ],
                     },
                 ],
             },

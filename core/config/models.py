@@ -129,35 +129,51 @@ class DirectParallelCollimatorConfig(CompositeNodeConfig):
     hole_material: Optional[str] = None
     hole_shape: str = 'hexagonal'
 
-class SourceMetadataConfig(BaseModel):
-    radionuclide: Optional[str] = None
-    phantom_type: Optional[str] = None
+class PointSpatialConfig(BaseModel):
+    type: Literal['point'] = 'point'
+    cell_jitter: Tuple[LengthConfig, LengthConfig] = (0.0 * units.mm, 0.0 * units.mm)
 
-class SourceConfig(CompositeNodeConfig):
-    type: Literal['Source'] = 'Source'
-    activity: Optional[ActivityConfig] = None
-    distribution: Optional[AnyDistributionConfig] = None
+
+class VoxelSpatialConfig(BaseModel):
+    type: Literal['voxel'] = 'voxel'
     voxel_size: LengthConfig = 4.0 * units.mm
-    radiation_type: str = 'Gamma'
-    energy: Union[EnergyConfig, List[List[Any]], List[Tuple[Any, float]]] = 140.5 * units.keV
-    half_life: TimeConfig = 6.0 * units.hour
-    radionuclide: Optional[str] = None
-    phantom_type: Optional[str] = None
+    distribution: AnyDistributionConfig
 
-    @field_serializer('activity', when_used='unless-none')
-    def serialize_activity(self, value: Any) -> Any:
-        if isinstance(value, (int, float)):
-            activity_value = float(value) / float(units.MBq)
-            return f"{activity_value:.6g} MBq"
+
+AnySpatialDistributionConfig = Annotated[
+    Union[
+        PointSpatialConfig,
+        VoxelSpatialConfig,
+    ],
+    Field(discriminator='type')
+]
+
+
+class DiscreteSpectrumConfig(BaseModel):
+    type: Literal['discrete'] = 'discrete'
+    lines: List[Tuple[EnergyConfig, float]] = Field(
+        default_factory=lambda: [(float(140.5 * units.keV), 1.0)]
+    )
+
+    @field_validator('lines', mode='before')
+    @classmethod
+    def normalize_lines(cls, value: Any) -> Any:
+        if isinstance(value, (int, float, str)):
+            return [(value, 1.0)]
+        if isinstance(value, (list, tuple)) and len(value) > 0:
+            if all(isinstance(item, (int, float, str)) for item in value):
+                equal_prob = 1.0 / len(value)
+                return [(item, equal_prob) for item in value]
         return value
 
-    @field_serializer('energy', when_used='unless-none')
-    def serialize_energy(self, value: Any) -> Any:
-        if isinstance(value, (int, float)):
-            energy_value = float(value) / float(units.keV)
-            return [[f"{energy_value:.6g} keV", 1.0]]
-        if isinstance(value, str):
-            return [[str(value), 1.0]]
+    @model_validator(mode='after')
+    def validate_lines(self) -> 'DiscreteSpectrumConfig':
+        if not self.lines:
+            raise ValueError("Список спектральных линий (lines) не может быть пустым")
+        return self
+
+    @field_serializer('lines', when_used='unless-none')
+    def serialize_lines(self, value: Any) -> Any:
         if isinstance(value, list):
             res = []
             for item in value:
@@ -171,6 +187,108 @@ class SourceConfig(CompositeNodeConfig):
                 else:
                     res.append(item)
             return res
+        return value
+
+
+class ContinuousSpectrumConfig(BaseModel):
+    type: Literal['continuous'] = 'continuous'
+    energy_grid: List[EnergyConfig]
+    pdf_values: List[float]
+
+    @model_validator(mode='after')
+    def validate_continuous_spectrum(self) -> 'ContinuousSpectrumConfig':
+        if len(self.energy_grid) < 2:
+            raise ValueError("Сетка энергий (energy_grid) непрерывного спектра должна содержать минимум 2 узла")
+        if len(self.energy_grid) != len(self.pdf_values):
+            raise ValueError(
+                f"Длины energy_grid ({len(self.energy_grid)}) и pdf_values ({len(self.pdf_values)}) должны совпадать"
+            )
+        return self
+
+    @field_serializer('energy_grid', when_used='unless-none')
+    def serialize_energy_grid(self, value: Any) -> Any:
+        if isinstance(value, list):
+            return [
+                f"{float(e_val) / float(units.keV):.6g} keV" if isinstance(e_val, (int, float)) else str(e_val)
+                for e_val in value
+            ]
+        return value
+
+
+AnySpectrumConfig = Annotated[
+    Union[
+        DiscreteSpectrumConfig,
+        ContinuousSpectrumConfig,
+    ],
+    Field(discriminator='type')
+]
+
+
+class IsotropicAngularConfig(BaseModel):
+    type: Literal['isotropic'] = 'isotropic'
+
+
+class ConeAngularConfig(BaseModel):
+    type: Literal['cone'] = 'cone'
+    max_polar_angle: AngleConfig
+
+
+AnyAngularDistributionConfig = Annotated[
+    Union[
+        IsotropicAngularConfig,
+        ConeAngularConfig,
+    ],
+    Field(discriminator='type')
+]
+
+
+class RadiationChannelConfig(BaseModel):
+    species: Literal['photon', 'electron', 'positron', 'alpha'] = 'photon'
+    branching_ratio: float = 1.0
+    spectrum: AnySpectrumConfig = Field(default_factory=DiscreteSpectrumConfig)
+    angular: AnyAngularDistributionConfig = Field(default_factory=IsotropicAngularConfig)
+
+    @field_validator('species', mode='before')
+    @classmethod
+    def normalize_species(cls, value: Any) -> str:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return str(value).strip().lower()
+
+    @model_validator(mode='after')
+    def validate_branching_ratio(self) -> 'RadiationChannelConfig':
+        if self.branching_ratio <= 0.0:
+            raise ValueError(f"Выход канала излучения (branching_ratio={self.branching_ratio}) должен быть строго больше 0")
+        return self
+
+
+class SourceMetadataConfig(BaseModel):
+    radionuclide: Optional[str] = None
+    phantom_type: Optional[str] = None
+
+
+class SourceConfig(CompositeNodeConfig):
+    type: Literal['Source'] = 'Source'
+    activity: Optional[ActivityConfig] = None
+    half_life: TimeConfig = 6.0 * units.hour
+    spatial: AnySpatialDistributionConfig = Field(default_factory=PointSpatialConfig)
+    channels: List[RadiationChannelConfig] = Field(
+        default_factory=lambda: [RadiationChannelConfig()]
+    )
+    radionuclide: Optional[str] = None
+    phantom_type: Optional[str] = None
+
+    @model_validator(mode='after')
+    def validate_channels_not_empty(self) -> 'SourceConfig':
+        if not self.channels:
+            raise ValueError("Источник должен содержать хотя бы один канал излучения (channels)")
+        return self
+
+    @field_serializer('activity', when_used='unless-none')
+    def serialize_activity(self, value: Any) -> Any:
+        if isinstance(value, (int, float)):
+            activity_value = float(value) / float(units.MBq)
+            return f"{activity_value:.6g} MBq"
         return value
 
 class DoseGridNodeConfig(CompositeNodeConfig):
@@ -268,6 +386,9 @@ class SimulationManagerConfig(BaseModel):
     batch_capacity: Optional[CountConfig] = None
     buffer_capacity: Optional[CountConfig] = None
     min_energy: EnergyConfig = 1.0 * units.keV
+    enable_atomic_relaxation: bool = False
+    photon_production_cut: EnergyConfig = 1.0 * units.keV
+    electron_production_cut: EnergyConfig = float("inf")
     physics_list: Optional[str] = None
     seed: Optional[int] = None
 
@@ -417,6 +538,16 @@ __all__ = [
     "GammaCameraConfig",
     "ParametricParallelCollimatorConfig",
     "DirectParallelCollimatorConfig",
+    "PointSpatialConfig",
+    "VoxelSpatialConfig",
+    "AnySpatialDistributionConfig",
+    "DiscreteSpectrumConfig",
+    "ContinuousSpectrumConfig",
+    "AnySpectrumConfig",
+    "IsotropicAngularConfig",
+    "ConeAngularConfig",
+    "AnyAngularDistributionConfig",
+    "RadiationChannelConfig",
     "SourceMetadataConfig",
     "SourceConfig",
     "DoseGridNodeConfig",

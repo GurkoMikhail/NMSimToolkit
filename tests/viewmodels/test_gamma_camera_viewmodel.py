@@ -111,7 +111,7 @@ class TestGammaCameraViewModel(unittest.TestCase):
         2. Для ядра с activity=500.0 * units.Bq выполняется строгая конвертация через units.MBq
            (500 Бк == 0.0005 МБк) без ложной эвристики и потери данных при обратной синхронизации.
         """
-        core_source = Source(
+        core_source = Source.from_voxels(
             distribution=np.ones((2, 2, 2), dtype=Float),
             activity=Float(500.0 * units.Bq),
             half_life=Float(6.0 * units.hour),

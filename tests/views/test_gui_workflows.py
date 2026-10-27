@@ -13,7 +13,7 @@ from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.materials.materials import Material, MaterialArray
 from settings.database_setting import material_database
-from core.source.sources import Source, PointSource
+from core.source.sources import Source
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.scene.dose_grid_node import DoseGridNode
 from gui.viewmodels.nodes.gamma_camera_vm import create_default_gamma_camera_vm
@@ -24,7 +24,7 @@ from core.config.builder import SceneBuilder
 from core.config.exporter import SceneExporter
 from core.config.yaml_loader import load_simulation_config
 from core.config.models import (
-    WoodcockVoxelVolumeConfig, SourceConfig, NumpyDistributionConfig,
+    WoodcockVoxelVolumeConfig, SourceConfig, VoxelSpatialConfig, NumpyDistributionConfig,
     RawDistributionConfig, SimulationConfig, SimulationManagerConfig
 )
 from gui.controllers.stream_handlers import GuiStreamDataHandler
@@ -440,9 +440,11 @@ class TestGUIIntegrationFixes(unittest.TestCase):
             np.save(src_p, np.ones((10, 10, 10), dtype=np.float32))
             src_cfg = SourceConfig(
                 name="TestSource",
-                distribution=NumpyDistributionConfig(path=str(src_p)),
-                voxel_size="1.0 mm",
-                activity="1 MBq"
+                spatial=VoxelSpatialConfig(
+                    voxel_size="1.0 mm",
+                    distribution=NumpyDistributionConfig(path=str(src_p)),
+                ),
+                activity="1 MBq",
             )
             src_node = builder._build_source(src_cfg)
             self.assertEqual(builder.get_distribution_path(src_node), str(src_p))

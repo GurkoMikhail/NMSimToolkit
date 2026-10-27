@@ -85,8 +85,7 @@ class TestVoxelPhantomMappingAndSaving(unittest.TestCase):
         scene_vm = SceneViewModel()
         material_array = MaterialArray((4, 4, 4))
         voxel_node = WoodcockVoxelVolume(voxel_size=1.0, material_distribution=material_array, name="VoxelNode")
-        source_node = Source(distribution=np.ones((4, 4, 4)))
-        source_node.name = "SourceNode"
+        source_node = Source.from_voxels(distribution=np.ones((4, 4, 4)), name="SourceNode")
 
         # Регистрация пути фантома (.npy)
         scene_vm.update_distribution_path(voxel_node, "phantoms/brain.npy")

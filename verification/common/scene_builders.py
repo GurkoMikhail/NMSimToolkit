@@ -18,8 +18,7 @@ from core.geometry.direct_collimators import DirectParallelCollimator
 from core.geometry.geometries import Box
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import Volume
-from core.other.typing_definitions import Float, Index
-from core.source.source_kernels import inject_poisson_sources_kernel
+from core.other.typing_definitions import Float
 from core.transport.propagator import ParticlePropagator
 from core.transport.simulation_managers import SimulationManager
 import settings.database_setting as database_setting
@@ -28,7 +27,7 @@ from verification.common.history_classifier import (
     CollimatorExitPlaneHandler,
 )
 from verification.common.presets import CollimatorPreset
-from verification.common.sources import ConePointSource
+from core.source.sources import DiscreteSpectrum, Source
 
 CollimatorImplementationKind = Literal["parametric", "direct"]
 
@@ -41,7 +40,7 @@ class CollimatorSceneSetup:
 
     world_volume: Volume
     collimator_node: ParametricParallelCollimator | DirectParallelCollimator
-    source_node: ConePointSource
+    source_node: Source
     z_source: Float
     z_enter_face: Float
     z_exit_face: Float
@@ -144,13 +143,13 @@ def build_collimator_verification_scene(
     # 3. Конический источник излучения с заданной активностью
     # Активность выбирается так, чтобы за 1 секунду распалось ровно particles_number частиц
     activity_val = Float(float(particles_number) * units.Bq)
-    jitter_span = (preset.pitch_x, preset.pitch_y) if cell_averaging else None
+    jitter_span = (preset.pitch_x, preset.pitch_y) if cell_averaging else (Float(0.0), Float(0.0))
 
-    source_node = ConePointSource(
+    source_node = Source.from_point(
         activity=activity_val,
         energy=energy,
         max_polar_angle=max_polar_angle,
-        cell_jitter_span=jitter_span,
+        cell_jitter=jitter_span,
         half_life=Float(np.inf),
     )
     source_node.translate(
@@ -184,52 +183,8 @@ class QuotaBoundedSimulationManager(SimulationManager):
 
     def __init__(self, *args: Any, max_emitted_particles: int, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._max_emitted_particles = int(max_emitted_particles)
-
-    @property
-    def has_pending_sources(self) -> bool:
-        """Проверяет наличие неисчерпанной квоты частиц и активных источников."""
-        if not self.active_sources or self._emission_finished:
-            return False
-        emitted_so_far = int(self.bank.count_array[0]) - self.initial_particle_id
-        if emitted_so_far >= self._max_emitted_particles:
-            return False
-        return True
-
-    def _replenish_bank(self) -> None:
-        """Докачивает в банк не более оставшейся квоты max_emitted_particles частиц."""
-        if not self.has_pending_sources:
-            return
-
-        emitted_so_far = int(self.bank.count_array[0]) - self.initial_particle_id
-        remaining_quota = self._max_emitted_particles - emitted_so_far
-        if remaining_quota <= 0:
-            self._emission_finished = True
-            self.global_timer = self.stop_time
-            return
-
-        injected_cnt, _, new_t_last, new_pending = inject_poisson_sources_kernel(
-            self.bank,
-            self.source_buffer,
-            Float(np.inf),
-            self.t_ref,
-            self.t_last,
-            self.pending_arrival_time,
-            self.rng_ctx,
-            Index(remaining_quota),
-            Index(0),
-        )
-        self.t_last = Float(new_t_last)
-        self.pending_arrival_time = Float(new_pending)
-        self.global_timer = self.t_last
-
-        if int(self.bank.count_array[0]) - self.initial_particle_id >= self._max_emitted_particles:
-            self._emission_finished = True
-            self.global_timer = self.stop_time
-        elif bool(np.isinf(self.pending_arrival_time)) or (
-            int(injected_cnt) == 0 and int(np.count_nonzero(self.bank.state.is_active)) == 0
-        ):
-            self._emission_finished = True
+        self.primary_source.stop_time = Float(np.inf)
+        self.primary_source.max_particles = int(max_emitted_particles)
 
 
 def _get_shared_propagator() -> ParticlePropagator:
@@ -272,9 +227,11 @@ def run_collimator_simulation(
     if isinstance(energy, (int, float, np.floating)):
         primary_energy_scalar = Float(energy)
     else:
-        energy_arr = scene_setup.source_node.energy
-        max_prob_idx = int(np.argmax(energy_arr["probability"]))
-        primary_energy_scalar = Float(energy_arr["energy"][max_prob_idx])
+        spectrum = scene_setup.source_node.channels[0].spectrum
+        assert isinstance(spectrum, DiscreteSpectrum)
+        probs = np.array([float(line.probability) for line in spectrum.lines], dtype=Float)
+        max_prob_idx = int(np.argmax(probs))
+        primary_energy_scalar = Float(spectrum.line_energy[max_prob_idx])
 
     effective_batch = (
         min(particles_number, 500_000) if batch_capacity is None else min(int(batch_capacity), particles_number)
@@ -291,7 +248,7 @@ def run_collimator_simulation(
         septa=preset.septa,
         primary_energy=primary_energy_scalar,
         total_emitted=particles_number,
-        solid_angle_fraction=scene_setup.source_node.solid_angle_fraction,
+        solid_angle_fraction=scene_setup.source_node.channels[0].angular.solid_angle_fraction,
     )
 
     sim_manager = QuotaBoundedSimulationManager(

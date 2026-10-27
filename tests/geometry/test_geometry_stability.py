@@ -8,7 +8,7 @@ from core.geometry.geometries import Box
 from core.geometry.volumes import Volume
 from core.geometry.direct_collimators import CollimatorHoleShape
 from core.geometry.parametric_collimators import ParametricParallelCollimator
-from core.source.sources import Source
+from core.source.sources import Source, VoxelDistribution
 from core.transport.simulation_managers import SimulationManager, SimulationState
 from core.config.builder import SceneBuilder
 from core.config.models import SimulationConfig, ParametricParallelCollimatorConfig
@@ -56,17 +56,18 @@ class TestCoreHotfixStability(unittest.TestCase):
         # 1. Нулевое распределение
         zero_dist = np.zeros((4, 4, 4), dtype=np.float32)
         with self.assertRaises(ValueError):
-            Source(distribution=zero_dist, voxel_size=2.0 * units.mm)
+            Source.from_voxels(distribution=zero_dist, voxel_size=2.0 * units.mm)
 
         # 2. Неоднородное распределение и динамическое обновление
         dist = np.array([[[0.0, 1.0], [2.0, 3.0]]], dtype=np.float32)
-        src2 = Source(distribution=dist, voxel_size=1.0 * units.mm)
-        self.assertAlmostEqual(float(np.sum(src2.voxel_probabilities)), 1.0, places=6)
+        src2 = Source.from_voxels(distribution=dist, voxel_size=1.0 * units.mm)
+        assert isinstance(src2.spatial, VoxelDistribution)
+        self.assertAlmostEqual(float(np.sum(src2.spatial.voxel_probabilities)), 1.0, places=6)
 
-        # Проверка сеттера voxel_size
-        src2.voxel_size = 2.5 * units.mm
-        self.assertAlmostEqual(float(src2.voxel_size), 2.5 * units.mm)
-        self.assertAlmostEqual(float(np.sum(src2.voxel_probabilities)), 1.0, places=6)
+        # Проверка обновления VoxelDistribution с новым voxel_size
+        src2.spatial = VoxelDistribution(distribution=src2.spatial.distribution, voxel_size=2.5 * units.mm)
+        self.assertAlmostEqual(float(src2.spatial.voxel_size), 2.5 * units.mm)
+        self.assertAlmostEqual(float(np.sum(src2.spatial.voxel_probabilities)), 1.0, places=6)
 
     def test_scene_builder_square_collimator(self):
         """

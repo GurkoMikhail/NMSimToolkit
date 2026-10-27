@@ -1,6 +1,6 @@
 """
-Модуль компилятора источников излучения для обхода графа сцены и упаковки
-активных источников в плоский буфер SourceBuffer с таблицами метода Воза.
+Модуль компилятора источников излучения для обхода графа сцены и уплощения
+активных источников по каналам эмиссии в плоский буфер SourceBuffer с таблицами метода Воза.
 """
 
 from typing import List, Sequence
@@ -8,16 +8,28 @@ from typing import List, Sequence
 import numpy as np
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Float, Index
+from core.other.typing_definitions import Float, Index, Species
 from core.scene.nodes import CompositeNode, SpatialNode
-from core.source.source_buffer import SourceBuffer
-from core.source.sources import Source
+from core.source.source_buffer import (
+    SPATIAL_POINT,
+    SPATIAL_VOXEL,
+    SPECTRUM_CONTINUOUS_TRAPEZOID,
+    SPECTRUM_DISCRETE,
+    SourceBuffer,
+)
+from core.source.sources import (
+    ContinuousSpectrum,
+    DiscreteSpectrum,
+    PointDistribution,
+    Source,
+    VoxelDistribution,
+)
 
 
 class SourceCompiler:
     """
     Компилятор, отвечающий за извлечение плоского списка источников частиц из графа сцены
-    и компиляцию их пространственных и спектральных распределений в плоский SourceBuffer.
+    и уплощение их каналов излучения (RadiationChannel) в плоский SoA/CSR-буфер SourceBuffer.
     """
 
     active_sources: List[Source]
@@ -37,91 +49,162 @@ class SourceCompiler:
     @classmethod
     def compile(cls, active_sources: Sequence[Source]) -> SourceBuffer:
         """
-        Компилирует список активных источников в плоский SoA/CSR-буфер SourceBuffer.
+        Компилирует список активных источников в плоский SoA/CSR-буфер SourceBuffer на уровне каналов эмиссии.
 
-        Выполняет проверку предусловий LBYL: непустые распределения и спектры,
-        неотрицательные вероятности, строго положительная сумма вероятностей,
-        корректная нормировка (сумма равна 1.0) и согласованность таблиц алиасов Воза.
+        Все каналы одного воксельного источника разделяют единый срез [vox_start, vox_end) в таблицах
+        Воза активных вокселей без дублирования памяти. Точечные источники (PointDistribution)
+        не выделяют элементов в воксельных таблицах (vox_start == vox_end).
         """
-        num_sources = len(active_sources)
-        if num_sources == 0:
+        if not active_sources:
             return SourceBuffer.empty()
 
-        voxel_offsets = np.zeros(num_sources + 1, dtype=Index)
-        line_offsets = np.zeros(num_sources + 1, dtype=Index)
+        total_channels = sum(len(source.channels) for source in active_sources)
+        if total_channels == 0:
+            return SourceBuffer.empty()
+
+        spatial_type = np.empty(total_channels, dtype=Index)
+        local_to_global = np.empty((total_channels, 4, 4), dtype=Float)
+        voxel_range = np.empty((total_channels, 2), dtype=Index)
 
         voxel_index_parts: List[NDArray[np.int32]] = []
         voxel_prob_parts: List[NDArray[Float]] = []
         voxel_alias_parts: List[NDArray[np.int32]] = []
 
+        grid_shape = np.zeros((total_channels, 3), dtype=Index)
+        voxel_size = np.zeros(total_channels, dtype=Float)
+        half_size = np.zeros((total_channels, 3), dtype=Float)
+        cell_jitter = np.zeros((total_channels, 2), dtype=Float)
+
+        initial_emission_rate = np.empty(total_channels, dtype=Float)
+        decay_constant = np.empty(total_channels, dtype=Float)
+        source_id = np.empty(total_channels, dtype=Index)
+        species = np.empty(total_channels, dtype=Species)
+
+        spectrum_type = np.empty(total_channels, dtype=Index)
+        spectrum_offsets = np.zeros(total_channels + 1, dtype=Index)
+
         line_energy_parts: List[NDArray[Float]] = []
+        line_grid_high_parts: List[NDArray[Float]] = []
+        line_pdf_ratio_parts: List[NDArray[Float]] = []
         line_prob_parts: List[NDArray[Float]] = []
         line_alias_parts: List[NDArray[np.int32]] = []
 
-        grid_shape = np.empty((num_sources, 3), dtype=Index)
-        voxel_size = np.empty(num_sources, dtype=Float)
-        half_size = np.empty((num_sources, 3), dtype=Float)
-        local_to_global = np.empty((num_sources, 4, 4), dtype=Float)
-        initial_activity = np.empty(num_sources, dtype=Float)
-        decay_constant = np.empty(num_sources, dtype=Float)
-        source_id = np.arange(num_sources, dtype=Index)
-        cos_theta_min = np.empty(num_sources, dtype=Float)
-        cell_jitter = np.zeros((num_sources, 2), dtype=Float)
+        cos_theta_min = np.empty(total_channels, dtype=Float)
+
+        ch_cursor = 0
+        vox_cursor = Index(0)
 
         for src_idx, source in enumerate(active_sources):
-            dist = source.distribution
-            src_vox_idx = source.voxel_indices
-            src_energies = np.asarray(source.energy["energy"], dtype=Float)
             g_mat = np.asarray(source.global_matrix, dtype=Float)
             if g_mat.shape != (4, 4) or np.any(~np.isfinite(g_mat)):
                 raise ValueError(
                     f"Матрица global_matrix источника '{source.name}' имеет некорректную форму {g_mat.shape} или NaN/Inf."
                 )
 
-            voxel_offsets[src_idx + 1] = voxel_offsets[src_idx] + Index(src_vox_idx.shape[0])
-            line_offsets[src_idx + 1] = line_offsets[src_idx] + Index(src_energies.shape[0])
+            spatial = source.spatial
+            if isinstance(spatial, PointDistribution):
+                src_spatial_type = SPATIAL_POINT
+                src_vox_start = vox_cursor
+                src_vox_end = vox_cursor
+                src_grid_shape = (0, 0, 0)
+                src_vox_size = Float(0.0)
+                src_half_size = np.zeros(3, dtype=Float)
+                src_jitter = spatial.cell_jitter
+            elif isinstance(spatial, VoxelDistribution):
+                src_spatial_type = SPATIAL_VOXEL
+                src_vox_idx = spatial.voxel_indices
+                src_vox_start = vox_cursor
+                src_vox_end = vox_cursor + Index(src_vox_idx.shape[0])
+                vox_cursor = src_vox_end
 
-            voxel_index_parts.append(np.ascontiguousarray(src_vox_idx, dtype=np.int32))
-            voxel_prob_parts.append(np.ascontiguousarray(source.voxel_prob, dtype=Float))
-            voxel_alias_parts.append(np.ascontiguousarray(source.voxel_alias, dtype=np.int32))
+                voxel_index_parts.append(src_vox_idx)
+                voxel_prob_parts.append(spatial.voxel_prob)
+                voxel_alias_parts.append(spatial.voxel_alias)
 
-            line_energy_parts.append(np.ascontiguousarray(src_energies, dtype=Float))
-            line_prob_parts.append(np.ascontiguousarray(source.line_prob, dtype=Float))
-            line_alias_parts.append(np.ascontiguousarray(source.line_alias, dtype=np.int32))
+                src_grid_shape = spatial.grid_shape
+                src_vox_size = Float(spatial.voxel_size)
+                src_half_size = 0.5 * np.asarray(src_grid_shape, dtype=Float) * src_vox_size
+                src_jitter = (Float(0.0), Float(0.0))
+            else:
+                raise TypeError(f"Неподдерживаемый тип пространственного распределения: {type(spatial)}.")
 
-            grid_shape[src_idx, :] = dist.shape
-            vox_sz_val = Float(source.voxel_size)
-            voxel_size[src_idx] = vox_sz_val
-            half_size[src_idx, :] = 0.5 * np.asarray(dist.shape, dtype=Float) * vox_sz_val
-            local_to_global[src_idx, :, :] = g_mat
-            initial_activity[src_idx] = Float(source.initial_activity)
-            decay_constant[src_idx] = Float(source.decay_constant)
-            cos_theta_min[src_idx] = Float(source.cos_theta_min)
-            if source.cell_jitter_span is not None:
-                cell_jitter[src_idx, 0] = Float(source.cell_jitter_span[0])
-                cell_jitter[src_idx, 1] = Float(source.cell_jitter_span[1])
+            src_act = Float(source.initial_activity)
+            src_decay = Float(source.decay_constant)
 
-        buf = SourceBuffer(
-            voxel_offsets=np.ascontiguousarray(voxel_offsets, dtype=Index),
-            voxel_index=np.ascontiguousarray(np.concatenate(voxel_index_parts), dtype=np.int32),
-            voxel_prob=np.ascontiguousarray(np.concatenate(voxel_prob_parts), dtype=Float),
-            voxel_alias=np.ascontiguousarray(np.concatenate(voxel_alias_parts), dtype=np.int32),
-            grid_shape=np.ascontiguousarray(grid_shape, dtype=Index),
-            voxel_size=np.ascontiguousarray(voxel_size, dtype=Float),
-            half_size=np.ascontiguousarray(half_size, dtype=Float),
-            line_offsets=np.ascontiguousarray(line_offsets, dtype=Index),
-            line_energy=np.ascontiguousarray(np.concatenate(line_energy_parts), dtype=Float),
-            line_prob=np.ascontiguousarray(np.concatenate(line_prob_parts), dtype=Float),
-            line_alias=np.ascontiguousarray(np.concatenate(line_alias_parts), dtype=np.int32),
-            local_to_global=np.ascontiguousarray(local_to_global, dtype=Float),
-            initial_activity=np.ascontiguousarray(initial_activity, dtype=Float),
-            decay_constant=np.ascontiguousarray(decay_constant, dtype=Float),
-            source_id=np.ascontiguousarray(source_id, dtype=Index),
-            cos_theta_min=np.ascontiguousarray(cos_theta_min, dtype=Float),
-            cell_jitter=np.ascontiguousarray(cell_jitter, dtype=Float),
+            for channel in source.channels:
+                spatial_type[ch_cursor] = src_spatial_type
+                local_to_global[ch_cursor, :, :] = g_mat
+                voxel_range[ch_cursor, 0] = src_vox_start
+                voxel_range[ch_cursor, 1] = src_vox_end
+                grid_shape[ch_cursor, :] = src_grid_shape
+                voxel_size[ch_cursor] = src_vox_size
+                half_size[ch_cursor, :] = src_half_size
+                cell_jitter[ch_cursor, 0] = src_jitter[0]
+                cell_jitter[ch_cursor, 1] = src_jitter[1]
+
+                initial_emission_rate[ch_cursor] = Float(src_act * Float(channel.branching_ratio))
+                decay_constant[ch_cursor] = src_decay
+                source_id[ch_cursor] = Index(src_idx)
+                species[ch_cursor] = Species(int(channel.species))
+                cos_theta_min[ch_cursor] = Float(channel.angular.cos_theta_min)
+
+                spec = channel.spectrum
+                if isinstance(spec, DiscreteSpectrum):
+                    spectrum_type[ch_cursor] = SPECTRUM_DISCRETE
+                    num_lines = Index(spec.line_energy.shape[0])
+                    spectrum_offsets[ch_cursor + 1] = spectrum_offsets[ch_cursor] + num_lines
+                    line_energy_parts.append(spec.line_energy)
+                    line_grid_high_parts.append(spec.line_energy)
+                    line_pdf_ratio_parts.append(np.ones(int(num_lines), dtype=Float))
+                    line_prob_parts.append(spec.line_prob)
+                    line_alias_parts.append(spec.line_alias)
+                elif isinstance(spec, ContinuousSpectrum):
+                    spectrum_type[ch_cursor] = SPECTRUM_CONTINUOUS_TRAPEZOID
+                    num_bins = Index(spec.bin_energy_low.shape[0])
+                    spectrum_offsets[ch_cursor + 1] = spectrum_offsets[ch_cursor] + num_bins
+                    line_energy_parts.append(spec.bin_energy_low)
+                    line_grid_high_parts.append(spec.bin_energy_high)
+                    line_pdf_ratio_parts.append(spec.bin_pdf_ratio)
+                    line_prob_parts.append(spec.bin_prob)
+                    line_alias_parts.append(spec.bin_alias)
+                else:
+                    raise TypeError(f"Неподдерживаемый тип энергетического спектра: {type(spec)}.")
+
+                ch_cursor += 1
+
+        if voxel_index_parts:
+            flat_vox_index = np.concatenate(voxel_index_parts)
+            flat_vox_prob = np.concatenate(voxel_prob_parts)
+            flat_vox_alias = np.concatenate(voxel_alias_parts)
+        else:
+            flat_vox_index = np.empty(0, dtype=np.int32)
+            flat_vox_prob = np.empty(0, dtype=Float)
+            flat_vox_alias = np.empty(0, dtype=np.int32)
+
+        return SourceBuffer(
+            spatial_type=spatial_type,
+            local_to_global=local_to_global,
+            voxel_range=voxel_range,
+            voxel_index=flat_vox_index,
+            voxel_prob=flat_vox_prob,
+            voxel_alias=flat_vox_alias,
+            grid_shape=grid_shape,
+            voxel_size=voxel_size,
+            half_size=half_size,
+            cell_jitter=cell_jitter,
+            initial_emission_rate=initial_emission_rate,
+            decay_constant=decay_constant,
+            source_id=source_id,
+            species=species,
+            spectrum_type=spectrum_type,
+            spectrum_offsets=spectrum_offsets,
+            line_energy=np.concatenate(line_energy_parts),
+            line_grid_high=np.concatenate(line_grid_high_parts),
+            line_pdf_ratio=np.concatenate(line_pdf_ratio_parts),
+            line_prob=np.concatenate(line_prob_parts),
+            line_alias=np.concatenate(line_alias_parts),
+            cos_theta_min=cos_theta_min,
         )
-        buf.validate()
-        return buf
 
     def _extract_sources(self, node: SpatialNode) -> bool:
         """

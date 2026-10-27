@@ -496,6 +496,8 @@ def unit_validator_factory(target_unit: str, to_hepunits_factor: float = 1.0):
             # Пропуск шаблонов интерполяции вида ${var} для отложенной подстановки в оркестраторе
             if _TEMPLATE_MACRO_SEARCH_PATTERN.search(input_value):
                 return input_value
+            if input_value.strip().lower() in ("inf", "+inf", ".inf", "+.inf", "infinity", "+infinity"):
+                return float("inf")
             if input_value.strip() == '':
                 raise ValueError("Пустая строка не является допустимой физической величиной")
             try:

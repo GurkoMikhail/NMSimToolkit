@@ -30,7 +30,7 @@ from gui.viewmodels.nodes.dose_grid_vm import DoseGridViewModel
 from gui.viewmodels.scene_viewmodel import SceneViewModel
 from core.geometry.volumes import Volume
 from core.geometry.geometries import Box
-from core.source.sources import PointSource
+from core.source.sources import Source
 from core.scene.dose_grid_node import DoseGridNode
 from core.scene.nodes import CompositeNode
 from settings.database_setting import material_database
@@ -242,7 +242,7 @@ class TestDoseAndTrackFixes(unittest.TestCase):
             material=material_database['Water, Liquid'],
             name='WaterBox'
         )
-        source = PointSource(activity=50 * units.MBq, energy=140 * units.keV)
+        source = Source.from_point(activity=50 * units.MBq, energy=140 * units.keV)
         world.add_child(source)
         dose_grid = DoseGridNode(name="DoseScorer", size=[160.0, 160.0, 160.0], dose_voxel_size=10.0)
         world.add_child(dose_grid)

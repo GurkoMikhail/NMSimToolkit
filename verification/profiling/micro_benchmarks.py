@@ -38,10 +38,11 @@ from core.physics.physics_kernels import (
 from core.scene.nodes import CompositeNode
 from core.source.source_buffer import SourceBuffer
 from core.source.source_compiler import SourceCompiler
+from core.source.sources import VoxelDistribution
 from core.source.source_kernels import (
     _sample_alias,
     _sample_voxel_position,
-    inject_source_particles_kernel,
+    inject_poisson_sources_kernel,
 )
 from core.transport.propagator import ParticlePropagator
 from core.transport.transport_buffer import TransportBuffer
@@ -241,8 +242,8 @@ def _bench_source_buffer_voxel_positions_kernel(
     out_z: NDArray[Float],
 ) -> None:
     """Генерирует глобальные координаты в SoA-массивы за O(1) реальными ядрами SourceBuffer без аллокаций."""
-    vox_start = source_buffer.voxel_offsets[source_idx]
-    vox_end = source_buffer.voxel_offsets[source_idx + 1]
+    vox_start = source_buffer.voxel_range[source_idx, 0]
+    vox_end = source_buffer.voxel_range[source_idx, 1]
     vox_count = vox_end - vox_start
 
     voxel_index = source_buffer.voxel_index
@@ -406,8 +407,10 @@ def run_micro_benchmarks_suite() -> List[MicroBenchmarkRecord]:
     )
 
     # --- M2: Построение таблицы эмиссии 3D-фантома (np.meshgrid vs разреженный flatnonzero) ---
-    dist_3d = workload.source_node.distribution
-    voxel_sz = float(workload.source_node.voxel_size)
+    spatial_vox = workload.source_node.spatial
+    assert isinstance(spatial_vox, VoxelDistribution)
+    dist_3d = spatial_vox.distribution
+    voxel_sz = float(spatial_vox.voxel_size)
     size_vec = np.asarray(dist_3d.shape, dtype=Float) * voxel_sz
     n_repeats_m2 = 20
 
@@ -460,8 +463,8 @@ def run_micro_benchmarks_suite() -> List[MicroBenchmarkRecord]:
     active_sources = SourceCompiler().compile_scene(workload.root_scene)
     source_buffer = SourceCompiler().compile(active_sources)
 
-    vox_indices = workload.source_node.voxel_indices
-    voxel_probs = np.ascontiguousarray(workload.source_node.voxel_probabilities, dtype=np.float64)
+    vox_indices = spatial_vox.voxel_indices
+    voxel_probs = np.ascontiguousarray(spatial_vox.voxel_probabilities, dtype=np.float64)
     ix_ref, iy_ref, iz_ref = np.unravel_index(vox_indices, dist_3d.shape)
     half_sz_ref = size_vec / 2.0
     voxel_origins = np.ascontiguousarray(
@@ -655,14 +658,15 @@ def run_micro_benchmarks_suite() -> List[MicroBenchmarkRecord]:
     m7_rng_ctx = RNGContext.from_numpy_rng(rng)
     propagator.transport_buffer = TransportBuffer.allocate(n_particles_m7, len(propagator.processes))
 
-    inject_source_particles_kernel(
+    inject_poisson_sources_kernel(
         m7_bank,
         source_buffer,
-        Index(0),
-        Index(n_particles_m7),
+        Float(np.inf),
         Float(0.0),
-        Float(1.0),
+        Float(0.0),
+        Float(np.nan),
         m7_rng_ctx,
+        Index(n_particles_m7),
         Index(0),
     )
     active_m7 = m7_bank.active_indices

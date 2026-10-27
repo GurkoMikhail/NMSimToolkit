@@ -5,15 +5,19 @@ import re
 
 import settings.database_setting as database_setting
 import hepunits as units
-from core.config.units import unit_validator_factory
 from core.config.models import (
     AnyNodeConfig, VolumeConfig, GammaCameraConfig, GammaCameraSlotsConfig, WoodcockVoxelVolumeConfig,
     ParametricParallelCollimatorConfig,
     DirectParallelCollimatorConfig,
+    PointSpatialConfig, VoxelSpatialConfig,
+    DiscreteSpectrumConfig, ContinuousSpectrumConfig,
+    IsotropicAngularConfig, ConeAngularConfig,
+    RadiationChannelConfig,
     SourceMetadataConfig, SourceConfig, BoxConfig, GeometryConfig, TranslateConfig, RotateConfig,
     MatrixTransformConfig,
     NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig,
-    DoseGridNodeConfig, GantryConfig, CompositeNodeConfig, BaseSpatialNodeConfig, BaseCompositeNodeConfig
+    DoseGridNodeConfig, GantryConfig, CompositeNodeConfig, BaseSpatialNodeConfig, BaseCompositeNodeConfig,
+    SimulationManagerConfig,
 )
 from core.config.exporter import SceneExporter
 from core.geometry.geometries import Box, Geometry
@@ -23,11 +27,25 @@ from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.direct_collimators import DirectParallelCollimator, CollimatorHoleShape
 from core.materials.materials import Material, MaterialArray
-from core.other.typing_definitions import Float
-from core.source.sources import Source, PointSource
+from core.other.typing_definitions import Float, ParticleSpecies
+from core.source.sources import (
+    Source,
+    SpatialDistribution,
+    PointDistribution,
+    VoxelDistribution,
+    SpectralLine,
+    EnergySpectrum,
+    DiscreteSpectrum,
+    ContinuousSpectrum,
+    AngularDistribution,
+    IsotropicAngular,
+    ConeAngular,
+    RadiationChannel,
+)
 from core.scene.nodes import SpatialNode, CompositeNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.scene.gantry_node import GantryNode
+from core.transport.simulation_managers import SimulationManager
 
 class SceneBuilder:
     def __init__(self, base_dir: Optional[Any] = None) -> None:
@@ -264,37 +282,22 @@ class SceneBuilder:
         )
 
     def _build_source(self, config: SourceConfig) -> Source:
-        dist_config = config.distribution
         activity = Float(self._to_float(config.activity, check_positive=True)) if config.activity is not None else None
-        raw_voxel_size = self._to_float(config.voxel_size, check_positive=False)
-        if raw_voxel_size < 0.0:
-            raise ValueError(f"Значение voxel_size ({raw_voxel_size}) не может быть отрицательным")
-        voxel_size = Float(raw_voxel_size)
-        if isinstance(config.energy, list):
-            energy_validator = unit_validator_factory('MeV', float(units.MeV))
-            energy: Any = [
-                [float(energy_validator(item[0])), float(item[1])]
-                for item in config.energy
-            ]
-        else:
-            energy = Float(self._to_float(config.energy, check_positive=True))
         half_life_raw = self._to_float(config.half_life, check_positive=False)
         if half_life_raw < 0.0:
             raise ValueError(f"Значение half_life ({half_life_raw}) не может быть отрицательным")
         half_life = Float(half_life_raw) if half_life_raw > 0.0 else Float(np.inf)
 
-        if dist_config is None:
-            effective_activity = activity if activity is not None else Float(1.0 * units.MBq)
-            node: Source = PointSource(
-                activity=effective_activity,
-                energy=energy,
-                size=voxel_size,
-                half_life=half_life,
-            )
-            node.radiation_type = config.radiation_type
-        else:
-            if voxel_size <= 0.0:
-                raise ValueError(f"Значение {voxel_size} должно быть строго больше 0")
+        spatial_cfg = config.spatial
+        dist_config: Optional[AnyDistributionConfig] = None
+        if isinstance(spatial_cfg, PointSpatialConfig):
+            jitter_x = Float(self._to_float(spatial_cfg.cell_jitter[0], check_positive=False))
+            jitter_y = Float(self._to_float(spatial_cfg.cell_jitter[1], check_positive=False))
+            spatial_dist: SpatialDistribution = PointDistribution(cell_jitter=(jitter_x, jitter_y))
+            effective_activity: Optional[Float] = activity if activity is not None else Float(1.0 * units.MBq)
+        elif isinstance(spatial_cfg, VoxelSpatialConfig):
+            voxel_size = Float(self._to_float(spatial_cfg.voxel_size, check_positive=True))
+            dist_config = spatial_cfg.distribution
             raw_distribution = self._load_raw_distribution(dist_config)
             distribution = np.array(raw_distribution, dtype=float, copy=True)
 
@@ -306,18 +309,66 @@ class SceneBuilder:
                     mask = np.isclose(raw_distribution, map_val)
                     distribution[mask] = float(act_val)
 
-            node = Source(
-                distribution=distribution,
-                activity=activity,
-                voxel_size=voxel_size,
-                radiation_type=config.radiation_type,
-                energy=energy,
-                half_life=half_life,
-            )
-            self.distribution_registry[node] = dist_config
+            spatial_dist = VoxelDistribution(distribution=distribution, voxel_size=voxel_size)
+            effective_activity = activity
+        else:
+            raise TypeError(f"Неизвестный тип пространственной конфигурации источника: {type(spatial_cfg)}")
 
-        if config.name is not None:
-            node.name = config.name
+        species_map = {
+            'photon': ParticleSpecies.PHOTON,
+            'electron': ParticleSpecies.ELECTRON,
+            'positron': ParticleSpecies.POSITRON,
+            'alpha': ParticleSpecies.ALPHA,
+        }
+        built_channels = []
+        for ch_cfg in config.channels:
+            species = species_map[ch_cfg.species]
+
+            if isinstance(ch_cfg.spectrum, DiscreteSpectrumConfig):
+                lines_tuple = tuple(
+                    SpectralLine(
+                        energy=Float(self._to_float(line_e, check_positive=True)),
+                        probability=Float(line_p),
+                    )
+                    for line_e, line_p in ch_cfg.spectrum.lines
+                )
+                spectrum_obj: EnergySpectrum = DiscreteSpectrum(lines=lines_tuple)
+            elif isinstance(ch_cfg.spectrum, ContinuousSpectrumConfig):
+                grid_arr = np.array(
+                    [self._to_float(e_val, check_positive=False) for e_val in ch_cfg.spectrum.energy_grid],
+                    dtype=Float,
+                )
+                pdf_arr = np.array([float(p_val) for p_val in ch_cfg.spectrum.pdf_values], dtype=Float)
+                spectrum_obj = ContinuousSpectrum(energy_grid=grid_arr, pdf_values=pdf_arr)
+            else:
+                raise TypeError(f"Неизвестный тип спектра канала источника: {type(ch_cfg.spectrum)}")
+
+            if isinstance(ch_cfg.angular, IsotropicAngularConfig):
+                angular_obj: AngularDistribution = IsotropicAngular()
+            elif isinstance(ch_cfg.angular, ConeAngularConfig):
+                max_angle = Float(self._to_float(ch_cfg.angular.max_polar_angle, check_positive=False))
+                angular_obj = ConeAngular(max_polar_angle=max_angle)
+            else:
+                raise TypeError(f"Неизвестный тип углового распределения канала источника: {type(ch_cfg.angular)}")
+
+            built_channels.append(
+                RadiationChannel(
+                    species=species,
+                    spectrum=spectrum_obj,
+                    angular=angular_obj,
+                    branching_ratio=Float(ch_cfg.branching_ratio),
+                )
+            )
+
+        node = Source(
+            spatial=spatial_dist,
+            channels=tuple(built_channels),
+            activity=effective_activity,
+            half_life=half_life,
+            name=config.name,
+        )
+        if dist_config is not None:
+            self.distribution_registry[node] = dist_config
         if config.radionuclide is not None or config.phantom_type is not None:
             source_meta = SourceMetadataConfig(
                 radionuclide=config.radionuclide,
@@ -356,6 +407,28 @@ class SceneBuilder:
     def _build_gantry(self, config: GantryConfig) -> GantryNode:
         """Сборка поворотной станины томографа GantryNode."""
         return GantryNode(name=config.name)
+
+    def build_simulation_manager(
+        self,
+        config: SimulationManagerConfig,
+        scene: CompositeNode,
+        **kwargs: Any,
+    ) -> SimulationManager:
+        """Создает экземпляр SimulationManager из декларативной конфигурации SimulationManagerConfig."""
+        return SimulationManager(
+            scene=scene,
+            start_time=self._to_float(config.start_time),
+            stop_time=self._to_float(config.stop_time),
+            particles_number=int(config.particles_number),
+            batch_capacity=None if config.batch_capacity is None else int(config.batch_capacity),
+            buffer_capacity=None if config.buffer_capacity is None else int(config.buffer_capacity),
+            min_energy=self._to_float(config.min_energy, check_positive=True),
+            enable_atomic_relaxation=bool(config.enable_atomic_relaxation),
+            photon_production_cut=self._to_float(config.photon_production_cut, check_positive=True),
+            electron_production_cut=self._to_float(config.electron_production_cut, check_positive=True),
+            seed=config.seed if "seed" not in kwargs else kwargs.pop("seed"),
+            **kwargs,
+        )
 
 
 __all__ = ["SceneBuilder"]

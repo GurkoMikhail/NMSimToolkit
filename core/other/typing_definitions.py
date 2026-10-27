@@ -2,6 +2,7 @@
 Определения базовых физических и индексных псевдонимов типов (TypeAlias) расчетного ядра.
 """
 import ctypes
+from enum import IntEnum
 from typing import TypeAlias
 import numpy as np
 from numba import from_dtype
@@ -16,9 +17,19 @@ Angle: TypeAlias = Float
 Density: TypeAlias = Float
 
 Vector3D: TypeAlias = NDArray[Float]
-ID: TypeAlias = np.uint64
+ID: TypeAlias = np.int64
 Species: TypeAlias = np.uint8
 Index: TypeAlias = np.int64
+
+
+class ParticleSpecies(IntEnum):
+    """Канонические коды типов частиц в расчётном ядре."""
+
+    PHOTON = 0
+    ELECTRON = 1
+    POSITRON = 2
+    ALPHA = 3
+
 
 ShapeID: TypeAlias = np.int32
 
@@ -49,6 +60,7 @@ __all__ = [
     "Vector3D",
     "ID",
     "Species",
+    "ParticleSpecies",
     "Index",
     "ShapeID",
     "CMaterialFunc",
@@ -58,4 +70,3 @@ __all__ = [
     "ProcessID",
     "Charge",
 ]
-

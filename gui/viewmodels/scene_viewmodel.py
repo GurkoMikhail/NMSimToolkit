@@ -8,7 +8,7 @@ from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.scene.gamma_camera_node import GammaCameraNode
 from core.scene.nodes import SpatialNode, CompositeNode
-from core.source.sources import Source
+from core.source.sources import Source, VoxelDistribution
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
 from gui.viewmodels.nodes.gamma_camera_vm import GammaCameraViewModel
@@ -143,8 +143,8 @@ class SceneViewModel(QObject):
             raw_shape = tuple(core_node.material_distribution.shape)
             if len(raw_shape) == 3:
                 shape = (int(raw_shape[0]), int(raw_shape[1]), int(raw_shape[2]))
-        elif isinstance(core_node, Source) and core_node.distribution is not None:
-            raw_shape = tuple(core_node.distribution.shape)
+        elif isinstance(core_node, Source) and isinstance(core_node.spatial, VoxelDistribution):
+            raw_shape = tuple(core_node.spatial.distribution.shape)
             if len(raw_shape) == 3:
                 shape = (int(raw_shape[0]), int(raw_shape[1]), int(raw_shape[2]))
 

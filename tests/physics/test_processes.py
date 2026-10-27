@@ -11,13 +11,28 @@ from core.geometry.volumes import Volume
 from core.materials.attenuation_database import _interpolate_element_on_material_grid
 from core.materials.material_bank import MaterialBank, MaterialInfoDType, MaterialPointerDType
 from core.materials.materials import Material
-from core.other.typing_definitions import CFuncAddress, Charge, Float, ID, Index, ProcessID
+from core.other.typing_definitions import (
+    CFuncAddress,
+    Charge,
+    Float,
+    ID,
+    Index,
+    ParticleSpecies,
+    ProcessID,
+    Species,
+    Time,
+)
 from core.particles.kinematic_state import KinematicState
 from core.particles.particles import ParticleBank
 from core.particles.particles_kernels import _rotate_particle
 from core.physics.g4coherent import _generate_coherent_theta_scalar
-from core.physics.g4compton import _generate_compton_theta_scalar
-from core.physics.interaction_buffers import InteractionBuffer, RNGContext, SimulationDataBuffer
+from core.physics.g4compton import _generate_compton_theta_scalar, electron_mass_c2
+from core.physics.interaction_buffers import (
+    InteractionBuffer,
+    RNGContext,
+    SecondaryActivationBuffer,
+    SimulationDataBuffer,
+)
 from core.physics.physics_buffer import ElementCSR, PhysicsBuffer
 from core.physics.physics_compiler import PhysicsCompiler
 from core.physics.processes import (
@@ -26,13 +41,20 @@ from core.physics.processes import (
     PhotoelectricEffect,
 )
 from core.physics.processes_kernels import (
+    C_LIGHT,
+    _compute_activation_time,
     _sample_Z_scalar,
+    _sample_ionized_subshell_scalar,
     make_coherent_kernel,
     make_compton_kernel,
     make_photoelectric_kernel,
+    partition_transferred_energy_kernel,
 )
 from core.scene.nodes import CompositeNode
+from core.source.source_kernels import inject_secondary_sources_kernel
+from core.source.sources import Source
 from core.transport.propagator import ParticlePropagator
+from core.transport.simulation_managers import SimulationManager
 from settings.database_setting import attenuation_database, material_database
 
 
@@ -59,10 +81,12 @@ class TestProcessesSoA(unittest.TestCase):
 
         self.bank.state.is_active[:] = True
         self.bank.initial_state.ID[:] = np.arange(self.capacity, dtype=np.uint64)
+        self.bank.initial_state.emission_time[:] = 0.0
         self.bank.state.energy[:] = energy
         self.target_indices = np.arange(self.capacity, dtype=np.int64)
 
         self.buffer = InteractionBuffer.allocate(self.capacity)
+        self.act_buffer = SecondaryActivationBuffer.allocate(0)
 
     def test_photoelectric_kernel(self) -> None:
         """Проверка фотоэлектрического поглощения в SoA-ядре."""
@@ -76,10 +100,12 @@ class TestProcessesSoA(unittest.TestCase):
         kernel(
             self.bank.state,
             particle_ids,
+            self.bank.initial_state.emission_time,
             self.target_indices,
             current_volumes,
             material_ids,
             self.buffer,
+            self.act_buffer,
             mock_physics,
             self.rng_ctx,
         )
@@ -222,6 +248,7 @@ class TestProcessesSoA(unittest.TestCase):
             majorant_material_map=np.array([0, 1], dtype=Index),
             woodcock_function_pointers=np.zeros(2, dtype=CFuncAddress),
             element_csr=csr,
+            relaxation_bank=PhysicsCompiler()._build_atomic_relaxation_bank([]),
         )
 
     def test_compton_kernel(self) -> None:
@@ -235,10 +262,12 @@ class TestProcessesSoA(unittest.TestCase):
         kernel(
             self.bank.state,
             particle_ids,
+            self.bank.initial_state.emission_time,
             self.target_indices,
             current_volumes,
             material_ids,
             self.buffer,
+            self.act_buffer,
             physics_buffer,
             self.rng_ctx,
         )
@@ -247,10 +276,12 @@ class TestProcessesSoA(unittest.TestCase):
         kernel(
             self.bank.state,
             particle_ids,
+            self.bank.initial_state.emission_time,
             self.target_indices,
             current_volumes,
             material_ids,
             self.buffer,
+            self.act_buffer,
             physics_buffer,
             self.rng_ctx,
         )
@@ -263,10 +294,12 @@ class TestProcessesSoA(unittest.TestCase):
             kernel(
                 self.bank.state,
                 particle_ids,
+                self.bank.initial_state.emission_time,
                 self.target_indices,
                 current_volumes,
                 material_ids,
                 self.buffer,
+                self.act_buffer,
                 physics_buffer,
                 self.rng_ctx,
             )
@@ -291,10 +324,12 @@ class TestProcessesSoA(unittest.TestCase):
         kernel(
             self.bank.state,
             particle_ids,
+            self.bank.initial_state.emission_time,
             self.target_indices,
             current_volumes,
             material_ids,
             self.buffer,
+            self.act_buffer,
             physics_buffer,
             self.rng_ctx,
         )
@@ -303,10 +338,12 @@ class TestProcessesSoA(unittest.TestCase):
         kernel(
             self.bank.state,
             particle_ids,
+            self.bank.initial_state.emission_time,
             self.target_indices,
             current_volumes,
             material_ids,
             self.buffer,
+            self.act_buffer,
             physics_buffer,
             self.rng_ctx,
         )
@@ -319,10 +356,12 @@ class TestProcessesSoA(unittest.TestCase):
             kernel(
                 self.bank.state,
                 particle_ids,
+                self.bank.initial_state.emission_time,
                 self.target_indices,
                 current_volumes,
                 material_ids,
                 self.buffer,
+                self.act_buffer,
                 physics_buffer,
                 self.rng_ctx,
             )
@@ -380,6 +419,7 @@ class TestProcessesSoA(unittest.TestCase):
             majorant_material_map=np.array([lead.ID], dtype=Index),
             woodcock_function_pointers=np.zeros(1, dtype=CFuncAddress),
             element_csr=csr,
+            relaxation_bank=compiler._build_atomic_relaxation_bank(processes),
         )
 
         rng = np.random.default_rng(98765)
@@ -448,6 +488,7 @@ class TestProcessesSoA(unittest.TestCase):
             majorant_material_map=np.array([nai.ID], dtype=Index),
             woodcock_function_pointers=np.zeros(1, dtype=CFuncAddress),
             element_csr=csr,
+            relaxation_bank=compiler._build_atomic_relaxation_bank(processes),
         )
 
         @njit(cache=True)
@@ -678,6 +719,526 @@ class TestProcessesSoA(unittest.TestCase):
         self.assertGreater(results_by_process_id[0][0], 0.998)
         self.assertTrue(0.80 < results_by_process_id[1][0] < 0.83)
         self.assertTrue(0.96 < results_by_process_id[2][0] < 0.99)
+
+    def test_secondary_activation_buffer_and_activation_time_kinematics(self) -> None:
+        """
+        Проверка Фазы 3:
+        1. Предвыделение SecondaryActivationBuffer на базе Vector3DSoA, курсора и параметров отсечки.
+        2. Точный релятивистский расчет мирового времени точки активации t_act = t_emit + l / v(E, m_0)
+           для фотонов (v = c) и массивных электронов.
+        """
+        act_buf = SecondaryActivationBuffer.allocate(
+            capacity=16,
+            enable_atomic_relaxation=True,
+            photon_production_cut=Float(1.0 * units.keV),
+            electron_production_cut=Float(50.0 * units.keV),
+        )
+        self.assertTrue(act_buf.is_enabled)
+        self.assertEqual(act_buf.capacity, 16)
+        self.assertEqual(act_buf.cursor_value, 0)
+        self.assertEqual(act_buf.remaining_capacity, 16)
+        self.assertTrue(act_buf.enable_atomic_relaxation)
+        self.assertAlmostEqual(float(act_buf.photon_production_cut), float(1.0 * units.keV), places=12)
+        self.assertAlmostEqual(float(act_buf.electron_production_cut), float(50.0 * units.keV), places=12)
+
+        t_emit = Time(10.0 * units.ns)
+        distance = Float(300.0 * units.mm)
+        t_photon = _compute_activation_time(
+            t_emit,
+            distance,
+            Float(0.140 * units.MeV),
+            Species(ParticleSpecies.PHOTON),
+        )
+        expected_photon_t = float(t_emit + distance / C_LIGHT)
+        self.assertAlmostEqual(float(t_photon), expected_photon_t, places=12)
+
+        e_kin = Float(0.510998910 * units.MeV)  # T == m_e c^2 -> gamma = 2, beta = sqrt(3)/2
+        t_electron = _compute_activation_time(
+            t_emit,
+            distance,
+            e_kin,
+            Species(ParticleSpecies.ELECTRON),
+        )
+        expected_beta = float(np.sqrt(1.0 - (float(electron_mass_c2) / float(e_kin + electron_mass_c2)) ** 2))
+        expected_electron_t = float(t_emit + distance / (expected_beta * float(C_LIGHT)))
+        self.assertAlmostEqual(float(t_electron), expected_electron_t, places=12)
+
+    def test_partition_transferred_energy_conservation_and_characteristic_lines(self) -> None:
+        """
+        Проверка Фазы 3 (partition_transferred_energy_kernel и PhotoelectricEffect.apply):
+        1. При отключенной релаксации и electron_production_cut == inf: 0 обращений к ГСЧ и 100% локальное
+           энерговыделение без записей в SecondaryActivationBuffer.
+        2. При включенной релаксации в Pb (Z=82, E=140 кэВ) и NaI (Z=53/11, E=140 кэВ):
+           - строгий пошаговый баланс энергии: sum(delta_E) == sum(E_dep_local) + sum(E_sec_tracked);
+           - энергии рожденных вторичных фотонов принадлежат дискретным характеристическим линиям
+             AtomicRelaxationBank и удовлетворяют E_line >= photon_production_cut;
+           - отсутствие холостых записей в SecondaryActivationBuffer при безызлучательных Оже-переходах
+             (когда electron_production_cut == inf).
+        3. При конечном electron_production_cut рождаются надпороговые фотоэлектроны, Оже-электроны
+           и комптоновские электроны с точным сохранением энергии.
+        """
+        compiler = PhysicsCompiler()
+        processes = [
+            PhotoelectricEffect(attenuation_database=attenuation_database),
+            ComptonScattering(attenuation_database=attenuation_database),
+            CoherentScattering(attenuation_database=attenuation_database),
+        ]
+        lead: Material = material_database["Pb"]
+        nai: Material = material_database["Sodium Iodide"]
+        mat_bank = compiler._build_material_bank([lead, nai], processes)
+        csr = compiler._build_element_csr([lead, nai], processes, mat_bank)
+        relax_bank = compiler._build_atomic_relaxation_bank(processes)
+        phys_buf = PhysicsBuffer(
+            material_bank=mat_bank,
+            majorant_material_map=np.array([lead.ID, nai.ID], dtype=Index),
+            woodcock_function_pointers=np.zeros(2, dtype=CFuncAddress),
+            element_csr=csr,
+            relaxation_bank=relax_bank,
+        )
+
+        num_particles = 5000
+        initial_energy = Float(140.0 * units.keV)
+        bank = ParticleBank.allocate(num_particles)
+        bank.state.is_active[:] = True
+        bank.state.species[:] = int(ParticleSpecies.PHOTON)
+        bank.state.energy[:] = initial_energy
+        bank.state.distance_traveled[:] = Float(15.0 * units.mm)
+        bank.state.position.x[:] = 1.0
+        bank.state.position.y[:] = 2.0
+        bank.state.position.z[:] = 3.0
+        bank.state.direction.x[:] = 0.0
+        bank.state.direction.y[:] = 0.0
+        bank.state.direction.z[:] = 1.0
+        bank.initial_state.ID[:] = np.arange(100, 100 + num_particles, dtype=ID)
+        bank.initial_state.emission_time[:] = Time(5.0 * units.ns)
+        bank.navigation_state.current_volume[:] = 0
+        target_indices = np.arange(num_particles, dtype=Index)
+        lead_mat_ids = np.full(num_particles, lead.ID, dtype=Index)
+
+        # 1. Режим с релаксацией в свинце (Z=82): K-край = 88.005 кэВ < 140 кэВ
+        inter_buf = InteractionBuffer.allocate(num_particles)
+        act_buf = SecondaryActivationBuffer.allocate(
+            capacity=2 * num_particles,
+            enable_atomic_relaxation=True,
+            photon_production_cut=Float(1.0 * units.keV),
+            electron_production_cut=Float(np.inf),
+        )
+        rng = np.random.default_rng(202603)
+        rng_ctx = RNGContext.from_numpy_rng(rng)
+
+        processes[0].apply(
+            bank,
+            target_indices,
+            inter_buf,
+            phys_buf,
+            lead_mat_ids,
+            rng_ctx,
+            activation_buffer=act_buf,
+        )
+
+        self.assertEqual(inter_buf.cursor_value, num_particles)
+        sec_count = act_buf.cursor_value
+        # Для свинца при 140 кэВ доля K-ионизации ~80%, выход флуоресценции omega_K ~ 0.96 -> ожидаем > 3500 фотонов
+        self.assertGreater(sec_count, 3500)
+        self.assertLess(sec_count, num_particles)
+
+        sec_energies = act_buf.energy[:sec_count]
+        sec_species = act_buf.species[:sec_count]
+        sec_z = act_buf.target_z[:sec_count]
+        sec_shells = act_buf.shell_idx[:sec_count]
+
+        self.assertTrue(np.all(sec_species == int(ParticleSpecies.PHOTON)))
+        self.assertTrue(np.all(sec_z == 82))
+        self.assertTrue(np.all(sec_shells >= 0))
+        self.assertTrue(np.all(sec_energies >= Float(1.0 * units.keV)))
+
+        # Строгий закон сохранения энергии: N * 140 кэВ == sum(local_deposit) + sum(sec_energies)
+        total_initial = float(num_particles) * float(initial_energy)
+        total_local_deposit = float(np.sum(inter_buf.energy_deposit[:num_particles]))
+        total_secondary_energy = float(np.sum(sec_energies))
+        self.assertAlmostEqual(
+            total_initial,
+            total_local_deposit + total_secondary_energy,
+            places=9,
+        )
+
+        # Проверяем, что рождаются характеристические K-альфа линии свинца (~72.8 и ~75.0 кэВ)
+        k_alpha_mask = (sec_energies > Float(72.0 * units.keV)) & (sec_energies < Float(76.0 * units.keV))
+        self.assertGreater(int(np.sum(k_alpha_mask)), 2000)
+
+        # 2. Режим с конечным порогом электронов (electron_production_cut = 10 кэВ) для фотоэффекта и Комптона
+        bank.state.energy[:] = initial_energy
+        inter_buf.reset_cursor()
+        act_buf_e = SecondaryActivationBuffer.allocate(
+            capacity=2 * num_particles,
+            enable_atomic_relaxation=True,
+            photon_production_cut=Float(1.0 * units.keV),
+            electron_production_cut=Float(10.0 * units.keV),
+        )
+        processes[0].apply(
+            bank,
+            target_indices,
+            inter_buf,
+            phys_buf,
+            lead_mat_ids,
+            rng_ctx,
+            activation_buffer=act_buf_e,
+        )
+        sec_e_count = act_buf_e.cursor_value
+        # Теперь на каждый K-фотоэффект рождается фотоэлектрон (~52 кэВ) И флуоресцентный фотон/Оже-электрон
+        self.assertGreater(sec_e_count, num_particles)
+        self.assertTrue(np.any(act_buf_e.species[:sec_e_count] == int(ParticleSpecies.ELECTRON)))
+        self.assertTrue(np.any(act_buf_e.species[:sec_e_count] == int(ParticleSpecies.PHOTON)))
+        self.assertAlmostEqual(
+            total_initial,
+            float(np.sum(inter_buf.energy_deposit[:num_particles]))
+            + float(np.sum(act_buf_e.energy[:sec_e_count])),
+            places=9,
+        )
+
+        # 3. Комптоновское рассеяние: проверка сохранения target_z, исходного parent_direction (до рассеяния)
+        #    и баланса энергии
+        bank.state.energy[:] = initial_energy
+        bank.state.direction.x[:] = 0.0
+        bank.state.direction.y[:] = 0.0
+        bank.state.direction.z[:] = 1.0
+        inter_buf.reset_cursor()
+        act_buf_compton = SecondaryActivationBuffer.allocate(
+            capacity=num_particles,
+            enable_atomic_relaxation=True,
+            photon_production_cut=Float(1.0 * units.keV),
+            electron_production_cut=Float(5.0 * units.keV),
+        )
+        processes[1].apply(
+            bank,
+            target_indices,
+            inter_buf,
+            phys_buf,
+            lead_mat_ids,
+            rng_ctx,
+            activation_buffer=act_buf_compton,
+        )
+        compton_sec_count = act_buf_compton.cursor_value
+        self.assertGreater(compton_sec_count, 1000)
+        self.assertTrue(np.all(act_buf_compton.species[:compton_sec_count] == int(ParticleSpecies.ELECTRON)))
+        self.assertTrue(np.all(act_buf_compton.target_z[:compton_sec_count] == 82))
+        self.assertTrue(np.all(act_buf_compton.direction.x[:compton_sec_count] == 0.0))
+        self.assertTrue(np.all(act_buf_compton.direction.y[:compton_sec_count] == 0.0))
+        self.assertTrue(np.all(act_buf_compton.direction.z[:compton_sec_count] == 1.0))
+        self.assertAlmostEqual(
+            total_initial,
+            float(np.sum(bank.state.energy[:num_particles]))
+            + float(np.sum(inter_buf.energy_deposit[:num_particles]))
+            + float(np.sum(act_buf_compton.energy[:compton_sec_count])),
+            places=9,
+        )
+
+        # 4. Переполнение SecondaryActivationBuffer: не поместившиеся вторичные частицы обязаны
+        #    остаться в local_deposit без потери энергии
+        bank.state.energy[:] = initial_energy
+        inter_buf.reset_cursor()
+        tiny_capacity = 10
+        act_buf_tiny = SecondaryActivationBuffer.allocate(
+            capacity=tiny_capacity,
+            enable_atomic_relaxation=True,
+            photon_production_cut=Float(1.0 * units.keV),
+            electron_production_cut=Float(10.0 * units.keV),
+        )
+        processes[0].apply(
+            bank,
+            target_indices,
+            inter_buf,
+            phys_buf,
+            lead_mat_ids,
+            rng_ctx,
+            activation_buffer=act_buf_tiny,
+        )
+        self.assertEqual(act_buf_tiny.cursor_value, tiny_capacity)
+        self.assertAlmostEqual(
+            total_initial,
+            float(np.sum(inter_buf.energy_deposit[:num_particles]))
+            + float(np.sum(act_buf_tiny.energy[:tiny_capacity])),
+            places=9,
+        )
+
+    def test_three_production_cut_regimes_per_event_energy_balance_and_genealogy(self) -> None:
+        """
+        Проверка Фазы 4 (сохранение энергии и генеалогия (particle_ID, parent_ID)):
+        Точный по-событийный (per-vertex) баланс энергии
+            delta_E_i == E_dep_local_i + sum_{c: parent_ID[c] == pid_i} E_sec_c
+        во всех трёх режимах порогов production_cuts в кристалле NaI (Z=53, 11) при E = 140.5 кэВ:
+        1. Полное локальное поглощение (photon_production_cut = inf, electron_production_cut = inf);
+        2. Столкновительная Керма с фотонной релаксацией (photon_production_cut = 1 кэВ, electron_production_cut = inf);
+        3. Связанный гамма-электронный режим с фотоэлектронами и Оже-электронами
+           (photon_production_cut = 1 кэВ, electron_production_cut = 1 кэВ),
+           а также выгрузка вторичных частиц в ParticleBank с проверкой связности (ID, parent_ID).
+        """
+        compiler = PhysicsCompiler()
+        processes = [
+            PhotoelectricEffect(attenuation_database=attenuation_database),
+            ComptonScattering(attenuation_database=attenuation_database),
+            CoherentScattering(attenuation_database=attenuation_database),
+        ]
+        nai: Material = material_database["Sodium Iodide"]
+        mat_bank = compiler._build_material_bank([nai], processes)
+        csr = compiler._build_element_csr([nai], processes, mat_bank)
+        relax_bank = compiler._build_atomic_relaxation_bank(processes)
+        phys_buf = PhysicsBuffer(
+            material_bank=mat_bank,
+            majorant_material_map=np.array([nai.ID], dtype=Index),
+            woodcock_function_pointers=np.zeros(1, dtype=CFuncAddress),
+            element_csr=csr,
+            relaxation_bank=relax_bank,
+        )
+
+        num_events = 2000
+        initial_energy = Float(140.5 * units.keV)
+        parent_ids = np.arange(500, 500 + num_events, dtype=ID)
+        target_indices = np.arange(num_events, dtype=Index)
+        nai_mat_ids = np.full(num_events, nai.ID, dtype=Index)
+
+        def _prepare_bank() -> ParticleBank:
+            bank = ParticleBank.allocate(num_events)
+            bank.state.is_active[:] = True
+            bank.state.species[:] = int(ParticleSpecies.PHOTON)
+            bank.state.energy[:] = initial_energy
+            bank.state.distance_traveled[:] = Float(10.0 * units.mm)
+            bank.state.position.x[:] = 0.0
+            bank.state.position.y[:] = 0.0
+            bank.state.position.z[:] = 0.0
+            bank.state.direction.x[:] = 0.0
+            bank.state.direction.y[:] = 0.0
+            bank.state.direction.z[:] = 1.0
+            bank.initial_state.ID[:] = parent_ids
+            bank.initial_state.parent_ID[:] = ID(-1)
+            bank.initial_state.emission_time[:] = Time(0.0)
+            bank.navigation_state.current_volume[:] = 0
+            return bank
+
+        # Режим 1: Полное локальное поглощение (пороги +inf)
+        bank_mode1 = _prepare_bank()
+        inter_mode1 = InteractionBuffer.allocate(num_events)
+        act_mode1 = SecondaryActivationBuffer.allocate(
+            capacity=2 * num_events,
+            enable_atomic_relaxation=True,
+            photon_production_cut=Float(np.inf),
+            electron_production_cut=Float(np.inf),
+        )
+        rng_mode1 = np.random.default_rng(2026401)
+        ctx_mode1 = RNGContext.from_numpy_rng(rng_mode1)
+        processes[0].apply(
+            bank_mode1,
+            target_indices,
+            inter_mode1,
+            phys_buf,
+            nai_mat_ids,
+            ctx_mode1,
+            activation_buffer=act_mode1,
+        )
+        self.assertEqual(act_mode1.cursor_value, 0)
+        np.testing.assert_allclose(
+            inter_mode1.energy_deposit[:num_events],
+            np.full(num_events, initial_energy, dtype=Float),
+            rtol=0.0,
+            atol=1e-12,
+        )
+
+        # Режим 2: Столкновительная Керма с фотонной релаксацией (E_cut_gamma = 1 кэВ, E_cut_e = +inf)
+        bank_mode2 = _prepare_bank()
+        inter_mode2 = InteractionBuffer.allocate(num_events)
+        act_mode2 = SecondaryActivationBuffer.allocate(
+            capacity=2 * num_events,
+            enable_atomic_relaxation=True,
+            photon_production_cut=Float(1.0 * units.keV),
+            electron_production_cut=Float(np.inf),
+        )
+        rng_mode2 = np.random.default_rng(2026402)
+        ctx_mode2 = RNGContext.from_numpy_rng(rng_mode2)
+        processes[0].apply(
+            bank_mode2,
+            target_indices,
+            inter_mode2,
+            phys_buf,
+            nai_mat_ids,
+            ctx_mode2,
+            activation_buffer=act_mode2,
+        )
+        sec_count_mode2 = act_mode2.cursor_value
+        self.assertGreater(sec_count_mode2, 1200)
+        self.assertTrue(np.all(act_mode2.species[:sec_count_mode2] == int(ParticleSpecies.PHOTON)))
+
+        sec_sum_by_event_mode2 = np.zeros(num_events, dtype=Float)
+        np.add.at(
+            sec_sum_by_event_mode2,
+            act_mode2.parent_ID[:sec_count_mode2] - 500,
+            act_mode2.energy[:sec_count_mode2],
+        )
+        np.testing.assert_allclose(
+            inter_mode2.energy_deposit[:num_events] + sec_sum_by_event_mode2,
+            np.full(num_events, initial_energy, dtype=Float),
+            rtol=0.0,
+            atol=1e-12,
+        )
+
+        # Режим 3: Связанный гамма-электронный режим с фотоэлектронами, рентгеном и Оже-электронами
+        bank_mode3 = _prepare_bank()
+        inter_mode3 = InteractionBuffer.allocate(num_events)
+        act_mode3 = SecondaryActivationBuffer.allocate(
+            capacity=2 * num_events,
+            enable_atomic_relaxation=True,
+            photon_production_cut=Float(1.0 * units.keV),
+            electron_production_cut=Float(1.0 * units.keV),
+        )
+        rng_mode3 = np.random.default_rng(2026403)
+        ctx_mode3 = RNGContext.from_numpy_rng(rng_mode3)
+        processes[0].apply(
+            bank_mode3,
+            target_indices,
+            inter_mode3,
+            phys_buf,
+            nai_mat_ids,
+            ctx_mode3,
+            activation_buffer=act_mode3,
+        )
+        sec_count_mode3 = act_mode3.cursor_value
+        self.assertGreater(sec_count_mode3, int(1.8 * num_events))
+
+        sec_species_mode3 = act_mode3.species[:sec_count_mode3]
+        sec_shells_mode3 = act_mode3.shell_idx[:sec_count_mode3]
+        sec_parents_mode3 = act_mode3.parent_ID[:sec_count_mode3]
+        sec_energies_mode3 = act_mode3.energy[:sec_count_mode3]
+
+        # Проверяем наличие всех трёх физических типов вторичных частиц при фотоэффекте:
+        # 1) фотоэлектроны (ELECTRON, shell_idx == -1)
+        # 2) характеристические фотоны (PHOTON, shell_idx >= 0)
+        # 3) электроны Оже (ELECTRON, shell_idx >= 0)
+        pe_mask = (sec_species_mode3 == int(ParticleSpecies.ELECTRON)) & (sec_shells_mode3 == -1)
+        fluor_mask = (sec_species_mode3 == int(ParticleSpecies.PHOTON)) & (sec_shells_mode3 >= 0)
+        auger_mask = (sec_species_mode3 == int(ParticleSpecies.ELECTRON)) & (sec_shells_mode3 >= 0)
+        self.assertEqual(int(np.sum(pe_mask)), num_events)
+        self.assertGreater(int(np.sum(fluor_mask)), 1200)
+        self.assertGreater(int(np.sum(auger_mask)), 150)
+
+        sec_sum_by_event_mode3 = np.zeros(num_events, dtype=Float)
+        np.add.at(sec_sum_by_event_mode3, sec_parents_mode3 - 500, sec_energies_mode3)
+        np.testing.assert_allclose(
+            inter_mode3.energy_deposit[:num_events] + sec_sum_by_event_mode3,
+            np.full(num_events, initial_energy, dtype=Float),
+            rtol=0.0,
+            atol=1e-12,
+        )
+
+        # Выгружаем все вторичные активации Режима 3 через inject_secondary_sources_kernel в ParticleBank
+        sec_bank = ParticleBank.allocate(sec_count_mode3)
+        sec_bank.count_array[0] = Index(500 + num_events)
+        inj_sec, _ = inject_secondary_sources_kernel(
+            sec_bank,
+            act_mode3,
+            relax_bank,
+            Float(np.inf),
+            ctx_mode3,
+        )
+        self.assertEqual(int(inj_sec), sec_count_mode3)
+        self.assertEqual(act_mode3.cursor_value, 0)
+        np.testing.assert_array_equal(
+            sec_bank.initial_state.ID[:sec_count_mode3],
+            np.arange(500 + num_events, 500 + num_events + sec_count_mode3, dtype=ID),
+        )
+        np.testing.assert_array_equal(sec_bank.initial_state.parent_ID[:sec_count_mode3], sec_parents_mode3)
+        self.assertTrue(np.all((sec_bank.initial_state.parent_ID[:sec_count_mode3] >= 500) & (
+            sec_bank.initial_state.parent_ID[:sec_count_mode3] < 500 + num_events
+        )))
+
+    def test_lead_characteristic_xray_above_and_below_k_edge(self) -> None:
+        """
+        Физический тест Фазы 4 (характеристический рентген свинца Pb, Z=82, K-край = 88.005 кэВ):
+        1. При облучении свинцовой пластины фотонами 99mTc (140.5 кэВ > 88.005 кэВ) рождаются
+           вторичные фотоны (parent_ID >= 0) с характерными линиями K_alpha (~72.8-75.0 кэВ)
+           и K_beta (~84.4-87.3 кэВ).
+        2. При энергии первичных фотонов ниже K-края свинца (80.0 кэВ < 88.005 кэВ) возбуждаются
+           только L/M-оболочки (E_sec < 16 кэВ), а K-флуоресценция полностью отсутствует.
+        """
+        lead_mat: Material = material_database["Pb"]
+
+        def _run_lead_target_simulation(primary_energy: Float, seed_val: int) -> dict[str, np.ndarray]:
+            world = Volume(
+                geometry=Box(200.0 * units.mm, 200.0 * units.mm, 200.0 * units.mm),
+                material=material_database["Air, Dry (near sea level)"],
+                name="World",
+            )
+            pb_plate = Volume(
+                geometry=Box(100.0 * units.mm, 100.0 * units.mm, 5.0 * units.mm),
+                material=lead_mat,
+                name="LeadCollimatorPlate",
+            )
+            world.add_child(pb_plate)
+            src = Source.from_point(
+                activity=Float(1.0e5 * units.Bq),
+                energy=primary_energy,
+                half_life=Float(np.inf),
+                name="PointBeam",
+            )
+            world.add_child(src)
+
+            mgr = SimulationManager(
+                scene=world,
+                propagator=ParticlePropagator(
+                    processes_list=[PhotoelectricEffect, ComptonScattering, CoherentScattering]
+                ),
+                start_time=Float(0.0),
+                stop_time=None,
+                particles_number=1500,
+                batch_capacity=256,
+                buffer_capacity=4096,
+                min_energy=Float(1.0 * units.keV),
+                seed=seed_val,
+                enable_atomic_relaxation=True,
+                photon_production_cut=Float(1.0 * units.keV),
+                electron_production_cut=Float(np.inf),
+            )
+            mgr.start()
+            mgr.join()
+
+            init_chunks: list[dict[str, np.ndarray]] = []
+            while True:
+                item = mgr.queue.get_nowait()
+                if item is None or item == "stop":
+                    break
+                if item["type"].value == "initial_states":
+                    init_chunks.append(item["data"])
+            return {
+                key: np.concatenate([chunk[key] for chunk in init_chunks])
+                for key in init_chunks[0]
+            }
+
+        # 1. Выше K-края свинца (140.5 кэВ > 88.005 кэВ)
+        above_init = _run_lead_target_simulation(Float(140.5 * units.keV), seed_val=2026410)
+        sec_mask_above = above_init["parent_ID"] >= 0
+        sec_energies_above = above_init["emission_energy"][sec_mask_above]
+        self.assertGreater(len(sec_energies_above), 400)
+
+        # Линии K_alpha свинца (K_alpha2 = 72.805 кэВ, K_alpha1 = 74.969 кэВ)
+        pb_k_alpha_mask = (sec_energies_above >= Float(72.5 * units.keV)) & (
+            sec_energies_above <= Float(75.5 * units.keV)
+        )
+        # Линии K_beta свинца (K_beta3 = 84.450 кэВ, K_beta1 = 84.938 кэВ, K_beta2 = 87.300 кэВ)
+        pb_k_beta_mask = (sec_energies_above >= Float(84.0 * units.keV)) & (
+            sec_energies_above <= Float(87.8 * units.keV)
+        )
+        k_alpha_count = int(np.sum(pb_k_alpha_mask))
+        k_beta_count = int(np.sum(pb_k_beta_mask))
+        self.assertGreater(k_alpha_count, 250)
+        self.assertGreater(k_beta_count, 50)
+        # Отношение интенсивностей K_alpha / K_beta для свинца составляет ~3.5 - 4.5
+        self.assertGreater(k_alpha_count, 2 * k_beta_count)
+
+        # 2. Ниже K-края свинца (80.0 кэВ < 88.005 кэВ): K-флуоресценция невозможна, только L/M (< 16 кэВ)
+        below_init = _run_lead_target_simulation(Float(80.0 * units.keV), seed_val=2026411)
+        sec_mask_below = below_init["parent_ID"] >= 0
+        sec_energies_below = below_init["emission_energy"][sec_mask_below]
+        self.assertGreater(len(sec_energies_below), 150)
+        self.assertEqual(int(np.sum(sec_energies_below > Float(70.0 * units.keV))), 0)
+        self.assertTrue(np.all(sec_energies_below < Float(16.0 * units.keV)))
 
 
 if __name__ == "__main__":

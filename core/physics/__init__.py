@@ -12,7 +12,12 @@ from core.physics.processes import (
     get_species_mapping,
 )
 from core.physics.physics_compiler import PhysicsCompiler
-from core.physics.physics_buffer import ElementCSR, PhysicsBuffer
+from core.physics.physics_buffer import (
+    AtomicRelaxationBank,
+    ElementCSR,
+    MAX_RELAXATION_Z,
+    PhysicsBuffer,
+)
 from core.physics.interaction_buffers import (
     TELEMETRY_ORDER,
     ChunkType,
@@ -22,6 +27,7 @@ from core.physics.interaction_buffers import (
     InitialStateBuffer,
     DeadParticlesBuffer,
     EscapedParticlesBuffer,
+    SecondaryActivationBuffer,
     SimulationDataBuffer,
     RNGContext,
 )
@@ -35,7 +41,9 @@ __all__ = [
     'get_process_mapping',
     'get_species_mapping',
     'PhysicsCompiler',
+    'AtomicRelaxationBank',
     'ElementCSR',
+    'MAX_RELAXATION_Z',
     'PhysicsBuffer',
     'TELEMETRY_ORDER',
     'ChunkType',
@@ -45,8 +53,7 @@ __all__ = [
     'InitialStateBuffer',
     'DeadParticlesBuffer',
     'EscapedParticlesBuffer',
+    'SecondaryActivationBuffer',
     'SimulationDataBuffer',
     'RNGContext',
 ]
-
-

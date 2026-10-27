@@ -27,7 +27,7 @@ from core.geometry.direct_collimators import DirectParallelCollimator
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from gui.factories.gamma_camera_factory import create_default_gamma_camera
 from core.materials.materials import Material, MaterialArray
-from core.source.sources import Source, PointSource
+from core.source.sources import Source
 from core.scene.nodes import CompositeNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.other.typing_definitions import Float
@@ -394,11 +394,11 @@ class SceneTreeWidget(QWidget):
             return
 
         src_name = self._get_unique_name("PointSource")
-        src = PointSource(
+        src = Source.from_point(
             activity=Float(1e6 * units.becquerel),
-            energy=Float(140.5 * units.keV)
+            energy=Float(140.5 * units.keV),
+            name=src_name,
         )
-        src.name = src_name
         vm = SourceViewModel(src)
         try:
             self.scene_vm.add_node(parent, vm)
@@ -412,13 +412,13 @@ class SceneTreeWidget(QWidget):
 
         src_name = self._get_unique_name("Source")
         dist = np.ones((16, 16, 16), dtype=Float)
-        src = Source(
+        src = Source.from_voxels(
             distribution=dist,
-            activity=Float(1e6 * units.becquerel),
             voxel_size=Float(4.0 * units.mm),
-            energy=Float(140.5 * units.keV)
+            activity=Float(1e6 * units.becquerel),
+            energy=Float(140.5 * units.keV),
+            name=src_name,
         )
-        src.name = src_name
         vm = SourceViewModel(src)
         try:
             self.scene_vm.add_node(parent, vm)

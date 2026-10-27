@@ -93,6 +93,7 @@ def _write_single_initial_state(
         return
 
     initial_state_buffer.particle_ID[idx] = initial_state.ID[p_idx]
+    initial_state_buffer.parent_ID[idx] = initial_state.parent_ID[p_idx]
     initial_state_buffer.emission_time[idx] = initial_state.emission_time[p_idx]
     initial_state_buffer.emission_energy[idx] = initial_state.emission_energy[p_idx]
 
@@ -352,4 +353,3 @@ __all__ = [
     "_push_to_escaped_particles_kernel",
     "make_transport_kernel",
 ]
-

@@ -84,7 +84,7 @@
 ## 7. Глобальная унификация распределений и скалярных величин в расчетном ядре [РЕАЛИЗОВАНО]
 
 ### Статус:
-* **Завершено:** В [`core/source/sources.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py) (`Source.energy`) и [`core/config/models.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/config/models.py) (`SourceConfig`) энергетический спектр всегда хранится в унифицированном табличном представлении пар `[energy, probability]`, где моноэнергетический источник является строгим частным случаем таблицы из одной строки с вероятностью `1.0`. Также реализована нативная сериализация `PointSource` (`voxel_size = 0.0` без пространственного размытия) и параметров `RawDistributionConfig`.
+* **Завершено (расширено в Разделе 31):** В [`core/source/sources.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py) и [`core/config/models.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/config/models.py) (`SourceConfig`) реализована композиционная модель первичного источника `Source(spatial, channels)` с явными типами пространственного распределения (`PointDistribution` без выделения воксельных массивов, `VoxelDistribution` с `RawDistributionConfig` / `NumpyDistributionConfig`), спектра (`DiscreteSpectrum` для табличных линий `[energy, probability]`, `ContinuousSpectrum` для кусочно-линейных плотностей) и углового распределения (`IsotropicAngular`, `ConeAngular`).
 
 ---
 
@@ -418,21 +418,10 @@
 
 ---
 
-## 28. Атомная релаксация после фотоэффекта: выбор оболочки и специализированный вторичный источник характеристической флуоресценции
+## 28. Атомная релаксация после фотоэффекта: выбор оболочки и специализированный вторичный источник характеристической флуоресценции [РЕАЛИЗОВАНО — см. Раздел 31]
 
-### Проблема:
-* Фотоэффект ([`make_photoelectric_kernel`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py#L107-L170)) депонирует всю энергию фотона локально; характеристическое излучение не моделируется.
-* Пропущенные эффекты, значимые для ОФЭКТ: K-излучение свинца коллиматора и защиты (`72–87 кэВ`, попадает в окна $^{201}\text{Tl}$ и низкоэнергетических линий $^{161}\text{Tb}$), пики вылета йода в NaI (фотопик минус `≈ 28.5 / 32.3 кэВ`, линии Kα / Kβ), искажение спектра и окон рассеяния.
-* Номер сегмента энергетической сетки определяет лишь энергетически доступные оболочки ($E > E_K$), но не оболочку поглощения — для выбора требуются вероятности по каналам.
-
-### Согласованное архитектурное направление:
-1. **Выбор оболочки** (после выбора элемента по п. 27): либо метод скачков $P_K = 1 - 1/J_K$ с рекурсивным делением остатка по L1/L2/L3 (скачки $J$ извлекаются из пар узлов краев п. 26), либо точные сечения подоболочек (EPDL97 / Scofield) как дополнительные столбцы на той же сетке — выбор на этапе проектирования.
-2. **Релаксация и сохранение энергии:** выход флуоресценции $\omega_s$, энергии линий и радиационные вероятности (Kα1, Kα2, Kβ1, Kβ2, опционально L-линии); при испускании характеристического кванта локальный депозит фотоэффекта уменьшается до $E_\gamma - E_{\text{флуор}}$; Оже- и Костер–Крониг-переходы депонируются локально; каскад вакансий K → L — опционально.
-3. **Вторичный источник излучения:** генерация характеристических фотонов оформляется как специализированный вид вторичного источника (с заделом под будущие источники $\alpha$-, $\beta$- и других вторичных излучений), переиспользующий таблицы Воза (`SourceBuffer` / `alias_tables`) из п. 15 и наследующий координаты, время и контекст истории родительской частицы.
-4. **Данные атомной релаксации** запекаются офлайн в HDF5 (источник — EADL / `xraylib` только в скрипте генерации, без зависимости во время выполнения).
-
-### План реализации:
-* Фаза 6 плана [`docs/plans/cross_sections_and_source_sampling_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/cross_sections_and_source_sampling_plan.md) (требует отдельной проектной спецификации перед реализацией).
+### Статус:
+* **Завершено:** Полностью реализовано и верифицировано в рамках Фаз 2–4 плана [`docs/plans/composable_sources_and_secondary_radiation_plan.md`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/docs/plans/composable_sources_and_secondary_radiation_plan.md) (см. подробное описание в Разделе 31).
 
 ---
 
@@ -471,24 +460,17 @@
 
 ---
 
-## 31. Композиционная архитектура источников частиц и модель вторичного излучения (`SecondarySource`)
+## 31. Композиционная архитектура источников частиц, распределение переданной энергии и модель вторичного излучения (`SecondarySource`) [РЕАЛИЗОВАНО]
 
-> **Статус: спроектировано (спецификация в [`docs/plans/composable_sources_and_secondary_radiation_plan.md`](plans/composable_sources_and_secondary_radiation_plan.md)).**
-
-### Постановка задачи:
-* Текущий класс [`Source(CompositeNode)`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py) совмещает узел 3D-сцены, воксельную сетку и модель дискретного $\gamma$-излучения, а [`PointSource`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py) наследует `Source` с фиктивным 3D-массивом `(1, 1, 1)`.
-* Для поддержки вторичного излучения (характеристический рентген $K_\alpha/K_\beta/L$ после фотоэффекта, аннигиляционные кванты, тормозное излучение) и других видов первичного излучения ($\beta^\pm, \alpha$ с непрерывными и дискретными спектрами) требуется:
-  1. Уйти от наследования `PointSource(VoxelSource)` к композиции пространственного распределения и физической модели излучения (по аналогии с `Volume = CompositeNode + Geometry + Material`);
-  2. Выделить `SecondarySource` вне иерархии `CompositeNode`, исключив переполнение `ParticleBank` внутри `processes_kernels.py` и обеспечив физически точный пуассоновский розыгрыш времени испускания и угловой анизотропии на этапе `_replenish_bank`.
-
-### Согласованное архитектурное решение:
-1. **Композиция первичного источника `Source(CompositeNode)`:**
-   * `spatial: SpatialDistribution` (`PointDistribution` без массивов и вызовов ГСЧ, `VoxelDistribution` с таблицами Воза, в перспективе `AnalyticDistribution`);
-   * `channels: tuple[RadiationChannel, ...]`, где каждый канал задаёт `species: ParticleSpecies` (`PHOTON`, `ELECTRON`, `POSITRON`, `ALPHA`), `spectrum: EnergySpectrum` (`DiscreteSpectrum` на таблицах Воза линий или `ContinuousSpectrum` на таблицах Воза трапеций с аналитическим обращением внутри бина за $\mathcal{O}(1)$) и `angular: AngularDistribution` (`IsotropicAngular`, `ConeAngular`, `AnisotropicMultipoleAngular` с полиномами Лежандра $P_2, P_4$ относительно опорного орта $\vec{n}_{\text{ref}}$).
-2. **Независимый `SecondarySource` в контуре симуляции (вне `CompositeNode`):**
-   * Владеет предвыделенным SoA-буфером `SecondaryActivationBuffer` (`pos_x/y/z`, `dir_x/y/z`, `activation_time`, `parent_energy`, `parent_id`, `target_z`, `process_id`, `cursor`) и банком атомной релаксации `AtomicRelaxationBank` ($Z = 1..100$);
-   * Ядра `processes_kernels.py` при взаимодействии записывают только затравку активации в `SecondaryActivationBuffer`, не модифицируя `ParticleBank`;
-   * На этапе `_replenish_bank` ядро `inject_secondary_sources_kernel` первым разряжает `SecondaryActivationBuffer` в свободные слоты `ParticleBank`, разыгрывая время испускания $t_{\text{emit}} = t_{\text{act}} - \ln(1 - u)/\lambda_{\text{sec}}(Z, s)$ по экспоненциальному (пуассоновскому) закону распада атомной вакансии и направление вылета относительно импульса родителя $\vec{n}_{\text{ref}} = \vec{d}_{\text{parent}}$, после чего оставшиеся слоты дозаполняются первичными источниками.
-
-### План реализации:
-* Подробная спецификация SoA-структур, математических инвариантов, YAML-схем (`Roundtrip`) и 4-фазный план работ зафиксированы в [`docs/plans/composable_sources_and_secondary_radiation_plan.md`](plans/composable_sources_and_secondary_radiation_plan.md).
+### Статус:
+* **Завершено (Фазы 1–4 плана [`docs/plans/composable_sources_and_secondary_radiation_plan.md`](plans/composable_sources_and_secondary_radiation_plan.md)):**
+  1. **Композиционная модель `Source(CompositeNode)` и уплощенный `SourceBuffer` ([`core/source/sources.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/sources.py), [`core/source/source_buffer.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/source_buffer.py), [`core/source/source_compiler.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/source_compiler.py), [`core/source/source_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/source_kernels.py)):**
+     * Устранено наследование `PointSource(Source)` и `ConePointSource(PointSource)`; внедрены ортогональные компоненты `SpatialDistribution` (`PointDistribution` с `0 байт` воксельных таблиц и опциональным `cell_jitter`, `VoxelDistribution`), `RadiationChannel(species, spectrum, angular, branching_ratio)`, `EnergySpectrum` (`DiscreteSpectrum`, `ContinuousSpectrum` с $\mathcal{O}(1)$ выборкой трапеций по таблицам Воза) и `AngularDistribution` (`IsotropicAngular`, `ConeAngular`).
+     * В `InitialState`, `InitialStateBuffer` и выходную HDF5-схему `initial_states` добавлено каноническое поле генеалогии `parent_ID: NDArray[ID]` (`-1` для первичных частиц).
+     * Обновлены конфигурационные Pydantic-схемы (`PointSpatialConfig`, `VoxelSpatialConfig`, `DiscreteSpectrumConfig`, `ContinuousSpectrumConfig`, `IsotropicAngularConfig`, `ConeAngularConfig`, `RadiationChannelConfig`), `SceneBuilder`, `SceneExporter`, `SourceViewModel` и `SourceInspectorSection` со строгим соблюдением инварианта `Roundtrip`.
+  2. **Гибридные таблицы атомной релаксации и `AtomicRelaxationBank` ([`tables/scripts/generate_nist_xcom_mac.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/tables/scripts/generate_nist_xcom_mac.py), [`core/materials/attenuation_database.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/materials/attenuation_database.py), [`core/physics/physics_buffer.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_buffer.py), [`core/physics/physics_compiler.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/physics_compiler.py)):**
+     * В `tables/NIST XCOM Elements MAC.h5` для всех 92 элементов записана подгруппа `/<Symbol>/Relaxation` (пороги $E_{\text{bind}}(Z, s)$ и кумулятивные веса скачков $J_s$ из пар узлов краёв `NIST XCOM`; выходы флуоресценции $\omega_s$, постоянные распада вакансий $\lambda_{\text{sec}}(Z, s)$ и CSR-таблицы радиационных и Оже-переходов из библиотеки `ENDF/B-VIII.0 EADL / EPICS2017`).
+     * В `PhysicsCompiler._build_atomic_relaxation_bank` данные компилируются в `AtomicRelaxationBank(NamedTuple)` с таблицами Воза для каждого уровня.
+  3. **Ядро распределения переданной энергии, `SecondaryActivationBuffer` и иерархия `ParticleSource` ([`core/physics/interaction_buffers.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/interaction_buffers.py), [`core/physics/processes_kernels.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/physics/processes_kernels.py), [`core/source/primary_source.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/primary_source.py), [`core/source/secondary_source.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/source/secondary_source.py), [`core/transport/simulation_managers.py`](file:///d:/Python%20Projects/NMSimToolkit-Refactor/core/transport/simulation_managers.py)):**
+     * Реализовано `@njit(inline='always')`-ядро `partition_transferred_energy_kernel`, разделяющее переданную энергию $\Delta E$ по порогам $(E_{\text{cut},\gamma}, E_{\text{cut},e})$ между локальным `energy_deposit` и надпороговыми вторичными частицами в `SecondaryActivationBuffer` с точным расчетом времени активации $t_{\text{act}} = t_0 + l/v$ и нулевым расходом ГСЧ при выключенной релаксации.
+     * Введен единый абстрактный базовый класс `ParticleSource` (`replenish_bank`, `has_pending`, `export_state`, `restore_state`) для `PrimarySource` (`inject_poisson_sources_kernel`) и `SecondarySource` (`inject_secondary_sources_kernel`), обеспечивающий двухфазное пополнение `ParticleBank` с передачей эстафетного курсора `slot_cursor`, соблюдением квоты первичных историй `emitted_primaries == particles_number` и полной поддержкой чекпоинтов `Stateful Resume`.

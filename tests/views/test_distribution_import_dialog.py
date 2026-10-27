@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication
 from core.data.distribution_loader import DistributionLoader
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.materials.materials import MaterialArray
-from core.source.sources import Source
+from core.source.sources import Source, VoxelDistribution
 from gui.models.distribution_import_params import DistributionImportParameters, ImportTargetKind
 from gui.viewmodels.nodes.source_vm import SourceViewModel
 from gui.viewmodels.nodes.voxel_volume_vm import VoxelVolumeViewModel
@@ -148,7 +148,7 @@ class TestDistributionImportDialog(unittest.TestCase):
             activity_data[0, 0, 0] = 0.01  # Ниже порога шума
             activity_data.tofile(file_path)
 
-            source_core = Source(distribution=np.ones(shape, dtype=float), voxel_size=2.0)
+            source_core = Source.from_voxels(distribution=np.ones(shape, dtype=float), voxel_size=2.0)
             source_vm = SourceViewModel(source_core)
 
             success = source_vm.reload_distribution(
@@ -165,9 +165,10 @@ class TestDistributionImportDialog(unittest.TestCase):
             self.assertEqual(source_vm.activity, 250.0)
             self.assertEqual(source_vm.dimensions, shape)
             # Проверяем фильтрацию фонового шума и нормировку вероятностей эмиссии
-            self.assertAlmostEqual(source_core.distribution[0, 0, 0], 0.0)
-            self.assertGreater(source_core.distribution[1, 1, 1], 0.0)
-            self.assertAlmostEqual(float(np.sum(source_core.distribution)), 1.0)
+            assert isinstance(source_core.spatial, VoxelDistribution)
+            self.assertAlmostEqual(source_core.spatial.distribution[0, 0, 0], 0.0)
+            self.assertGreater(source_core.spatial.distribution[1, 1, 1], 0.0)
+            self.assertAlmostEqual(float(np.sum(source_core.spatial.distribution)), 1.0)
 
     def test_distribution_import_dialog_phantom_mode(self) -> None:
         """
@@ -272,7 +273,7 @@ class TestDistributionImportDialog(unittest.TestCase):
             )
             phantom_vm = VoxelVolumeViewModel(phantom_core)
 
-            source_core = Source(distribution=np.ones(source_shape, dtype=float), voxel_size=2.0)
+            source_core = Source.from_voxels(distribution=np.ones(source_shape, dtype=float), voxel_size=2.0)
             source_vm = SourceViewModel(source_core)
 
             from core.geometry.geometries import Box

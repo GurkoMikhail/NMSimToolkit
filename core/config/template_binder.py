@@ -129,18 +129,24 @@ class ConfigTemplateBinder:
                 if match:
                     node_bindings["activity"] = match.group(1).strip().split()[0]
 
-            # Энергия источника
-            energy_val = node_dict.get("energy")
-            if isinstance(energy_val, str):
-                match = re.search(r'\$\{([^}]+)\}', energy_val)
-                if match:
-                    node_bindings["energy"] = match.group(1).strip().split()[0]
-            elif isinstance(energy_val, list) and len(energy_val) > 0:
-                first_item = energy_val[0]
-                if isinstance(first_item, (list, tuple)) and len(first_item) >= 1 and isinstance(first_item[0], str):
-                    match = re.search(r'\$\{([^}]+)\}', first_item[0])
-                    if match:
-                        node_bindings["energy"] = match.group(1).strip().split()[0]
+            # Энергия источника (в первом канале излучения)
+            channels_list = node_dict.get("channels")
+            if isinstance(channels_list, list) and len(channels_list) > 0:
+                first_ch = channels_list[0]
+                if isinstance(first_ch, dict):
+                    spec_dict = first_ch.get("spectrum")
+                    if isinstance(spec_dict, dict):
+                        lines_list = spec_dict.get("lines")
+                        if isinstance(lines_list, list) and len(lines_list) > 0:
+                            first_line = lines_list[0]
+                            if (
+                                isinstance(first_line, (list, tuple))
+                                and len(first_line) >= 1
+                                and isinstance(first_line[0], str)
+                            ):
+                                match = re.search(r'\$\{([^}]+)\}', first_line[0])
+                                if match:
+                                    node_bindings["energy"] = match.group(1).strip().split()[0]
 
             if node_name and node_bindings:
                 bindings_by_target[node_name] = node_bindings
@@ -396,18 +402,18 @@ class ConfigTemplateBinder:
 
             # 3. Энергия источника
             b_energy = node_bindings.get("energy")
-            if b_energy and "energy" in node_dict:
-                current_energy = node_dict["energy"]
-                if isinstance(current_energy, list):
-                    new_energy_list = []
-                    for item in current_energy:
-                        if isinstance(item, (list, tuple)) and len(item) == 2:
-                            new_energy_list.append([f"${{{b_energy}}} keV", float(item[1])])
-                        else:
-                            new_energy_list.append(item)
-                    node_dict["energy"] = new_energy_list
-                else:
-                    node_dict["energy"] = [[f"${{{b_energy}}} keV", 1.0]]
+            if b_energy and "channels" in node_dict and isinstance(node_dict["channels"], list):
+                for ch_dict in node_dict["channels"]:
+                    if isinstance(ch_dict, dict) and isinstance(ch_dict.get("spectrum"), dict):
+                        spec_dict = ch_dict["spectrum"]
+                        if spec_dict.get("type") == "discrete" and isinstance(spec_dict.get("lines"), list):
+                            new_lines = []
+                            for item in spec_dict["lines"]:
+                                if isinstance(item, (list, tuple)) and len(item) == 2:
+                                    new_lines.append([f"${{{b_energy}}} keV", float(item[1])])
+                                else:
+                                    new_lines.append(item)
+                            spec_dict["lines"] = new_lines
 
             # Рекурсивный обход детей
             for child_dict in node_dict.get("children", []):

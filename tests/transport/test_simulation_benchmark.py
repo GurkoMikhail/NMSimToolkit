@@ -21,7 +21,7 @@ from core.geometry.geometries import Box
 from core.geometry.parametric_collimators import ParametricParallelCollimator
 from core.geometry.volumes import Volume
 from core.other.typing_definitions import Float
-from core.source.sources import PointSource
+from core.source.sources import Source
 from core.transport.propagator import ParticlePropagator
 from core.transport.simulation_managers import SimulationManager
 from gui.factories.gamma_camera_factory import create_default_gamma_camera
@@ -84,7 +84,7 @@ class TestFullBenchmark(unittest.TestCase):
 
         activity = Float(1000 * units.Bq)
         energy = Float(140.5 * units.keV)
-        source = PointSource(
+        source = Source.from_point(
             activity=activity,
             energy=energy,
         )

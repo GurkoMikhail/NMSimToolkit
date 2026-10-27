@@ -13,7 +13,7 @@ from core.geometry.volumes import Volume
 from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.materials.materials import Material, MaterialArray
 from settings.database_setting import material_database
-from core.source.sources import Source, PointSource
+from core.source.sources import Source
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.other.typing_definitions import Float
@@ -68,7 +68,7 @@ class TestAll14GUIFixes(unittest.TestCase):
             self.assertEqual(vm.file_path, str(file_path))
 
             # Source
-            src = Source(distribution=np.ones((4, 4, 4)), activity=Float(1e5 * units.Bq))
+            src = Source.from_voxels(distribution=np.ones((4, 4, 4)), activity=Float(1e5 * units.Bq))
             src_vm = SourceViewModel(src)
             self.assertTrue(src_vm.reload_distribution(str(file_path)))
             self.assertEqual(src_vm.dimensions, (8, 8, 8))
@@ -93,7 +93,6 @@ class TestAll14GUIFixes(unittest.TestCase):
         node_types = [type(n.core_node).__name__ for n in root_vm.children]
         self.assertIn("Volume", node_types)
         self.assertIn("WoodcockVoxelVolume", node_types)
-        self.assertIn("PointSource", node_types)
         self.assertIn("Source", node_types)
         self.assertIn("CompositeNode", node_types)
 
@@ -139,8 +138,11 @@ class TestAll14GUIFixes(unittest.TestCase):
 
     # 6. Источники в ViewModel и их параметры
     def test_06_source_viewmodel(self):
-        ps = PointSource(activity=Float(5e6 * units.Bq), energy=Float(140.5 * units.keV))
-        ps.name = "MyPointSource"
+        ps = Source.from_point(
+            activity=Float(5e6 * units.Bq),
+            energy=Float(140.5 * units.keV),
+            name="MyPointSource",
+        )
         vm = create_node_viewmodel(ps)
         self.assertIsInstance(vm, SourceViewModel)
         self.assertTrue(vm.is_point_source)

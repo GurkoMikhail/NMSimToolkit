@@ -57,7 +57,7 @@ class SourceInspectorSection(BaseInspectorSection):
         form_layout = QFormLayout(self)
 
         self.combo_rad_type = QComboBox()
-        self.combo_rad_type.addItems(["Gamma", "Beta", "Positron"])
+        self.combo_rad_type.addItems(["Gamma", "Beta", "Positron", "Alpha"])
         self.combo_rad_type.currentTextChanged.connect(self._on_source_rad_type_changed)
         form_layout.addRow("Тип излучения:", self.combo_rad_type)
 

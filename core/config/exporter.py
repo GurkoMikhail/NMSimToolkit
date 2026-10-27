@@ -11,20 +11,29 @@ from scipy.spatial.transform import Rotation
 import hepunits as units
 
 from core.config.models import (
+    AnyAngularDistributionConfig,
     AnyDistributionConfig,
     AnyNodeConfig,
     AnyProtocolConfig,
+    AnySpatialDistributionConfig,
+    AnySpectrumConfig,
     BaseCompositeNodeConfig,
     BaseSpatialNodeConfig,
     BoxConfig,
+    ConeAngularConfig,
+    ContinuousSpectrumConfig,
     DataManagerConfig,
     DirectStreamHandlerConfig,
+    DiscreteSpectrumConfig,
     GammaCameraConfig,
     GammaCameraSlotsConfig,
+    IsotropicAngularConfig,
     LoggingConfig,
     NumpyDistributionConfig,
     ParametricParallelCollimatorConfig,
     DirectParallelCollimatorConfig,
+    PointSpatialConfig,
+    RadiationChannelConfig,
     RotateConfig,
     SimulationConfig,
     SimulationManagerConfig,
@@ -34,6 +43,7 @@ from core.config.models import (
     TranslateConfig,
     MatrixTransformConfig,
     VolumeConfig,
+    VoxelSpatialConfig,
     WoodcockVoxelVolumeConfig,
     DoseGridNodeConfig,
     GantryConfig,
@@ -54,7 +64,16 @@ from core.geometry.voxel_volumes import WoodcockVoxelVolume
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.scene.dose_grid_node import DoseGridNode
 from core.scene.gantry_node import GantryNode
-from core.source.sources import Source, PointSource
+from core.source.sources import (
+    ConeAngular,
+    ContinuousSpectrum,
+    DiscreteSpectrum,
+    IsotropicAngular,
+    PointDistribution,
+    Source,
+    VoxelDistribution,
+)
+from core.transport.simulation_managers import SimulationManager
 
 logger = logging.getLogger(__name__)
 
@@ -266,23 +285,65 @@ class SceneExporter:
 
         # 6. Source
         if isinstance(node, Source):
-            act = float(np.sum(node.initial_activity)) if node.initial_activity is not None else None
-            act_val = None
-            if act is not None:
-                scaled_activity = float(act) / float(units.MBq)
-                act_val = f"{scaled_activity:.6g} MBq"
-
-            v_sz = float(np.mean(node.voxel_size)) if isinstance(node.voxel_size, (list, tuple, np.ndarray, Sequence)) else float(node.voxel_size)
-            dist_cfg = distribution_registry.get(node) if distribution_registry is not None else None
-            is_point = (
-                isinstance(node, PointSource)
-                and v_sz == 0.0
-                and node.distribution.shape == (1, 1, 1)
-            )
-            if dist_cfg is None and not is_point:
-                dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'source_dist'}.npy")
+            act = float(node.initial_activity)
+            scaled_activity = float(act) / float(units.MBq)
+            act_val = f"{scaled_activity:.6g} MBq"
             half_life = 0.0 if np.isinf(node.half_life) else float(node.half_life)
-            rad_type = node.radiation_type
+
+            if isinstance(node.spatial, PointDistribution):
+                spatial_cfg: AnySpatialDistributionConfig = PointSpatialConfig(
+                    cell_jitter=(float(node.spatial.cell_jitter[0]), float(node.spatial.cell_jitter[1])),
+                )
+            elif isinstance(node.spatial, VoxelDistribution):
+                v_sz = float(np.mean(node.spatial.voxel_size))
+                dist_cfg = distribution_registry.get(node) if distribution_registry is not None else None
+                if dist_cfg is None:
+                    dist_cfg = NumpyDistributionConfig(path=f"{node_name or 'source_dist'}.npy")
+                spatial_cfg = VoxelSpatialConfig(
+                    voxel_size=v_sz,
+                    distribution=dist_cfg,
+                )
+            else:
+                raise TypeError(f"Неизвестный тип пространственного распределения источника: {type(node.spatial)}")
+
+            exported_channels: List[RadiationChannelConfig] = []
+            for ch in node.channels:
+                species_str = ch.species.name.lower()
+
+                if isinstance(ch.spectrum, DiscreteSpectrum):
+                    spec_cfg: AnySpectrumConfig = DiscreteSpectrumConfig(
+                        lines=[
+                            (f"{float(line.energy) / float(units.keV):.6g} keV", float(line.probability))
+                            for line in ch.spectrum.lines
+                        ]
+                    )
+                elif isinstance(ch.spectrum, ContinuousSpectrum):
+                    spec_cfg = ContinuousSpectrumConfig(
+                        energy_grid=[
+                            f"{float(e_val) / float(units.keV):.6g} keV"
+                            for e_val in ch.spectrum.energy_grid
+                        ],
+                        pdf_values=[float(p_val) for p_val in ch.spectrum.pdf_values],
+                    )
+                else:
+                    raise TypeError(f"Неизвестный тип спектра канала источника: {type(ch.spectrum)}")
+
+                if isinstance(ch.angular, IsotropicAngular):
+                    ang_cfg: AnyAngularDistributionConfig = IsotropicAngularConfig()
+                elif isinstance(ch.angular, ConeAngular):
+                    ang_cfg = ConeAngularConfig(max_polar_angle=float(ch.angular.max_polar_angle))
+                else:
+                    raise TypeError(f"Неизвестный тип углового распределения канала источника: {type(ch.angular)}")
+
+                exported_channels.append(
+                    RadiationChannelConfig(
+                        species=species_str,
+                        branching_ratio=float(ch.branching_ratio),
+                        spectrum=spec_cfg,
+                        angular=ang_cfg,
+                    )
+                )
+
             source_meta: Optional[SourceMetadataConfig] = None
             if source_metadata_registry is not None:
                 source_meta = source_metadata_registry.get(node)
@@ -291,20 +352,14 @@ class SceneExporter:
             radionuclide_val = source_meta.radionuclide if source_meta is not None else None
             phantom_type_val = source_meta.phantom_type if source_meta is not None else None
 
-            energy_val = [
-                [f"{float(energy_value) / float(units.keV):.6g} keV", float(probability_value)]
-                for energy_value, probability_value in zip(node.energy["energy"], node.energy["probability"])
-            ]
             return SourceConfig(
                 name=node_name,
                 tags=node_tags,
                 transformations=transforms,
-                distribution=dist_cfg,
                 activity=act_val,
-                voxel_size=v_sz,
-                radiation_type=str(rad_type),
-                energy=energy_val,
                 half_life=half_life,
+                spatial=spatial_cfg,
+                channels=exported_channels,
                 radionuclide=radionuclide_val,
                 phantom_type=phantom_type_val,
                 children=children_cfgs,
@@ -385,10 +440,38 @@ class SceneExporter:
         )
 
     @classmethod
+    def export_simulation_manager(
+        cls,
+        manager: SimulationManager,
+        physics_list: Optional[str] = None,
+        seed: Optional[int] = None,
+    ) -> SimulationManagerConfig:
+        """Экспортирует экземпляр SimulationManager в декларативную конфигурацию SimulationManagerConfig."""
+        return SimulationManagerConfig(
+            start_time=float(manager.start_time),
+            stop_time=float(manager.stop_time),
+            particles_number=int(manager.particles_number),
+            batch_capacity=(
+                None if int(manager.batch_capacity) == int(manager.particles_number) else int(manager.batch_capacity)
+            ),
+            buffer_capacity=(
+                None
+                if int(manager.data_buffer.interactions.capacity) == int(manager.batch_capacity)
+                else int(manager.data_buffer.interactions.capacity)
+            ),
+            min_energy=float(manager.min_energy),
+            enable_atomic_relaxation=bool(manager.enable_atomic_relaxation),
+            photon_production_cut=float(manager.photon_production_cut),
+            electron_production_cut=float(manager.electron_production_cut),
+            physics_list=physics_list,
+            seed=seed,
+        )
+
+    @classmethod
     def export_to_config(
         cls,
         root_node: SpatialNode,
-        simulation_manager_cfg: Optional[SimulationManagerConfig] = None,
+        simulation_manager_cfg: Optional[Union[SimulationManagerConfig, SimulationManager]] = None,
         data_manager_cfg: Optional[DataManagerConfig] = None,
         pool_size: int = 1,
         protocol: Optional[AnyProtocolConfig] = None,
@@ -406,7 +489,10 @@ class SceneExporter:
             slots_registry=slots_registry,
             source_metadata_registry=source_metadata_registry,
         )
-        sim_mgr = simulation_manager_cfg or SimulationManagerConfig()
+        if isinstance(simulation_manager_cfg, SimulationManager):
+            sim_mgr = cls.export_simulation_manager(simulation_manager_cfg)
+        else:
+            sim_mgr = simulation_manager_cfg or SimulationManagerConfig()
         data_mgr = data_manager_cfg or DataManagerConfig(
             filename="output.h5",
             handlers=[DirectStreamHandlerConfig()]
@@ -485,17 +571,7 @@ class SceneExporter:
                         mapping=actual_mapping if actual_mapping else {0.0: 'Vacuum'},
                     )
                 elif isinstance(curr_node, Source):
-                    v_sz = (
-                        float(np.mean(curr_node.voxel_size))
-                        if isinstance(curr_node.voxel_size, (list, tuple, np.ndarray, Sequence))
-                        else float(curr_node.voxel_size)
-                    )
-                    is_point = (
-                        isinstance(curr_node, PointSource)
-                        and v_sz == 0.0
-                        and curr_node.distribution.shape == (1, 1, 1)
-                    )
-                    if not is_point and curr_node.distribution.size > 0:
+                    if isinstance(curr_node.spatial, VoxelDistribution) and curr_node.spatial.distribution.size > 0:
                         raw_name = (
                             Path(existing_orig.path).name
                             if (existing_orig is not None and existing_orig.path)
@@ -504,7 +580,7 @@ class SceneExporter:
                         if not raw_name.lower().endswith('.npy'):
                             raw_name = f"{Path(raw_name).stem}.npy"
                         target_npy = base_dir / raw_name
-                        np.save(target_npy, np.asarray(curr_node.distribution, dtype=float))
+                        np.save(target_npy, np.asarray(curr_node.spatial.distribution, dtype=float))
                         adjusted_registry[curr_node] = NumpyDistributionConfig(path=raw_name)
 
             if isinstance(curr_node, CompositeNode):

@@ -221,15 +221,14 @@ def build_nema_phantom(activity: float = float(100.0 * units.MBq)) -> WoodcockVo
 
     raw_activity = _load_voxel_grid(PROJECT_ROOT / "phantoms" / "nema" / "nema_voxel_size_4.2_mm.dat")
 
-    source = Source(
+    source = Source.from_voxels(
         distribution=raw_activity,
         activity=Float(activity),
         voxel_size=Float(4.2 * units.mm),
-        radiation_type="Gamma",
         energy=TB161_ENERGY_SPECTRUM,
         half_life=Float(TB161_HALF_LIFE),
+        name="Source",
     )
-    source.name = "Source"
     phantom.add_child(source)
 
     return phantom

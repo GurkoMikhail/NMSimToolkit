@@ -39,16 +39,22 @@ scene:
       children:
         - type: Source
           name: Source
-          radiation_type: Gamma
-          energy: 159 keV
           activity: 100 MBq
-          voxel_size: 4.2 mm
           half_life: 13.2 hour
-          distribution:
-            format: raw
-            path: phantoms/nema/nema_voxel_size_4.2_mm.dat
-            shape: [128, 128, 92]
-            order: 'F'
+          spatial:
+            type: voxel
+            voxel_size: 4.2 mm
+            distribution:
+              format: raw
+              path: phantoms/nema/nema_voxel_size_4.2_mm.dat
+              shape: [128, 128, 92]
+              order: 'F'
+          channels:
+            - species: photon
+              branching_ratio: 1.0
+              spectrum:
+                type: discrete
+                lines: 159 keV
     - type: GammaCamera
       name: Gamma_camera
       transformations:

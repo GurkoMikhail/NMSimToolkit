@@ -111,6 +111,8 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
             ("stop_time", sim_config.stop_time),
             ("batch_capacity", sim_config.batch_capacity),
             ("buffer_capacity", sim_config.buffer_capacity),
+            ("photon_production_cut", sim_config.photon_production_cut),
+            ("electron_production_cut", sim_config.electron_production_cut),
         ):
             if isinstance(field_val, str):
                 raise ValueError(
@@ -269,6 +271,9 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
             batch_capacity=effective_batch_capacity,
             consumed_chunk_types=consumed_chunk_types,
             resume_state=resume_state,
+            enable_atomic_relaxation=bool(sim_config.enable_atomic_relaxation),
+            photon_production_cut=float(sim_config.photon_production_cut),
+            electron_production_cut=float(sim_config.electron_production_cut),
         )
 
         ipc_pause_event = task_dict.get("_run_event", task_dict.get("_pause_event"))
@@ -306,10 +311,9 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
             "status": "in_progress",
             "context": context_data,
             "rng_state": json.dumps(dict(manager.rng.bit_generator.state)),
-            "t_ref": float(manager.t_ref),
-            "t_last": float(manager.t_last),
-            "pending_arrival_time": float(manager.pending_arrival_time),
             "batch_capacity": int(manager.batch_capacity),
+            **(manager.primary_source.export_state() or {}),
+            "secondary_activations": manager.secondary_source.export_state(),
         }
 
         data_manager = DataManager(
@@ -349,10 +353,9 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
             "particle_id_end": int(manager.bank.count),
             "simulated_histories": int(manager.bank.count) - int(initial_particle_id),
             "rng_state": final_rng_json,
-            "t_ref": float(manager.t_ref),
-            "t_last": float(manager.t_last),
-            "pending_arrival_time": float(manager.pending_arrival_time),
             "batch_capacity": int(manager.batch_capacity),
+            **(manager.primary_source.export_state() or {}),
+            "secondary_activations": manager.secondary_source.export_state(),
         }
         data_manager.finalize_metadata(status="completed", runtime_summary=runtime_summary)
 

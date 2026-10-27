@@ -8,7 +8,7 @@ from core.geometry.geometries import Box
 from core.materials.materials import Material
 from core.physics.interaction_buffers import ChunkType
 from settings.database_setting import material_database
-from core.source.sources import PointSource
+from core.source.sources import Source
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.transport.simulation_managers import SimulationManager, SimulationState
 from gui.viewmodels.nodes.base_node_vm import NodeViewModel
@@ -61,7 +61,7 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
             material=material_database['Air, Dry (near sea level)'],
             name='TestVol'
         )
-        root.add_child(PointSource(activity=50 * units.Bq, energy=140 * units.keV))
+        root.add_child(Source.from_point(activity=50 * units.Bq, energy=140 * units.keV))
         mgr = SimulationManager(scene=root, stop_time=0.005 * units.s, particles_number=10)
 
         mgr.start()
@@ -186,7 +186,7 @@ class TestGuiIntegrationAndFixes(unittest.TestCase):
         root = SceneBuilder().build_scene(cfg.scene)
         mgr = SimulationManager(scene=root, stop_time=None, particles_number=1000, seed=42)
 
-        total_activity = float(np.sum(mgr.source_buffer.initial_activity[: mgr.source_buffer.num_sources]))
+        total_activity = float(np.sum(mgr.source_buffer.initial_emission_rate[: mgr.source_buffer.num_channels]))
         self.assertAlmostEqual(total_activity, float(100.0 * units.MBq), places=9)
 
         mgr._replenish_bank()

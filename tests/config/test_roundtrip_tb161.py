@@ -23,7 +23,7 @@ from core.config.models import (
 )
 from core.data.metadata_collector import ProcedureMetadataCollector
 from core.scene.nodes import SpatialNode
-from core.source.sources import Source
+from core.source.sources import DiscreteSpectrum, Source
 
 
 class TestRoundtripTB161Protocol(unittest.TestCase):
@@ -88,8 +88,10 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
 
         # Проверка спектра источника: должно быть ровно 21 линия (Juget et al. 2021/2023)
         assert source_node is not None
-        self.assertIsNotNone(source_node.energy)
-        self.assertEqual(len(source_node.energy["energy"]), 21, "Спектр 161Tb обязан содержать 21 линию")
+        self.assertGreaterEqual(len(source_node.channels), 1)
+        spec_obj = source_node.channels[0].spectrum
+        assert isinstance(spec_obj, DiscreteSpectrum)
+        self.assertEqual(len(spec_obj.lines), 21, "Спектр 161Tb обязан содержать 21 линию")
 
         # 4. Экспорт сцены обратно во временный YAML-файл с наложением шаблонов макросов
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -143,7 +145,7 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
             source_dict = phantom_dict["children"][0]
             self.assertEqual(source_dict["name"], "Source")
             self.assertIn("MBq", str(source_dict["activity"]), "Активность должна содержать единицу MBq")
-            energy_list = source_dict["energy"]
+            energy_list = source_dict["channels"][0]["spectrum"]["lines"]
             self.assertIsInstance(energy_list, list)
             self.assertEqual(len(energy_list), 21, "Экспортированный спектр обязан содержать 21 линию")
             self.assertIn("keV", str(energy_list[0][0]))
@@ -373,6 +375,145 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
                             rtol=1e-12,
                             atol=1e-12,
                         )
+
+    def test_tc99m_full_roundtrip_integrity(self) -> None:
+        """Проверка загрузки, построения сцены и полного цикла Roundtrip для examples/tc99m_nema_protocol.yaml."""
+        tc99m_path = Path("examples/tc99m_nema_protocol.yaml").resolve()
+        self.assertTrue(tc99m_path.exists(), f"Файл {tc99m_path} должен существовать")
+
+        raw_dict = load_raw_config(tc99m_path)
+        bindings = ConfigTemplateBinder.extract_bindings(raw_dict)
+        self.assertIn("Gantry", bindings)
+        self.assertEqual(bindings["Gantry"]["rotation.alpha"], "gantry_angle")
+        self.assertIn("data_manager", bindings)
+        self.assertEqual(bindings["data_manager"]["filename"], "gantry_angle")
+        self.assertIn("simulation_manager", bindings)
+        self.assertEqual(bindings["simulation_manager"]["start_time"], "start_time")
+        self.assertEqual(bindings["simulation_manager"]["stop_time"], "stop_time")
+
+        sim_cfg = load_simulation_config(tc99m_path, resolve_protocol=True)
+        self.assertEqual(sim_cfg.pool_size, 24)
+        self.assertIsInstance(sim_cfg.protocol, StepAndShootProtocolConfig)
+        assert isinstance(sim_cfg.protocol, StepAndShootProtocolConfig)
+        self.assertEqual(sim_cfg.protocol.steps, 60)
+        self.assertAlmostEqual(float(sim_cfg.protocol.radius), float(270.0 * units.mm), places=5)
+
+        builder = SceneBuilder()
+        root_node = builder.build_scene(sim_cfg.scene)
+
+        phantom_node = next((node for node in root_node.childs if node.name == "Phantom"), None)
+        self.assertIsNotNone(phantom_node)
+        assert phantom_node is not None
+        source_node = next((ch for ch in phantom_node.childs if isinstance(ch, Source)), None)
+        self.assertIsNotNone(source_node)
+        assert source_node is not None
+        self.assertEqual(len(source_node.channels), 1)
+        spec_obj = source_node.channels[0].spectrum
+        assert isinstance(spec_obj, DiscreteSpectrum)
+        self.assertEqual(len(spec_obj.lines), 1)
+        self.assertAlmostEqual(float(spec_obj.line_energy[0]), float(140.511 * units.keV), places=6)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_yaml_path = os.path.join(tmp_dir, "tc99m_roundtrip_exported.yaml")
+            ConfigTemplateBinder.export_templated_yaml(
+                root_node=root_node,
+                filepath=out_yaml_path,
+                bindings_registry=bindings,
+                simulation_manager_cfg=sim_cfg.simulation_manager,
+                data_manager_cfg=sim_cfg.data_manager,
+                protocol=sim_cfg.protocol,
+                pool_size=sim_cfg.pool_size,
+                distribution_registry=builder.distribution_registry,
+                slots_registry=builder.slots_registry,
+            )
+
+            with open(out_yaml_path, "r", encoding="utf-8") as file_handle:
+                exported_raw = yaml.safe_load(file_handle)
+
+            phantom_dict = next(
+                ch for ch in exported_raw["scene"]["children"] if ch.get("name") == "Phantom"
+            )
+            source_dict = phantom_dict["children"][0]
+            self.assertEqual(source_dict["spatial"]["type"], "voxel")
+            self.assertEqual(len(source_dict["channels"]), 1)
+            self.assertEqual(source_dict["channels"][0]["species"], "photon")
+            self.assertEqual(source_dict["channels"][0]["spectrum"]["type"], "discrete")
+            self.assertEqual(len(source_dict["channels"][0]["spectrum"]["lines"]), 1)
+
+            sim_cfg2 = load_simulation_config(out_yaml_path, resolve_protocol=True)
+            root_node2 = SceneBuilder().build_scene(sim_cfg2.scene)
+            self.assertIsNotNone(root_node2)
+            self.assertEqual(sim_cfg2.pool_size, 24)
+
+    def test_nema_1_cam_full_roundtrip_integrity(self) -> None:
+        """Проверка загрузки, построения сцены и полного цикла Roundtrip для examples/nema_1_cam.yaml."""
+        nema1_path = Path("examples/nema_1_cam.yaml").resolve()
+        self.assertTrue(nema1_path.exists(), f"Файл {nema1_path} должен существовать")
+
+        raw_dict = load_raw_config(nema1_path)
+        bindings = ConfigTemplateBinder.extract_bindings(raw_dict)
+        self.assertIn("Gamma_camera", bindings)
+        self.assertEqual(bindings["Gamma_camera"]["rotation.alpha"], "current_angle")
+        self.assertIn("data_manager", bindings)
+        self.assertEqual(bindings["data_manager"]["filename"], "current_angle")
+        self.assertIn("simulation_manager", bindings)
+        self.assertEqual(bindings["simulation_manager"]["start_time"], "start_time")
+        self.assertEqual(bindings["simulation_manager"]["stop_time"], "stop_time")
+
+        sim_cfg = load_simulation_config(nema1_path, resolve_protocol=True)
+        self.assertEqual(sim_cfg.pool_size, 24)
+        self.assertIsInstance(sim_cfg.protocol, CustomSweepProtocolConfig)
+        assert isinstance(sim_cfg.protocol, CustomSweepProtocolConfig)
+        compiled_sweep = SweepCompiler.compile_protocol(sim_cfg.protocol)
+        job_matrix = SweepCompiler.generate_job_matrix(compiled_sweep)
+        self.assertEqual(len(job_matrix), 20)
+
+        builder = SceneBuilder()
+        root_node = builder.build_scene(sim_cfg.scene)
+
+        phantom_node = next((node for node in root_node.childs if node.name == "Phantom"), None)
+        self.assertIsNotNone(phantom_node)
+        assert phantom_node is not None
+        source_node = next((ch for ch in phantom_node.childs if isinstance(ch, Source)), None)
+        self.assertIsNotNone(source_node)
+        assert source_node is not None
+        self.assertEqual(len(source_node.channels), 1)
+        spec_obj = source_node.channels[0].spectrum
+        assert isinstance(spec_obj, DiscreteSpectrum)
+        self.assertEqual(len(spec_obj.lines), 1)
+        self.assertAlmostEqual(float(spec_obj.line_energy[0]), float(159.0 * units.keV), places=6)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_yaml_path = os.path.join(tmp_dir, "nema_1_cam_roundtrip_exported.yaml")
+            ConfigTemplateBinder.export_templated_yaml(
+                root_node=root_node,
+                filepath=out_yaml_path,
+                bindings_registry=bindings,
+                simulation_manager_cfg=sim_cfg.simulation_manager,
+                data_manager_cfg=sim_cfg.data_manager,
+                protocol=sim_cfg.protocol,
+                pool_size=sim_cfg.pool_size,
+                distribution_registry=builder.distribution_registry,
+                slots_registry=builder.slots_registry,
+            )
+
+            with open(out_yaml_path, "r", encoding="utf-8") as file_handle:
+                exported_raw = yaml.safe_load(file_handle)
+
+            phantom_dict = next(
+                ch for ch in exported_raw["scene"]["children"] if ch.get("name") == "Phantom"
+            )
+            source_dict = phantom_dict["children"][0]
+            self.assertEqual(source_dict["spatial"]["type"], "voxel")
+            self.assertEqual(len(source_dict["channels"]), 1)
+            self.assertEqual(source_dict["channels"][0]["species"], "photon")
+            self.assertEqual(source_dict["channels"][0]["spectrum"]["type"], "discrete")
+            self.assertEqual(len(source_dict["channels"][0]["spectrum"]["lines"]), 1)
+
+            sim_cfg2 = load_simulation_config(out_yaml_path, resolve_protocol=True)
+            root_node2 = SceneBuilder().build_scene(sim_cfg2.scene)
+            self.assertIsNotNone(root_node2)
+            self.assertEqual(sim_cfg2.pool_size, 24)
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from settings.database_setting import material_database
 from core.scene.gantry_node import GantryNode
-from core.source.sources import Source
+from core.source.sources import DiscreteSpectrum, Source
 from core.config.models import (
     BaseCompositeNodeConfig,
     DataManagerConfig,
@@ -155,15 +155,14 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         """Проверка привязки энергии и активности источника в PropertyInspector."""
         root = CompositeNode(name="World")
         dist = np.ones((5, 5, 5), dtype=float)
-        source_core = Source(
+        source_core = Source.from_voxels(
             distribution=dist,
             activity=150.0 * float(units.MBq),
             voxel_size=2.0 * float(units.mm),
-            radiation_type="Gamma",
             energy=140.5 * float(units.keV),
             half_life=6.0 * float(units.hour),
+            name="TestCobalt",
         )
-        source_core.name = "TestCobalt"
         root.add_child(source_core)
 
         scene_vm = SceneViewModel(root)
@@ -240,15 +239,14 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
         np.save(temp_dist_path, dist)
         self.addCleanup(lambda: os.remove(temp_dist_path) if os.path.exists(temp_dist_path) else None)
 
-        source = Source(
+        source = Source.from_voxels(
             distribution=dist,
             activity=200.0 * float(units.MBq),
             voxel_size=2.0 * float(units.mm),
-            radiation_type="Gamma",
             energy=140.5 * float(units.keV),
             half_life=6.0 * float(units.hour),
+            name="HotSpot",
         )
-        source.name = "HotSpot"
         root.add_child(source)
 
         dist_reg = {source: NumpyDistributionConfig(path=temp_dist_path)}
@@ -299,7 +297,7 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
 
         # Проверка Source: сформированы activity и energy со строками ${var}
         self.assertEqual(source_cfg["activity"], "${activity_var} MBq")
-        self.assertEqual(source_cfg["energy"][0][0], "${energy_var} keV")
+        self.assertEqual(source_cfg["channels"][0]["spectrum"]["lines"][0][0], "${energy_var} keV")
 
         # Проверка Gantry
         self.assertEqual(gantry_cfg["transformations"][0]["alpha"], "${gantry_var} deg")
@@ -434,21 +432,23 @@ class TestBindableFieldsAndRoundtrip(unittest.TestCase):
 
     def test_source_energy_scalar_and_1d_list(self) -> None:
         """
-        Проверка setter energy узла Source: скаляр, список из 1 элемента, 1D массив.
+        Проверка создания DiscreteSpectrum из скаляра, списка из 1 элемента и 1D массива.
         """
         dist = np.ones((2, 2, 2), dtype=float)
-        source = Source(distribution=dist, activity=1.0, energy=140.5 * units.keV)
-        self.assertEqual(len(source.energy), 1)
+        source = Source.from_voxels(distribution=dist, activity=1.0, energy=140.5 * units.keV)
+        spec0 = source.channels[0].spectrum
+        assert isinstance(spec0, DiscreteSpectrum)
+        self.assertEqual(len(spec0.lines), 1)
 
         # 1D список из одного значения энергии
-        source.energy = [140.5 * units.keV]
-        self.assertEqual(len(source.energy), 1)
-        self.assertAlmostEqual(float(source.energy["energy"][0]), 140.5 * float(units.keV))
+        spec1 = DiscreteSpectrum.from_energies([140.5 * units.keV])
+        self.assertEqual(len(spec1.lines), 1)
+        self.assertAlmostEqual(float(spec1.lines[0].energy), 140.5 * float(units.keV))
 
         # 1D список из нескольких энергий
-        source.energy = [100.0 * units.keV, 200.0 * units.keV]
-        self.assertEqual(len(source.energy), 2)
-        np.testing.assert_allclose(source.energy["probability"], [0.5, 0.5])
+        spec2 = DiscreteSpectrum.from_energies([100.0 * units.keV, 200.0 * units.keV])
+        self.assertEqual(len(spec2.lines), 2)
+        np.testing.assert_allclose([line.probability for line in spec2.lines], [0.5, 0.5])
 
     def test_step_and_shoot_config_zipped_length_validation(self) -> None:
         """Проверка валидации несовпадающей длины zipped_variables в StepAndShootProtocolConfig."""

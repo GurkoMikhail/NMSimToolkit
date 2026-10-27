@@ -27,7 +27,7 @@ from core.geometry.volumes import Volume
 from core.materials.materials import Material
 from core.other.typing_definitions import Float
 from core.scene.nodes import CompositeNode
-from core.source.sources import PointSource
+from core.source.sources import PointDistribution, Source
 from gui.viewmodels.data_handler_viewmodel import SensitiveVolumeHandlerViewModel
 from gui.viewmodels.nodes.source_vm import SourceViewModel
 from gui.viewmodels.nodes.volume_vm import VolumeViewModel
@@ -479,11 +479,11 @@ class TestStage4Views(unittest.TestCase):
 
         # Добавляем точечный источник Tc-99m (140.5 кэВ) -> авто-предел 170 кэВ (ceil(140.5 * 1.2 / 10) * 10)
         assert main_win.scene_vm.root_vm is not None
-        tc_src = PointSource(
+        tc_src = Source.from_point(
             activity=Float(10.0 * units.MBq),
             energy=Float(140.5 * units.keV),
+            name="Tc99m_Source",
         )
-        tc_src.name = "Tc99m_Source"
         tc_vm = SourceViewModel(tc_src)
         main_win.scene_vm.add_node(main_win.scene_vm.root_vm, tc_vm)
         self.assertAlmostEqual(main_win.results_viewer.max_energy, 170.0)
@@ -519,15 +519,15 @@ class TestStage4Views(unittest.TestCase):
 
         # Добавляем второй источник с многолинейчатым спектром Tb-161 (до 550.25 кэВ при малом выходе 0.04258%):
         # compute_auto_max_energy учитывает максимум по всем источникам сцены без отсечки слабых линий -> 675.0 кэВ
-        tb_src = PointSource(
+        tb_src = Source.from_point(
             activity=Float(20.0 * units.MBq),
             energy=[
                 [25.65 * units.keV, 23.154],
                 [74.57 * units.keV, 10.28],
                 [550.25 * units.keV, 0.04258],
             ],
+            name="Tb161_Source",
         )
-        tb_src.name = "Tb161_Source"
         tb_vm = SourceViewModel(tb_src)
         main_win.scene_vm.add_node(main_win.scene_vm.root_vm, tb_vm)
         self.assertAlmostEqual(main_win.results_viewer.max_energy, 675.0)
@@ -617,8 +617,8 @@ class TestStage4Views(unittest.TestCase):
             assert isinstance(rebuilt_root, CompositeNode)
             self.assertEqual(len(rebuilt_root.childs), 3)
             first_child = rebuilt_root.childs[0]
-            assert isinstance(first_child, PointSource)
-            self.assertEqual(float(first_child.voxel_size), 0.0)
+            assert isinstance(first_child, Source)
+            self.assertIsInstance(first_child.spatial, PointDistribution)
 
         main_win.close()
 

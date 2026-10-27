@@ -15,6 +15,7 @@ import numpy as np
 from core.data.dataset_write_buffer import DEFAULT_BUFFER_SIZE, DatasetWriteBuffer
 from core.geometry.flattened_scene import FlattenedScene
 from core.geometry.volumes import Volume
+from core.other.typing_definitions import ID
 from core.physics.interaction_buffers import ChunkType
 from core.physics.processes import get_process_mapping, get_species_mapping
 from core.scene.nodes import CompositeNode, SpatialNode
@@ -248,6 +249,11 @@ class DirectStreamHandler(BaseDataHandler):
         target_float_dtype = np.float32 if self.floating_point_precision == "float32" else np.float64
         states_copy = dict(initial_states)
 
+        if 'parent_ID' not in states_copy and 'particle_ID' in states_copy:
+            states_copy['parent_ID'] = np.full(len(states_copy['particle_ID']), -1, dtype=ID)
+        elif 'parent_ID' in states_copy:
+            states_copy['parent_ID'] = np.asarray(states_copy['parent_ID'], dtype=ID)
+
         if 'pos_x' in states_copy and 'pos_y' in states_copy and 'pos_z' in states_copy:
             pos_x = states_copy.pop('pos_x')
             pos_y = states_copy.pop('pos_y')
@@ -479,7 +485,10 @@ class HistoryAssemblerHandler(SensitiveVolumeHandler):
 
         if chunk_type == ChunkType.INITIAL_STATES:
             if self.save_initial_states:
-                self.initial_states_chunks.append({key: np.array(val, copy=False) for key, val in data.items()})
+                chunk_copy = {key: np.array(val, copy=False) for key, val in data.items()}
+                if 'parent_ID' not in chunk_copy and 'particle_ID' in chunk_copy:
+                    chunk_copy['parent_ID'] = np.full(len(chunk_copy['particle_ID']), -1, dtype=ID)
+                self.initial_states_chunks.append(chunk_copy)
         elif chunk_type == ChunkType.INTERACTIONS:
             vol_ids = data['volume_id']
             scored_mask = np.isin(vol_ids, self.target_volumes)
@@ -585,4 +594,3 @@ __all__ = [
     "SensitiveVolumeHandler",
     "HistoryAssemblerHandler",
 ]
-

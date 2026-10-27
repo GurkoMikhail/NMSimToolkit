@@ -2,7 +2,7 @@
 Модуль фасада пула частиц (ParticleBank), объединяющего кинематическое, начальное и навигационное состояния.
 """
 
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import numpy as np
 from numpy.typing import NDArray
@@ -58,6 +58,7 @@ class ParticleBank(NamedTuple):
         energy: NDArray[Energy],
         emission_time: NDArray[Time],
         distance_traveled: NDArray[Length],
+        parent_id: Optional[NDArray[ID]] = None,
     ) -> NDArray[Index]:
         """
         Инжектирует новые частицы в неактивные слоты пула объектов.
@@ -83,6 +84,10 @@ class ParticleBank(NamedTuple):
 
         self.state.is_active[target_indices] = True
         self.initial_state.ID[target_indices] = new_ids
+        if parent_id is not None:
+            self.initial_state.parent_ID[target_indices] = parent_id
+        else:
+            self.initial_state.parent_ID[target_indices] = ID(-1)
         self.state.species[target_indices] = species
         self.state.energy[target_indices] = energy
         self.initial_state.emission_time[target_indices] = emission_time
@@ -130,4 +135,3 @@ class ParticleBank(NamedTuple):
 
 
 __all__ = ["ParticleBank"]
-

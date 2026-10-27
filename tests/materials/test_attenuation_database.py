@@ -8,7 +8,11 @@ import hepunits as units
 import numpy as np
 import pytest
 
-from core.materials.attenuation_database import AttenuationDataBase
+from core.materials.attenuation_database import (
+    AttenuationDataBase,
+    EADL_DESIGNATOR_TO_LABEL,
+    EADL_LABEL_TO_DESIGNATOR,
+)
 from core.materials.attenuation_functions import AttenuationFunction
 from core.materials.materials import Material, MaterialArray
 from core.other.typing_definitions import Float, Index
@@ -24,9 +28,11 @@ from core.physics.processes import (
 )
 from settings.database_setting import attenuation_database, material_database
 from tables.scripts.generate_nist_xcom_mac import (
+    fetch_and_save_eadl_reference,
     fetch_and_save_nist_xcom_reference,
     fetch_nist_xcom_element,
     generate_nist_xcom_elements_hdf5,
+    parse_eadl_epics2017_text,
     parse_nist_xcom_html,
 )
 
@@ -55,6 +61,53 @@ def _write_minimal_element_group(
         dtype=str_dt,
         data=np.asarray(edge_labels, dtype=object),
     )
+
+    num_shells = len(edge_labels)
+    rel_grp = grp.create_group("Relaxation")
+    rel_grp.create_dataset(
+        "subshell_label",
+        shape=(num_shells,),
+        dtype=str_dt,
+        data=np.asarray(edge_labels, dtype=object),
+    )
+    designators = np.asarray(
+        [EADL_LABEL_TO_DESIGNATOR.get(lbl, 1) for lbl in edge_labels],
+        dtype=np.int32,
+    )
+    rel_grp.create_dataset("subshell_designator", data=designators)
+    rel_grp.create_dataset("binding_energy", data=edge_energies.astype(np.float64))
+
+    jump_ratios = np.full(num_shells, 2.0, dtype=np.float64)
+    cum_weights = np.ones(num_shells + 1, dtype=np.float64)
+    for idx in range(num_shells):
+        edge_val = float(edge_energies[idx])
+        left_pos = int(np.searchsorted(energies, edge_val, side="left"))
+        right_pos = int(np.searchsorted(energies, edge_val, side="right"))
+        if right_pos > left_pos and left_pos < len(pe_values) and pe_values[left_pos] > 0.0:
+            ratio = float(pe_values[right_pos - 1]) / float(pe_values[left_pos])
+            if ratio > 1.0:
+                jump_ratios[idx] = ratio
+        cum_weights[idx + 1] = cum_weights[idx] * jump_ratios[idx]
+
+    rel_grp.create_dataset("jump_ratio", data=jump_ratios)
+    rel_grp.create_dataset("jump_cumulative_weight", data=cum_weights)
+    rel_grp.create_dataset("fluorescence_yield", data=np.full(num_shells, 0.5, dtype=np.float64))
+    rel_grp.create_dataset("decay_constant", data=np.full(num_shells, 1.0e6, dtype=np.float64))
+    rel_grp.create_dataset("rad_offsets", data=np.arange(num_shells + 1, dtype=np.int64))
+    rel_grp.create_dataset("rad_vacancy_designator", data=np.full(num_shells, 58, dtype=np.int32))
+    rel_grp.create_dataset(
+        "rad_energy",
+        data=(0.8 * edge_energies).astype(np.float64) if num_shells > 0 else np.empty(0, dtype=np.float64),
+    )
+    rel_grp.create_dataset("rad_probability", data=np.ones(num_shells, dtype=np.float64))
+    rel_grp.create_dataset("auger_offsets", data=np.arange(num_shells + 1, dtype=np.int64))
+    rel_grp.create_dataset("auger_vacancy_primary", data=np.full(num_shells, 58, dtype=np.int32))
+    rel_grp.create_dataset("auger_vacancy_secondary", data=np.full(num_shells, 58, dtype=np.int32))
+    rel_grp.create_dataset(
+        "auger_energy",
+        data=(0.5 * edge_energies).astype(np.float64) if num_shells > 0 else np.empty(0, dtype=np.float64),
+    )
+    rel_grp.create_dataset("auger_probability", data=np.ones(num_shells, dtype=np.float64))
 
 
 def test_element_schema_validation_on_production_table() -> None:
@@ -166,6 +219,36 @@ def test_corrupted_tables_raise_value_error() -> None:
             )
         with pytest.raises(ValueError, match="выше края"):
             AttenuationDataBase(base_name=str(bad_triple_edge))
+
+        # 6. Отсутствие подгруппы Relaxation
+        bad_no_relax = tmp_path / "bad_no_relax.h5"
+        with h5py.File(bad_no_relax, "w") as h5f:
+            _write_minimal_element_group(
+                h5f,
+                "Pb",
+                energies=np.array([0.001, 0.088, 0.088, 20.0]),
+                pe_values=np.array([1000.0, 1.91, 7.72, 0.01]),
+                edge_energies=np.array([0.088]),
+                edge_labels=["K"],
+            )
+            del h5f["Pb"]["Relaxation"]
+        with pytest.raises(ValueError, match="отсутствует обязательная подгруппа 'Relaxation'"):
+            AttenuationDataBase(base_name=str(bad_no_relax))
+
+        # 7. Отсутствует обязательный датасет внутри подгруппы 'Relaxation'
+        bad_missing_ds = tmp_path / "bad_missing_ds.h5"
+        with h5py.File(bad_missing_ds, "w") as h5f:
+            _write_minimal_element_group(
+                h5f,
+                "Pb",
+                energies=np.array([0.001, 0.088, 0.088, 20.0]),
+                pe_values=np.array([1000.0, 1.91, 7.72, 0.01]),
+                edge_energies=np.array([0.088]),
+                edge_labels=["K"],
+            )
+            del h5f["Pb"]["Relaxation"]["binding_energy"]
+        with pytest.raises(ValueError, match="отсутствует обязательный датасет 'binding_energy'"):
+            AttenuationDataBase(base_name=str(bad_missing_ds))
 
 
 def test_offline_generator_reproducibility() -> None:
@@ -496,6 +579,169 @@ def test_parse_nist_xcom_html() -> None:
         fetch_nist_xcom_element(atomic_z=1, timeout=0.0)
     with pytest.raises(ValueError, match="Таймаут запроса"):
         fetch_and_save_nist_xcom_reference(timeout=-5.0)
+
+
+def test_element_relaxation_data_on_production_table() -> None:
+    """
+    Проверка полноты и физической согласованности подгруппы /<Symbol>/Relaxation
+    для всех 92 элементов (NIST XCOM Edges + ENDF/B-VIII.0 EADL / EPICS2017):
+    - побитовое совпадение порогов подоболочек с Edges/energy и скачков с PhotoelectricEffect;
+    - выходы флуоресценции omega_K, постоянные распада и характеристические линии K_alpha/K_beta
+      для свинца (Pb), йода (I) и вольфрама (W);
+    - строгое соблюдение закона сохранения энергии E_line <= E_bind во всех радиационных и Оже-переходах.
+    """
+    el_relax = attenuation_database.elements_relaxation
+    assert len(el_relax) == 92
+
+    for symbol, rel in el_relax.items():
+        edge_energies, edge_labels = attenuation_database.elements_edges[symbol]
+        el_mac = attenuation_database.elements_MAC[symbol]
+        el_energy = el_mac["Energy"]
+        pe_values = el_mac["Coefficient"]["PhotoelectricEffect"]
+
+        np.testing.assert_array_equal(rel.binding_energy, edge_energies)
+        np.testing.assert_array_equal(rel.subshell_label, edge_labels)
+        assert rel.jump_cumulative_weight.size == edge_energies.size + 1
+        assert float(rel.jump_cumulative_weight[0]) == 1.0
+        assert int(rel.rad_offsets[0]) == 0 and np.all(np.diff(rel.rad_offsets) >= 0)
+        assert int(rel.auger_offsets[0]) == 0 and np.all(np.diff(rel.auger_offsets) >= 0)
+
+        num_shells = edge_energies.size
+        expected_cum_weight = 1.0
+        for s_idx in range(num_shells):
+            lbl_str = str(rel.subshell_label[s_idx])
+            shell_desig = int(rel.subshell_designator[s_idx])
+            assert lbl_str in EADL_LABEL_TO_DESIGNATOR
+            assert EADL_LABEL_TO_DESIGNATOR[lbl_str] == shell_desig
+
+            shell_bind = float(rel.binding_energy[s_idx])
+            left_pos = int(np.searchsorted(el_energy, shell_bind, side="left"))
+            right_pos = int(np.searchsorted(el_energy, shell_bind, side="right"))
+            expected_jump = float(pe_values[right_pos - 1]) / float(pe_values[left_pos])
+            assert float(rel.jump_ratio[s_idx]) > 1.0
+            assert np.isclose(float(rel.jump_ratio[s_idx]), expected_jump, rtol=1e-12, atol=0.0)
+            expected_cum_weight *= float(rel.jump_ratio[s_idx])
+            assert np.isclose(
+                float(rel.jump_cumulative_weight[s_idx + 1]), expected_cum_weight, rtol=1e-12, atol=0.0
+            )
+
+            assert 0.0 <= float(rel.fluorescence_yield[s_idx]) <= 1.0
+            assert float(rel.decay_constant[s_idx]) > 0.0
+
+            r_start = int(rel.rad_offsets[s_idx])
+            r_end = int(rel.rad_offsets[s_idx + 1])
+            assert r_end > r_start
+            assert np.all(rel.rad_energy[r_start:r_end] > 0.0)
+            assert np.all(rel.rad_energy[r_start:r_end] <= shell_bind)
+            assert np.isclose(float(np.sum(rel.rad_probability[r_start:r_end])), 1.0, rtol=1e-6)
+            for vac_desig in rel.rad_vacancy_designator[r_start:r_end]:
+                assert int(vac_desig) in EADL_DESIGNATOR_TO_LABEL and int(vac_desig) > shell_desig
+
+            a_start = int(rel.auger_offsets[s_idx])
+            a_end = int(rel.auger_offsets[s_idx + 1])
+            assert a_end > a_start
+            assert np.all(rel.auger_energy[a_start:a_end] > 0.0)
+            assert np.all(rel.auger_energy[a_start:a_end] <= shell_bind)
+            assert np.isclose(float(np.sum(rel.auger_probability[a_start:a_end])), 1.0, rtol=1e-6)
+            for vac_p, vac_s in zip(
+                rel.auger_vacancy_primary[a_start:a_end],
+                rel.auger_vacancy_secondary[a_start:a_end],
+            ):
+                assert int(vac_p) in EADL_DESIGNATOR_TO_LABEL and int(vac_p) > shell_desig
+                assert int(vac_s) in EADL_DESIGNATOR_TO_LABEL and int(vac_s) > shell_desig
+
+    # Проверка эталонных K-оболочек для Pb (Z=82), I (Z=53) и W (Z=74)
+    reference_k_shells = [
+        ("Pb", 82, 88.00 * units.keV, 0.96131, 72.805 * units.keV, 74.970 * units.keV),
+        ("I", 53, 33.17 * units.keV, 0.88581, 28.318 * units.keV, 28.613 * units.keV),
+        ("W", 74, 69.53 * units.keV, 0.95386, 57.983 * units.keV, 59.320 * units.keV),
+    ]
+    for symbol, atomic_z, expected_bind, expected_omega, expected_ka2, expected_ka1 in reference_k_shells:
+        rel_by_sym = attenuation_database.get_element_relaxation(symbol)
+        rel_by_z = attenuation_database.get_element_relaxation(atomic_z)
+        np.testing.assert_array_equal(rel_by_sym.binding_energy, rel_by_z.binding_energy)
+
+        # K-оболочка всегда последняя в порядке возрастания энергии связи
+        assert str(rel_by_sym.subshell_label[-1]) == "K"
+        assert int(rel_by_sym.subshell_designator[-1]) == 1
+        assert np.isclose(float(rel_by_sym.binding_energy[-1]), expected_bind, rtol=1e-5)
+        assert np.isclose(float(rel_by_sym.fluorescence_yield[-1]), expected_omega, rtol=1e-4)
+
+        k_r_start = int(rel_by_sym.rad_offsets[-2])
+        k_r_end = int(rel_by_sym.rad_offsets[-1])
+        k_rad_vacs = rel_by_sym.rad_vacancy_designator[k_r_start:k_r_end]
+        k_rad_energies = rel_by_sym.rad_energy[k_r_start:k_r_end]
+
+        # K_alpha2: переход K <- L2 (designator=5); K_alpha1: переход K <- L3 (designator=6)
+        ka2_idx = int(np.flatnonzero(k_rad_vacs == 5)[0])
+        ka1_idx = int(np.flatnonzero(k_rad_vacs == 6)[0])
+        assert np.isclose(float(k_rad_energies[ka2_idx]), expected_ka2, rtol=1e-4)
+        assert np.isclose(float(k_rad_energies[ka1_idx]), expected_ka1, rtol=1e-4)
+
+    with pytest.raises(ValueError, match="Неизвестный атомный номер"):
+        attenuation_database.get_element_relaxation(999)
+    with pytest.raises(ValueError, match="отсутствует в базе атомной релаксации"):
+        attenuation_database.get_element_relaxation("Unobtainium")
+    with pytest.raises(TypeError, match="атомным номером"):
+        attenuation_database.get_element_relaxation(3.14)  # type: ignore[arg-type]
+
+
+def test_parse_eadl_epics2017_text() -> None:
+    """Проверка парсера ENDL-текста библиотеки атомной релаксации EADL EPICS2017."""
+    end_marker = " " * 71 + "1"
+    sample_eadl = "\n".join(
+        [
+            " 11000  0  0   0.00000+0 171215  1               0.0       0.0",
+            "91912  0  0.0         0.0         0.0         0.0         0.0",
+            " 1.00000+0  2.00000+0",
+            " 3.00000+0  2.00000+0",
+            " 5.00000+0  2.00000+0",
+            " 6.00000+0  4.00000+0",
+            end_marker,
+            " 11000  0  0   0.00000+0 171215  1               0.0       0.0",
+            "91913  0  0.0         0.0         0.0         0.0         0.0",
+            " 1.00000+0  1.07167-3",
+            " 3.00000+0  6.36200-5",
+            " 5.00000+0  3.11700-5",
+            " 6.00000+0  3.09900-5",
+            end_marker,
+            " 11000  0  0   0.00000+0 171215  1               0.0       0.0",
+            "92921  0  0.0         0.0         0.0         0.0         0.0",
+            " 1.00000+0  7.46000-9",
+            end_marker,
+            " 11000  0  0   0.00000+0 171215  1               0.0       0.0",
+            "92922  0  0.0         0.0         0.0         0.0         0.0",
+            " 1.00000+0  2.95000-7",
+            end_marker,
+            " 11000  0  7   0.00000+0 171215  1               0.0       0.0",
+            "93931 91  0.0         1.          0.0         0.0         0.0",
+            " 5.00000+0  8.20000-3  1.04050-3",
+            " 6.00000+0  1.64000-2  1.04068-3",
+            end_marker,
+            " 11000  0  9   0.00000+0 171215  1               0.0       0.0",
+            "93932 91  0.0         1.          0.0         0.0         0.0",
+            " 3.00000+0  3.00000+0  1.75400-1  9.44430-4",
+            " 5.00000+0  6.00000+0  8.00000-1  1.00951-3",
+            end_marker,
+        ]
+    )
+    parsed = parse_eadl_epics2017_text(sample_eadl)
+    np.testing.assert_array_equal(parsed["Z11_subshell_designator"], [1, 3, 5, 6])
+    np.testing.assert_allclose(parsed["Z11_binding_energy"], [1.07167e-3, 6.362e-5, 3.117e-5, 3.099e-5])
+    np.testing.assert_allclose(parsed["Z11_radiative_width"], [7.46e-9, 0.0, 0.0, 0.0])
+    np.testing.assert_allclose(parsed["Z11_nonradiative_width"], [2.95e-7, 0.0, 0.0, 0.0])
+    np.testing.assert_array_equal(parsed["Z11_rad_offsets"], [0, 2, 2, 2, 2])
+    np.testing.assert_array_equal(parsed["Z11_rad_vacancy_designator"], [5, 6])
+    np.testing.assert_allclose(parsed["Z11_rad_probability"], [0.0082, 0.0164])
+    np.testing.assert_array_equal(parsed["Z11_auger_offsets"], [0, 2, 2, 2, 2])
+    np.testing.assert_array_equal(parsed["Z11_auger_vacancy_primary"], [3, 5])
+    np.testing.assert_array_equal(parsed["Z11_auger_vacancy_secondary"], [3, 6])
+
+    with pytest.raises(ValueError, match="не найдено ни одной валидной секции"):
+        parse_eadl_epics2017_text("empty text")
+    with pytest.raises(ValueError, match="Таймаут запроса"):
+        fetch_and_save_eadl_reference(timeout=0.0)
+
 
 
 

@@ -272,7 +272,7 @@ class TestMetadataCollector(unittest.TestCase):
         округление периода полураспада 6.89 суток до точного 595296.0 с без артефактов IEEE-754.
         """
         root = CompositeNode(name="World")
-        tb161_source = Source(
+        tb161_source = Source.from_voxels(
             distribution=np.ones((2, 2, 2)),
             activity=100.0 * units.MBq,
             half_life=6.89 * units.day,

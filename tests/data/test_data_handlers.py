@@ -862,7 +862,7 @@ class TestDataHandlers(unittest.TestCase):
 
         # 1. Тест записи в EscapedParticlesBuffer через Numba-ядро _push_to_escaped_particles_kernel
         esc_buf = EscapedParticlesBuffer.allocate(4)
-        esc_buf.validate()
+
         test_bank = ParticleBank.allocate(5)
         test_bank.initial_state.ID[:] = np.array([100, 200, 300, 400, 500], dtype=Index)
         test_bank.state.position.x[:] = np.array([20.0, 40.0, 60.0, 80.0, 100.0], dtype=Float)

@@ -246,23 +246,10 @@ class OrchestratorSession(QObject):
         while stack:
             node = stack.pop()
             if isinstance(node, Source):
-                energy_table = node.energy
-                if (
-                    isinstance(energy_table, np.ndarray)
-                    and energy_table.size > 0
-                    and energy_table.dtype.names is not None
-                    and "energy" in energy_table.dtype.names
-                ):
-                    energies = np.asarray(energy_table["energy"], dtype=float).ravel()
-                    valid_mask = energies > 0.0
-                    if np.any(valid_mask):
-                        valid_e = energies[valid_mask]
-                        if "probability" in energy_table.dtype.names:
-                            probs = np.asarray(energy_table["probability"], dtype=float).ravel()[valid_mask]
-                            pos_prob_mask = probs > 0.0
-                            if np.any(pos_prob_mask):
-                                valid_e = valid_e[pos_prob_mask]
-                        all_energies.extend(float(val) for val in valid_e)
+                for ch in node.channels:
+                    _, e_max = ch.spectrum.energy_bounds
+                    if e_max > 0.0:
+                        all_energies.append(float(e_max))
             if isinstance(node, CompositeNode):
                 stack.extend(node.childs)
 

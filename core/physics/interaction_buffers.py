@@ -8,7 +8,17 @@ from typing import AbstractSet, Any, NamedTuple, Protocol, TypeAlias
 import numpy as np
 from numpy.typing import NDArray
 
-from core.other.typing_definitions import Charge, Energy, Float, ID, Index, Length, ProcessID, Species, Time
+from core.other.typing_definitions import (
+    Charge,
+    Energy,
+    Float,
+    ID,
+    Index,
+    Length,
+    ProcessID,
+    Species,
+    Time,
+)
 from core.other.vectors import Vector3DSoA
 
 
@@ -109,52 +119,14 @@ class InteractionBuffer(NamedTuple):
     def reset_cursor(self) -> None:
         self.cursor[0] = 0
 
-    def validate(self) -> None:
-        """
-        Проверяет согласованность размерностей массивов буфера взаимодействий.
-        """
-        if self.capacity < 0:
-            raise ValueError("Емкость InteractionBuffer должна быть неотрицательной.")
-
-        self.position.validate()
-        self.direction.validate()
-
-        tracked_arrays: list[NDArray[Any]] = [
-            self.process_id,
-            self.volume_id,
-            self.material_id,
-            self.particle_ID,
-            self.energy_deposit,
-            self.scattering_theta,
-            self.scattering_phi,
-            self.distance_traveled,
-            self.species,
-            self.Z
-        ]
-
-        # Все базовые поля должны быть одномерными
-        for target_array in tracked_arrays:
-            if target_array.ndim != 1:
-                raise ValueError("Все массивы в InteractionBuffer должны быть одномерными.")
-
-        # Проверка согласованности емкости
-        for target_array in tracked_arrays:
-            if target_array.shape[0] != self.capacity:
-                raise ValueError("Все массивы в InteractionBuffer должны иметь одинаковую длину (емкость).")
-
-        # Проверка длины компонент векторов
-        if self.position.x.shape[0] != self.capacity:
-            raise ValueError("Компоненты векторов в InteractionBuffer должны иметь ту же длину, что и базовые массивы.")
-
-        if self.cursor.shape != (1,):
-            raise ValueError("Курсор должен быть одномерным массивом длины 1.")
-
     @classmethod
     def allocate(cls, capacity: int) -> 'InteractionBuffer':
         """
         Выделяет память под InteractionBuffer заданной емкости.
         """
-        buffer = cls(
+        if capacity < 0:
+            raise ValueError("Емкость InteractionBuffer должна быть неотрицательной.")
+        return cls(
             process_id=np.empty(capacity, dtype=ProcessID),
             volume_id=np.empty(capacity, dtype=Index),
             material_id=np.empty(capacity, dtype=Index),
@@ -170,8 +142,6 @@ class InteractionBuffer(NamedTuple):
             cursor=np.zeros(1, dtype=Index),
             capacity=capacity
         )
-        buffer.validate()
-        return buffer
 
     def flush(self, clear: bool = True) -> dict[str, NDArray[Any]]:
         cursor_pos = self.cursor_value
@@ -203,6 +173,7 @@ class InitialStateBuffer(NamedTuple):
     SoA-буфер для промежуточной фиксации начальных состояний частиц.
     """
     particle_ID: NDArray[ID]
+    parent_ID: NDArray[ID]
     emission_time: NDArray[Time]
     emission_energy: NDArray[Energy]
 
@@ -227,37 +198,13 @@ class InitialStateBuffer(NamedTuple):
     def reset_cursor(self) -> None:
         self.cursor[0] = 0
 
-    def validate(self) -> None:
-        if self.capacity < 0:
-            raise ValueError("Емкость InitialStateBuffer должна быть неотрицательной.")
-
-        self.emission_position.validate()
-        self.emission_direction.validate()
-
-        tracked_arrays: list[NDArray[Any]] = [
-            self.particle_ID,
-            self.emission_time,
-            self.emission_energy,
-        ]
-
-        for target_array in tracked_arrays:
-            if target_array.ndim != 1:
-                raise ValueError("Все массивы в InitialStateBuffer должны быть одномерными.")
-
-        for target_array in tracked_arrays:
-            if target_array.shape[0] != self.capacity:
-                raise ValueError("Все массивы в InitialStateBuffer должны иметь одинаковую длину (емкость).")
-
-        if self.emission_position.x.shape[0] != self.capacity:
-            raise ValueError("Компоненты векторов в InitialStateBuffer должны иметь ту же длину, что и базовые массивы.")
-
-        if self.cursor.shape != (1,):
-            raise ValueError("Курсор должен быть одномерным массивом длины 1.")
-
     @classmethod
     def allocate(cls, capacity: int) -> 'InitialStateBuffer':
-        buffer = cls(
+        if capacity < 0:
+            raise ValueError("Емкость InitialStateBuffer должна быть неотрицательной.")
+        return cls(
             particle_ID=np.empty(capacity, dtype=ID),
+            parent_ID=np.full(capacity, -1, dtype=ID),
             emission_time=np.empty(capacity, dtype=Time),
             emission_energy=np.empty(capacity, dtype=Energy),
             emission_position=Vector3DSoA.allocate(capacity, dtype=Length),
@@ -265,13 +212,12 @@ class InitialStateBuffer(NamedTuple):
             cursor=np.zeros(1, dtype=Index),
             capacity=capacity
         )
-        buffer.validate()
-        return buffer
 
     def flush(self, clear: bool = True) -> dict[str, NDArray[Any]]:
         cursor_pos = self.cursor_value
         chunk: dict[str, NDArray[Any]] = {
             'particle_ID': self.particle_ID[:cursor_pos].copy(),
+            'parent_ID': self.parent_ID[:cursor_pos].copy(),
             'emission_time': self.emission_time[:cursor_pos].copy(),
             'emission_energy': self.emission_energy[:cursor_pos].copy(),
             'pos_x': self.emission_position.x[:cursor_pos].copy(),
@@ -309,25 +255,15 @@ class DeadParticlesBuffer(NamedTuple):
     def reset_cursor(self) -> None:
         self.cursor[0] = 0
 
-    def validate(self) -> None:
-        if self.capacity < 0:
-            raise ValueError("Емкость DeadParticlesBuffer должна быть неотрицательной.")
-        if self.particle_ID.ndim != 1:
-            raise ValueError("Массив particle_ID в DeadParticlesBuffer должен быть одномерным.")
-        if self.particle_ID.shape[0] != self.capacity:
-            raise ValueError("Массив particle_ID в DeadParticlesBuffer должен иметь длину, равную емкости.")
-        if self.cursor.shape != (1,):
-            raise ValueError("Курсор должен быть одномерным массивом длины 1.")
-
     @classmethod
     def allocate(cls, capacity: int) -> 'DeadParticlesBuffer':
-        buffer = cls(
+        if capacity < 0:
+            raise ValueError("Емкость DeadParticlesBuffer должна быть неотрицательной.")
+        return cls(
             particle_ID=np.empty(capacity, dtype=ID),
             cursor=np.zeros(1, dtype=Index),
             capacity=capacity
         )
-        buffer.validate()
-        return buffer
 
     def flush(self, clear: bool = True) -> NDArray[ID]:
         cursor_pos = self.cursor_value
@@ -362,34 +298,16 @@ class EscapedParticlesBuffer(NamedTuple):
     def reset_cursor(self) -> None:
         self.cursor[0] = 0
 
-    def validate(self) -> None:
-        if self.capacity < 0:
-            raise ValueError("Емкость EscapedParticlesBuffer должна быть неотрицательной.")
-
-        self.position.validate()
-
-        if self.particle_ID.ndim != 1:
-            raise ValueError("Все массивы в EscapedParticlesBuffer должны быть одномерными.")
-
-        if self.particle_ID.shape[0] != self.capacity:
-            raise ValueError("Все массивы в EscapedParticlesBuffer должны иметь одинаковую длину (емкость).")
-
-        if self.position.x.shape[0] != self.capacity:
-            raise ValueError("Компоненты векторов в EscapedParticlesBuffer должны иметь ту же длину, что и базовые массивы.")
-
-        if self.cursor.shape != (1,):
-            raise ValueError("Курсор должен быть одномерным массивом длины 1.")
-
     @classmethod
     def allocate(cls, capacity: int) -> 'EscapedParticlesBuffer':
-        buffer = cls(
+        if capacity < 0:
+            raise ValueError("Емкость EscapedParticlesBuffer должна быть неотрицательной.")
+        return cls(
             particle_ID=np.empty(capacity, dtype=ID),
             position=Vector3DSoA.allocate(capacity, dtype=Length),
             cursor=np.zeros(1, dtype=Index),
             capacity=capacity,
         )
-        buffer.validate()
-        return buffer
 
     def flush(self, clear: bool = True) -> dict[str, NDArray[Any]]:
         cursor_pos = self.cursor_value
@@ -402,6 +320,71 @@ class EscapedParticlesBuffer(NamedTuple):
         if clear:
             self.reset_cursor()
         return chunk
+
+
+class SecondaryActivationBuffer(NamedTuple):
+    """
+    Предвыделенный SoA-буфер точек активации (наведенных вторичных источников).
+    Использует Vector3DSoA единообразно с InteractionBuffer и InitialStateBuffer.
+    Заполняется на шаге транспорта при взаимодействиях и разряжается в ParticleBank
+    на шаге пополнения с пуассоновским розыгрышем времени испускания.
+    """
+    position: Vector3DSoA
+    direction: Vector3DSoA
+    activation_time: NDArray[Time]
+    energy: NDArray[Energy]
+    parent_ID: NDArray[ID]
+    species: NDArray[Species]
+    target_z: NDArray[Charge]
+    shell_idx: NDArray[Index]
+    process_id: NDArray[ProcessID]
+    cursor: NDArray[Index]
+    capacity: int
+    enable_atomic_relaxation: bool = False
+    photon_production_cut: Float = Float(np.inf)
+    electron_production_cut: Float = Float(np.inf)
+
+    @property
+    def cursor_value(self) -> int:
+        return int(self.cursor[0])
+
+    @property
+    def remaining_capacity(self) -> int:
+        return self.capacity - self.cursor_value
+
+    @property
+    def is_enabled(self) -> bool:
+        return self.capacity > 0
+
+    def reset_cursor(self) -> None:
+        self.cursor[0] = 0
+
+    @classmethod
+    def allocate(
+        cls,
+        capacity: int,
+        enable_atomic_relaxation: bool = False,
+        photon_production_cut: Float = Float(np.inf),
+        electron_production_cut: Float = Float(np.inf),
+    ) -> 'SecondaryActivationBuffer':
+        if capacity < 0:
+            raise ValueError("Емкость SecondaryActivationBuffer должна быть неотрицательной.")
+        return cls(
+            position=Vector3DSoA.allocate(capacity, dtype=Length),
+            direction=Vector3DSoA.allocate(capacity, dtype=Float),
+            activation_time=np.empty(capacity, dtype=Time),
+            energy=np.empty(capacity, dtype=Energy),
+            parent_ID=np.empty(capacity, dtype=ID),
+            species=np.empty(capacity, dtype=Species),
+            target_z=np.empty(capacity, dtype=Charge),
+            shell_idx=np.empty(capacity, dtype=Index),
+            process_id=np.empty(capacity, dtype=ProcessID),
+            cursor=np.zeros(1, dtype=Index),
+            capacity=int(capacity),
+            enable_atomic_relaxation=bool(enable_atomic_relaxation),
+            photon_production_cut=Float(photon_production_cut),
+            electron_production_cut=Float(electron_production_cut),
+        )
 
 
 class SimulationDataBuffer(NamedTuple):
@@ -469,9 +452,6 @@ __all__ = [
     "InitialStateBuffer",
     "DeadParticlesBuffer",
     "EscapedParticlesBuffer",
+    "SecondaryActivationBuffer",
     "SimulationDataBuffer",
 ]
-
-
-
-

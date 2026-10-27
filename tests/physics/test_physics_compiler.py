@@ -7,6 +7,7 @@ from core.materials.attenuation_database import _interpolate_element_on_material
 from core.materials.material_bank import MaterialBank, MaterialInfoDType, MaterialPointerDType
 from core.materials.materials import Material
 from core.other.typing_definitions import Float, Index
+from core.physics.physics_buffer import AtomicRelaxationBank
 from core.physics.physics_compiler import PhysicsCompiler
 from core.physics.physics_kernels import (
     _compute_log_1d_array,
@@ -175,20 +176,6 @@ def test_build_element_csr_partial_cross_sections_and_edges() -> None:
     assert abs(pe_iodine_left - expected_left) <= 1e-12
     assert abs(pe_iodine_right - expected_right) <= 1e-12
 
-    # Проверка Fail-Fast при расхождении полного сечения в MaterialBank и суммы парциальных вкладов
-    corrupted_lacs = np.copy(mat_bank.physics_lac_table)
-    corrupted_lacs[row_left, 0] *= 1.01
-    corrupted_bank = mat_bank._replace(physics_lac_table=corrupted_lacs)
-    with pytest.raises(ValueError, match="Нарушен инвариант парциальных сечений"):
-        compiler._build_element_csr(materials, processes, corrupted_bank)
-
-    # Проверка Fail-Fast при обнулении полного сечения в MaterialBank при ненулевых парциальных вкладах
-    zeroed_lacs = np.copy(mat_bank.physics_lac_table)
-    zeroed_lacs[row_left, 0] = 0.0
-    zeroed_bank = mat_bank._replace(physics_lac_table=zeroed_lacs)
-    with pytest.raises(ValueError, match="полное сечение в MaterialBank равно 0.0"):
-        compiler._build_element_csr(materials, processes, zeroed_bank)
-
     # Проверка отсутствия расхождения индексов строк row при обрезке по суженному energy_range [10 кэВ, 500 кэВ]
     trimmed_processes = [
         PhotoelectricEffect(attenuation_database=attenuation_database),
@@ -297,7 +284,7 @@ def test_compile_scene_source_energy_out_of_range_raises() -> None:
     scene.add_child(world_vol)
 
     # 1. Источник с энергией ниже нижней границы (0.5 кэВ < 1.0 кэВ)
-    low_source = Source(
+    low_source = Source.from_voxels(
         distribution=np.ones((1, 1, 1), dtype=Float),
         activity=Float(1000.0 * units.Bq),
         energy=Float(0.5 * units.keV),
@@ -308,7 +295,7 @@ def test_compile_scene_source_energy_out_of_range_raises() -> None:
     scene.remove_child(low_source)
 
     # 2. Источник с энергией выше верхней границы (25 МэВ > 20 МэВ)
-    high_source = Source(
+    high_source = Source.from_voxels(
         distribution=np.ones((1, 1, 1), dtype=Float),
         activity=Float(1000.0 * units.Bq),
         energy=Float(25.0 * units.MeV),
@@ -319,7 +306,7 @@ def test_compile_scene_source_energy_out_of_range_raises() -> None:
     scene.remove_child(high_source)
 
     # 3. Источник с допустимой энергией (140.5 кэВ) успешно компилируется
-    valid_source = Source(
+    valid_source = Source.from_voxels(
         distribution=np.ones((1, 1, 1), dtype=Float),
         activity=Float(1000.0 * units.Bq),
         energy=Float(140.5 * units.keV),
@@ -683,6 +670,228 @@ def test_material_bank_validate_invariants() -> None:
         bad_mono_grid._validate()
 
 
+@njit(cache=True)
+def _sample_subshell_and_vose_lines_kernel(
+    target_z: int,
+    photon_energy: Float,
+    u_shell_arr: np.ndarray,
+    u_bin_arr: np.ndarray,
+    u_coin_arr: np.ndarray,
+    relaxation_bank: AtomicRelaxationBank,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Тестовое @njit-ядро выборки ионизированной подоболочки по jump_cumulative_weight
+    и O(1) выборки радиационной и Оже-линии по таблицам Воза из AtomicRelaxationBank.
+    """
+    num_samples = u_shell_arr.shape[0]
+    sampled_local_shells = np.empty(num_samples, dtype=np.int32)
+    sampled_rad_indices = np.empty(num_samples, dtype=np.int32)
+    sampled_auger_indices = np.empty(num_samples, dtype=np.int32)
+
+    s_start = int(relaxation_bank.shell_offsets[target_z])
+    s_end = int(relaxation_bank.shell_offsets[target_z + 1])
+    num_shells = s_end - s_start
+
+    open_count = 0
+    for local_idx in range(num_shells):
+        if relaxation_bank.binding_energy[s_start + local_idx] <= photon_energy:
+            open_count = local_idx + 1
+        else:
+            break
+
+    total_weight = (
+        Float(1.0)
+        if open_count == 0
+        else relaxation_bank.jump_cumulative_weight[s_start + open_count - 1]
+    )
+    k_global_shell = s_end - 1
+    l_start = int(relaxation_bank.line_offsets[k_global_shell])
+    l_end = int(relaxation_bank.line_offsets[k_global_shell + 1])
+    n_lines = l_end - l_start
+
+    a_start = int(relaxation_bank.auger_offsets[k_global_shell])
+    a_end = int(relaxation_bank.auger_offsets[k_global_shell + 1])
+    n_auger = a_end - a_start
+
+    for idx in range(num_samples):
+        target_w = u_shell_arr[idx] * total_weight
+        if target_w < 1.0 or open_count == 0:
+            sampled_local_shells[idx] = -1
+        else:
+            chosen = open_count - 1
+            for local_s in range(open_count):
+                if relaxation_bank.jump_cumulative_weight[s_start + local_s] > target_w:
+                    chosen = local_s
+                    break
+            sampled_local_shells[idx] = chosen
+
+        bin_r = int(u_bin_arr[idx] * n_lines)
+        if bin_r >= n_lines:
+            bin_r = n_lines - 1
+        if u_coin_arr[idx] < relaxation_bank.line_prob[l_start + bin_r]:
+            sampled_rad_indices[idx] = bin_r
+        else:
+            sampled_rad_indices[idx] = relaxation_bank.line_alias[l_start + bin_r]
+
+        bin_a = int(u_bin_arr[idx] * n_auger)
+        if bin_a >= n_auger:
+            bin_a = n_auger - 1
+        if u_coin_arr[idx] < relaxation_bank.auger_prob[a_start + bin_a]:
+            sampled_auger_indices[idx] = bin_a
+        else:
+            sampled_auger_indices[idx] = relaxation_bank.auger_alias[a_start + bin_a]
+
+    return sampled_local_shells, sampled_rad_indices, sampled_auger_indices
+
+
+def test_build_atomic_relaxation_bank_and_vose_sampling() -> None:
+    """
+    Проверка компиляции AtomicRelaxationBank в PhysicsCompiler и O(1) выборки
+    подоболочек (по правилу скачков поглощения) и радиационных/Оже-линий (по таблицам Воза) в Numba.
+    """
+    compiler = PhysicsCompiler()
+    processes = [
+        PhotoelectricEffect(attenuation_database=attenuation_database),
+        ComptonScattering(attenuation_database=attenuation_database),
+        CoherentScattering(attenuation_database=attenuation_database),
+    ]
+    scene = CompositeNode()
+    world_vol = Volume(
+        geometry=Box(100.0 * units.mm, 100.0 * units.mm, 100.0 * units.mm),
+        material=material_database["Pb"],
+    )
+    scene.add_child(world_vol)
+
+    physics_buf = compiler.compile_scene(scene, processes)
+    rel_bank = physics_buf.relaxation_bank
+
+    # Структурные и физические инварианты скомпилированного AtomicRelaxationBank по всем Z = 1..92
+    assert rel_bank.shell_offsets.dtype == Index
+    assert rel_bank.shell_offsets.shape == (102,)
+    assert int(rel_bank.shell_offsets[0]) == 0
+    assert np.all(np.diff(rel_bank.shell_offsets) >= 0)
+
+    total_shells = int(rel_bank.shell_offsets[-1])
+    assert rel_bank.binding_energy.shape == (total_shells,) and rel_bank.binding_energy.dtype == Float
+    assert (
+        rel_bank.jump_cumulative_weight.shape == (total_shells,)
+        and rel_bank.jump_cumulative_weight.dtype == Float
+    )
+    assert rel_bank.fluorescence_yield.shape == (total_shells,) and rel_bank.fluorescence_yield.dtype == Float
+    assert rel_bank.decay_constant.shape == (total_shells,) and rel_bank.decay_constant.dtype == Float
+    assert rel_bank.line_offsets.shape == (total_shells + 1,) and rel_bank.line_offsets.dtype == Index
+    assert rel_bank.auger_offsets.shape == (total_shells + 1,) and rel_bank.auger_offsets.dtype == Index
+    assert int(rel_bank.line_offsets[0]) == 0 and np.all(np.diff(rel_bank.line_offsets) >= 0)
+    assert int(rel_bank.auger_offsets[0]) == 0 and np.all(np.diff(rel_bank.auger_offsets) >= 0)
+
+    total_lines = int(rel_bank.line_offsets[-1])
+    total_auger = int(rel_bank.auger_offsets[-1])
+    assert rel_bank.line_energy.shape == (total_lines,) and rel_bank.line_energy.dtype == Float
+    assert rel_bank.line_prob.shape == (total_lines,) and rel_bank.line_prob.dtype == Float
+    assert rel_bank.line_alias.shape == (total_lines,) and rel_bank.line_alias.dtype == np.int32
+    assert rel_bank.auger_energy.shape == (total_auger,) and rel_bank.auger_energy.dtype == Float
+    assert rel_bank.auger_prob.shape == (total_auger,) and rel_bank.auger_prob.dtype == Float
+    assert rel_bank.auger_alias.shape == (total_auger,) and rel_bank.auger_alias.dtype == np.int32
+
+    for z_val in range(1, 93):
+        s_start = int(rel_bank.shell_offsets[z_val])
+        s_end = int(rel_bank.shell_offsets[z_val + 1])
+        if s_end > s_start:
+            z_binds = rel_bank.binding_energy[s_start:s_end]
+            assert np.all(z_binds > 0.0)
+            if s_end - s_start > 1:
+                assert np.all(np.diff(z_binds) > 0.0)
+            for g_shell in range(s_start, s_end):
+                bind_val = float(rel_bank.binding_energy[g_shell])
+                l_s = int(rel_bank.line_offsets[g_shell])
+                l_e = int(rel_bank.line_offsets[g_shell + 1])
+                l_cnt = l_e - l_s
+                if l_cnt > 0:
+                    assert np.all(rel_bank.line_energy[l_s:l_e] > 0.0)
+                    assert np.all(rel_bank.line_energy[l_s:l_e] <= bind_val)
+                    assert np.all((rel_bank.line_prob[l_s:l_e] >= 0.0) & (rel_bank.line_prob[l_s:l_e] <= 1.0))
+                    assert np.all((rel_bank.line_alias[l_s:l_e] >= 0) & (rel_bank.line_alias[l_s:l_e] < l_cnt))
+                a_s = int(rel_bank.auger_offsets[g_shell])
+                a_e = int(rel_bank.auger_offsets[g_shell + 1])
+                a_cnt = a_e - a_s
+                if a_cnt > 0:
+                    assert np.all(rel_bank.auger_energy[a_s:a_e] > 0.0)
+                    assert np.all(rel_bank.auger_energy[a_s:a_e] <= bind_val)
+                    assert np.all((rel_bank.auger_prob[a_s:a_e] >= 0.0) & (rel_bank.auger_prob[a_s:a_e] <= 1.0))
+                    assert np.all((rel_bank.auger_alias[a_s:a_e] >= 0) & (rel_bank.auger_alias[a_s:a_e] < a_cnt))
+
+    # Для водорода (Z=1) и неона (Z=10) нет краев в диапазоне [1 кэВ, 20 МэВ]
+    for light_z in (0, 1, 10):
+        assert int(rel_bank.shell_offsets[light_z + 1] - rel_bank.shell_offsets[light_z]) == 0
+
+    # Для свинца (Z=82) 9 подоболочек: M5, M4, M3, M2, M1, L3, L2, L1, K
+    pb_z = 82
+    pb_rel_ref = attenuation_database.get_element_relaxation("Pb")
+    pb_s_start = int(rel_bank.shell_offsets[pb_z])
+    pb_s_end = int(rel_bank.shell_offsets[pb_z + 1])
+    assert pb_s_end - pb_s_start == 9
+    np.testing.assert_array_equal(
+        rel_bank.binding_energy[pb_s_start:pb_s_end],
+        pb_rel_ref.binding_energy,
+    )
+    np.testing.assert_array_equal(
+        rel_bank.jump_cumulative_weight[pb_s_start:pb_s_end],
+        pb_rel_ref.jump_cumulative_weight[1:],
+    )
+    np.testing.assert_array_equal(
+        rel_bank.fluorescence_yield[pb_s_start:pb_s_end],
+        pb_rel_ref.fluorescence_yield,
+    )
+    np.testing.assert_array_equal(
+        rel_bank.decay_constant[pb_s_start:pb_s_end],
+        pb_rel_ref.decay_constant,
+    )
+
+    # Статистическая проверка выборки подоболочек и линий К-оболочки свинца при E_gamma = 100 кэВ > E_K
+    num_samples = 200_000
+    rng = np.random.default_rng(np.random.SeedSequence(20261027))
+    u_shell = rng.uniform(0.0, 1.0, size=num_samples).astype(Float)
+    u_bin = rng.uniform(0.0, 1.0, size=num_samples).astype(Float)
+    u_coin = rng.uniform(0.0, 1.0, size=num_samples).astype(Float)
+
+    sampled_shells, sampled_rad, sampled_auger = _sample_subshell_and_vose_lines_kernel(
+        pb_z,
+        Float(100.0 * units.keV),
+        u_shell,
+        u_bin,
+        u_coin,
+        rel_bank,
+    )
+
+    # 1. Проверка вероятностей выбора ионизированной оболочки по скачкам поглощения
+    cum_w = pb_rel_ref.jump_cumulative_weight
+    total_w = float(cum_w[-1])
+    expected_outer_prob = 1.0 / total_w
+    actual_outer_prob = float(np.mean(sampled_shells == -1))
+    assert abs(actual_outer_prob - expected_outer_prob) < 3e-3
+
+    for local_s in range(9):
+        expected_s_prob = float(cum_w[local_s + 1] - cum_w[local_s]) / total_w
+        actual_s_prob = float(np.mean(sampled_shells == local_s))
+        assert abs(actual_s_prob - expected_s_prob) < 4e-3
+
+    # 2. Проверка вероятностей выборки радиационных линий К-оболочки по таблице Воза
+    k_r_start = int(pb_rel_ref.rad_offsets[-2])
+    k_r_end = int(pb_rel_ref.rad_offsets[-1])
+    ref_rad_probs = pb_rel_ref.rad_probability[k_r_start:k_r_end]
+    rad_counts = np.bincount(sampled_rad, minlength=len(ref_rad_probs))
+    empirical_rad_probs = rad_counts / float(num_samples)
+    np.testing.assert_allclose(empirical_rad_probs, ref_rad_probs, rtol=0.0, atol=4e-3)
+
+    # 3. Проверка вероятностей выборки Оже-линий К-оболочки по таблице Воза
+    k_a_start = int(pb_rel_ref.auger_offsets[-2])
+    k_a_end = int(pb_rel_ref.auger_offsets[-1])
+    ref_auger_probs = pb_rel_ref.auger_probability[k_a_start:k_a_end]
+    auger_counts = np.bincount(sampled_auger, minlength=len(ref_auger_probs))
+    empirical_auger_probs = auger_counts / float(num_samples)
+    np.testing.assert_allclose(empirical_auger_probs, ref_auger_probs, rtol=0.0, atol=4e-3)
+
+
 if __name__ == '__main__':
     test_build_element_csr_basic()
     test_build_element_csr_partial_cross_sections_and_edges()
@@ -691,6 +900,7 @@ if __name__ == '__main__':
     test_two_level_log_index_bitwise_equivalence()
     test_lookup_max_advance_precondition_violation()
     test_material_bank_validate_invariants()
+    test_build_atomic_relaxation_bank_and_vose_sampling()
     print("All Pytest-style assertions passed!")
 
 

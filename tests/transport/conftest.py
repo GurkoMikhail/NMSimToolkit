@@ -3,6 +3,7 @@ import numpy as np
 import ctypes
 from core.particles.particles import ParticleBank
 from core.physics.physics_buffer import PhysicsBuffer, ElementCSR
+from core.physics.physics_compiler import PhysicsCompiler
 from core.physics.interaction_buffers import InteractionBuffer, RNGContext
 from core.materials.material_bank import MaterialBank, MaterialInfoDType, MaterialPointerDType
 from core.other.typing_definitions import Index, Float, Charge, CFuncAddress, CMaterialFunc
@@ -102,7 +103,8 @@ def mock_physics_buffer():
         material_bank=material_bank,
         majorant_material_map=majorant_material_map,
         woodcock_function_pointers=woodcock_function_pointers,
-        element_csr=element_csr
+        element_csr=element_csr,
+        relaxation_bank=PhysicsCompiler()._build_atomic_relaxation_bank([]),
     )
 
 @pytest.fixture

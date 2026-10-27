@@ -188,11 +188,10 @@ def modeling(
     activity_distribution[activity_distribution == 700] = 550
     activity_distribution[activity_distribution == 10000] = 7000
 
-    source = Source(
+    source = Source.from_voxels(
         distribution=activity_distribution,
         activity=Float(300.0 * units.MBq),
         voxel_size=Float(4.0 * units.mm),
-        radiation_type="Gamma",
         energy=[[Float(140.511 * units.keV), 0.89]],
         half_life=Float(6.0067 * units.hour),
     )

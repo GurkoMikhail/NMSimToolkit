@@ -14,7 +14,11 @@ from core.materials.attenuation_functions import AttenuationFunction
 from core.other.typing_definitions import Float, Index, ProcessID
 from core.particles.particles import ParticleBank
 from core.particles.particles_kernels import update_navigation_state_rotate_kernel
-from core.physics.interaction_buffers import InteractionBuffer, RNGContext
+from core.physics.interaction_buffers import (
+    InteractionBuffer,
+    RNGContext,
+    SecondaryActivationBuffer,
+)
 from core.physics.physics_buffer import PhysicsBuffer
 from core.physics.processes_kernels import (
     make_coherent_kernel,
@@ -87,16 +91,22 @@ class Process(ABC):
         material_ids: NDArray[Index],
         rng_ctx: RNGContext,
         process_col_idx: Optional[Index] = None,
+        activation_buffer: Optional[SecondaryActivationBuffer] = None,
     ) -> None:
         """Применяет Numba-ядро процесса к выбранным частицам и обновляет состояние навигации."""
         col_idx = self.process_col_idx if process_col_idx is None else Index(process_col_idx)
+        resolved_act_buf = (
+            SecondaryActivationBuffer.allocate(0) if activation_buffer is None else activation_buffer
+        )
         self._kernel(
             bank.state,
             bank.initial_state.ID,
+            bank.initial_state.emission_time,
             target_indices,
             bank.navigation_state.current_volume,
             material_ids,
             interaction_buffer,
+            resolved_act_buf,
             physics_buffer,
             rng_ctx,
             col_idx,
@@ -183,6 +193,7 @@ def get_species_mapping() -> dict[int, str]:
         0: "Photon",
         1: "Electron",
         2: "Positron",
+        3: "Alpha",
     }
 
 
