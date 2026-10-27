@@ -41,14 +41,14 @@ from core.physics.processes import (
     PhotoelectricEffect,
 )
 from core.physics.processes_kernels import (
-    C_LIGHT,
     _compute_activation_time,
     _sample_Z_scalar,
     _sample_ionized_subshell_scalar,
     make_coherent_kernel,
     make_compton_kernel,
     make_photoelectric_kernel,
-    partition_transferred_energy_kernel,
+    partition_compton_energy_kernel,
+    partition_photoelectric_energy_kernel,
 )
 from core.scene.nodes import CompositeNode
 from core.source.source_kernels import inject_secondary_sources_kernel
@@ -82,6 +82,7 @@ class TestProcessesSoA(unittest.TestCase):
         self.bank.state.is_active[:] = True
         self.bank.initial_state.ID[:] = np.arange(self.capacity, dtype=np.uint64)
         self.bank.initial_state.emission_time[:] = 0.0
+        self.bank.navigation_state.current_volume[:] = 0
         self.bank.state.energy[:] = energy
         self.target_indices = np.arange(self.capacity, dtype=np.int64)
 
@@ -92,17 +93,12 @@ class TestProcessesSoA(unittest.TestCase):
         """Проверка фотоэлектрического поглощения в SoA-ядре."""
         kernel = make_photoelectric_kernel(process_id=ProcessID(1))
         material_ids = np.full(self.capacity, 0, dtype=Index)
-        particle_ids = np.arange(self.capacity, dtype=ID)
-        current_volumes = np.zeros(self.capacity, dtype=Index)
 
         mock_physics = self._create_mock_physics_buffer()
 
         kernel(
-            self.bank.state,
-            particle_ids,
-            self.bank.initial_state.emission_time,
+            self.bank,
             self.target_indices,
-            current_volumes,
             material_ids,
             self.buffer,
             self.act_buffer,
@@ -248,23 +244,21 @@ class TestProcessesSoA(unittest.TestCase):
             majorant_material_map=np.array([0, 1], dtype=Index),
             woodcock_function_pointers=np.zeros(2, dtype=CFuncAddress),
             element_csr=csr,
-            relaxation_bank=PhysicsCompiler()._build_atomic_relaxation_bank([]),
+            relaxation_bank=PhysicsCompiler()._build_atomic_relaxation_bank(
+                [],
+                unique_atomic_numbers=csr.element_Z.tolist(),
+            ),
         )
 
     def test_compton_kernel(self) -> None:
         kernel = make_compton_kernel(process_id=ProcessID(2))
         material_ids = np.full(self.capacity, 0, dtype=Index)
-        particle_ids = np.arange(self.capacity, dtype=ID)
-        current_volumes = np.zeros(self.capacity, dtype=Index)
 
         physics_buffer = self._create_mock_physics_buffer()
 
         kernel(
-            self.bank.state,
-            particle_ids,
-            self.bank.initial_state.emission_time,
+            self.bank,
             self.target_indices,
-            current_volumes,
             material_ids,
             self.buffer,
             self.act_buffer,
@@ -274,11 +268,8 @@ class TestProcessesSoA(unittest.TestCase):
 
         tracemalloc.start()
         kernel(
-            self.bank.state,
-            particle_ids,
-            self.bank.initial_state.emission_time,
+            self.bank,
             self.target_indices,
-            current_volumes,
             material_ids,
             self.buffer,
             self.act_buffer,
@@ -292,11 +283,8 @@ class TestProcessesSoA(unittest.TestCase):
 
         for _ in range(10):
             kernel(
-                self.bank.state,
-                particle_ids,
-                self.bank.initial_state.emission_time,
+                self.bank,
                 self.target_indices,
-                current_volumes,
                 material_ids,
                 self.buffer,
                 self.act_buffer,
@@ -316,17 +304,12 @@ class TestProcessesSoA(unittest.TestCase):
     def test_coherent_kernel(self) -> None:
         kernel = make_coherent_kernel(process_id=ProcessID(3))
         material_ids = np.full(self.capacity, 1, dtype=Index)
-        particle_ids = np.arange(self.capacity, dtype=ID)
-        current_volumes = np.zeros(self.capacity, dtype=Index)
 
         physics_buffer = self._create_mock_physics_buffer()
 
         kernel(
-            self.bank.state,
-            particle_ids,
-            self.bank.initial_state.emission_time,
+            self.bank,
             self.target_indices,
-            current_volumes,
             material_ids,
             self.buffer,
             self.act_buffer,
@@ -336,11 +319,8 @@ class TestProcessesSoA(unittest.TestCase):
 
         tracemalloc.start()
         kernel(
-            self.bank.state,
-            particle_ids,
-            self.bank.initial_state.emission_time,
+            self.bank,
             self.target_indices,
-            current_volumes,
             material_ids,
             self.buffer,
             self.act_buffer,
@@ -354,11 +334,8 @@ class TestProcessesSoA(unittest.TestCase):
 
         for _ in range(10):
             kernel(
-                self.bank.state,
-                particle_ids,
-                self.bank.initial_state.emission_time,
+                self.bank,
                 self.target_indices,
-                current_volumes,
                 material_ids,
                 self.buffer,
                 self.act_buffer,
@@ -419,7 +396,10 @@ class TestProcessesSoA(unittest.TestCase):
             majorant_material_map=np.array([lead.ID], dtype=Index),
             woodcock_function_pointers=np.zeros(1, dtype=CFuncAddress),
             element_csr=csr,
-            relaxation_bank=compiler._build_atomic_relaxation_bank(processes),
+            relaxation_bank=compiler._build_atomic_relaxation_bank(
+                processes,
+                unique_atomic_numbers=csr.element_Z.tolist(),
+            ),
         )
 
         rng = np.random.default_rng(98765)
@@ -488,7 +468,10 @@ class TestProcessesSoA(unittest.TestCase):
             majorant_material_map=np.array([nai.ID], dtype=Index),
             woodcock_function_pointers=np.zeros(1, dtype=CFuncAddress),
             element_csr=csr,
-            relaxation_bank=compiler._build_atomic_relaxation_bank(processes),
+            relaxation_bank=compiler._build_atomic_relaxation_bank(
+                processes,
+                unique_atomic_numbers=csr.element_Z.tolist(),
+            ),
         )
 
         @njit(cache=True)
@@ -749,7 +732,7 @@ class TestProcessesSoA(unittest.TestCase):
             Float(0.140 * units.MeV),
             Species(ParticleSpecies.PHOTON),
         )
-        expected_photon_t = float(t_emit + distance / C_LIGHT)
+        expected_photon_t = float(t_emit + distance / units.c_light)
         self.assertAlmostEqual(float(t_photon), expected_photon_t, places=12)
 
         e_kin = Float(0.510998910 * units.MeV)  # T == m_e c^2 -> gamma = 2, beta = sqrt(3)/2
@@ -760,12 +743,12 @@ class TestProcessesSoA(unittest.TestCase):
             Species(ParticleSpecies.ELECTRON),
         )
         expected_beta = float(np.sqrt(1.0 - (float(electron_mass_c2) / float(e_kin + electron_mass_c2)) ** 2))
-        expected_electron_t = float(t_emit + distance / (expected_beta * float(C_LIGHT)))
+        expected_electron_t = float(t_emit + distance / (expected_beta * float(units.c_light)))
         self.assertAlmostEqual(float(t_electron), expected_electron_t, places=12)
 
     def test_partition_transferred_energy_conservation_and_characteristic_lines(self) -> None:
         """
-        Проверка Фазы 3 (partition_transferred_energy_kernel и PhotoelectricEffect.apply):
+        Проверка Фазы 3 (partition_photoelectric_energy_kernel, partition_compton_energy_kernel и PhotoelectricEffect.apply):
         1. При отключенной релаксации и electron_production_cut == inf: 0 обращений к ГСЧ и 100% локальное
            энерговыделение без записей в SecondaryActivationBuffer.
         2. При включенной релаксации в Pb (Z=82, E=140 кэВ) и NaI (Z=53/11, E=140 кэВ):
@@ -787,7 +770,10 @@ class TestProcessesSoA(unittest.TestCase):
         nai: Material = material_database["Sodium Iodide"]
         mat_bank = compiler._build_material_bank([lead, nai], processes)
         csr = compiler._build_element_csr([lead, nai], processes, mat_bank)
-        relax_bank = compiler._build_atomic_relaxation_bank(processes)
+        relax_bank = compiler._build_atomic_relaxation_bank(
+            processes,
+            unique_atomic_numbers=csr.element_Z.tolist(),
+        )
         phys_buf = PhysicsBuffer(
             material_bank=mat_bank,
             majorant_material_map=np.array([lead.ID, nai.ID], dtype=Index),
@@ -961,6 +947,49 @@ class TestProcessesSoA(unittest.TestCase):
             places=9,
         )
 
+        # 5. Прямой вызов специализированных ядер partition_photoelectric_energy_kernel и partition_compton_energy_kernel
+        act_buf_direct = SecondaryActivationBuffer.allocate(
+            capacity=4,
+            enable_atomic_relaxation=True,
+            photon_production_cut=Float(1.0 * units.keV),
+            electron_production_cut=Float(5.0 * units.keV),
+        )
+        dep_pe = partition_photoelectric_energy_kernel(
+            ProcessID(1),
+            bank.state,
+            Index(0),
+            ID(100),
+            initial_energy,
+            initial_energy,
+            Charge(82),
+            Time(5.0 * units.ns),
+            relax_bank,
+            act_buf_direct,
+            rng_ctx,
+        )
+        pe_sec_count = act_buf_direct.cursor_value
+        self.assertGreaterEqual(pe_sec_count, 1)
+        self.assertAlmostEqual(
+            float(initial_energy),
+            float(dep_pe) + float(np.sum(act_buf_direct.energy[:pe_sec_count])),
+            places=12,
+        )
+
+        compton_delta = Float(25.0 * units.keV)
+        dep_comp = partition_compton_energy_kernel(
+            ProcessID(3),
+            bank.state,
+            Index(0),
+            ID(100),
+            compton_delta,
+            Charge(82),
+            Time(5.0 * units.ns),
+            act_buf_direct,
+        )
+        self.assertEqual(float(dep_comp), 0.0)
+        self.assertEqual(act_buf_direct.cursor_value, pe_sec_count + 1)
+        self.assertAlmostEqual(float(act_buf_direct.energy[pe_sec_count]), float(compton_delta), places=12)
+
     def test_three_production_cut_regimes_per_event_energy_balance_and_genealogy(self) -> None:
         """
         Проверка Фазы 4 (сохранение энергии и генеалогия (particle_ID, parent_ID)):
@@ -982,7 +1011,10 @@ class TestProcessesSoA(unittest.TestCase):
         nai: Material = material_database["Sodium Iodide"]
         mat_bank = compiler._build_material_bank([nai], processes)
         csr = compiler._build_element_csr([nai], processes, mat_bank)
-        relax_bank = compiler._build_atomic_relaxation_bank(processes)
+        relax_bank = compiler._build_atomic_relaxation_bank(
+            processes,
+            unique_atomic_numbers=csr.element_Z.tolist(),
+        )
         phys_buf = PhysicsBuffer(
             material_bank=mat_bank,
             majorant_material_map=np.array([nai.ID], dtype=Index),

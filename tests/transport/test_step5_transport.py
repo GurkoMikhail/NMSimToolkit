@@ -96,7 +96,10 @@ class TestStep5TransportLogic(unittest.TestCase):
             majorant_material_map=majorant_material_map,
             woodcock_function_pointers=woodcock_function_pointers,
             element_csr=element_csr,
-            relaxation_bank=PhysicsCompiler()._build_atomic_relaxation_bank([]),
+            relaxation_bank=PhysicsCompiler()._build_atomic_relaxation_bank(
+                [],
+                unique_atomic_numbers=element_csr.element_Z.tolist(),
+            ),
         )
 
         rng = np.random.default_rng(42)
@@ -105,6 +108,9 @@ class TestStep5TransportLogic(unittest.TestCase):
         mapped_process_ids = np.array([0, 1, 2], dtype=Index)
         transport_kernel = make_transport_kernel(mapped_process_ids)
         transport_buffer = TransportBuffer.allocate(10)
+        self.assertEqual(transport_buffer.process_ids.shape, (10,))
+        self.assertEqual(transport_buffer.material_ids.shape, (10,))
+        self.assertEqual(transport_buffer.process_lacs.ndim, 1)
         active_indices = np.arange(10, dtype=Index)
 
         transport_kernel(
@@ -226,20 +232,17 @@ class TestStep5TransportLogic(unittest.TestCase):
 
         # Записываем 3 взаимодействия при capacity == 2 (имитация процесса, пишущего > 1 записи на частицу)
         _push_to_interaction_buffer(
-            ibuf, ProcessID(1), Index(0), Index(0), ID(101), Energy(0.05),
-            Float(0.1), Float(0.2), Float(1.0), Species(0), Charge(82),
-            Float(0.0), Float(0.0), Float(1.0), Float(0.0), Float(0.0), Float(1.0),
+            ibuf, mgr.bank.state, Index(0), ProcessID(1), Index(0), Index(0), ID(101), Energy(0.05),
+            Float(0.1), Float(0.2), Charge(82),
         )
         _push_to_interaction_buffer(
-            ibuf, ProcessID(1), Index(0), Index(0), ID(202), Energy(0.06),
-            Float(0.3), Float(0.4), Float(2.0), Species(0), Charge(82),
-            Float(0.0), Float(0.0), Float(2.0), Float(0.0), Float(0.0), Float(1.0),
+            ibuf, mgr.bank.state, Index(0), ProcessID(1), Index(0), Index(0), ID(202), Energy(0.06),
+            Float(0.3), Float(0.4), Charge(82),
         )
         # Третья запись не должна затереть нулевой слот (ID=101)
         _push_to_interaction_buffer(
-            ibuf, ProcessID(2), Index(0), Index(0), ID(999), Energy(0.99),
-            Float(0.5), Float(0.6), Float(3.0), Species(0), Charge(82),
-            Float(0.0), Float(0.0), Float(3.0), Float(0.0), Float(0.0), Float(1.0),
+            ibuf, mgr.bank.state, Index(0), ProcessID(2), Index(0), Index(0), ID(999), Energy(0.99),
+            Float(0.5), Float(0.6), Charge(82),
         )
 
         self.assertEqual(ibuf.cursor_value, 3)

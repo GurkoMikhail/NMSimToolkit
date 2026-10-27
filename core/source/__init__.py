@@ -4,12 +4,9 @@
 
 from core.source.alias_tables import build_alias_tables
 from core.source.source_buffer import (
-    SPATIAL_ANALYTIC,
-    SPATIAL_POINT,
-    SPATIAL_VOXEL,
-    SPECTRUM_CONTINUOUS_TRAPEZOID,
-    SPECTRUM_DISCRETE,
     SourceBuffer,
+    SpatialType,
+    SpectrumType,
 )
 from core.source.sources import (
     AngularDistribution,
@@ -24,9 +21,7 @@ from core.source.sources import (
     RadiationChannel,
     Source,
     SpatialDistribution,
-    SpatialType,
     SpectralLine,
-    SpectrumType,
     VoxelDistribution,
 )
 from core.source.source_compiler import SourceCompiler
@@ -52,11 +47,6 @@ __all__ = [
     "ParticleSource",
     "PrimarySource",
     "SecondarySource",
-    "SPATIAL_POINT",
-    "SPATIAL_VOXEL",
-    "SPATIAL_ANALYTIC",
-    "SPECTRUM_DISCRETE",
-    "SPECTRUM_CONTINUOUS_TRAPEZOID",
     "SourceBuffer",
     "SourceCompiler",
     "build_alias_tables",

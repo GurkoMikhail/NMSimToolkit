@@ -3,6 +3,7 @@
 в формате Structure of Arrays / CSR для высокопроизводительных Numba JIT-ядер.
 """
 
+from enum import IntEnum
 from typing import NamedTuple
 
 import numpy as np
@@ -10,12 +11,20 @@ from numpy.typing import NDArray
 
 from core.other.typing_definitions import Float, Index, Species
 
-SPATIAL_POINT: Index = Index(0)
-SPATIAL_VOXEL: Index = Index(1)
-SPATIAL_ANALYTIC: Index = Index(2)
 
-SPECTRUM_DISCRETE: Index = Index(0)
-SPECTRUM_CONTINUOUS_TRAPEZOID: Index = Index(1)
+class SpatialType(IntEnum):
+    """Код типа пространственного распределения первичного источника в SourceBuffer."""
+
+    POINT = 0
+    VOXEL = 1
+    ANALYTIC = 2
+
+
+class SpectrumType(IntEnum):
+    """Код типа энергетического спектра канала излучения в SourceBuffer."""
+
+    DISCRETE = 0
+    CONTINUOUS_TRAPEZOID = 1
 
 
 class SourceBuffer(NamedTuple):
@@ -25,7 +34,7 @@ class SourceBuffer(NamedTuple):
     Уплощает источники непосредственно на уровне каналов эмиссии (N_ch записей) по теореме о
     суперпозиции пуассоновских потоков: I_{s,c}(0) = A_{0,s} * branching_ratio_{s,c}.
     Все каналы одного воксельного источника ссылаются на общий диапазон [vox_start, vox_end)
-    в voxel_range без дублирования воксельных таблиц Воза, а точечные источники (SPATIAL_POINT)
+    в voxel_range без дублирования воксельных таблиц Воза, а точечные источники (SpatialType.POINT)
     занимают 0 элементов в воксельных таблицах.
     """
 
@@ -92,10 +101,7 @@ class SourceBuffer(NamedTuple):
 
 
 __all__ = [
-    "SPATIAL_POINT",
-    "SPATIAL_VOXEL",
-    "SPATIAL_ANALYTIC",
-    "SPECTRUM_DISCRETE",
-    "SPECTRUM_CONTINUOUS_TRAPEZOID",
+    "SpatialType",
+    "SpectrumType",
     "SourceBuffer",
 ]

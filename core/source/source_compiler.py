@@ -11,11 +11,9 @@ from numpy.typing import NDArray
 from core.other.typing_definitions import Float, Index, Species
 from core.scene.nodes import CompositeNode, SpatialNode
 from core.source.source_buffer import (
-    SPATIAL_POINT,
-    SPATIAL_VOXEL,
-    SPECTRUM_CONTINUOUS_TRAPEZOID,
-    SPECTRUM_DISCRETE,
     SourceBuffer,
+    SpatialType,
+    SpectrumType,
 )
 from core.source.sources import (
     ContinuousSpectrum,
@@ -103,7 +101,7 @@ class SourceCompiler:
 
             spatial = source.spatial
             if isinstance(spatial, PointDistribution):
-                src_spatial_type = SPATIAL_POINT
+                src_spatial_type = Index(SpatialType.POINT)
                 src_vox_start = vox_cursor
                 src_vox_end = vox_cursor
                 src_grid_shape = (0, 0, 0)
@@ -111,7 +109,7 @@ class SourceCompiler:
                 src_half_size = np.zeros(3, dtype=Float)
                 src_jitter = spatial.cell_jitter
             elif isinstance(spatial, VoxelDistribution):
-                src_spatial_type = SPATIAL_VOXEL
+                src_spatial_type = Index(SpatialType.VOXEL)
                 src_vox_idx = spatial.voxel_indices
                 src_vox_start = vox_cursor
                 src_vox_end = vox_cursor + Index(src_vox_idx.shape[0])
@@ -150,7 +148,7 @@ class SourceCompiler:
 
                 spec = channel.spectrum
                 if isinstance(spec, DiscreteSpectrum):
-                    spectrum_type[ch_cursor] = SPECTRUM_DISCRETE
+                    spectrum_type[ch_cursor] = Index(SpectrumType.DISCRETE)
                     num_lines = Index(spec.line_energy.shape[0])
                     spectrum_offsets[ch_cursor + 1] = spectrum_offsets[ch_cursor] + num_lines
                     line_energy_parts.append(spec.line_energy)
@@ -159,7 +157,7 @@ class SourceCompiler:
                     line_prob_parts.append(spec.line_prob)
                     line_alias_parts.append(spec.line_alias)
                 elif isinstance(spec, ContinuousSpectrum):
-                    spectrum_type[ch_cursor] = SPECTRUM_CONTINUOUS_TRAPEZOID
+                    spectrum_type[ch_cursor] = Index(SpectrumType.CONTINUOUS_TRAPEZOID)
                     num_bins = Index(spec.bin_energy_low.shape[0])
                     spectrum_offsets[ch_cursor + 1] = spectrum_offsets[ch_cursor] + num_bins
                     line_energy_parts.append(spec.bin_energy_low)

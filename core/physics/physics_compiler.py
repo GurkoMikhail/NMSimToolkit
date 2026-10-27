@@ -5,7 +5,7 @@
 
 import ctypes
 import math
-from typing import Any, List, Optional
+from typing import AbstractSet, Any, List, Optional, Sequence
 
 import numpy as np
 
@@ -402,10 +402,13 @@ class PhysicsCompiler:
         self,
         processes_list: List[Process],
         attenuation_database: Optional[AttenuationDataBase] = None,
+        unique_atomic_numbers: Optional[AbstractSet[int] | Sequence[int]] = None,
     ) -> AtomicRelaxationBank:
         """
         Компилирует банк атомной релаксации AtomicRelaxationBank (Z = 0..100) с предвычисленными
         таблицами Воза для O(1) выборки радиационных и Оже-переходов каждого ионизируемого уровня.
+        При передаче unique_atomic_numbers заполняет подоболочки и таблицы Воза только для
+        присутствующих в сцене элементов, сохраняя прямую O(1) индексацию shell_offsets[Z].
         """
         if attenuation_database is not None:
             target_db = attenuation_database
@@ -425,6 +428,11 @@ class PhysicsCompiler:
 
         relaxation_map = target_db.elements_relaxation
         num_z_slots = MAX_RELAXATION_Z + 1
+        allowed_z = (
+            {int(z_val) for z_val in unique_atomic_numbers}
+            if unique_atomic_numbers is not None
+            else None
+        )
 
         shell_offsets = np.zeros(num_z_slots + 1, dtype=Index)
 
@@ -452,6 +460,9 @@ class PhysicsCompiler:
         current_auger = 0
 
         for atomic_z in range(num_z_slots):
+            if allowed_z is not None and atomic_z not in allowed_z:
+                shell_offsets[atomic_z + 1] = Index(current_shells)
+                continue
             symbol = element_symbol.get(atomic_z)
             if symbol is not None and symbol in relaxation_map:
                 rel_data = relaxation_map[symbol]
@@ -629,7 +640,11 @@ class PhysicsCompiler:
             material_bank,
             capacity=capacity_mat_info,
         )
-        relaxation_bank = self._build_atomic_relaxation_bank(processes_list)
+        unique_scene_z = {int(z_val) for z_val in element_csr.element_Z.tolist()}
+        relaxation_bank = self._build_atomic_relaxation_bank(
+            processes_list,
+            unique_atomic_numbers=unique_scene_z,
+        )
         capacity = len(flat_list)
 
         majorant_material_map = np.zeros(capacity, dtype=Index)

@@ -2,6 +2,7 @@
 Подпакет физических процессов, буферов взаимодействия и компилятора физики.
 """
 
+from core.other.typing_definitions import ProcessType
 from core.physics.processes import (
     Process,
     PhotoelectricEffect,
@@ -33,6 +34,7 @@ from core.physics.interaction_buffers import (
 )
 
 __all__ = [
+    'ProcessType',
     'Process',
     'PhotoelectricEffect',
     'CoherentScattering',

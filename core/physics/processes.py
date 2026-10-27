@@ -11,7 +11,7 @@ from numpy.typing import NDArray
 
 from core.materials.attenuation_database import AttenuationDataBase
 from core.materials.attenuation_functions import AttenuationFunction
-from core.other.typing_definitions import Float, Index, ProcessID
+from core.other.typing_definitions import Float, Index, ParticleSpecies, ProcessID, ProcessType
 from core.particles.particles import ParticleBank
 from core.particles.particles_kernels import update_navigation_state_rotate_kernel
 from core.physics.interaction_buffers import (
@@ -99,11 +99,8 @@ class Process(ABC):
             SecondaryActivationBuffer.allocate(0) if activation_buffer is None else activation_buffer
         )
         self._kernel(
-            bank.state,
-            bank.initial_state.ID,
-            bank.initial_state.emission_time,
+            bank,
             target_indices,
-            bank.navigation_state.current_volume,
             material_ids,
             interaction_buffer,
             resolved_act_buf,
@@ -118,7 +115,7 @@ class Process(ABC):
 class PhotoelectricEffect(Process):
     """Фотоэлектрическое поглощение фотонов."""
 
-    process_id = ProcessID(0)
+    process_id = ProcessID(ProcessType.PHOTOELECTRIC)
 
     def __init__(
         self,
@@ -133,7 +130,7 @@ class PhotoelectricEffect(Process):
 class CoherentScattering(Process):
     """Когерентное (рэлеевское) рассеяние фотонов."""
 
-    process_id = ProcessID(2)
+    process_id = ProcessID(ProcessType.COHERENT)
     invalidates_navigation = True
 
     def __init__(
@@ -149,7 +146,7 @@ class CoherentScattering(Process):
 class ComptonScattering(CoherentScattering):
     """Некогерентное (комптоновское) рассеяние фотонов на электронах оболочки."""
 
-    process_id = ProcessID(1)
+    process_id = ProcessID(ProcessType.COMPTON)
     invalidates_navigation = True
 
     def __init__(
@@ -165,7 +162,7 @@ class ComptonScattering(CoherentScattering):
 class PairProduction(Process):
     """Образование электрон-позитронных пар в поле ядра."""
 
-    process_id = ProcessID(3)
+    process_id = ProcessID(ProcessType.PAIR_PRODUCTION)
 
 
 def get_process_mapping() -> dict[int, str]:
@@ -187,14 +184,10 @@ def get_process_mapping() -> dict[int, str]:
 
 def get_species_mapping() -> dict[int, str]:
     """
-    Возвращает словарь соответствия числового кода типа частицы ее строковому имени.
+    Возвращает словарь соответствия числового кода типа частицы ее строковому имени
+    на основе канонического перечисления ParticleSpecies.
     """
-    return {
-        0: "Photon",
-        1: "Electron",
-        2: "Positron",
-        3: "Alpha",
-    }
+    return {int(species): species.name.capitalize() for species in ParticleSpecies}
 
 
 __all__ = [
@@ -206,4 +199,3 @@ __all__ = [
     "get_process_mapping",
     "get_species_mapping",
 ]
-

@@ -5,9 +5,9 @@
 """
 
 import math
-from typing import Any
+from typing import Any, Tuple
 
-import hepunits as units
+from hepunits import c_light
 from numba import njit
 import numpy as np
 from numpy.typing import NDArray
@@ -20,10 +20,12 @@ from core.other.typing_definitions import (
     Index,
     ParticleSpecies,
     ProcessID,
+    ProcessType,
     Species,
     Time,
 )
 from core.particles.kinematic_state import KinematicState
+from core.particles.particles import ParticleBank
 from core.particles.particles_kernels import _rotate_particle
 from core.physics.g4coherent import _generate_coherent_theta_scalar
 from core.physics.g4compton import (
@@ -40,11 +42,6 @@ from core.physics.physics_buffer import AtomicRelaxationBank, MAX_RELAXATION_Z, 
 from core.physics.physics_kernels import _locate_energy_interval
 from core.source.source_kernels import _sample_alias
 
-PHOTON_SPECIES_ID: Species = Species(ParticleSpecies.PHOTON)
-ELECTRON_SPECIES_ID: Species = Species(ParticleSpecies.ELECTRON)
-C_LIGHT: Float = Float(299.792458 * units.mm / units.ns)
-ELECTRON_MASS: Float = electron_mass_c2
-
 
 @njit(cache=True, inline='always')
 def _generate_scattering_phi_scalar(rng_ctx: RNGContext) -> Float:
@@ -55,24 +52,18 @@ def _generate_scattering_phi_scalar(rng_ctx: RNGContext) -> Float:
 @njit(cache=True, inline='always')
 def _push_to_interaction_buffer(
     inter_buffer: InteractionBuffer,
+    state: KinematicState,
+    p_idx: Index,
     process_id: ProcessID,
     volume_id: Index,
     material_id: Index,
-    particle_ID: ID,
+    particle_id: ID,
     energy_deposit: Energy,
     scattering_theta: Float,
     scattering_phi: Float,
-    distance_traveled: Float,
-    species: Species,
-    Z: Charge,
-    pos_x: Float,
-    pos_y: Float,
-    pos_z: Float,
-    dir_x: Float,
-    dir_y: Float,
-    dir_z: Float,
+    atomic_z: Charge,
 ) -> None:
-    """Записывает акт взаимодействия частицы напрямую в буфер с курсором InteractionBuffer."""
+    """Записывает акт взаимодействия частицы p_idx напрямую в буфер с курсором InteractionBuffer."""
     if inter_buffer.capacity <= 0:
         return
 
@@ -84,23 +75,23 @@ def _push_to_interaction_buffer(
     inter_buffer.process_id[idx] = process_id
     inter_buffer.volume_id[idx] = volume_id
     inter_buffer.material_id[idx] = material_id
-    inter_buffer.particle_ID[idx] = particle_ID
+    inter_buffer.particle_ID[idx] = particle_id
     inter_buffer.energy_deposit[idx] = energy_deposit
 
     inter_buffer.scattering_theta[idx] = scattering_theta
     inter_buffer.scattering_phi[idx] = scattering_phi
 
-    inter_buffer.distance_traveled[idx] = distance_traveled
-    inter_buffer.species[idx] = species
-    inter_buffer.Z[idx] = Z
+    inter_buffer.distance_traveled[idx] = state.distance_traveled[p_idx]
+    inter_buffer.species[idx] = state.species[p_idx]
+    inter_buffer.Z[idx] = atomic_z
 
-    inter_buffer.position.x[idx] = pos_x
-    inter_buffer.position.y[idx] = pos_y
-    inter_buffer.position.z[idx] = pos_z
+    inter_buffer.position.x[idx] = state.position.x[p_idx]
+    inter_buffer.position.y[idx] = state.position.y[p_idx]
+    inter_buffer.position.z[idx] = state.position.z[p_idx]
 
-    inter_buffer.direction.x[idx] = dir_x
-    inter_buffer.direction.y[idx] = dir_y
-    inter_buffer.direction.z[idx] = dir_z
+    inter_buffer.direction.x[idx] = state.direction.x[p_idx]
+    inter_buffer.direction.y[idx] = state.direction.y[p_idx]
+    inter_buffer.direction.z[idx] = state.direction.z[p_idx]
 
 
 @njit(cache=True, inline='always')
@@ -161,15 +152,15 @@ def _compute_activation_time(
     if distance_traveled <= 0.0:
         return emission_time
 
-    if species == PHOTON_SPECIES_ID:
-        velocity = C_LIGHT
+    if species == ParticleSpecies.PHOTON:
+        velocity = Float(c_light)
     else:
         if kinetic_energy <= 0.0:
             return emission_time
-        total_energy = kinetic_energy + ELECTRON_MASS
-        gamma_inv = ELECTRON_MASS / total_energy
+        total_energy = kinetic_energy + electron_mass_c2
+        gamma_inv = electron_mass_c2 / total_energy
         beta_sq = max(0.0, 1.0 - gamma_inv * gamma_inv)
-        velocity = Float(math.sqrt(beta_sq)) * C_LIGHT
+        velocity = Float(math.sqrt(beta_sq) * c_light)
 
     if velocity <= 0.0:
         return emission_time
@@ -179,12 +170,8 @@ def _compute_activation_time(
 @njit(cache=True, inline='always')
 def _push_to_activation_buffer(
     act_buffer: SecondaryActivationBuffer,
-    pos_x: Float,
-    pos_y: Float,
-    pos_z: Float,
-    dir_x: Float,
-    dir_y: Float,
-    dir_z: Float,
+    state: KinematicState,
+    p_idx: Index,
     activation_time: Time,
     energy: Energy,
     parent_id: ID,
@@ -202,12 +189,12 @@ def _push_to_activation_buffer(
         return False
     act_buffer.cursor[0] = idx + 1
 
-    act_buffer.position.x[idx] = pos_x
-    act_buffer.position.y[idx] = pos_y
-    act_buffer.position.z[idx] = pos_z
-    act_buffer.direction.x[idx] = dir_x
-    act_buffer.direction.y[idx] = dir_y
-    act_buffer.direction.z[idx] = dir_z
+    act_buffer.position.x[idx] = state.position.x[p_idx]
+    act_buffer.position.y[idx] = state.position.y[p_idx]
+    act_buffer.position.z[idx] = state.position.z[p_idx]
+    act_buffer.direction.x[idx] = state.direction.x[p_idx]
+    act_buffer.direction.y[idx] = state.direction.y[p_idx]
+    act_buffer.direction.z[idx] = state.direction.z[p_idx]
     act_buffer.activation_time[idx] = activation_time
     act_buffer.energy[idx] = energy
     act_buffer.parent_ID[idx] = parent_id
@@ -271,29 +258,109 @@ def _sample_ionized_subshell_scalar(
 
 
 @njit(cache=True, inline='always')
-def partition_transferred_energy_kernel(
-    kind: Index,
+def _sample_vacancy_relaxation_emission(
+    global_shell: Index,
+    bind_energy: Energy,
+    photon_production_cut: Float,
+    electron_production_cut: Float,
+    relaxation_bank: AtomicRelaxationBank,
+    rng_ctx: RNGContext,
+) -> Tuple[Species, Energy]:
+    """
+    Разыгрывает канал атомной релаксации ионизированной подоболочки global_shell
+    (флуоресцентный фотон с вероятностью omega или Оже-электрон с вероятностью 1 - omega)
+    по таблицам Воза и проверяет пороги рождения вторичных частиц.
+    Возвращает (species, emitted_energy); если переход допороговый или безызлучательный,
+    возвращает энергию 0.0.
+    """
+    omega = relaxation_bank.fluorescence_yield[global_shell]
+    l_start = relaxation_bank.line_offsets[global_shell]
+    l_end = relaxation_bank.line_offsets[global_shell + 1]
+    a_start = relaxation_bank.auger_offsets[global_shell]
+    a_end = relaxation_bank.auger_offsets[global_shell + 1]
+
+    u_relax = rng_ctx.next_double(rng_ctx.state_addr)
+    if u_relax < omega and l_end > l_start:
+        line_table_idx = _sample_alias(
+            relaxation_bank.line_prob,
+            relaxation_bank.line_alias,
+            l_start,
+            Index(l_end - l_start),
+            rng_ctx,
+        )
+        line_e = relaxation_bank.line_energy[line_table_idx]
+        if line_e > 0.0 and line_e >= photon_production_cut:
+            return Species(ParticleSpecies.PHOTON), Energy(line_e)
+    elif a_end > a_start and bind_energy >= electron_production_cut:
+        auger_table_idx = _sample_alias(
+            relaxation_bank.auger_prob,
+            relaxation_bank.auger_alias,
+            a_start,
+            Index(a_end - a_start),
+            rng_ctx,
+        )
+        auger_e = relaxation_bank.auger_energy[auger_table_idx]
+        if auger_e > 0.0 and auger_e >= electron_production_cut:
+            return Species(ParticleSpecies.ELECTRON), Energy(auger_e)
+
+    return Species(ParticleSpecies.PHOTON), Energy(0.0)
+
+
+@njit(cache=True, inline='always')
+def partition_compton_energy_kernel(
     process_id_c: ProcessID,
+    state: KinematicState,
+    p_idx: Index,
+    parent_id: ID,
+    delta_energy: Energy,
+    target_z: Charge,
+    activation_time: Time,
+    act_buffer: SecondaryActivationBuffer,
+) -> Energy:
+    """
+    Ядро распределения переданной при комптоновском рассеянии энергии delta_energy между
+    локальным энерговыделением и надпороговым электроном отдачи в SecondaryActivationBuffer.
+    Строго соблюдает закон сохранения энергии: delta_energy == local_energy_deposit + E_secondary_tracked.
+    """
+    if delta_energy <= 0.0:
+        return Float(0.0)
+
+    if delta_energy >= act_buffer.electron_production_cut:
+        if _push_to_activation_buffer(
+            act_buffer,
+            state,
+            p_idx,
+            activation_time,
+            delta_energy,
+            parent_id,
+            Species(ParticleSpecies.ELECTRON),
+            target_z,
+            Index(-1),
+            process_id_c,
+        ):
+            return Float(0.0)
+    return delta_energy
+
+
+@njit(cache=True, inline='always')
+def partition_photoelectric_energy_kernel(
+    process_id_c: ProcessID,
+    state: KinematicState,
+    p_idx: Index,
     parent_id: ID,
     parent_energy: Energy,
     delta_energy: Energy,
     target_z: Charge,
-    pos_x: Float,
-    pos_y: Float,
-    pos_z: Float,
-    dir_x: Float,
-    dir_y: Float,
-    dir_z: Float,
     activation_time: Time,
     relaxation_bank: AtomicRelaxationBank,
     act_buffer: SecondaryActivationBuffer,
     rng_ctx: RNGContext,
 ) -> Energy:
     """
-    Ядро распределения переданной при взаимодействии энергии delta_energy между
-    локальным энерговыделением energy_deposit и надпороговыми вторичными частицами
-    в SecondaryActivationBuffer. Строго соблюдает закон сохранения энергии:
-    delta_energy == local_energy_deposit + sum(E_secondary_tracked).
+    Ядро распределения поглощенной при фотоэффекте энергии delta_energy между локальным
+    энерговыделением, фотоэлектроном и каналом атомной релаксации ионизированной оболочки
+    (флуоресцентный фотон или Оже-электрон) в SecondaryActivationBuffer.
+    Строго соблюдает закон сохранения энергии: delta_energy == local_energy_deposit + sum(E_secondary_tracked).
     """
     if delta_energy <= 0.0:
         return Float(0.0)
@@ -301,31 +368,6 @@ def partition_transferred_energy_kernel(
     enable_atomic_relaxation = act_buffer.enable_atomic_relaxation
     photon_production_cut = act_buffer.photon_production_cut
     electron_production_cut = act_buffer.electron_production_cut
-
-    if kind == 1:
-        # Комптоновское рассеяние: вся переданная энергия переходит комптоновскому электрону отдачи
-        if delta_energy >= electron_production_cut:
-            if _push_to_activation_buffer(
-                act_buffer,
-                pos_x,
-                pos_y,
-                pos_z,
-                dir_x,
-                dir_y,
-                dir_z,
-                activation_time,
-                delta_energy,
-                parent_id,
-                ELECTRON_SPECIES_ID,
-                target_z,
-                Index(-1),
-                process_id_c,
-            ):
-                return Float(0.0)
-        return delta_energy
-
-    if kind != 0:
-        return delta_energy
 
     # Быстрый выход (Fast-path) для фотоэффекта без релаксации и ниже порогов отсечки:
     # 0 обращений к ГСЧ -> 100% побитовая обратная воспроизводимость.
@@ -345,16 +387,12 @@ def partition_transferred_energy_kernel(
         if delta_energy >= electron_production_cut:
             if _push_to_activation_buffer(
                 act_buffer,
-                pos_x,
-                pos_y,
-                pos_z,
-                dir_x,
-                dir_y,
-                dir_z,
+                state,
+                p_idx,
                 activation_time,
                 delta_energy,
                 parent_id,
-                ELECTRON_SPECIES_ID,
+                Species(ParticleSpecies.ELECTRON),
                 target_z,
                 Index(-1),
                 process_id_c,
@@ -371,16 +409,12 @@ def partition_transferred_energy_kernel(
     if pe_energy > 0.0 and pe_energy >= electron_production_cut:
         if _push_to_activation_buffer(
             act_buffer,
-            pos_x,
-            pos_y,
-            pos_z,
-            dir_x,
-            dir_y,
-            dir_z,
+            state,
+            p_idx,
             activation_time,
             pe_energy,
             parent_id,
-            ELECTRON_SPECIES_ID,
+            Species(ParticleSpecies.ELECTRON),
             target_z,
             Index(-1),
             process_id_c,
@@ -388,78 +422,36 @@ def partition_transferred_energy_kernel(
             local_deposit = Float(max(0.0, local_deposit - pe_energy))
 
     if enable_atomic_relaxation and bind_e > 0.0:
-        omega = relaxation_bank.fluorescence_yield[global_shell]
-        l_start = relaxation_bank.line_offsets[global_shell]
-        l_end = relaxation_bank.line_offsets[global_shell + 1]
-        a_start = relaxation_bank.auger_offsets[global_shell]
-        a_end = relaxation_bank.auger_offsets[global_shell + 1]
-
-        u_relax = rng_ctx.next_double(rng_ctx.state_addr)
-        if u_relax < omega and l_end > l_start:
-            line_table_idx = _sample_alias(
-                relaxation_bank.line_prob,
-                relaxation_bank.line_alias,
-                l_start,
-                Index(l_end - l_start),
-                rng_ctx,
-            )
-            line_e = relaxation_bank.line_energy[line_table_idx]
-            if line_e > 0.0 and line_e >= photon_production_cut:
-                if _push_to_activation_buffer(
-                    act_buffer,
-                    pos_x,
-                    pos_y,
-                    pos_z,
-                    dir_x,
-                    dir_y,
-                    dir_z,
-                    activation_time,
-                    line_e,
-                    parent_id,
-                    PHOTON_SPECIES_ID,
-                    target_z,
-                    local_shell_idx,
-                    process_id_c,
-                ):
-                    local_deposit = Float(max(0.0, local_deposit - line_e))
-        elif a_end > a_start and bind_e >= electron_production_cut:
-            auger_table_idx = _sample_alias(
-                relaxation_bank.auger_prob,
-                relaxation_bank.auger_alias,
-                a_start,
-                Index(a_end - a_start),
-                rng_ctx,
-            )
-            auger_e = relaxation_bank.auger_energy[auger_table_idx]
-            if auger_e > 0.0 and auger_e >= electron_production_cut:
-                if _push_to_activation_buffer(
-                    act_buffer,
-                    pos_x,
-                    pos_y,
-                    pos_z,
-                    dir_x,
-                    dir_y,
-                    dir_z,
-                    activation_time,
-                    auger_e,
-                    parent_id,
-                    ELECTRON_SPECIES_ID,
-                    target_z,
-                    local_shell_idx,
-                    process_id_c,
-                ):
-                    local_deposit = Float(max(0.0, local_deposit - auger_e))
+        relax_species, relax_energy = _sample_vacancy_relaxation_emission(
+            global_shell,
+            bind_e,
+            photon_production_cut,
+            electron_production_cut,
+            relaxation_bank,
+            rng_ctx,
+        )
+        if relax_energy > 0.0:
+            if _push_to_activation_buffer(
+                act_buffer,
+                state,
+                p_idx,
+                activation_time,
+                relax_energy,
+                parent_id,
+                relax_species,
+                target_z,
+                local_shell_idx,
+                process_id_c,
+            ):
+                local_deposit = Float(max(0.0, local_deposit - relax_energy))
 
     return local_deposit
 
 
 @njit(cache=True)
-def _process_kernel_impl(
-    state: KinematicState,
-    particle_ids: NDArray[ID],
-    emission_times: NDArray[Time],
+def _photoelectric_kernel_impl(
+    bank: ParticleBank,
     target_indices: NDArray[Index],
-    volume_ids: NDArray[Index],
     material_ids: NDArray[Index],
     inter_buffer: InteractionBuffer,
     act_buffer: SecondaryActivationBuffer,
@@ -467,79 +459,119 @@ def _process_kernel_impl(
     rng_ctx: RNGContext,
     process_id_c: ProcessID,
     process_col_idx: Index,
-    kind: Index,
 ) -> None:
     """
-    Применяет физический процесс (0: фотоэффект, 1: комптоновское рассеяние, 2: когерентное рассеяние)
-    на месте к выбранным частицам, распределяет переданную энергию и записывает события в буферы.
+    Применяет фотоэлектрическое поглощение на месте к выбранным частицам в ParticleBank,
+    распределяет поглощенную энергию по вторичным каналам и записывает события в буферы.
     """
+    state = bank.state
+    particle_ids = bank.initial_state.ID
+    emission_times = bank.initial_state.emission_time
+    volume_ids = bank.navigation_state.current_volume
+    relaxation_bank = physics_buffer.relaxation_bank
+
     for j in range(len(target_indices)):
         p_idx = target_indices[j]
         energy = state.energy[p_idx]
         mat_id = material_ids[p_idx]
         atomic_z = _sample_Z_scalar(mat_id, process_col_idx, energy, physics_buffer, rng_ctx)
-        pos_x = state.position.x[p_idx]
-        pos_y = state.position.y[p_idx]
-        pos_z = state.position.z[p_idx]
-        parent_dir_x = state.direction.x[p_idx]
-        parent_dir_y = state.direction.y[p_idx]
-        parent_dir_z = state.direction.z[p_idx]
-        dir_x = parent_dir_x
-        dir_y = parent_dir_y
-        dir_z = parent_dir_z
-        dist_traveled = state.distance_traveled[p_idx]
-        species_val = state.species[p_idx]
         parent_id = particle_ids[p_idx]
 
-        if kind == 0:
-            theta = Float(0.0)
-            phi = Float(0.0)
-            delta_energy = energy
-            state.energy[p_idx] = 0.0
-        elif kind == 1:
-            theta = _generate_compton_theta_scalar(energy, atomic_z, rng_ctx)
-            phi = _generate_scattering_phi_scalar(rng_ctx)
-            delta_energy = _calculate_compton_energy_deposit_scalar(theta, energy)
-            state.energy[p_idx] -= delta_energy
-            _rotate_particle(state, p_idx, theta, phi)
-            dir_x = state.direction.x[p_idx]
-            dir_y = state.direction.y[p_idx]
-            dir_z = state.direction.z[p_idx]
-        else:
-            theta = _generate_coherent_theta_scalar(energy, atomic_z, rng_ctx)
-            phi = _generate_scattering_phi_scalar(rng_ctx)
-            delta_energy = Float(0.0)
-            _rotate_particle(state, p_idx, theta, phi)
-            dir_x = state.direction.x[p_idx]
-            dir_y = state.direction.y[p_idx]
-            dir_z = state.direction.z[p_idx]
+        delta_energy = energy
+        state.energy[p_idx] = 0.0
 
-        if kind == 0 or kind == 1:
-            emit_t = emission_times[p_idx]
-            act_time = _compute_activation_time(emit_t, dist_traveled, energy, species_val)
-            energy_deposit = partition_transferred_energy_kernel(
-                kind,
-                process_id_c,
-                parent_id,
-                energy,
-                delta_energy,
-                atomic_z,
-                pos_x,
-                pos_y,
-                pos_z,
-                parent_dir_x,
-                parent_dir_y,
-                parent_dir_z,
-                act_time,
-                physics_buffer.relaxation_bank,
-                act_buffer,
-                rng_ctx,
-            )
-        else:
-            energy_deposit = Float(0.0)
+        act_time = _compute_activation_time(
+            emission_times[p_idx],
+            state.distance_traveled[p_idx],
+            energy,
+            state.species[p_idx],
+        )
+        energy_deposit = partition_photoelectric_energy_kernel(
+            process_id_c,
+            state,
+            p_idx,
+            parent_id,
+            energy,
+            delta_energy,
+            atomic_z,
+            act_time,
+            relaxation_bank,
+            act_buffer,
+            rng_ctx,
+        )
 
         _push_to_interaction_buffer(
             inter_buffer,
+            state,
+            p_idx,
+            process_id_c,
+            volume_ids[p_idx],
+            mat_id,
+            parent_id,
+            energy_deposit,
+            Float(0.0),
+            Float(0.0),
+            atomic_z,
+        )
+
+
+@njit(cache=True)
+def _compton_kernel_impl(
+    bank: ParticleBank,
+    target_indices: NDArray[Index],
+    material_ids: NDArray[Index],
+    inter_buffer: InteractionBuffer,
+    act_buffer: SecondaryActivationBuffer,
+    physics_buffer: PhysicsBuffer,
+    rng_ctx: RNGContext,
+    process_id_c: ProcessID,
+    process_col_idx: Index,
+) -> None:
+    """
+    Применяет некогерентное (комптоновское) рассеяние на месте к выбранным частицам в ParticleBank,
+    распределяет переданную электрону отдачи энергию (до поворота родителя), поворачивает фотон
+    и записывает события в буферы.
+    """
+    state = bank.state
+    particle_ids = bank.initial_state.ID
+    emission_times = bank.initial_state.emission_time
+    volume_ids = bank.navigation_state.current_volume
+
+    for j in range(len(target_indices)):
+        p_idx = target_indices[j]
+        energy = state.energy[p_idx]
+        mat_id = material_ids[p_idx]
+        atomic_z = _sample_Z_scalar(mat_id, process_col_idx, energy, physics_buffer, rng_ctx)
+        parent_id = particle_ids[p_idx]
+
+        theta = _generate_compton_theta_scalar(energy, atomic_z, rng_ctx)
+        phi = _generate_scattering_phi_scalar(rng_ctx)
+        delta_energy = _calculate_compton_energy_deposit_scalar(theta, energy)
+        state.energy[p_idx] -= delta_energy
+
+        act_time = _compute_activation_time(
+            emission_times[p_idx],
+            state.distance_traveled[p_idx],
+            energy,
+            state.species[p_idx],
+        )
+        energy_deposit = partition_compton_energy_kernel(
+            process_id_c,
+            state,
+            p_idx,
+            parent_id,
+            delta_energy,
+            atomic_z,
+            act_time,
+            act_buffer,
+        )
+
+        _rotate_particle(state, p_idx, theta, phi)
+
+        _push_to_interaction_buffer(
+            inter_buffer,
+            state,
+            p_idx,
             process_id_c,
             volume_ids[p_idx],
             mat_id,
@@ -547,36 +579,71 @@ def _process_kernel_impl(
             energy_deposit,
             theta,
             phi,
-            dist_traveled,
-            species_val,
             atomic_z,
-            pos_x,
-            pos_y,
-            pos_z,
-            dir_x,
-            dir_y,
-            dir_z,
+        )
+
+
+@njit(cache=True)
+def _coherent_kernel_impl(
+    bank: ParticleBank,
+    target_indices: NDArray[Index],
+    material_ids: NDArray[Index],
+    inter_buffer: InteractionBuffer,
+    physics_buffer: PhysicsBuffer,
+    rng_ctx: RNGContext,
+    process_id_c: ProcessID,
+    process_col_idx: Index,
+) -> None:
+    """
+    Применяет когерентное (рэлеевское) рассеяние на месте к выбранным частицам в ParticleBank,
+    поворачивает фотон без потери энергии и записывает события в InteractionBuffer.
+    """
+    state = bank.state
+    particle_ids = bank.initial_state.ID
+    volume_ids = bank.navigation_state.current_volume
+
+    for j in range(len(target_indices)):
+        p_idx = target_indices[j]
+        energy = state.energy[p_idx]
+        mat_id = material_ids[p_idx]
+        atomic_z = _sample_Z_scalar(mat_id, process_col_idx, energy, physics_buffer, rng_ctx)
+        parent_id = particle_ids[p_idx]
+
+        theta = _generate_coherent_theta_scalar(energy, atomic_z, rng_ctx)
+        phi = _generate_scattering_phi_scalar(rng_ctx)
+
+        _rotate_particle(state, p_idx, theta, phi)
+
+        _push_to_interaction_buffer(
+            inter_buffer,
+            state,
+            p_idx,
+            process_id_c,
+            volume_ids[p_idx],
+            mat_id,
+            parent_id,
+            Float(0.0),
+            theta,
+            phi,
+            atomic_z,
         )
 
 
 _KERNEL_CACHE: dict[tuple[int, int], Any] = {}
 
 
-def _make_process_kernel(process_id: ProcessID, kind: int) -> Any:
-    cache_key = (kind, int(process_id))
+def make_photoelectric_kernel(process_id: ProcessID) -> Any:
+    """Создает скомпилированное Numba-ядро фотоэффекта с запеченным идентификатором процесса."""
+    cache_key = (int(ProcessType.PHOTOELECTRIC), int(process_id))
     cached_kernel = _KERNEL_CACHE.get(cache_key)
     if cached_kernel is not None:
         return cached_kernel
 
     process_id_c = ProcessID(process_id)
-    kind_c = Index(kind)
 
     def _process_kernel(
-        state: KinematicState,
-        particle_ids: NDArray[ID],
-        emission_times: NDArray[Time],
+        bank: ParticleBank,
         target_indices: NDArray[Index],
-        volume_ids: NDArray[Index],
         material_ids: NDArray[Index],
         inter_buffer: InteractionBuffer,
         act_buffer: SecondaryActivationBuffer,
@@ -584,12 +651,9 @@ def _make_process_kernel(process_id: ProcessID, kind: int) -> Any:
         rng_ctx: RNGContext,
         process_col_idx: Index = Index(0),
     ) -> None:
-        _process_kernel_impl(
-            state,
-            particle_ids,
-            emission_times,
+        _photoelectric_kernel_impl(
+            bank,
             target_indices,
-            volume_ids,
             material_ids,
             inter_buffer,
             act_buffer,
@@ -597,26 +661,79 @@ def _make_process_kernel(process_id: ProcessID, kind: int) -> Any:
             rng_ctx,
             process_id_c,
             process_col_idx,
-            kind_c,
         )
 
     _KERNEL_CACHE[cache_key] = _process_kernel
     return _process_kernel
 
 
-def make_photoelectric_kernel(process_id: ProcessID) -> Any:
-    """Создает скомпилированное Numba-ядро фотоэффекта с запеченным идентификатором процесса."""
-    return _make_process_kernel(process_id, 0)
-
-
 def make_compton_kernel(process_id: ProcessID) -> Any:
     """Создает скомпилированное Numba-ядро комптоновского рассеяния с запеченным идентификатором процесса."""
-    return _make_process_kernel(process_id, 1)
+    cache_key = (int(ProcessType.COMPTON), int(process_id))
+    cached_kernel = _KERNEL_CACHE.get(cache_key)
+    if cached_kernel is not None:
+        return cached_kernel
+
+    process_id_c = ProcessID(process_id)
+
+    def _process_kernel(
+        bank: ParticleBank,
+        target_indices: NDArray[Index],
+        material_ids: NDArray[Index],
+        inter_buffer: InteractionBuffer,
+        act_buffer: SecondaryActivationBuffer,
+        physics_buffer: PhysicsBuffer,
+        rng_ctx: RNGContext,
+        process_col_idx: Index = Index(0),
+    ) -> None:
+        _compton_kernel_impl(
+            bank,
+            target_indices,
+            material_ids,
+            inter_buffer,
+            act_buffer,
+            physics_buffer,
+            rng_ctx,
+            process_id_c,
+            process_col_idx,
+        )
+
+    _KERNEL_CACHE[cache_key] = _process_kernel
+    return _process_kernel
 
 
 def make_coherent_kernel(process_id: ProcessID) -> Any:
     """Создает скомпилированное Numba-ядро когерентного (рэлеевского) рассеяния с запеченным идентификатором процесса."""
-    return _make_process_kernel(process_id, 2)
+    cache_key = (int(ProcessType.COHERENT), int(process_id))
+    cached_kernel = _KERNEL_CACHE.get(cache_key)
+    if cached_kernel is not None:
+        return cached_kernel
+
+    process_id_c = ProcessID(process_id)
+
+    def _process_kernel(
+        bank: ParticleBank,
+        target_indices: NDArray[Index],
+        material_ids: NDArray[Index],
+        inter_buffer: InteractionBuffer,
+        act_buffer: SecondaryActivationBuffer,
+        physics_buffer: PhysicsBuffer,
+        rng_ctx: RNGContext,
+        process_col_idx: Index = Index(0),
+    ) -> None:
+        _coherent_kernel_impl(
+            bank,
+            target_indices,
+            material_ids,
+            inter_buffer,
+            physics_buffer,
+            rng_ctx,
+            process_id_c,
+            process_col_idx,
+        )
+
+    _KERNEL_CACHE[cache_key] = _process_kernel
+    return _process_kernel
 
 
 __all__ = [
@@ -626,9 +743,13 @@ __all__ = [
     "_push_to_interaction_buffer",
     "_sample_Z_scalar",
     "_sample_ionized_subshell_scalar",
-    "partition_transferred_energy_kernel",
+    "_sample_vacancy_relaxation_emission",
+    "partition_compton_energy_kernel",
+    "partition_photoelectric_energy_kernel",
+    "_photoelectric_kernel_impl",
+    "_compton_kernel_impl",
+    "_coherent_kernel_impl",
     "make_photoelectric_kernel",
     "make_compton_kernel",
     "make_coherent_kernel",
 ]
-

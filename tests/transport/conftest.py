@@ -104,7 +104,10 @@ def mock_physics_buffer():
         majorant_material_map=majorant_material_map,
         woodcock_function_pointers=woodcock_function_pointers,
         element_csr=element_csr,
-        relaxation_bank=PhysicsCompiler()._build_atomic_relaxation_bank([]),
+        relaxation_bank=PhysicsCompiler()._build_atomic_relaxation_bank(
+            [],
+            unique_atomic_numbers=element_csr.element_Z.tolist(),
+        ),
     )
 
 @pytest.fixture

@@ -1,6 +1,7 @@
 """
 Модуль высокопроизводительных Numba JIT-ядер генерации и прямой инжекции
-первичных частиц из SourceBuffer в ParticleBank без промежуточных аллокаций (Zero-Allocation).
+первичных частиц из SourceBuffer и вторичных частиц из SecondaryActivationBuffer
+в ParticleBank без промежуточных аллокаций (Zero-Allocation).
 """
 
 import math
@@ -15,9 +16,9 @@ from core.particles.particles import ParticleBank
 from core.physics.interaction_buffers import RNGContext, SecondaryActivationBuffer
 from core.physics.physics_buffer import AtomicRelaxationBank, MAX_RELAXATION_Z
 from core.source.source_buffer import (
-    SPATIAL_POINT,
-    SPECTRUM_CONTINUOUS_TRAPEZOID,
     SourceBuffer,
+    SpatialType,
+    SpectrumType,
 )
 
 
@@ -61,8 +62,8 @@ def _sample_channel_energy(
     """
     Выбирает энергию испускаемой частицы из спектра канала channel_idx за O(1).
 
-    Для дискретного спектра (SPECTRUM_DISCRETE) возвращает энергию выбранной линии Воза.
-    Для непрерывного кусочно-линейного спектра (SPECTRUM_CONTINUOUS_TRAPEZOID) выбирает
+    Для дискретного спектра (SpectrumType.DISCRETE) возвращает энергию выбранной линии Воза.
+    Для непрерывного кусочно-линейного спектра (SpectrumType.CONTINUOUS_TRAPEZOID) выбирает
     интервал трапеции [E_k, E_{k+1}] по таблице Воза и аналитически обращает линейную
     плотность вероятности на интервале за одно дополнительное равномерное число u_trap.
     """
@@ -76,7 +77,7 @@ def _sample_channel_energy(
         rng_ctx,
     )
     e_low = source_buffer.line_energy[line_table_idx]
-    if source_buffer.spectrum_type[channel_idx] == SPECTRUM_CONTINUOUS_TRAPEZOID:
+    if source_buffer.spectrum_type[channel_idx] == SpectrumType.CONTINUOUS_TRAPEZOID:
         e_high = source_buffer.line_grid_high[line_table_idx]
         r_val = source_buffer.line_pdf_ratio[line_table_idx]
         u_trap = rng_ctx.next_double(rng_ctx.state_addr)
@@ -90,31 +91,26 @@ def _sample_channel_energy(
 
 @njit(cache=True, inline='always')
 def _sample_voxel_position(
+    source_buffer: SourceBuffer,
+    channel_idx: Index,
     flat_voxel_idx: Index,
-    shape_y: Index,
-    shape_z: Index,
-    voxel_size: Float,
-    half_size_x: Float,
-    half_size_y: Float,
-    half_size_z: Float,
-    local_to_global: NDArray[Float],
-    source_idx: Index,
     rng_ctx: RNGContext,
-    cell_jitter_x: Float = Float(0.0),
-    cell_jitter_y: Float = Float(0.0),
 ) -> Tuple[Float, Float, Float]:
     """
-    Вычисляет глобальные координаты рождения частицы по плоскому индексу вокселя.
+    Вычисляет глобальные координаты рождения частицы для канала channel_idx по плоскому индексу вокселя.
 
     Раскладывает flat_voxel_idx в (idx_x, idx_y, idx_z), находит левый нижний угол вокселя
     idx * voxel_size - half_size и добавляет равномерное смещение в [0.0, voxel_size)
     (строго согласовано с геометрией WoodcockVoxelVolume без сдвига на полвокселя).
     При voxel_size == 0.0 и нулевом cell_jitter читает мировой сдвиг (m03, m13, m23) напрямую.
     """
+    voxel_size = source_buffer.voxel_size[channel_idx]
+    local_to_global = source_buffer.local_to_global
+
     if voxel_size > 0.0:
         u_flat = np.uint32(flat_voxel_idx)
-        u_ny = np.uint32(shape_y)
-        u_nz = np.uint32(shape_z)
+        u_ny = np.uint32(source_buffer.grid_shape[channel_idx, 1])
+        u_nz = np.uint32(source_buffer.grid_shape[channel_idx, 2])
         u_ny_nz = u_ny * u_nz
         idx_x = u_flat // u_ny_nz
         rem = u_flat - idx_x * u_ny_nz
@@ -125,37 +121,66 @@ def _sample_voxel_position(
         rand_uy = rng_ctx.next_double(rng_ctx.state_addr)
         rand_uz = rng_ctx.next_double(rng_ctx.state_addr)
 
-        local_x = Float(idx_x) * voxel_size - half_size_x + rand_ux * voxel_size
-        local_y = Float(idx_y) * voxel_size - half_size_y + rand_uy * voxel_size
-        local_z = Float(idx_z) * voxel_size - half_size_z + rand_uz * voxel_size
+        local_x = Float(idx_x) * voxel_size - source_buffer.half_size[channel_idx, 0] + rand_ux * voxel_size
+        local_y = Float(idx_y) * voxel_size - source_buffer.half_size[channel_idx, 1] + rand_uy * voxel_size
+        local_z = Float(idx_z) * voxel_size - source_buffer.half_size[channel_idx, 2] + rand_uz * voxel_size
     else:
+        cell_jitter_x = source_buffer.cell_jitter[channel_idx, 0]
+        cell_jitter_y = source_buffer.cell_jitter[channel_idx, 1]
         if cell_jitter_x <= 0.0 and cell_jitter_y <= 0.0:
             return (
-                Float(local_to_global[source_idx, 0, 3]),
-                Float(local_to_global[source_idx, 1, 3]),
-                Float(local_to_global[source_idx, 2, 3]),
+                Float(local_to_global[channel_idx, 0, 3]),
+                Float(local_to_global[channel_idx, 1, 3]),
+                Float(local_to_global[channel_idx, 2, 3]),
             )
         local_x = (rng_ctx.next_double(rng_ctx.state_addr) - 0.5) * cell_jitter_x if cell_jitter_x > 0.0 else Float(0.0)
         local_y = (rng_ctx.next_double(rng_ctx.state_addr) - 0.5) * cell_jitter_y if cell_jitter_y > 0.0 else Float(0.0)
         local_z = Float(0.0)
 
-    m00 = local_to_global[source_idx, 0, 0]
-    m01 = local_to_global[source_idx, 0, 1]
-    m02 = local_to_global[source_idx, 0, 2]
-    m03 = local_to_global[source_idx, 0, 3]
-    m10 = local_to_global[source_idx, 1, 0]
-    m11 = local_to_global[source_idx, 1, 1]
-    m12 = local_to_global[source_idx, 1, 2]
-    m13 = local_to_global[source_idx, 1, 3]
-    m20 = local_to_global[source_idx, 2, 0]
-    m21 = local_to_global[source_idx, 2, 1]
-    m22 = local_to_global[source_idx, 2, 2]
-    m23 = local_to_global[source_idx, 2, 3]
+    m00 = local_to_global[channel_idx, 0, 0]
+    m01 = local_to_global[channel_idx, 0, 1]
+    m02 = local_to_global[channel_idx, 0, 2]
+    m03 = local_to_global[channel_idx, 0, 3]
+    m10 = local_to_global[channel_idx, 1, 0]
+    m11 = local_to_global[channel_idx, 1, 1]
+    m12 = local_to_global[channel_idx, 1, 2]
+    m13 = local_to_global[channel_idx, 1, 3]
+    m20 = local_to_global[channel_idx, 2, 0]
+    m21 = local_to_global[channel_idx, 2, 1]
+    m22 = local_to_global[channel_idx, 2, 2]
+    m23 = local_to_global[channel_idx, 2, 3]
 
     global_x = m00 * local_x + m01 * local_y + m02 * local_z + m03
     global_y = m10 * local_x + m11 * local_y + m12 * local_z + m13
     global_z = m20 * local_x + m21 * local_y + m22 * local_z + m23
     return Float(global_x), Float(global_y), Float(global_z)
+
+
+@njit(cache=True, inline='always')
+def _sample_channel_position(
+    source_buffer: SourceBuffer,
+    channel_idx: Index,
+    rng_ctx: RNGContext,
+) -> Tuple[Float, Float, Float]:
+    """
+    Разыгрывает глобальную координату рождения частицы для канала channel_idx:
+    для SpatialType.POINT — точечное/ячейковое положение без обращения к воксельным таблицам,
+    для SpatialType.VOXEL — выбор активного вокселя методом Воза и равномерное смещение внутри вокселя.
+    """
+    if source_buffer.spatial_type[channel_idx] == SpatialType.POINT:
+        return _sample_voxel_position(source_buffer, channel_idx, Index(0), rng_ctx)
+
+    vox_offset = source_buffer.voxel_range[channel_idx, 0]
+    vox_count = source_buffer.voxel_range[channel_idx, 1] - vox_offset
+    vox_table_idx = _sample_alias(
+        source_buffer.voxel_prob,
+        source_buffer.voxel_alias,
+        vox_offset,
+        vox_count,
+        rng_ctx,
+    )
+    flat_voxel_idx = Index(source_buffer.voxel_index[vox_table_idx])
+    return _sample_voxel_position(source_buffer, channel_idx, flat_voxel_idx, rng_ctx)
 
 
 @njit(cache=True, inline='always')
@@ -290,55 +315,11 @@ def _emit_primary_from_source(
 
     Порядок потребления случайных чисел из rng_ctx:
     1) выбор энергии из дискретного или непрерывного спектра (_sample_channel_energy);
-    2) для SPATIAL_VOXEL — выбор активного вокселя методом алиасов Воза (_sample_alias) и
-       равномерное смещение внутри вокселя; для SPATIAL_POINT — прямое чтение (m03, m13, m23)
-       при нулевом cell_jitter или смещение в [-dx/2, +dx/2] x [-dy/2, +dy/2];
+    2) выбор мировой позиции рождения (_sample_channel_position);
     3) изотропное или конусное направление вылета (_sample_cone_direction).
     """
     energy_val = _sample_channel_energy(source_buffer, channel_idx, rng_ctx)
-
-    if source_buffer.spatial_type[channel_idx] == SPATIAL_POINT:
-        pos_x, pos_y, pos_z = _sample_voxel_position(
-            Index(0),
-            Index(0),
-            Index(0),
-            Float(0.0),
-            Float(0.0),
-            Float(0.0),
-            Float(0.0),
-            source_buffer.local_to_global,
-            channel_idx,
-            rng_ctx,
-            source_buffer.cell_jitter[channel_idx, 0],
-            source_buffer.cell_jitter[channel_idx, 1],
-        )
-    else:
-        vox_offset = source_buffer.voxel_range[channel_idx, 0]
-        vox_count = source_buffer.voxel_range[channel_idx, 1] - vox_offset
-        vox_table_idx = _sample_alias(
-            source_buffer.voxel_prob,
-            source_buffer.voxel_alias,
-            vox_offset,
-            vox_count,
-            rng_ctx,
-        )
-        flat_voxel_idx = Index(source_buffer.voxel_index[vox_table_idx])
-
-        pos_x, pos_y, pos_z = _sample_voxel_position(
-            flat_voxel_idx,
-            source_buffer.grid_shape[channel_idx, 1],
-            source_buffer.grid_shape[channel_idx, 2],
-            source_buffer.voxel_size[channel_idx],
-            source_buffer.half_size[channel_idx, 0],
-            source_buffer.half_size[channel_idx, 1],
-            source_buffer.half_size[channel_idx, 2],
-            source_buffer.local_to_global,
-            channel_idx,
-            rng_ctx,
-            Float(0.0),
-            Float(0.0),
-        )
-
+    pos_x, pos_y, pos_z = _sample_channel_position(source_buffer, channel_idx, rng_ctx)
     dir_x, dir_y, dir_z = _sample_cone_direction(
         source_buffer.cos_theta_min[channel_idx],
         source_buffer.local_to_global,
@@ -360,6 +341,56 @@ def _emit_primary_from_source(
         dir_y,
         dir_z,
     )
+
+
+@njit(cache=True, inline='always')
+def _compute_total_intensity(
+    initial_rate: NDArray[Float],
+    decay_constant: NDArray[Float],
+    time_val: Float,
+) -> Float:
+    """Вычисляет суммарную интенсивность суперпозиции каналов излучения в момент времени time_val."""
+    num_channels = Index(initial_rate.shape[0])
+    total_rate = Float(0.0)
+    for ch_i in range(num_channels):
+        act_0 = initial_rate[ch_i]
+        lam = decay_constant[ch_i]
+        if lam > 0.0 and time_val != 0.0:
+            total_rate = Float(total_rate + act_0 * math.exp(-lam * time_val))
+        else:
+            total_rate = Float(total_rate + act_0)
+    return total_rate
+
+
+@njit(cache=True, inline='always')
+def _select_thinning_channel(
+    initial_rate: NDArray[Float],
+    decay_constant: NDArray[Float],
+    candidate_t: Float,
+    threshold_x: Float,
+) -> Tuple[Index, Float]:
+    """
+    Проверяет условие принятия кандидата времени candidate_t при прореживании Льюиса–Шедлера
+    и выбирает индекс сработавшего канала эмиссии (или -1 при отвержении), возвращая также
+    полную текущую интенсивность total_act_t.
+    """
+    num_channels = Index(initial_rate.shape[0])
+    accepted_channel = Index(-1)
+    total_act_t = Float(0.0)
+    rem_threshold = threshold_x
+    for ch_i in range(num_channels):
+        act_0 = initial_rate[ch_i]
+        lam = decay_constant[ch_i]
+        if lam > 0.0 and candidate_t != 0.0:
+            act_t = Float(act_0 * math.exp(-lam * candidate_t))
+        else:
+            act_t = act_0
+        total_act_t = Float(total_act_t + act_t)
+        rem_threshold = Float(rem_threshold - act_t)
+        if rem_threshold < 0.0:
+            accepted_channel = Index(ch_i)
+            break
+    return accepted_channel, total_act_t
 
 
 @njit(cache=True)
@@ -402,15 +433,7 @@ def inject_poisson_sources_kernel(
     initial_rate = source_buffer.initial_emission_rate
     decay_constant = source_buffer.decay_constant
 
-    a_max = Float(0.0)
-    for ch_i in range(num_channels):
-        act_0 = initial_rate[ch_i]
-        lam = decay_constant[ch_i]
-        if lam > 0.0 and t_ref != 0.0:
-            a_max = Float(a_max + act_0 * math.exp(-lam * t_ref))
-        else:
-            a_max = Float(a_max + act_0)
-
+    a_max = _compute_total_intensity(initial_rate, decay_constant, t_ref)
     if a_max <= 0.0 or not math.isfinite(a_max):
         return Index(0), slot_cursor, current_t_last, Float(np.inf)
 
@@ -450,20 +473,12 @@ def inject_poisson_sources_kernel(
         rand_u2 = next_double(state_addr)
         threshold_x = Float(rand_u2 * a_max)
 
-        accepted_channel = Index(-1)
-        total_act_t = Float(0.0)
-        for ch_i in range(num_channels):
-            act_0 = initial_rate[ch_i]
-            lam = decay_constant[ch_i]
-            if lam > 0.0 and candidate_t != 0.0:
-                act_t = Float(act_0 * math.exp(-lam * candidate_t))
-            else:
-                act_t = act_0
-            total_act_t = Float(total_act_t + act_t)
-            threshold_x = Float(threshold_x - act_t)
-            if threshold_x < 0.0:
-                accepted_channel = Index(ch_i)
-                break
+        accepted_channel, total_act_t = _select_thinning_channel(
+            initial_rate,
+            decay_constant,
+            candidate_t,
+            threshold_x,
+        )
 
         if accepted_channel < Index(0):
             if total_act_t <= 1e-30:
@@ -489,6 +504,71 @@ def inject_poisson_sources_kernel(
 
     count_array[0] = Index(next_id)
     return injected, slot_cursor, current_t_last, current_pending
+
+
+@njit(cache=True, inline='always')
+def _sample_secondary_emission_time(
+    act_buffer: SecondaryActivationBuffer,
+    act_idx: Index,
+    relaxation_bank: AtomicRelaxationBank,
+    rng_ctx: RNGContext,
+) -> Time:
+    """
+    Разыгрывает мировое время испускания вторичной частицы для точки активации act_idx:
+        t_emit = t_act - ln(1 - u) / lambda_sec(Z, shell_idx).
+    При отсутствии задержки релаксации (shell_idx < 0 или lambda_sec <= 0) возвращает t_act без вызова ГСЧ.
+    """
+    t_act = act_buffer.activation_time[act_idx]
+    target_z = Index(act_buffer.target_z[act_idx])
+    local_shell = act_buffer.shell_idx[act_idx]
+
+    decay_lambda = Float(0.0)
+    if (
+        local_shell >= Index(0)
+        and target_z > Index(0)
+        and target_z <= Index(MAX_RELAXATION_Z)
+        and relaxation_bank.shell_offsets.shape[0] > target_z + 1
+    ):
+        s_start = relaxation_bank.shell_offsets[target_z]
+        s_end = relaxation_bank.shell_offsets[target_z + 1]
+        global_shell = Index(s_start + local_shell)
+        if global_shell < s_end:
+            decay_lambda = relaxation_bank.decay_constant[global_shell]
+
+    if decay_lambda > 0.0 and math.isfinite(decay_lambda):
+        rand_u = rng_ctx.next_double(rng_ctx.state_addr)
+        delta_t = -math.log(1.0 - rand_u) / decay_lambda
+        return Time(t_act + delta_t)
+    return Time(t_act)
+
+
+@njit(cache=True, inline='always')
+def _compact_activation_buffer_tail(
+    act_buffer: SecondaryActivationBuffer,
+    start_idx: Index,
+    total_count: Index,
+) -> None:
+    """Сдвигает невыгруженный хвост записей [start_idx .. total_count) в начало SecondaryActivationBuffer."""
+    if start_idx < total_count:
+        remaining = Index(total_count - start_idx)
+        for dst_i in range(remaining):
+            src_i = start_idx + dst_i
+            act_buffer.position.x[dst_i] = act_buffer.position.x[src_i]
+            act_buffer.position.y[dst_i] = act_buffer.position.y[src_i]
+            act_buffer.position.z[dst_i] = act_buffer.position.z[src_i]
+            act_buffer.direction.x[dst_i] = act_buffer.direction.x[src_i]
+            act_buffer.direction.y[dst_i] = act_buffer.direction.y[src_i]
+            act_buffer.direction.z[dst_i] = act_buffer.direction.z[src_i]
+            act_buffer.activation_time[dst_i] = act_buffer.activation_time[src_i]
+            act_buffer.energy[dst_i] = act_buffer.energy[src_i]
+            act_buffer.parent_ID[dst_i] = act_buffer.parent_ID[src_i]
+            act_buffer.species[dst_i] = act_buffer.species[src_i]
+            act_buffer.target_z[dst_i] = act_buffer.target_z[src_i]
+            act_buffer.shell_idx[dst_i] = act_buffer.shell_idx[src_i]
+            act_buffer.process_id[dst_i] = act_buffer.process_id[src_i]
+        act_buffer.cursor[0] = remaining
+    else:
+        act_buffer.cursor[0] = Index(0)
 
 
 @njit(cache=True)
@@ -524,9 +604,6 @@ def inject_secondary_sources_kernel(
     capacity = Index(is_active.shape[0])
     next_id = ID(count_array[0])
 
-    next_double = rng_ctx.next_double
-    state_addr = rng_ctx.state_addr
-
     has_max_particles = max_particles >= Index(0)
     injected = Index(0)
     act_idx = Index(0)
@@ -540,30 +617,7 @@ def inject_secondary_sources_kernel(
         if slot_cursor >= capacity:
             break
 
-        t_act = act_buffer.activation_time[act_idx]
-        target_z = Index(act_buffer.target_z[act_idx])
-        local_shell = act_buffer.shell_idx[act_idx]
-
-        decay_lambda = Float(0.0)
-        if (
-            local_shell >= Index(0)
-            and target_z > Index(0)
-            and target_z <= Index(MAX_RELAXATION_Z)
-            and relaxation_bank.shell_offsets.shape[0] > target_z + 1
-        ):
-            s_start = relaxation_bank.shell_offsets[target_z]
-            s_end = relaxation_bank.shell_offsets[target_z + 1]
-            global_shell = Index(s_start + local_shell)
-            if global_shell < s_end:
-                decay_lambda = relaxation_bank.decay_constant[global_shell]
-
-        if decay_lambda > 0.0 and math.isfinite(decay_lambda):
-            rand_u = next_double(state_addr)
-            delta_t = -math.log(1.0 - rand_u) / decay_lambda
-            t_emit = Time(t_act + delta_t)
-        else:
-            t_emit = Time(t_act)
-
+        t_emit = _sample_secondary_emission_time(act_buffer, act_idx, relaxation_bank, rng_ctx)
         if t_emit >= stop_time or not math.isfinite(t_emit):
             act_idx += Index(1)
             continue
@@ -591,27 +645,7 @@ def inject_secondary_sources_kernel(
         injected += Index(1)
         act_idx += Index(1)
 
-    if act_idx < num_activations:
-        remaining = Index(num_activations - act_idx)
-        for dst_i in range(remaining):
-            src_i = act_idx + dst_i
-            act_buffer.position.x[dst_i] = act_buffer.position.x[src_i]
-            act_buffer.position.y[dst_i] = act_buffer.position.y[src_i]
-            act_buffer.position.z[dst_i] = act_buffer.position.z[src_i]
-            act_buffer.direction.x[dst_i] = act_buffer.direction.x[src_i]
-            act_buffer.direction.y[dst_i] = act_buffer.direction.y[src_i]
-            act_buffer.direction.z[dst_i] = act_buffer.direction.z[src_i]
-            act_buffer.activation_time[dst_i] = act_buffer.activation_time[src_i]
-            act_buffer.energy[dst_i] = act_buffer.energy[src_i]
-            act_buffer.parent_ID[dst_i] = act_buffer.parent_ID[src_i]
-            act_buffer.species[dst_i] = act_buffer.species[src_i]
-            act_buffer.target_z[dst_i] = act_buffer.target_z[src_i]
-            act_buffer.shell_idx[dst_i] = act_buffer.shell_idx[src_i]
-            act_buffer.process_id[dst_i] = act_buffer.process_id[src_i]
-        act_buffer.cursor[0] = remaining
-    else:
-        act_buffer.cursor[0] = Index(0)
-
+    _compact_activation_buffer_tail(act_buffer, act_idx, num_activations)
     count_array[0] = Index(next_id)
     return injected, slot_cursor
 
@@ -620,10 +654,15 @@ __all__ = [
     "_sample_alias",
     "_sample_channel_energy",
     "_sample_voxel_position",
+    "_sample_channel_position",
     "_sample_isotropic_direction",
     "_sample_cone_direction",
     "_write_primary",
     "_emit_primary_from_source",
+    "_compute_total_intensity",
+    "_select_thinning_channel",
+    "_sample_secondary_emission_time",
+    "_compact_activation_buffer_tail",
     "inject_poisson_sources_kernel",
     "inject_secondary_sources_kernel",
 ]

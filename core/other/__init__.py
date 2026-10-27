@@ -13,7 +13,9 @@ from core.other.typing_definitions import (
     Index,
     ID,
     ProcessID,
+    ProcessType,
     Species,
+    ParticleSpecies,
     Charge,
 )
 from core.other.transform import Matrix3x3DType, Vector3DDType, TransformDType
@@ -29,7 +31,9 @@ __all__ = [
     'Index',
     'ID',
     'ProcessID',
+    'ProcessType',
     'Species',
+    'ParticleSpecies',
     'Charge',
     'Matrix3x3DType',
     'Vector3DDType',

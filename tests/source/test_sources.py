@@ -41,7 +41,7 @@ import core.source as source_pkg
 from core.source.alias_tables import build_alias_tables
 from core.source.primary_source import PrimarySource
 from core.source.secondary_source import SecondarySource
-from core.source.source_buffer import SourceBuffer
+from core.source.source_buffer import SourceBuffer, SpatialType, SpectrumType
 from core.source.source_compiler import SourceCompiler
 from core.source.source_kernels import (
     _emit_primary_from_source,
@@ -63,8 +63,6 @@ from core.source.sources import (
     PointDistribution,
     RadiationChannel,
     Source,
-    SpatialType,
-    SpectrumType,
     VoxelDistribution,
 )
 from core.transport.propagator import ParticlePropagator
@@ -108,14 +106,9 @@ def _batch_sample_isotropic_directions_kernel(
 
 @njit(cache=True)
 def _batch_sample_single_voxel_positions_kernel(
+    source_buffer: SourceBuffer,
+    channel_idx: Index,
     flat_idx: Index,
-    ny: Index,
-    nz: Index,
-    voxel_size: Length,
-    half_x: Length,
-    half_y: Length,
-    half_z: Length,
-    local_to_global: NDArray[Float],
     num_samples: int,
     rng_context: RNGContext,
 ) -> tuple[NDArray[Length], NDArray[Length], NDArray[Length]]:
@@ -125,18 +118,10 @@ def _batch_sample_single_voxel_positions_kernel(
     out_z = np.empty(num_samples, dtype=Length)
     for sample_idx in range(num_samples):
         px, py, pz = _sample_voxel_position(
+            source_buffer,
+            channel_idx,
             flat_idx,
-            ny,
-            nz,
-            voxel_size,
-            half_x,
-            half_y,
-            half_z,
-            local_to_global,
-            Index(0),
             rng_context,
-            Length(0.0),
-            Length(0.0),
         )
         out_x[sample_idx] = px
         out_y[sample_idx] = py
@@ -628,20 +613,16 @@ class TestSourcesAndSourceBuffer(unittest.TestCase):
         # Активен угловой воксель (3, 2, 1) в сетке (4, 4, 4) с voxel_size = 2.0 мм:
         # half_size = (4.0, 4.0, 4.0); границы вокселя:
         # X in [2.0, 4.0], Y in [0.0, 2.0], Z in [-2.0, 0.0]
-        ny, nz = Index(4), Index(4)
         flat_idx = Index(3 * 16 + 2 * 4 + 1)
         voxel_sz = Length(2.0)
-        identity_mat = np.eye(4, dtype=Float).reshape(1, 4, 4)
+        corner_dist = np.zeros((4, 4, 4), dtype=Float)
+        corner_dist[3, 2, 1] = 1.0
+        corner_sbuf = SourceCompiler.compile([Source.from_voxels(corner_dist, voxel_size=voxel_sz)])
 
         px, py, pz = _batch_sample_single_voxel_positions_kernel(
+            corner_sbuf,
+            Index(0),
             flat_idx,
-            ny,
-            nz,
-            voxel_sz,
-            Length(4.0),
-            Length(4.0),
-            Length(4.0),
-            identity_mat,
             num_samples,
             rng_ctx,
         )
@@ -944,24 +925,12 @@ class TestSourcesAndSourceBuffer(unittest.TestCase):
         rng_b = np.random.default_rng(987654)
         ctx_b = RNGContext.from_numpy_rng(rng_b)
         flat_idx = Index(sbuf.voxel_index[0])
-        shape_y = Index(sbuf.grid_shape[0, 1])
-        shape_z = Index(sbuf.grid_shape[0, 2])
-        vox_sz = Float(sbuf.voxel_size[0])
-        hx = Float(sbuf.half_size[0, 0])
-        hy = Float(sbuf.half_size[0, 1])
-        hz = Float(sbuf.half_size[0, 2])
 
         for idx in range(num_samples):
             px, py, pz = _sample_voxel_position(
-                flat_idx,
-                shape_y,
-                shape_z,
-                vox_sz,
-                hx,
-                hy,
-                hz,
-                sbuf.local_to_global,
+                sbuf,
                 Index(0),
+                flat_idx,
                 ctx_b,
             )
             dx, dy, dz = _sample_cone_direction(
@@ -1877,7 +1846,10 @@ class TestPoissonSourceStreamPhase5(unittest.TestCase):
            свободных слотов в ParticleBank и последующая полная разрядка.
         3. Сохранение parent_ID и выдача уникальных particle_ID из bank.count_array[0].
         """
-        relax_bank = PhysicsCompiler()._build_atomic_relaxation_bank([PhotoelectricEffect()])
+        relax_bank = PhysicsCompiler()._build_atomic_relaxation_bank(
+            [PhotoelectricEffect()],
+            unique_atomic_numbers=(82,),
+        )
         act_buf = SecondaryActivationBuffer.allocate(capacity=10, enable_atomic_relaxation=True)
 
         # Записываем 5 точек активации (K-оболочка свинца Z=82, local_shell=0)
@@ -1942,7 +1914,10 @@ class TestPoissonSourceStreamPhase5(unittest.TestCase):
         self.assertTrue(issubclass(PrimarySource, ParticleSource))
         self.assertTrue(issubclass(SecondarySource, ParticleSource))
 
-        relax_bank = PhysicsCompiler()._build_atomic_relaxation_bank([PhotoelectricEffect()])
+        relax_bank = PhysicsCompiler()._build_atomic_relaxation_bank(
+            [PhotoelectricEffect()],
+            unique_atomic_numbers=(82,),
+        )
         act_buf = SecondaryActivationBuffer.allocate(capacity=8, enable_atomic_relaxation=True)
         for idx in range(5):
             act_buf.position.x[idx] = Float(idx)

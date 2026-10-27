@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass, field
-from enum import IntEnum
 import math
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Tuple
 
@@ -40,28 +39,8 @@ if TYPE_CHECKING:
     from core.physics.interaction_buffers import RNGContext
 
 
-class SpatialType(IntEnum):
-    """Код типа пространственного распределения первичного источника в SourceBuffer."""
-
-    POINT = 0
-    VOXEL = 1
-    ANALYTIC = 2
-
-
-class SpectrumType(IntEnum):
-    """Код типа энергетического спектра канала излучения в SourceBuffer."""
-
-    DISCRETE = 0
-    CONTINUOUS_TRAPEZOID = 1
-
-
 class SpatialDistribution(abc.ABC):
     """Абстрактный базовый класс пространственного распределения источника в локальной СК."""
-
-    @property
-    @abc.abstractmethod
-    def spatial_type(self) -> SpatialType:
-        """Код типа пространственной модели."""
 
     @property
     @abc.abstractmethod
@@ -92,10 +71,6 @@ class PointDistribution(SpatialDistribution):
                 f"Значения cell_jitter должны быть конечными и неотрицательными (>= 0.0), получено {self.cell_jitter}."
             )
         object.__setattr__(self, "cell_jitter", (jitter_x, jitter_y))
-
-    @property
-    def spatial_type(self) -> SpatialType:
-        return SpatialType.POINT
 
     @property
     def size(self) -> Vector3D:
@@ -182,10 +157,6 @@ class VoxelDistribution(SpatialDistribution):
         object.__setattr__(self, "_size", size_vec)
 
     @property
-    def spatial_type(self) -> SpatialType:
-        return SpatialType.VOXEL
-
-    @property
     def size(self) -> Vector3D:
         return self._size
 
@@ -216,11 +187,6 @@ class SpectralLine:
 
 class EnergySpectrum(abc.ABC):
     """Абстрактный базовый класс энергетического спектра канала излучения."""
-
-    @property
-    @abc.abstractmethod
-    def spectrum_type(self) -> SpectrumType:
-        """Код типа спектра для SourceBuffer."""
 
     @property
     @abc.abstractmethod
@@ -336,10 +302,6 @@ class DiscreteSpectrum(EnergySpectrum):
         )
 
     @property
-    def spectrum_type(self) -> SpectrumType:
-        return SpectrumType.DISCRETE
-
-    @property
     def energy_bounds(self) -> Tuple[Float, Float]:
         return Float(np.min(self.line_energy)), Float(np.max(self.line_energy))
 
@@ -414,10 +376,6 @@ class ContinuousSpectrum(EnergySpectrum):
         object.__setattr__(self, "bin_pdf_ratio", pdf_ratio_contig)
         object.__setattr__(self, "bin_prob", prob_table)
         object.__setattr__(self, "bin_alias", alias_table)
-
-    @property
-    def spectrum_type(self) -> SpectrumType:
-        return SpectrumType.CONTINUOUS_TRAPEZOID
 
     @property
     def energy_bounds(self) -> Tuple[Float, Float]:
@@ -741,8 +699,6 @@ class ParticleSource(abc.ABC):
 
 __all__ = [
     "ParticleSpecies",
-    "SpatialType",
-    "SpectrumType",
     "SpatialDistribution",
     "PointDistribution",
     "VoxelDistribution",

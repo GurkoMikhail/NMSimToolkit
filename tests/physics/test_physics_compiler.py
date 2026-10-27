@@ -763,9 +763,20 @@ def test_build_atomic_relaxation_bank_and_vose_sampling() -> None:
     scene.add_child(world_vol)
 
     physics_buf = compiler.compile_scene(scene, processes)
-    rel_bank = physics_buf.relaxation_bank
+    scene_rel_bank = physics_buf.relaxation_bank
 
-    # Структурные и физические инварианты скомпилированного AtomicRelaxationBank по всем Z = 1..92
+    # 1. В compile_scene AtomicRelaxationBank формируется строго по уникальным элементам сцены (Pb, Z=82):
+    # shell_offsets сохраняет длину 102 для прямой O(1) индексации shell_offsets[Z], но заполнен только Z=82 (9 оболочек)
+    assert scene_rel_bank.shell_offsets.dtype == Index
+    assert scene_rel_bank.shell_offsets.shape == (102,)
+    assert int(scene_rel_bank.shell_offsets[-1]) == 9
+    assert int(scene_rel_bank.shell_offsets[83] - scene_rel_bank.shell_offsets[82]) == 9
+    for z_idx in range(101):
+        if z_idx != 82:
+            assert int(scene_rel_bank.shell_offsets[z_idx + 1] - scene_rel_bank.shell_offsets[z_idx]) == 0
+
+    # 2. Структурные и физические инварианты полного AtomicRelaxationBank по всем Z = 1..92
+    rel_bank = compiler._build_atomic_relaxation_bank(processes)
     assert rel_bank.shell_offsets.dtype == Index
     assert rel_bank.shell_offsets.shape == (102,)
     assert int(rel_bank.shell_offsets[0]) == 0

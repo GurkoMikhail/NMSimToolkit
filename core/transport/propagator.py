@@ -113,9 +113,9 @@ class ParticlePropagator:
         )
 
         # 4. Уплотнение потока (Stream Compaction) и диспетчеризация по ядрам процессов
+        active_process_ids = self.transport_buffer.process_ids[active_indices]
         for col_idx, process in enumerate(self.processes):
-            mask = self.transport_buffer.process_ids[active_indices] == process.process_id
-            target_indices = active_indices[mask]
+            target_indices = active_indices[active_process_ids == process.process_id]
 
             if target_indices.size > 0:
                 process.apply(

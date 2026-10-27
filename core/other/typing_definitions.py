@@ -31,6 +31,15 @@ class ParticleSpecies(IntEnum):
     ALPHA = 3
 
 
+class ProcessType(IntEnum):
+    """Канонические коды физических процессов взаимодействия в расчётном ядре."""
+
+    PHOTOELECTRIC = 0
+    COMPTON = 1
+    COHERENT = 2
+    PAIR_PRODUCTION = 3
+
+
 ShapeID: TypeAlias = np.int32
 
 # Сигнатура CFUNCTYPE для функций пространственного поиска материала Вудкока
@@ -61,6 +70,7 @@ __all__ = [
     "ID",
     "Species",
     "ParticleSpecies",
+    "ProcessType",
     "Index",
     "ShapeID",
     "CMaterialFunc",
