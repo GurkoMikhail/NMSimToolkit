@@ -63,22 +63,38 @@ class TelemetryBuffer(Protocol):
     def flush(self, clear: bool = True) -> TelemetryPayload: ...
 
 
-class RNGContext(NamedTuple):
+class _RNGContextTuple(NamedTuple):
     """
-    Явная CFFI-обертка над указателем состояния генератора случайных чисел для передачи в Numba-кернелы.
+    Базовый кортеж CFFI-указателей состояния генератора случайных чисел для диспетчеризации в Numba.
     """
     next_double: Any
     state_addr: int
 
+
+class RNGContext(_RNGContextTuple):
+    """
+    Явная CFFI-обертка над указателем состояния генератора случайных чисел для передачи в Numba-кернелы.
+
+    Удерживает сильные ссылки на исходный экземпляр ``np.random.Generator`` и его ``bit_generator``,
+    предотвращая преждевременное освобождение C-структуры состояния сборщиком мусора Python
+    при передаче временного генератора ``RNGContext.from_numpy_rng(np.random.default_rng(seed))``.
+    """
+    _rng_reference: np.random.Generator | None
+    _bit_generator_reference: Any
+
     @classmethod
     def from_numpy_rng(cls, rng: np.random.Generator) -> 'RNGContext':
         """
-        Извлекает указатель CFFI next_double и адрес состояния из генератора NumPy.
+        Извлекает указатель CFFI next_double и адрес состояния из генератора NumPy,
+        сохраняя сильную ссылку на генератор внутри контекста.
         """
-        return cls(
+        context = cls(
             next_double=rng.bit_generator.cffi.next_double,
-            state_addr=rng.bit_generator.cffi.state_address
+            state_addr=rng.bit_generator.cffi.state_address,
         )
+        context._rng_reference = rng
+        context._bit_generator_reference = rng.bit_generator
+        return context
 
 
 class InteractionBuffer(NamedTuple):

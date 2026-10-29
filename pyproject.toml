@@ -50,6 +50,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "verification: физико-математическая верификация ядра (EXP-01..EXP-07) и тесты многосидовой статистической устойчивости",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning"

@@ -1,0 +1,3919 @@
+{
+  "passed": true,
+  "quick": false,
+  "num_binning_points": 50000,
+  "num_mc_samples": 200000,
+  "max_nist_xcom_rel_error": 0.0018128188164785444,
+  "max_binning_rel_error": 0.0,
+  "total_binning_row_mismatches": 0,
+  "max_edge_continuity_rel_error": 0.0,
+  "max_edge_delta_vs_node_rel_error": 0.00016445223685145776,
+  "max_external_jump_ratio_rel_error": 0.0005042836780182112,
+  "lead_k_jump_ratio": 4.732356340451354,
+  "iodine_k_jump_ratio": 6.039845842896104,
+  "tungsten_k_jump_ratio": 5.099110280642967,
+  "max_bragg_rel_error": 5.062015194473117e-15,
+  "max_bragg_internodal_rel_error": 0.001187898961426613,
+  "max_interpolation_scheme_diff": 0.000301902924806724,
+  "max_sampling_z_score": 3.3836326983656586,
+  "max_sampling_abs_diff": 0.002989457283727015,
+  "sampling_holm_bonferroni_passed": true,
+  "min_sampling_chi2_pvalue": 0.0085694531111614,
+  "reference_standard_types": {
+    "nist_xcom_mac_anchor": "A",
+    "edge_jump_mcmaster_anchor": "A",
+    "o1_log_binning_vs_searchsorted": "C",
+    "edge_right_continuity_and_relaxation_db": "C",
+    "bragg_additivity_nodal_and_internodal": "B",
+    "target_z_sampling_multinomial": "B"
+  },
+  "model_limitations": [
+    "Процесс рождения электрон-позитронных пар (PairProduction, порог 1.022 МэВ) представлен классом-заглушкой и не включен в сумму макроскопических сечений MaterialBank; при E > 1.022 МэВ полный коэффициент ослабления учитывает только фотоэффект, комптоновское и когерентное рассеяние.",
+    "В многоэлементных средах парциальные доли выбора мишени ElementCSR линейно интерполируются по ln(E) между узлами объединенной сетки, что дает методическое расхождение <= 3.1e-4 относительно точной кусочно-степенной (log-log) интерполяции парциальных сечений Брэгга."
+  ],
+  "nist_xcom_metrics": [
+    {
+      "material_label": "Water",
+      "material_name": "Water, Liquid",
+      "photon_energy": 0.015,
+      "mac_kernel": 2.679933710536845e-20,
+      "mac_nist_xcom": 2.6804415086820007e-20,
+      "rel_error": 0.00018944571016046274,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "material_name": "Water, Liquid",
+      "photon_energy": 0.03,
+      "mac_kernel": 6.016703282463314e-21,
+      "mac_nist_xcom": 6.017775437304001e-21,
+      "rel_error": 0.000178164647693754,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "material_name": "Water, Liquid",
+      "photon_energy": 0.08,
+      "mac_kernel": 2.9423467512309924e-21,
+      "mac_nist_xcom": 2.943198476658001e-21,
+      "rel_error": 0.0002893876963321849,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "material_name": "Water, Liquid",
+      "photon_energy": 0.1405,
+      "mac_kernel": 2.4571464349880614e-21,
+      "mac_nist_xcom": 2.4609433098240005e-21,
+      "rel_error": 0.0015428534337959346,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "material_name": "Water, Liquid",
+      "photon_energy": 0.511,
+      "mac_kernel": 1.537438635371889e-21,
+      "mac_nist_xcom": 1.5374486979864005e-21,
+      "rel_error": 6.545008314551283e-06,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "material_name": "Water, Liquid",
+      "photon_energy": 1.0,
+      "mac_kernel": 1.1330650510282218e-21,
+      "mac_nist_xcom": 1.1330593155648003e-21,
+      "rel_error": 5.061926893659693e-06,
+      "passed": true
+    },
+    {
+      "material_label": "Air",
+      "material_name": "Air, Dry (near sea level)",
+      "photon_energy": 0.015,
+      "mac_kernel": 2.5856334901987493e-20,
+      "mac_nist_xcom": 2.5859130872760008e-20,
+      "rel_error": 0.00010812315333694328,
+      "passed": true
+    },
+    {
+      "material_label": "Air",
+      "material_name": "Air, Dry (near sea level)",
+      "photon_energy": 0.03,
+      "mac_kernel": 5.669137058396387e-21,
+      "mac_nist_xcom": 5.668500931092002e-21,
+      "rel_error": 0.0001122214342236429,
+      "passed": true
+    },
+    {
+      "material_label": "Air",
+      "material_name": "Air, Dry (near sea level)",
+      "photon_energy": 0.08,
+      "mac_kernel": 2.6637913058523154e-21,
+      "mac_nist_xcom": 2.6628175657080005e-21,
+      "rel_error": 0.00036568038188376274,
+      "passed": true
+    },
+    {
+      "material_label": "Air",
+      "material_name": "Air, Dry (near sea level)",
+      "photon_energy": 0.1405,
+      "mac_kernel": 2.213447764512877e-21,
+      "mac_nist_xcom": 2.2158102848220006e-21,
+      "rel_error": 0.0010662105530001942,
+      "passed": true
+    },
+    {
+      "material_label": "Air",
+      "material_name": "Air, Dry (near sea level)",
+      "photon_energy": 0.511,
+      "mac_kernel": 1.3827737545414955e-21,
+      "mac_nist_xcom": 1.3828386528054002e-21,
+      "rel_error": 4.6931190253516285e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Air",
+      "material_name": "Air, Dry (near sea level)",
+      "photon_energy": 1.0,
+      "mac_kernel": 1.0187009354019787e-21,
+      "mac_nist_xcom": 1.0186639038972001e-21,
+      "rel_error": 3.6353015589262556e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "material_name": "Bone, Cortical (ICRU-44)",
+      "photon_energy": 0.015,
+      "mac_kernel": 1.447191957149458e-19,
+      "mac_nist_xcom": 1.4470859358288004e-19,
+      "rel_error": 7.326539359736732e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "material_name": "Bone, Cortical (ICRU-44)",
+      "photon_energy": 0.03,
+      "mac_kernel": 2.1322148927837906e-20,
+      "mac_nist_xcom": 2.1324970998540006e-20,
+      "rel_error": 0.00013233643798593798,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "material_name": "Bone, Cortical (ICRU-44)",
+      "photon_energy": 0.08,
+      "mac_kernel": 3.570951272590086e-21,
+      "mac_nist_xcom": 3.571251717186001e-21,
+      "rel_error": 8.412865283866311e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "material_name": "Bone, Cortical (ICRU-44)",
+      "photon_energy": 0.1405,
+      "mac_kernel": 2.4414332175498157e-21,
+      "mac_nist_xcom": 2.444921543484001e-21,
+      "rel_error": 0.0014267639562839814,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "material_name": "Bone, Cortical (ICRU-44)",
+      "photon_energy": 0.511,
+      "mac_kernel": 1.4317870691429025e-21,
+      "mac_nist_xcom": 1.4318652578058004e-21,
+      "rel_error": 5.46061596730188e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "material_name": "Bone, Cortical (ICRU-44)",
+      "photon_energy": 1.0,
+      "mac_kernel": 1.0520636991743115e-21,
+      "mac_nist_xcom": 1.0518289602210003e-21,
+      "rel_error": 0.00022317217170164473,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "material_name": "Sodium Iodide",
+      "photon_energy": 0.015,
+      "mac_kernel": 7.591910786347435e-19,
+      "mac_nist_xcom": 7.591112891892002e-19,
+      "rel_error": 0.00010510902245767084,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "material_name": "Sodium Iodide",
+      "photon_energy": 0.03,
+      "mac_kernel": 1.1788833976719596e-19,
+      "mac_nist_xcom": 1.1788815672972001e-19,
+      "rel_error": 1.5526366772426412e-06,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "material_name": "Sodium Iodide",
+      "photon_energy": 0.08,
+      "mac_kernel": 4.805135298146533e-20,
+      "mac_nist_xcom": 4.8049277253660015e-20,
+      "rel_error": 4.3199979769903464e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "material_name": "Sodium Iodide",
+      "photon_energy": 0.1405,
+      "mac_kernel": 1.1410806990390766e-20,
+      "mac_nist_xcom": 1.1431530283590003e-20,
+      "rel_error": 0.0018128188164785444,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "material_name": "Sodium Iodide",
+      "photon_energy": 0.511,
+      "mac_kernel": 1.4941493036781707e-21,
+      "mac_nist_xcom": 1.4941899288684003e-21,
+      "rel_error": 2.718877262166406e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "material_name": "Sodium Iodide",
+      "photon_energy": 1.0,
+      "mac_kernel": 9.421866296580608e-22,
+      "mac_nist_xcom": 9.422400784554002e-22,
+      "rel_error": 5.6725242920009354e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Lead",
+      "material_name": "Pb",
+      "photon_energy": 0.015,
+      "mac_kernel": 1.7875036096080483e-18,
+      "mac_nist_xcom": 1.7880291235440003e-18,
+      "rel_error": 0.0002939068100358592,
+      "passed": true
+    },
+    {
+      "material_label": "Lead",
+      "material_name": "Pb",
+      "photon_energy": 0.03,
+      "mac_kernel": 4.857684197570353e-19,
+      "mac_nist_xcom": 4.857799554288001e-19,
+      "rel_error": 2.374670184698157e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Lead",
+      "material_name": "Pb",
+      "photon_energy": 0.08,
+      "mac_kernel": 3.875713342945021e-20,
+      "mac_nist_xcom": 3.875665277646001e-20,
+      "rel_error": 1.2401818933451861e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Lead",
+      "material_name": "Pb",
+      "photon_energy": 0.1405,
+      "mac_kernel": 3.7916113465491464e-20,
+      "mac_nist_xcom": 3.797158622580001e-20,
+      "rel_error": 0.0014609018432538774,
+      "passed": true
+    },
+    {
+      "material_label": "Lead",
+      "material_name": "Pb",
+      "photon_energy": 0.511,
+      "mac_kernel": 2.5029593286668357e-21,
+      "mac_nist_xcom": 2.5025999023080007e-21,
+      "rel_error": 0.00014362118311581063,
+      "passed": true
+    },
+    {
+      "material_label": "Lead",
+      "material_name": "Pb",
+      "photon_energy": 1.0,
+      "mac_kernel": 1.1378818672331402e-21,
+      "mac_nist_xcom": 1.1378658454668003e-21,
+      "rel_error": 1.4080540692727935e-05,
+      "passed": true
+    }
+  ],
+  "binning_metrics": [
+    {
+      "material_label": "Water",
+      "material_name": "Water, Liquid",
+      "num_grid_points": 50000,
+      "max_rel_error_pe": 0.0,
+      "max_rel_error_compton": 0.0,
+      "max_rel_error_coherent": 0.0,
+      "max_rel_error_total": 0.0,
+      "row_mismatches": 0,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "material_name": "Bone, Cortical (ICRU-44)",
+      "num_grid_points": 50000,
+      "max_rel_error_pe": 0.0,
+      "max_rel_error_compton": 0.0,
+      "max_rel_error_coherent": 0.0,
+      "max_rel_error_total": 0.0,
+      "row_mismatches": 0,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "material_name": "Sodium Iodide",
+      "num_grid_points": 50000,
+      "max_rel_error_pe": 0.0,
+      "max_rel_error_compton": 0.0,
+      "max_rel_error_coherent": 0.0,
+      "max_rel_error_total": 0.0,
+      "row_mismatches": 0,
+      "passed": true
+    },
+    {
+      "material_label": "Lead",
+      "material_name": "Pb",
+      "num_grid_points": 50000,
+      "max_rel_error_pe": 0.0,
+      "max_rel_error_compton": 0.0,
+      "max_rel_error_coherent": 0.0,
+      "max_rel_error_total": 0.0,
+      "row_mismatches": 0,
+      "passed": true
+    },
+    {
+      "material_label": "Tungsten",
+      "material_name": "W",
+      "num_grid_points": 50000,
+      "max_rel_error_pe": 0.0,
+      "max_rel_error_compton": 0.0,
+      "max_rel_error_coherent": 0.0,
+      "max_rel_error_total": 0.0,
+      "row_mismatches": 0,
+      "passed": true
+    },
+    {
+      "material_label": "Pyrex",
+      "material_name": "Glass, Borosilicate (Pyrex)",
+      "num_grid_points": 50000,
+      "max_rel_error_pe": 0.0,
+      "max_rel_error_compton": 0.0,
+      "max_rel_error_coherent": 0.0,
+      "max_rel_error_total": 0.0,
+      "row_mismatches": 0,
+      "passed": true
+    },
+    {
+      "material_label": "Air",
+      "material_name": "Air, Dry (near sea level)",
+      "num_grid_points": 50000,
+      "max_rel_error_pe": 0.0,
+      "max_rel_error_compton": 0.0,
+      "max_rel_error_coherent": 0.0,
+      "max_rel_error_total": 0.0,
+      "row_mismatches": 0,
+      "passed": true
+    }
+  ],
+  "edge_metrics": [
+    {
+      "element_symbol": "I",
+      "edge_label": "K",
+      "edge_energy": 0.03317,
+      "lac_below_delta": 2.8633682263463798,
+      "lac_at_edge": 17.294438880820266,
+      "lac_above_delta": 17.294302678578973,
+      "lac_node_left": 2.863343814703652,
+      "lac_node_right": 17.294438880820266,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 6.039845842896104,
+      "node_jump_ratio": 6.039944903581267,
+      "reference_jump_ratio": 6.04,
+      "delta_vs_node_jump_rel_error": 1.64009252972576e-05,
+      "jump_ratio_rel_error": 9.121923631313904e-06,
+      "relaxation_db_jump_ratio": 6.039944903581267,
+      "relaxation_db_consistency_rel_error": 0.0,
+      "passed": true
+    },
+    {
+      "element_symbol": "I",
+      "edge_label": "L1",
+      "edge_energy": 0.005188,
+      "lac_below_delta": 375.4875206052264,
+      "lac_at_edge": 433.2483719630801,
+      "lac_above_delta": 433.22769616007963,
+      "lac_node_left": 375.46877570218686,
+      "lac_node_right": 433.2483719630801,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 1.153773886977083,
+      "node_jump_ratio": 1.1538865546218486,
+      "reference_jump_ratio": 1.154,
+      "delta_vs_node_jump_rel_error": 9.764187329707503e-05,
+      "jump_ratio_rel_error": 9.830622023507615e-05,
+      "relaxation_db_jump_ratio": 1.1538865546218486,
+      "relaxation_db_consistency_rel_error": 0.0,
+      "passed": true
+    },
+    {
+      "element_symbol": "I",
+      "edge_label": "L2",
+      "edge_energy": 0.004852,
+      "lac_below_delta": 324.7528607220645,
+      "lac_at_edge": 437.9318716599955,
+      "lac_above_delta": 437.91436201734433,
+      "lac_node_left": 324.73907898507156,
+      "lac_node_right": 437.9318716599955,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 1.3484542092829404,
+      "node_jump_ratio": 1.3485653560042508,
+      "reference_jump_ratio": 1.349,
+      "delta_vs_node_jump_rel_error": 8.241849074317786e-05,
+      "jump_ratio_rel_error": 0.0003221971799475298,
+      "relaxation_db_jump_ratio": 1.3485653560042508,
+      "relaxation_db_consistency_rel_error": 0.0,
+      "passed": true
+    },
+    {
+      "element_symbol": "I",
+      "edge_label": "L3",
+      "edge_energy": 0.004557,
+      "lac_below_delta": 125.17976009927906,
+      "lac_at_edge": 369.6513760786498,
+      "lac_above_delta": 369.6345758073629,
+      "lac_node_left": 125.17269189966551,
+      "lac_node_right": 369.6513760786498,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 2.95283019806244,
+      "node_jump_ratio": 2.9531311539976364,
+      "reference_jump_ratio": 2.953,
+      "delta_vs_node_jump_rel_error": 0.00010191079213976686,
+      "jump_ratio_rel_error": 4.4413815657475084e-05,
+      "relaxation_db_jump_ratio": 2.9531311539976364,
+      "relaxation_db_consistency_rel_error": 0.0,
+      "passed": true
+    },
+    {
+      "element_symbol": "W",
+      "edge_label": "K",
+      "edge_energy": 0.06953,
+      "lac_below_delta": 4.087756231033174,
+      "lac_at_edge": 20.8439994136766,
+      "lac_above_delta": 20.843919822423604,
+      "lac_node_left": 4.087739885015465,
+      "lac_node_right": 20.8439994136766,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 5.099110280642967,
+      "node_jump_ratio": 5.099150141643061,
+      "reference_jump_ratio": 5.1,
+      "delta_vs_node_jump_rel_error": 7.817185018349367e-06,
+      "jump_ratio_rel_error": 0.00016663889351744304,
+      "relaxation_db_jump_ratio": 5.09915014164306,
+      "relaxation_db_consistency_rel_error": 1.7418165675230232e-16,
+      "passed": true
+    },
+    {
+      "element_symbol": "W",
+      "edge_label": "L1",
+      "edge_energy": 0.0121,
+      "lac_below_delta": 391.4118673802683,
+      "lac_at_edge": 452.3919872746105,
+      "lac_above_delta": 452.38250129072355,
+      "lac_node_left": 391.40398899014946,
+      "lac_node_right": 452.3919872746105,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 1.1557710406649997,
+      "node_jump_ratio": 1.1558185404339247,
+      "reference_jump_ratio": 1.156,
+      "delta_vs_node_jump_rel_error": 4.109621645903732e-05,
+      "jump_ratio_rel_error": 0.00015697194297161044,
+      "relaxation_db_jump_ratio": 1.155818540433925,
+      "relaxation_db_consistency_rel_error": 1.9211026398803906e-16,
+      "passed": true
+    },
+    {
+      "element_symbol": "W",
+      "edge_label": "L2",
+      "edge_energy": 0.01154,
+      "lac_below_delta": 318.4573072434335,
+      "lac_at_edge": 438.688987660064,
+      "lac_above_delta": 438.67994482662607,
+      "lac_node_left": 318.44999104228134,
+      "lac_node_right": 438.688987660064,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 1.3775157135624858,
+      "node_jump_ratio": 1.377575757575758,
+      "reference_jump_ratio": 1.378,
+      "delta_vs_node_jump_rel_error": 4.358672322874768e-05,
+      "jump_ratio_rel_error": 0.0003078682323962221,
+      "relaxation_db_jump_ratio": 1.3775757575757577,
+      "relaxation_db_consistency_rel_error": 1.6118504097065624e-16,
+      "passed": true
+    },
+    {
+      "element_symbol": "W",
+      "edge_label": "L3",
+      "edge_energy": 0.01021,
+      "lac_below_delta": 169.05295441684729,
+      "lac_at_edge": 441.9699875677723,
+      "lac_above_delta": 441.95828824658014,
+      "lac_node_left": 169.04869524480864,
+      "lac_node_right": 441.9699875677723,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 2.614318630343534,
+      "node_jump_ratio": 2.6144537047608174,
+      "reference_jump_ratio": 2.615,
+      "delta_vs_node_jump_rel_error": 5.1664489999289555e-05,
+      "jump_ratio_rel_error": 0.0002089083132630266,
+      "relaxation_db_jump_ratio": 2.6144537047608174,
+      "relaxation_db_consistency_rel_error": 0.0,
+      "passed": true
+    },
+    {
+      "element_symbol": "W",
+      "edge_label": "M1",
+      "edge_energy": 0.00282,
+      "lac_below_delta": 4041.7533827406924,
+      "lac_at_edge": 4215.119881432379,
+      "lac_above_delta": 4214.774468417249,
+      "lac_node_left": 4041.419886318407,
+      "lac_node_right": 4215.119881432379,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 1.0428084223088427,
+      "node_jump_ratio": 1.0429799426934099,
+      "reference_jump_ratio": 1.043,
+      "delta_vs_node_jump_rel_error": 0.00016445223685145776,
+      "jump_ratio_rel_error": 1.923039941519549e-05,
+      "relaxation_db_jump_ratio": 1.0429799426934097,
+      "relaxation_db_consistency_rel_error": 2.1289441516163717e-16,
+      "passed": true
+    },
+    {
+      "element_symbol": "Pb",
+      "edge_label": "K",
+      "edge_energy": 0.088,
+      "lac_below_delta": 1.7558505405836908,
+      "lac_at_edge": 8.309335183238684,
+      "lac_above_delta": 8.309310438616166,
+      "lac_node_left": 1.7558450387201534,
+      "lac_node_right": 8.309335183238684,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 4.732356340451354,
+      "node_jump_ratio": 4.732385261797027,
+      "reference_jump_ratio": 4.73,
+      "delta_vs_node_jump_rel_error": 6.1113675394262e-06,
+      "jump_ratio_rel_error": 0.0005042836780182112,
+      "relaxation_db_jump_ratio": 4.732385261797027,
+      "relaxation_db_consistency_rel_error": 0.0,
+      "passed": true
+    },
+    {
+      "element_symbol": "Pb",
+      "edge_label": "L1",
+      "edge_energy": 0.01586,
+      "lac_below_delta": 148.9142596979598,
+      "lac_at_edge": 172.17950379692775,
+      "lac_above_delta": 172.17673540733048,
+      "lac_node_left": 148.9120032838294,
+      "lac_node_right": 172.17950379692775,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 1.1562138894995921,
+      "node_jump_ratio": 1.15625,
+      "reference_jump_ratio": 1.156,
+      "delta_vs_node_jump_rel_error": 3.1230703055446405e-05,
+      "jump_ratio_rel_error": 0.00021626297577861895,
+      "relaxation_db_jump_ratio": 1.15625,
+      "relaxation_db_consistency_rel_error": 0.0,
+      "passed": true
+    },
+    {
+      "element_symbol": "Pb",
+      "edge_label": "L2",
+      "edge_energy": 0.0152,
+      "lac_below_delta": 118.60955246704454,
+      "lac_at_edge": 164.80200363423805,
+      "lac_above_delta": 164.79943632101205,
+      "lac_node_left": 118.60750261555012,
+      "lac_node_right": 164.80200363423805,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 1.3894280257637874,
+      "node_jump_ratio": 1.3894736842105262,
+      "reference_jump_ratio": 1.39,
+      "delta_vs_node_jump_rel_error": 3.286024575895683e-05,
+      "jump_ratio_rel_error": 0.0003786444528587828,
+      "relaxation_db_jump_ratio": 1.3894736842105262,
+      "relaxation_db_consistency_rel_error": 0.0,
+      "passed": true
+    },
+    {
+      "element_symbol": "Pb",
+      "edge_label": "L3",
+      "edge_energy": 0.01304,
+      "lac_below_delta": 71.61992594738332,
+      "lac_at_edge": 179.55700395961748,
+      "lac_above_delta": 179.55326847784642,
+      "lac_node_left": 71.61850157934174,
+      "lac_node_right": 179.55700395961748,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 2.5070295187090528,
+      "node_jump_ratio": 2.507131537242472,
+      "reference_jump_ratio": 2.507,
+      "delta_vs_node_jump_rel_error": 4.0691336654596806e-05,
+      "jump_ratio_rel_error": 5.246798662622509e-05,
+      "relaxation_db_jump_ratio": 2.507131537242472,
+      "relaxation_db_consistency_rel_error": 0.0,
+      "passed": true
+    },
+    {
+      "element_symbol": "Pb",
+      "edge_label": "M1",
+      "edge_energy": 0.003851,
+      "lac_below_delta": 1477.8607246858478,
+      "lac_at_edge": 1541.3300339896368,
+      "lac_above_delta": 1541.2358964530706,
+      "lac_node_left": 1477.7700325880023,
+      "lac_node_right": 1541.3300339896368,
+      "right_continuity_rel_error": 0.0,
+      "delta_jump_ratio": 1.0428830475758768,
+      "node_jump_ratio": 1.043010752688172,
+      "reference_jump_ratio": 1.043,
+      "delta_vs_node_jump_rel_error": 0.00012243892209746617,
+      "jump_ratio_rel_error": 1.030938463286447e-05,
+      "relaxation_db_jump_ratio": 1.043010752688172,
+      "relaxation_db_consistency_rel_error": 0.0,
+      "passed": true
+    }
+  ],
+  "bragg_metrics": [
+    {
+      "material_label": "Water",
+      "material_name": "Water, Liquid",
+      "num_elements": 2,
+      "num_grid_rows": 46,
+      "num_internodal_points": 45,
+      "max_rel_diff_lac": 3.0214625339739004e-16,
+      "max_nodal_rel_error": 3.0214625339739004e-16,
+      "max_internodal_rel_error": 0.0006437588092723471,
+      "max_rel_diff_partial_reconstruction": 9.487058907740344e-17,
+      "max_abs_fraction_sum_error": 2.220446049250313e-16,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "material_name": "Sodium Iodide",
+      "num_elements": 2,
+      "num_grid_rows": 58,
+      "num_internodal_points": 52,
+      "max_rel_diff_lac": 1.0416063809201087e-15,
+      "max_nodal_rel_error": 1.0416063809201087e-15,
+      "max_internodal_rel_error": 0.0007312769374224354,
+      "max_rel_diff_partial_reconstruction": 1.0850066467917787e-15,
+      "max_abs_fraction_sum_error": 2.220446049250313e-16,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "material_name": "Bone, Cortical (ICRU-44)",
+      "num_elements": 9,
+      "num_grid_rows": 58,
+      "num_internodal_points": 52,
+      "max_rel_diff_lac": 4.6679617350938325e-15,
+      "max_nodal_rel_error": 4.6679617350938325e-15,
+      "max_internodal_rel_error": 0.0007102006529929508,
+      "max_rel_diff_partial_reconstruction": 2.592822205036332e-15,
+      "max_abs_fraction_sum_error": 4.440892098500626e-16,
+      "passed": true
+    },
+    {
+      "material_label": "Pyrex",
+      "material_name": "Glass, Borosilicate (Pyrex)",
+      "num_elements": 6,
+      "num_grid_rows": 55,
+      "num_internodal_points": 50,
+      "max_rel_diff_lac": 5.062015194473117e-15,
+      "max_nodal_rel_error": 5.062015194473117e-15,
+      "max_internodal_rel_error": 0.001187898961426613,
+      "max_rel_diff_partial_reconstruction": 4.81508762401099e-15,
+      "max_abs_fraction_sum_error": 2.220446049250313e-16,
+      "passed": true
+    }
+  ],
+  "target_sampling_metrics": [
+    {
+      "material_label": "Water",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.015,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        5.506132249498138e-05,
+        0.999944938677505
+      ],
+      "bragg_exact_probabilities": [
+        5.5061322494981376e-05,
+        0.999944938677505
+      ],
+      "empirical_probabilities": [
+        4e-05,
+        0.99996
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.999944938677505,
+      "dominant_empirical_prob": 0.99996,
+      "max_interpolation_scheme_diff": 6.776263578034403e-21,
+      "max_abs_probability_diff": 1.506132249498138e-05,
+      "allowed_probability_diff": 7.466359178346914e-05,
+      "max_abs_z_score": 0.9077510150326358,
+      "chi2_stat": 0.8240119052927813,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.3640097841782478,
+      "holm_threshold": 2.777777777777778e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.03,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        4.7340609844520224e-05,
+        0.9999526593901554
+      ],
+      "bragg_exact_probabilities": [
+        4.7340609844520224e-05,
+        0.9999526593901555
+      ],
+      "empirical_probabilities": [
+        7.5e-05,
+        0.999925
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.9999526593901554,
+      "dominant_empirical_prob": 0.999925,
+      "max_interpolation_scheme_diff": 1.1102230246251565e-16,
+      "max_abs_probability_diff": 2.765939015547977e-05,
+      "allowed_probability_diff": 6.923156673087824e-05,
+      "max_abs_z_score": 1.7978396499903415,
+      "chi2_stat": 3.2322274070773953,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.07220242201541162,
+      "holm_threshold": 1.7241379310344828e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.033,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        4.6564571942671483e-05,
+        0.9999534354280574
+      ],
+      "bragg_exact_probabilities": [
+        4.6551368914683004e-05,
+        0.9999534486310853
+      ],
+      "empirical_probabilities": [
+        6.5e-05,
+        0.999935
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.9999534354280574,
+      "dominant_empirical_prob": 0.999935,
+      "max_interpolation_scheme_diff": 1.3203027988479199e-08,
+      "max_abs_probability_diff": 1.8435428057350656e-05,
+      "allowed_probability_diff": 6.866180432333007e-05,
+      "max_abs_z_score": 1.2082325402847853,
+      "chi2_stat": 1.4598258713982526,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.22695782846018386,
+      "holm_threshold": 2.173913043478261e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.0334,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        4.646647153658631e-05,
+        0.9999535335284634
+      ],
+      "bragg_exact_probabilities": [
+        4.645254081512682e-05,
+        0.9999535474591849
+      ],
+      "empirical_probabilities": [
+        4.5e-05,
+        0.999955
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.9999535335284634,
+      "dominant_empirical_prob": 0.999955,
+      "max_interpolation_scheme_diff": 1.3930721465271745e-08,
+      "max_abs_probability_diff": 1.4664715366485837e-06,
+      "allowed_probability_diff": 6.858944256128539e-05,
+      "max_abs_z_score": 0.09621191933470288,
+      "chi2_stat": 0.009256733421286006,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.9233522644761731,
+      "holm_threshold": 0.0002,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.0885,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        4.034885470400633e-05,
+        0.999959651145296
+      ],
+      "bragg_exact_probabilities": [
+        4.0345510603508796e-05,
+        0.9999596544893965
+      ],
+      "empirical_probabilities": [
+        2.5e-05,
+        0.999975
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.999959651145296,
+      "dominant_empirical_prob": 0.999975,
+      "max_interpolation_scheme_diff": 3.3441005520273848e-09,
+      "max_abs_probability_diff": 1.5348854704006327e-05,
+      "allowed_probability_diff": 6.391523058505065e-05,
+      "max_abs_z_score": 1.0806476881305898,
+      "chi2_stat": 1.1677994258619893,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.2798538609927982,
+      "holm_threshold": 2.272727272727273e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.1405,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        3.845873634743506e-05,
+        0.9999615412636526
+      ],
+      "bragg_exact_probabilities": [
+        3.845446168666713e-05,
+        0.9999615455383133
+      ],
+      "empirical_probabilities": [
+        2.5e-05,
+        0.999975
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.9999615412636526,
+      "dominant_empirical_prob": 0.999975,
+      "max_interpolation_scheme_diff": 4.274660767933716e-09,
+      "max_abs_probability_diff": 1.3458736347435062e-05,
+      "allowed_probability_diff": 6.240029886864171e-05,
+      "max_abs_z_score": 0.9705772994927496,
+      "chi2_stat": 0.9420202942906385,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.33175881470271795,
+      "holm_threshold": 2.5641025641025643e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.511,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        3.5214514224908516e-05,
+        0.999964785485775
+      ],
+      "bragg_exact_probabilities": [
+        3.521448385477797e-05,
+        0.9999647855161453
+      ],
+      "empirical_probabilities": [
+        1e-05,
+        0.99999
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.999964785485775,
+      "dominant_empirical_prob": 0.99999,
+      "max_interpolation_scheme_diff": 3.037026186092362e-11,
+      "max_abs_probability_diff": 2.5214514224991547e-05,
+      "allowed_probability_diff": 5.971050166425552e-05,
+      "max_abs_z_score": 1.9002572554232224,
+      "chi2_stat": 3.6109776367686646,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.057399367834027396,
+      "holm_threshold": 1.694915254237288e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.015,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.23988970852797345,
+        0.7601102914720266
+      ],
+      "bragg_exact_probabilities": [
+        0.23988970852797345,
+        0.7601102914720266
+      ],
+      "empirical_probabilities": [
+        0.240215,
+        0.759785
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.7601102914720266,
+      "dominant_empirical_prob": 0.759785,
+      "max_interpolation_scheme_diff": 0.0,
+      "max_abs_probability_diff": 0.00032529147202656206,
+      "allowed_probability_diff": 0.00429676528592983,
+      "max_abs_z_score": 0.34067758574407603,
+      "chi2_stat": 0.11606121742840785,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.7333463143145935,
+      "holm_threshold": 7.142857142857143e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.03,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.216572955812493,
+        0.783427044187507
+      ],
+      "bragg_exact_probabilities": [
+        0.21657295581249297,
+        0.783427044187507
+      ],
+      "empirical_probabilities": [
+        0.21716,
+        0.78284
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.783427044187507,
+      "dominant_empirical_prob": 0.78284,
+      "max_interpolation_scheme_diff": 2.7755575615628914e-17,
+      "max_abs_probability_diff": 0.0005870441875069909,
+      "allowed_probability_diff": 0.004144755415050713,
+      "max_abs_z_score": 0.637359404656001,
+      "chi2_stat": 0.40622701070343825,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.5238907646163395,
+      "holm_threshold": 3.4482758620689657e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.033,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.21463175014706254,
+        0.7853682498529375
+      ],
+      "bragg_exact_probabilities": [
+        0.21461878540783402,
+        0.7853812145921659
+      ],
+      "empirical_probabilities": [
+        0.215095,
+        0.784905
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.7853682498529375,
+      "dominant_empirical_prob": 0.784905,
+      "max_interpolation_scheme_diff": 1.2964739228515931e-05,
+      "max_abs_probability_diff": 0.00046324985293755283,
+      "allowed_probability_diff": 0.004131247075648827,
+      "max_abs_z_score": 0.5045992892815762,
+      "chi2_stat": 0.25462044274341616,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.6138403091297637,
+      "holm_threshold": 4.761904761904762e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.0334,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.21438635869953154,
+        0.7856136413004684
+      ],
+      "bragg_exact_probabilities": [
+        0.21437266958553725,
+        0.7856273304144628
+      ],
+      "empirical_probabilities": [
+        0.215025,
+        0.784975
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.7856136413004684,
+      "dominant_empirical_prob": 0.784975,
+      "max_interpolation_scheme_diff": 1.3689113994352908e-05,
+      "max_abs_probability_diff": 0.000638641300468451,
+      "allowed_probability_diff": 0.004129529737171969,
+      "max_abs_z_score": 0.695935381270836,
+      "chi2_stat": 0.48432605490457264,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.4864692983911403,
+      "holm_threshold": 3.0303030303030302e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.0885,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.20303607310322092,
+        0.7969639268967791
+      ],
+      "bragg_exact_probabilities": [
+        0.20303551267011732,
+        0.7969644873298827
+      ],
+      "empirical_probabilities": [
+        0.20227,
+        0.79773
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.7969639268967791,
+      "dominant_empirical_prob": 0.79773,
+      "max_interpolation_scheme_diff": 5.60433103591329e-07,
+      "max_abs_probability_diff": 0.0007660731032209656,
+      "allowed_probability_diff": 0.004047654647429422,
+      "max_abs_z_score": 0.8516855475018524,
+      "chi2_stat": 0.7253682718234625,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.39438864421587183,
+      "holm_threshold": 2.857142857142857e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.1405,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.201460150758977,
+        0.798539849241023
+      ],
+      "bragg_exact_probabilities": [
+        0.2014598169725522,
+        0.7985401830274478
+      ],
+      "empirical_probabilities": [
+        0.20267,
+        0.79733
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.798539849241023,
+      "dominant_empirical_prob": 0.79733,
+      "max_interpolation_scheme_diff": 3.337864248331712e-07,
+      "max_abs_probability_diff": 0.0012098492410229922,
+      "allowed_probability_diff": 0.004035899935520412,
+      "max_abs_z_score": 1.3489733817945722,
+      "chi2_stat": 1.8197291847902504,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.17734551600727,
+      "holm_threshold": 2.0833333333333333e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.511,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.20013006325220506,
+        0.7998699367477949
+      ],
+      "bragg_exact_probabilities": [
+        0.20013006310580178,
+        0.7998699368941983
+      ],
+      "empirical_probabilities": [
+        0.20068,
+        0.79932
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.7998699367477949,
+      "dominant_empirical_prob": 0.79932,
+      "max_interpolation_scheme_diff": 1.4640333390048e-10,
+      "max_abs_probability_diff": 0.000549936747794938,
+      "allowed_probability_diff": 0.00402590357929508,
+      "max_abs_z_score": 0.6146981208900522,
+      "chi2_stat": 0.3778537798257664,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.5387541010335926,
+      "holm_threshold": 3.571428571428572e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.015,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.00974806861812466,
+        0.9902519313818754
+      ],
+      "bragg_exact_probabilities": [
+        0.00974806861812466,
+        0.9902519313818753
+      ],
+      "empirical_probabilities": [
+        0.009605,
+        0.990395
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.9902519313818754,
+      "dominant_empirical_prob": 0.990395,
+      "max_interpolation_scheme_diff": 1.1102230246251565e-16,
+      "max_abs_probability_diff": 0.00014306861812465876,
+      "allowed_probability_diff": 0.0009886205957567978,
+      "max_abs_z_score": 0.6512192688724264,
+      "chi2_stat": 0.42408653615074376,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.5149049535231678,
+      "holm_threshold": 3.125e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.03,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.007209214201550629,
+        0.9927907857984494
+      ],
+      "bragg_exact_probabilities": [
+        0.007209214201550629,
+        0.9927907857984494
+      ],
+      "empirical_probabilities": [
+        0.007235,
+        0.992765
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.9927907857984494,
+      "dominant_empirical_prob": 0.992765,
+      "max_interpolation_scheme_diff": 0.0,
+      "max_abs_probability_diff": 2.5785798449371247e-05,
+      "allowed_probability_diff": 0.000851275921781453,
+      "max_abs_z_score": 0.13630844013459648,
+      "chi2_stat": 0.01857999085192736,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.8915774518990757,
+      "holm_threshold": 0.00014285714285714287,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.033,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.007028802003488404,
+        0.9929711979965116
+      ],
+      "bragg_exact_probabilities": [
+        0.0070240776638409415,
+        0.9929759223361591
+      ],
+      "empirical_probabilities": [
+        0.006925,
+        0.993075
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.9929711979965116,
+      "dominant_empirical_prob": 0.993075,
+      "max_interpolation_scheme_diff": 4.724339647488307e-06,
+      "max_abs_probability_diff": 0.00010380200348847346,
+      "allowed_probability_diff": 0.000840633119750093,
+      "max_abs_z_score": 0.5556633503055348,
+      "chi2_stat": 0.308761758872358,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.5784410153266075,
+      "holm_threshold": 4.347826086956522e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.0334,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.007005995759295356,
+        0.9929940042407046
+      ],
+      "bragg_exact_probabilities": [
+        0.007001012858621842,
+        0.9929989871413781
+      ],
+      "empirical_probabilities": [
+        0.00701,
+        0.99299
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.9929940042407046,
+      "dominant_empirical_prob": 0.99299,
+      "max_interpolation_scheme_diff": 4.982900673522472e-06,
+      "max_abs_probability_diff": 4.004240704643877e-06,
+      "allowed_probability_diff": 0.000839277855063511,
+      "max_abs_z_score": 0.02146974695231763,
+      "chi2_stat": 0.00046095003419661576,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.9828709363329226,
+      "holm_threshold": 0.0005,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.0885,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.00584528026613391,
+        0.994154719733866
+      ],
+      "bragg_exact_probabilities": [
+        0.00584492198780985,
+        0.9941550780121902
+      ],
+      "empirical_probabilities": [
+        0.005715,
+        0.994285
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.994154719733866,
+      "dominant_empirical_prob": 0.994285,
+      "max_interpolation_scheme_diff": 3.582783241196097e-07,
+      "max_abs_probability_diff": 0.00013028026613393084,
+      "allowed_probability_diff": 0.0007670561828708249,
+      "max_abs_z_score": 0.7643002047236185,
+      "chi2_stat": 0.5841548029403764,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.44468836341818896,
+      "holm_threshold": 2.9411764705882354e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.1405,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.005651053060447767,
+        0.9943489469395522
+      ],
+      "bragg_exact_probabilities": [
+        0.0056508003980534115,
+        0.9943491996019466
+      ],
+      "empirical_probabilities": [
+        0.005495,
+        0.994505
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.9943489469395522,
+      "dominant_empirical_prob": 0.994505,
+      "max_interpolation_scheme_diff": 2.526623943555767e-07,
+      "max_abs_probability_diff": 0.0001560530604477672,
+      "allowed_probability_diff": 0.0007542783069267422,
+      "max_abs_z_score": 0.931007514820596,
+      "chi2_stat": 0.8667749926524225,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.35184967691822844,
+      "holm_threshold": 2.6315789473684212e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Water",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.511,
+      "num_samples": 200000,
+      "element_symbols": [
+        "H",
+        "O"
+      ],
+      "element_atomic_numbers": [
+        1,
+        8
+      ],
+      "theoretical_probabilities": [
+        0.005503187669062737,
+        0.9944968123309372
+      ],
+      "bragg_exact_probabilities": [
+        0.0055031876690591975,
+        0.9944968123309409
+      ],
+      "empirical_probabilities": [
+        0.00534,
+        0.99466
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.9944968123309372,
+      "dominant_empirical_prob": 0.99466,
+      "max_interpolation_scheme_diff": 3.6637359812630166e-15,
+      "max_abs_probability_diff": 0.00016318766906275872,
+      "allowed_probability_diff": 0.0007444000186038162,
+      "max_abs_z_score": 0.9864917953115291,
+      "chi2_stat": 0.9731660622167128,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.3238918394512279,
+      "holm_threshold": 2.5e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.015,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9855126343760373,
+        0.014487365623962689
+      ],
+      "bragg_exact_probabilities": [
+        0.9855126343760373,
+        0.014487365623962693
+      ],
+      "empirical_probabilities": [
+        0.986215,
+        0.013785
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9855126343760373,
+      "dominant_empirical_prob": 0.986215,
+      "max_interpolation_scheme_diff": 3.469446951953614e-18,
+      "max_abs_probability_diff": 0.0007023656239626887,
+      "allowed_probability_diff": 0.0012023290059091903,
+      "max_abs_z_score": 2.6287690742701897,
+      "chi2_stat": 6.910426845839361,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.0085694531111614,
+      "holm_threshold": 1.5873015873015872e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.03,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.98873209971545,
+        0.011267900284550048
+      ],
+      "bragg_exact_probabilities": [
+        0.98873209971545,
+        0.011267900284550136
+      ],
+      "empirical_probabilities": [
+        0.988625,
+        0.011375
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.98873209971545,
+      "dominant_empirical_prob": 0.988625,
+      "max_interpolation_scheme_diff": 8.847089727481716e-17,
+      "max_abs_probability_diff": 0.00010709971544997643,
+      "allowed_probability_diff": 0.0010620826894161338,
+      "max_abs_z_score": 0.4537770216270439,
+      "chi2_stat": 0.20591358535661755,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.649989323921099,
+      "holm_threshold": 5.2631578947368424e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.033,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9891316439524037,
+        0.010868356047596284
+      ],
+      "bragg_exact_probabilities": [
+        0.9891320266860081,
+        0.01086797331399198
+      ],
+      "empirical_probabilities": [
+        0.988895,
+        0.011105
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9891316439524037,
+      "dominant_empirical_prob": 0.988895,
+      "max_interpolation_scheme_diff": 3.8273360436491544e-07,
+      "max_abs_probability_diff": 0.0002366439524037478,
+      "allowed_probability_diff": 0.0010432934783882336,
+      "max_abs_z_score": 1.0207077949552676,
+      "chi2_stat": 1.041844402682173,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.307392900318455,
+      "holm_threshold": 2.4390243902439026e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.0334,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9981948348295195,
+        0.0018051651704804605
+      ],
+      "bragg_exact_probabilities": [
+        0.9981952226600134,
+        0.0018047773399866485
+      ],
+      "empirical_probabilities": [
+        0.99833,
+        0.00167
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9981948348295195,
+      "dominant_empirical_prob": 0.99833,
+      "max_interpolation_scheme_diff": 3.87830493830954e-07,
+      "max_abs_probability_diff": 0.00013516517048051124,
+      "allowed_probability_diff": 0.000427133513207825,
+      "max_abs_z_score": 1.4240120439024304,
+      "chi2_stat": 2.027810301177661,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.1544429856662366,
+      "holm_threshold": 2e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.0885,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9989122048910953,
+        0.0010877951089046656
+      ],
+      "bragg_exact_probabilities": [
+        0.9989134436132238,
+        0.0010865563867762389
+      ],
+      "empirical_probabilities": [
+        0.99902,
+        0.00098
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9989122048910953,
+      "dominant_empirical_prob": 0.99902,
+      "max_interpolation_scheme_diff": 1.2387221284271277e-06,
+      "max_abs_probability_diff": 0.00010779510890468469,
+      "allowed_probability_diff": 0.000331691793437753,
+      "max_abs_z_score": 1.4624359108906122,
+      "chi2_stat": 2.138718793461696,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.14362179475256542,
+      "holm_threshold": 1.8867924528301888e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.1405,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9990947276922973,
+        0.0009052723077026537
+      ],
+      "bragg_exact_probabilities": [
+        0.9990962880158886,
+        0.0009037119841114329
+      ],
+      "empirical_probabilities": [
+        0.999135,
+        0.000865
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9990947276922973,
+      "dominant_empirical_prob": 0.999135,
+      "max_interpolation_scheme_diff": 1.5603235912209357e-06,
+      "max_abs_probability_diff": 4.0272307702653664e-05,
+      "allowed_probability_diff": 0.000302615011131876,
+      "max_abs_z_score": 0.5988644911701542,
+      "chi2_stat": 0.35863867878448735,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.549263252145749,
+      "holm_threshold": 3.846153846153846e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.511,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9993655603341278,
+        0.0006344396658721774
+      ],
+      "bragg_exact_probabilities": [
+        0.9993655846564208,
+        0.0006344153435791943
+      ],
+      "empirical_probabilities": [
+        0.999445,
+        0.000555
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9993655603341278,
+      "dominant_empirical_prob": 0.999445,
+      "max_interpolation_scheme_diff": 2.4322292983044308e-08,
+      "max_abs_probability_diff": 7.943966587220519e-05,
+      "allowed_probability_diff": 0.0002533698120504547,
+      "max_abs_z_score": 1.4108961660899724,
+      "chi2_stat": 1.9906279914859892,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.15827523281449551,
+      "holm_threshold": 2.0408163265306123e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.015,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.7629076550534897,
+        0.23709234494651032
+      ],
+      "bragg_exact_probabilities": [
+        0.7629076550534897,
+        0.2370923449465103
+      ],
+      "empirical_probabilities": [
+        0.762795,
+        0.237205
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.7629076550534897,
+      "dominant_empirical_prob": 0.762795,
+      "max_interpolation_scheme_diff": 2.7755575615628914e-17,
+      "max_abs_probability_diff": 0.0001126550534896742,
+      "allowed_probability_diff": 0.0042794924871496585,
+      "max_abs_z_score": 0.11845978050569839,
+      "chi2_stat": 0.01403271959746401,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.9057033611637079,
+      "holm_threshold": 0.00016666666666666666,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.03,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.7865751701138931,
+        0.2134248298861069
+      ],
+      "bragg_exact_probabilities": [
+        0.7865751701138932,
+        0.21342482988610673
+      ],
+      "empirical_probabilities": [
+        0.787115,
+        0.212885
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.7865751701138931,
+      "dominant_empirical_prob": 0.787115,
+      "max_interpolation_scheme_diff": 1.6653345369377348e-16,
+      "max_abs_probability_diff": 0.0005398298861069017,
+      "allowed_probability_diff": 0.004122779466241441,
+      "max_abs_z_score": 0.5892225153861274,
+      "chi2_stat": 0.34718317263794085,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.5557120152345927,
+      "holm_threshold": 4.1666666666666665e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.033,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.7896296965338553,
+        0.21037030346614471
+      ],
+      "bragg_exact_probabilities": [
+        0.7896305648223855,
+        0.21036943517761444
+      ],
+      "empirical_probabilities": [
+        0.79095,
+        0.20905
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.7896296965338553,
+      "dominant_empirical_prob": 0.79095,
+      "max_interpolation_scheme_diff": 8.682885302702115e-07,
+      "max_abs_probability_diff": 0.0013203034661447566,
+      "allowed_probability_diff": 0.0041011104821959896,
+      "max_abs_z_score": 1.448721175263249,
+      "chi2_stat": 2.0987930436560007,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.14741546447570242,
+      "holm_threshold": 1.923076923076923e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.0334,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.7899686861664371,
+        0.21003131383356288
+      ],
+      "bragg_exact_probabilities": [
+        0.7899700934124518,
+        0.2100299065875482
+      ],
+      "empirical_probabilities": [
+        0.79094,
+        0.20906
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.7899686861664371,
+      "dominant_empirical_prob": 0.79094,
+      "max_interpolation_scheme_diff": 1.4072460147174226e-06,
+      "max_abs_probability_diff": 0.0009713138335628868,
+      "allowed_probability_diff": 0.004098684399364589,
+      "max_abs_z_score": 1.0664183491928785,
+      "chi2_stat": 1.137248095495272,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.28623457062018065,
+      "holm_threshold": 2.3255813953488374e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.0885,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.8121007150014903,
+        0.18789928499850972
+      ],
+      "bragg_exact_probabilities": [
+        0.8121078989959457,
+        0.18789210100405432
+      ],
+      "empirical_probabilities": [
+        0.812135,
+        0.187865
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.8121007150014903,
+      "dominant_empirical_prob": 0.812135,
+      "max_interpolation_scheme_diff": 7.183994455428611e-06,
+      "max_abs_probability_diff": 3.4284998509770404e-05,
+      "allowed_probability_diff": 0.00393065589936022,
+      "max_abs_z_score": 0.03925108105216711,
+      "chi2_stat": 0.00154064736375865,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.9686902081980916,
+      "holm_threshold": 0.00025,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.1405,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.8184017316024595,
+        0.18159826839754045
+      ],
+      "bragg_exact_probabilities": [
+        0.818409048435093,
+        0.18159095156490704
+      ],
+      "empirical_probabilities": [
+        0.81686,
+        0.18314
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.8184017316024595,
+      "dominant_empirical_prob": 0.81686,
+      "max_interpolation_scheme_diff": 7.316832633441628e-06,
+      "max_abs_probability_diff": 0.001541731602459545,
+      "allowed_probability_diff": 0.0038791505710524085,
+      "max_abs_z_score": 1.7884823195160837,
+      "chi2_stat": 3.1986690072215946,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.07369822565702003,
+      "holm_threshold": 1.7543859649122806e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.511,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.8264261120116227,
+        0.17357388798837725
+      ],
+      "bragg_exact_probabilities": [
+        0.8264261729653652,
+        0.1735738270346347
+      ],
+      "empirical_probabilities": [
+        0.82624,
+        0.17376
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.8264261120116227,
+      "dominant_empirical_prob": 0.82624,
+      "max_interpolation_scheme_diff": 6.095374255332686e-08,
+      "max_abs_probability_diff": 0.00018611201162277435,
+      "allowed_probability_diff": 0.0038110243808513965,
+      "max_abs_z_score": 0.21975825096017446,
+      "chi2_stat": 0.0482936888650644,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.8260594356781583,
+      "holm_threshold": 0.00011111111111111112,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.015,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9762966235768763,
+        0.0237033764231237
+      ],
+      "bragg_exact_probabilities": [
+        0.9762966235768763,
+        0.023703376423123645
+      ],
+      "empirical_probabilities": [
+        0.97639,
+        0.02361
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9762966235768763,
+      "dominant_empirical_prob": 0.97639,
+      "max_interpolation_scheme_diff": 5.551115123125783e-17,
+      "max_abs_probability_diff": 9.337642312370192e-05,
+      "allowed_probability_diff": 0.0015307121038550407,
+      "max_abs_z_score": 0.27450877470584845,
+      "chi2_stat": 0.0753550673905033,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.7836936612872554,
+      "holm_threshold": 9.090909090909092e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.03,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9795366479396656,
+        0.02046335206033445
+      ],
+      "bragg_exact_probabilities": [
+        0.9795366479396654,
+        0.020463352060334575
+      ],
+      "empirical_probabilities": [
+        0.979365,
+        0.020635
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9795366479396656,
+      "dominant_empirical_prob": 0.979365,
+      "max_interpolation_scheme_diff": 1.249000902703301e-16,
+      "max_abs_probability_diff": 0.0001716479396655507,
+      "allowed_probability_diff": 0.0014246108529638582,
+      "max_abs_z_score": 0.5421941907068807,
+      "chi2_stat": 0.29397454043628624,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.5876847368450502,
+      "holm_threshold": 4.545454545454546e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.033,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9799010846320043,
+        0.020098915367995684
+      ],
+      "bragg_exact_probabilities": [
+        0.9799012571318517,
+        0.020098742868148264
+      ],
+      "empirical_probabilities": [
+        0.9798,
+        0.0202
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9799010846320043,
+      "dominant_empirical_prob": 0.9798,
+      "max_interpolation_scheme_diff": 1.7249984742007118e-07,
+      "max_abs_probability_diff": 0.00010108463200431475,
+      "allowed_probability_diff": 0.0014121308661430303,
+      "max_abs_z_score": 0.3221237173731906,
+      "chi2_stat": 0.1037636892943254,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.7473589712504207,
+      "holm_threshold": 8.333333333333333e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.0334,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9799433400818283,
+        0.020056659918171738
+      ],
+      "bragg_exact_probabilities": [
+        0.9799436720757587,
+        0.020056327924241266
+      ],
+      "empirical_probabilities": [
+        0.980145,
+        0.019855
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9799433400818283,
+      "dominant_empirical_prob": 0.980145,
+      "max_interpolation_scheme_diff": 3.319939304718966e-07,
+      "max_abs_probability_diff": 0.00020165991817178153,
+      "allowed_probability_diff": 0.0014106760857825326,
+      "max_abs_z_score": 0.6432870316006128,
+      "chi2_stat": 0.41381820502535316,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.520037869566633,
+      "holm_threshold": 3.3333333333333335e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.0885,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9829870301467675,
+        0.01701296985323253
+      ],
+      "bragg_exact_probabilities": [
+        0.9829886851818432,
+        0.01701131481815665
+      ],
+      "empirical_probabilities": [
+        0.982885,
+        0.017115
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9829870301467675,
+      "dominant_empirical_prob": 0.982885,
+      "max_interpolation_scheme_diff": 1.655035075879413e-06,
+      "max_abs_probability_diff": 0.00010203014676746919,
+      "allowed_probability_diff": 0.0013012521976496563,
+      "max_abs_z_score": 0.3528414102069606,
+      "chi2_stat": 0.12449706075683967,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.7242073370017436,
+      "holm_threshold": 6.666666666666667e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.1405,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9840010679149525,
+        0.015998932085047546
+      ],
+      "bragg_exact_probabilities": [
+        0.9840043223576285,
+        0.015995677642371545
+      ],
+      "empirical_probabilities": [
+        0.98352,
+        0.01648
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9840010679149525,
+      "dominant_empirical_prob": 0.98352,
+      "max_interpolation_scheme_diff": 3.2544426760150458e-06,
+      "max_abs_probability_diff": 0.00048106791495250434,
+      "allowed_probability_diff": 0.001262527359521385,
+      "max_abs_z_score": 1.714660360395621,
+      "chi2_stat": 2.940060151511433,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.08640751515697742,
+      "holm_threshold": 1.785714285714286e-05,
+      "passed": true
+    },
+    {
+      "material_label": "NaI",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.511,
+      "num_samples": 200000,
+      "element_symbols": [
+        "I",
+        "Na"
+      ],
+      "element_atomic_numbers": [
+        53,
+        11
+      ],
+      "theoretical_probabilities": [
+        0.9856978353074238,
+        0.01430216469257617
+      ],
+      "bragg_exact_probabilities": [
+        0.9856978818875756,
+        0.014302118112424517
+      ],
+      "empirical_probabilities": [
+        0.985855,
+        0.014145
+      ],
+      "dominant_element_symbol": "I",
+      "dominant_theoretical_prob": 0.9856978353074238,
+      "dominant_empirical_prob": 0.985855,
+      "max_interpolation_scheme_diff": 4.658015173575336e-08,
+      "max_abs_probability_diff": 0.00015716469257620602,
+      "allowed_probability_diff": 0.001194731473486977,
+      "max_abs_z_score": 0.5919665902236201,
+      "chi2_stat": 0.35042444394081274,
+      "chi2_ndf": 1,
+      "chi2_pvalue": 0.5538729609518384,
+      "holm_threshold": 4e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.015,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.010028182149793698,
+        0.7587383693704268,
+        2.654249424382656e-06,
+        0.0013755120522898118,
+        0.004706767027635831,
+        0.0005000914207289134,
+        0.0777035691887959,
+        0.14174932538887133,
+        0.005195529152033362
+      ],
+      "bragg_exact_probabilities": [
+        0.010028182149793698,
+        0.7587383693704268,
+        2.6542494243826557e-06,
+        0.0013755120522898118,
+        0.00470676702763583,
+        0.0005000914207289134,
+        0.07770356918879591,
+        0.14174932538887133,
+        0.0051955291520333945
+      ],
+      "empirical_probabilities": [
+        0.009785,
+        0.759935,
+        5e-06,
+        0.00152,
+        0.00493,
+        0.00049,
+        0.077305,
+        0.140725,
+        0.005305
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.7587383693704268,
+      "dominant_empirical_prob": 0.759935,
+      "max_interpolation_scheme_diff": 3.209238430557093e-17,
+      "max_abs_probability_diff": 0.0011966306295732032,
+      "allowed_probability_diff": 0.004305143864242247,
+      "max_abs_z_score": 1.74346532582822,
+      "chi2_stat": 9.084351141989472,
+      "chi2_ndf": 7,
+      "chi2_pvalue": 0.2466566007536116,
+      "holm_threshold": 2.2222222222222223e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.03,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.008210879374404203,
+        0.7789347751236392,
+        1.946294987592959e-06,
+        0.0012596272829570572,
+        0.003938191781006751,
+        0.00045063611670648256,
+        0.06627107928580371,
+        0.13588061576655075,
+        0.0050522489739442955
+      ],
+      "bragg_exact_probabilities": [
+        0.008210879374404203,
+        0.7789347751236393,
+        1.9462949875929587e-06,
+        0.0012596272829570572,
+        0.003938191781006751,
+        0.0004506361167064825,
+        0.06627107928580371,
+        0.13588061576655075,
+        0.005052248973944215
+      ],
+      "empirical_probabilities": [
+        0.007965,
+        0.779405,
+        0.0,
+        0.001235,
+        0.00407,
+        0.000515,
+        0.0659,
+        0.136135,
+        0.004775
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.7789347751236392,
+      "dominant_empirical_prob": 0.779405,
+      "max_interpolation_scheme_diff": 1.1102230246251565e-16,
+      "max_abs_probability_diff": 0.0004702248763608363,
+      "allowed_probability_diff": 0.00417549797769151,
+      "max_abs_z_score": 1.7488092264247854,
+      "chi2_stat": 7.7833250295815235,
+      "chi2_ndf": 7,
+      "chi2_pvalue": 0.35208743204717574,
+      "holm_threshold": 2.7027027027027027e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.033,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.00802435721439166,
+        0.7811692239727018,
+        1.8803386395572813e-06,
+        0.001246471368304318,
+        0.003856633204197449,
+        0.00044497990801834316,
+        0.06505132682524786,
+        0.1351712179116302,
+        0.0050339092568686405
+      ],
+      "bragg_exact_probabilities": [
+        0.008020231744065309,
+        0.7811941041989341,
+        1.8780204418390035e-06,
+        0.0012463801847251363,
+        0.0038550213229296823,
+        0.00044492454898991253,
+        0.06503055027321168,
+        0.1351728662338385,
+        0.005034043472863816
+      ],
+      "empirical_probabilities": [
+        0.008125,
+        0.78025,
+        0.0,
+        0.00124,
+        0.003755,
+        0.000475,
+        0.065305,
+        0.136055,
+        0.004795
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.7811692239727018,
+      "dominant_empirical_prob": 0.78025,
+      "max_interpolation_scheme_diff": 2.488022623226005e-05,
+      "max_abs_probability_diff": 0.0009192239727018325,
+      "allowed_probability_diff": 0.004160296453790535,
+      "max_abs_z_score": 1.5097016998338075,
+      "chi2_stat": 4.98682540527724,
+      "chi2_ndf": 7,
+      "chi2_pvalue": 0.661571072620051,
+      "holm_threshold": 5.555555555555556e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.0334,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.008000778598453542,
+        0.7814516848408468,
+        1.8720009739474179e-06,
+        0.0012448083044684136,
+        0.0038463232315973208,
+        0.0004442648960738401,
+        0.0648971356299224,
+        0.1350815415988137,
+        0.005031590898850191
+      ],
+      "bragg_exact_probabilities": [
+        0.007996426106127028,
+        0.7814779456617026,
+        1.8695566784455281e-06,
+        0.001244711990384812,
+        0.0038446224453120054,
+        0.00044420644409718497,
+        0.06487520985426537,
+        0.13508327554766314,
+        0.005031732393769467
+      ],
+      "empirical_probabilities": [
+        0.008195,
+        0.781775,
+        0.0,
+        0.001315,
+        0.003825,
+        0.00038,
+        0.064965,
+        0.134445,
+        0.0051
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.7814516848408468,
+      "dominant_empirical_prob": 0.781775,
+      "max_interpolation_scheme_diff": 2.6260820855772415e-05,
+      "max_abs_probability_diff": 0.0006365415988136836,
+      "allowed_probability_diff": 0.004158362189179795,
+      "max_abs_z_score": 1.363842753400265,
+      "chi2_stat": 4.545935919531362,
+      "chi2_ndf": 7,
+      "chi2_pvalue": 0.7151789871965232,
+      "holm_threshold": 6.25e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.0885,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.0065155446669548,
+        0.800137690332905,
+        1.3757597098353247e-06,
+        0.0011316197684938917,
+        0.0031946273686643944,
+        0.00039682655469305047,
+        0.05495113034614264,
+        0.12880247018083085,
+        0.004868715021605574
+      ],
+      "bragg_exact_probabilities": [
+        0.006514414935051104,
+        0.8001452798808634,
+        1.375219032042042e-06,
+        0.0011315825816155427,
+        0.0031941700822084506,
+        0.0003968084509963916,
+        0.054945094356737154,
+        0.1288025314470342,
+        0.004868743046461864
+      ],
+      "empirical_probabilities": [
+        0.0066,
+        0.799625,
+        5e-06,
+        0.00115,
+        0.00312,
+        0.000395,
+        0.05529,
+        0.129025,
+        0.00479
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.800137690332905,
+      "dominant_empirical_prob": 0.799625,
+      "max_interpolation_scheme_diff": 7.589547958319898e-06,
+      "max_abs_probability_diff": 0.0005126903329050192,
+      "allowed_probability_diff": 0.004023882875123847,
+      "max_abs_z_score": 0.7248480580329351,
+      "chi2_stat": 1.4440019031943871,
+      "chi2_ndf": 7,
+      "chi2_pvalue": 0.9841852475029487,
+      "holm_threshold": 0.001,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.1405,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.006077175629915298,
+        0.806404457283727,
+        1.2360304237876166e-06,
+        0.0010920311218111877,
+        0.002992028234695528,
+        0.00038077477157844606,
+        0.051792218771030976,
+        0.1264551759874528,
+        0.0048049021693648
+      ],
+      "bragg_exact_probabilities": [
+        0.006075875888854142,
+        0.8064146586040406,
+        1.2353500307330192e-06,
+        0.0010919807060117018,
+        0.0029914526199163994,
+        0.00038074847508909576,
+        0.05178409385819199,
+        0.12645501863084677,
+        0.004804935867018581
+      ],
+      "empirical_probabilities": [
+        0.006275,
+        0.803415,
+        0.0,
+        0.00102,
+        0.003255,
+        0.000375,
+        0.052585,
+        0.128185,
+        0.00489
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.806404457283727,
+      "dominant_empirical_prob": 0.803415,
+      "max_interpolation_scheme_diff": 1.020132031359644e-05,
+      "max_abs_probability_diff": 0.002989457283727015,
+      "allowed_probability_diff": 0.003975773665761457,
+      "max_abs_z_score": 3.3836326983656586,
+      "chi2_stat": 16.56393639602828,
+      "chi2_ndf": 7,
+      "chi2_pvalue": 0.0204350455765,
+      "holm_threshold": 1.6129032258064517e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "PhotoelectricEffect",
+      "process_col_idx": 0,
+      "photon_energy": 0.511,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.005372378413143034,
+        0.8169330429743323,
+        1.0216891413582816e-06,
+        0.0010253205330949047,
+        0.002673922500915065,
+        0.00035433006328442016,
+        0.046768177281519774,
+        0.12218228309509131,
+        0.004689523449477817
+      ],
+      "bragg_exact_probabilities": [
+        0.005372362874963627,
+        0.8169331506274062,
+        1.0216837736235814e-06,
+        0.0010253201950154182,
+        0.002673917330867255,
+        0.00035432970778650455,
+        0.046768093131949406,
+        0.12218228060390879,
+        0.004689523844329093
+      ],
+      "empirical_probabilities": [
+        0.00506,
+        0.818385,
+        0.0,
+        0.000975,
+        0.00281,
+        0.000345,
+        0.04742,
+        0.12061,
+        0.004395
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.8169330429743323,
+      "dominant_empirical_prob": 0.818385,
+      "max_interpolation_scheme_diff": 1.0765307389970502e-07,
+      "max_abs_probability_diff": 0.0015722830950913175,
+      "allowed_probability_diff": 0.003891309090131724,
+      "max_abs_z_score": 2.147036629709788,
+      "chi2_stat": 15.650984144942406,
+      "chi2_ndf": 7,
+      "chi2_pvalue": 0.028503483134349316,
+      "holm_threshold": 1.639344262295082e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.015,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.16045097734528826,
+        0.18602166722674973,
+        0.08488923114573316,
+        0.0018070873450899494,
+        0.04269963410950481,
+        0.0008912039258789586,
+        0.43359811338106813,
+        0.08706307856756836,
+        0.0025790069531187454
+      ],
+      "bragg_exact_probabilities": [
+        0.16045097734528826,
+        0.1860216672267497,
+        0.08488923114573316,
+        0.0018070873450899494,
+        0.04269963410950481,
+        0.0008912039258789585,
+        0.4335981133810681,
+        0.08706307856756836,
+        0.0025790069531187758
+      ],
+      "empirical_probabilities": [
+        0.15961,
+        0.18548,
+        0.085065,
+        0.001775,
+        0.042075,
+        0.000875,
+        0.434965,
+        0.087425,
+        0.00273
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.43359811338106813,
+      "dominant_empirical_prob": 0.434965,
+      "max_interpolation_scheme_diff": 5.551115123125783e-17,
+      "max_abs_probability_diff": 0.0013668866189318618,
+      "allowed_probability_diff": 0.0049865887570724595,
+      "max_abs_z_score": 1.3816705624629029,
+      "chi2_stat": 6.200923403931734,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.6247366741518396,
+      "holm_threshold": 5e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.03,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.15749344084178288,
+        0.19878154981203036,
+        0.07387411225750655,
+        0.001860267594762623,
+        0.04213413752750479,
+        0.0009111013566428161,
+        0.4307808595248764,
+        0.0914404363661926,
+        0.0027240947187010534
+      ],
+      "bragg_exact_probabilities": [
+        0.15749344084178288,
+        0.19878154981203036,
+        0.07387411225750654,
+        0.001860267594762623,
+        0.042134137527504785,
+        0.000911101356642816,
+        0.4307808595248764,
+        0.09144043636619259,
+        0.0027240947187010347
+      ],
+      "empirical_probabilities": [
+        0.157455,
+        0.19757,
+        0.073715,
+        0.002035,
+        0.042675,
+        0.000925,
+        0.43082,
+        0.09208,
+        0.002725
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.4307808595248764,
+      "dominant_empirical_prob": 0.43082,
+      "max_interpolation_scheme_diff": 1.8648277366750676e-17,
+      "max_abs_probability_diff": 0.0012115498120303658,
+      "allowed_probability_diff": 0.004982708294434701,
+      "max_abs_z_score": 1.813447849051112,
+      "chi2_stat": 7.156156208442521,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.519882271935917,
+      "holm_threshold": 3.2258064516129034e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.033,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.15697066212317864,
+        0.20010581494207963,
+        0.07298644950223523,
+        0.001866524259448395,
+        0.04205333714683229,
+        0.000913478873456949,
+        0.4304865903179652,
+        0.09187923553457683,
+        0.0027379073002269383
+      ],
+      "bragg_exact_probabilities": [
+        0.15697268694057695,
+        0.2001018360814294,
+        0.07297722296632808,
+        0.0018665481596636428,
+        0.04205419453442047,
+        0.000913494671366941,
+        0.43049676998403585,
+        0.09187934341384234,
+        0.002737903248336365
+      ],
+      "empirical_probabilities": [
+        0.155635,
+        0.20085,
+        0.07334,
+        0.00191,
+        0.04281,
+        0.000785,
+        0.43048,
+        0.09164,
+        0.00255
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.4304865903179652,
+      "dominant_empirical_prob": 0.43048,
+      "max_interpolation_scheme_diff": 1.0179666070642135e-05,
+      "max_abs_probability_diff": 0.0013356621231786492,
+      "allowed_probability_diff": 0.004982293492437066,
+      "max_abs_z_score": 1.901936066292031,
+      "chi2_stat": 12.41245864840054,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.13372789847443978,
+      "holm_threshold": 1.8518518518518518e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.0334,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.15690457668525662,
+        0.20027321777989565,
+        0.07287423838915512,
+        0.0018673151761612913,
+        0.04204312301922729,
+        0.0009137794198147818,
+        0.43044939119582487,
+        0.09193470496011105,
+        0.002739653374553286
+      ],
+      "bragg_exact_probabilities": [
+        0.15690671269384712,
+        0.2002690176733054,
+        0.072864499301685,
+        0.0018673404225649825,
+        0.04204402792329858,
+        0.0009137961042767024,
+        0.43046013722867704,
+        0.09193481953608237,
+        0.0027396491162628906
+      ],
+      "empirical_probabilities": [
+        0.15689,
+        0.20044,
+        0.072855,
+        0.00195,
+        0.04183,
+        0.00092,
+        0.43067,
+        0.0916,
+        0.002845
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.43044939119582487,
+      "dominant_empirical_prob": 0.43067,
+      "max_interpolation_scheme_diff": 1.074603285217135e-05,
+      "max_abs_probability_diff": 0.00033470496011105133,
+      "allowed_probability_diff": 0.004982240928790535,
+      "max_abs_z_score": 0.901329408804185,
+      "chi2_stat": 2.062355312425836,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.9790403406396957,
+      "holm_threshold": 0.0003333333333333333,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.0885,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.1525821950335835,
+        0.21162835022580842,
+        0.06733183786624662,
+        0.0019085755474797243,
+        0.04124740216746796,
+        0.0009280537496976181,
+        0.4260425266931319,
+        0.09547545328482265,
+        0.0028556054317615542
+      ],
+      "bragg_exact_probabilities": [
+        0.15258246052720534,
+        0.2116269422300489,
+        0.06733139055277242,
+        0.00190858192527896,
+        0.04124749634654693,
+        0.0009280572237784525,
+        0.4260438836498374,
+        0.09547558148174046,
+        0.0028556060627910693
+      ],
+      "empirical_probabilities": [
+        0.151555,
+        0.21224,
+        0.06666,
+        0.00198,
+        0.04114,
+        0.000885,
+        0.427425,
+        0.095305,
+        0.00281
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.4260425266931319,
+      "dominant_empirical_prob": 0.427425,
+      "max_interpolation_scheme_diff": 1.407995759511449e-06,
+      "max_abs_probability_diff": 0.0013824733068680817,
+      "allowed_probability_diff": 0.004975810695694117,
+      "max_abs_z_score": 1.2775184686143313,
+      "chi2_stat": 5.171023748158676,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.7391502964753434,
+      "holm_threshold": 7.692307692307693e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.1405,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.15154042570021928,
+        0.21461212766543944,
+        0.06643137909217273,
+        0.00191461071659775,
+        0.04102301668357899,
+        0.00092890525904833,
+        0.4244716333730035,
+        0.09619704996528951,
+        0.0028808515446504535
+      ],
+      "bragg_exact_probabilities": [
+        0.15154056560548368,
+        0.21461110663186747,
+        0.06643112102931627,
+        0.001914615597426244,
+        0.041023089212024126,
+        0.0009289079818711186,
+        0.42447264647178456,
+        0.096197096853137,
+        0.002880850617089571
+      ],
+      "empirical_probabilities": [
+        0.151335,
+        0.213685,
+        0.065865,
+        0.00194,
+        0.041085,
+        0.00107,
+        0.42676,
+        0.09557,
+        0.00269
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.4244716333730035,
+      "dominant_empirical_prob": 0.42676,
+      "max_interpolation_scheme_diff": 1.021033571968477e-06,
+      "max_abs_probability_diff": 0.0022883666269964964,
+      "allowed_probability_diff": 0.004973420946969914,
+      "max_abs_z_score": 2.071294807637873,
+      "chi2_stat": 12.00839367261066,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.1508297705108771,
+      "holm_threshold": 1.9607843137254903e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "ComptonScattering",
+      "process_col_idx": 1,
+      "photon_energy": 0.511,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.15059085761231938,
+        0.21764576225210885,
+        0.06562011186983446,
+        0.0019177719485418854,
+        0.040802342761597866,
+        0.0009294879686275945,
+        0.42277937971133484,
+        0.09681001742013974,
+        0.002904268455495407
+      ],
+      "bragg_exact_probabilities": [
+        0.1505908575279698,
+        0.2176457593305541,
+        0.06562011232509617,
+        0.0019177719590007458,
+        0.04080234305161757,
+        0.0009294879752185104,
+        0.4227793815458703,
+        0.09681001785724958,
+        0.002904268427423241
+      ],
+      "empirical_probabilities": [
+        0.151125,
+        0.21706,
+        0.065455,
+        0.001985,
+        0.040485,
+        0.0008,
+        0.423955,
+        0.09619,
+        0.002945
+      ],
+      "dominant_element_symbol": "O",
+      "dominant_theoretical_prob": 0.42277937971133484,
+      "dominant_empirical_prob": 0.423955,
+      "max_interpolation_scheme_diff": 2.921554748125388e-09,
+      "max_abs_probability_diff": 0.0011756202886651912,
+      "allowed_probability_diff": 0.0049707890520496005,
+      "max_abs_z_score": 1.9003100228478407,
+      "chi2_stat": 6.912334528335362,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.5461200609952639,
+      "holm_threshold": 3.7037037037037037e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.015,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.059637043434475026,
+        0.501622454376422,
+        0.0015518365457551594,
+        0.0022675667869026996,
+        0.01991275760858033,
+        0.0009710280796896098,
+        0.25412236219397155,
+        0.15484241055880332,
+        0.005072540415400284
+      ],
+      "bragg_exact_probabilities": [
+        0.05963704343447501,
+        0.5016224543764218,
+        0.0015518365457551592,
+        0.0022675667869026996,
+        0.019912757608580325,
+        0.0009710280796896095,
+        0.2541223621939715,
+        0.1548424105588033,
+        0.00507254041540043
+      ],
+      "empirical_probabilities": [
+        0.05897,
+        0.502265,
+        0.00147,
+        0.00238,
+        0.019935,
+        0.00096,
+        0.253755,
+        0.1553,
+        0.004965
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.501622454376422,
+      "dominant_empirical_prob": 0.502265,
+      "max_interpolation_scheme_diff": 1.457167719820518e-16,
+      "max_abs_probability_diff": 0.0006670434344750245,
+      "allowed_probability_diff": 0.005031126461711322,
+      "max_abs_z_score": 1.2596889013567465,
+      "chi2_stat": 4.4975556305846105,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.8096776091654005,
+      "holm_threshold": 0.0001,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.03,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.0574421905775123,
+        0.5102148287430376,
+        0.0011323350509433562,
+        0.0022136568596426956,
+        0.019566082273742673,
+        0.0009468063692710575,
+        0.251370637747084,
+        0.15211786679384498,
+        0.004995595584921353
+      ],
+      "bragg_exact_probabilities": [
+        0.0574421905775123,
+        0.5102148287430377,
+        0.0011323350509433562,
+        0.002213656859642696,
+        0.019566082273742676,
+        0.0009468063692710578,
+        0.25137063774708407,
+        0.152117866793845,
+        0.004995595584921134
+      ],
+      "empirical_probabilities": [
+        0.05706,
+        0.51101,
+        0.00111,
+        0.002085,
+        0.01959,
+        0.000995,
+        0.2519,
+        0.151275,
+        0.004975
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.5102148287430376,
+      "dominant_empirical_prob": 0.51101,
+      "max_interpolation_scheme_diff": 2.185751579730777e-16,
+      "max_abs_probability_diff": 0.0008428667938449874,
+      "allowed_probability_diff": 0.005030102911369431,
+      "max_abs_z_score": 1.2242610032019845,
+      "chi2_stat": 4.010497455066084,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.8561751025143148,
+      "holm_threshold": 0.000125,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.033,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.05691238478772867,
+        0.5121660441692412,
+        0.0010969331855146783,
+        0.002211140687898434,
+        0.019418263161400395,
+        0.0009439323003626941,
+        0.2497188742175952,
+        0.1525207159702292,
+        0.00501171152002966
+      ],
+      "bragg_exact_probabilities": [
+        0.0569089134766501,
+        0.5121724029092775,
+        0.0010957832090682468,
+        0.002211197553254457,
+        0.019417646388428883,
+        0.0009439489607356772,
+        0.24971454672482168,
+        0.15252376600079653,
+        0.005011794776966919
+      ],
+      "empirical_probabilities": [
+        0.05655,
+        0.51203,
+        0.00111,
+        0.002155,
+        0.018885,
+        0.000875,
+        0.250525,
+        0.152525,
+        0.005345
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.5121660441692412,
+      "dominant_empirical_prob": 0.51203,
+      "max_interpolation_scheme_diff": 6.358740036294108e-06,
+      "max_abs_probability_diff": 0.0008061257824047985,
+      "allowed_probability_diff": 0.005029663380499613,
+      "max_abs_z_score": 2.1107329204431275,
+      "chi2_stat": 9.673944509702581,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.28866043305439104,
+      "holm_threshold": 2.380952380952381e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.0334,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.056845411044564545,
+        0.5124127009693977,
+        0.0010924579693345762,
+        0.0022108226139109345,
+        0.01939957707027858,
+        0.0009435689839236961,
+        0.24951007169311346,
+        0.15257164088987585,
+        0.0050137487656006785
+      ],
+      "bragg_exact_probabilities": [
+        0.056841745635363615,
+        0.5124194176053473,
+        0.0010912453406103585,
+        0.0022108826337340196,
+        0.01939892557804875,
+        0.0009435865601428892,
+        0.2495054982394783,
+        0.15257486171330054,
+        0.005013836693974299
+      ],
+      "empirical_probabilities": [
+        0.056105,
+        0.512445,
+        0.00114,
+        0.002455,
+        0.019435,
+        0.000995,
+        0.2505,
+        0.15211,
+        0.004815
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.5124127009693977,
+      "dominant_empirical_prob": 0.512445,
+      "max_interpolation_scheme_diff": 6.716635949532979e-06,
+      "max_abs_probability_diff": 0.000989928306886545,
+      "allowed_probability_diff": 0.0050296023591863345,
+      "max_abs_z_score": 2.325006088596976,
+      "chi2_stat": 10.950851272967357,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.20449961706986988,
+      "holm_threshold": 2.1276595744680852e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.0885,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.051891633867515725,
+        0.5346574053036399,
+        0.0008524068874458962,
+        0.0021401139784353426,
+        0.01799192959075894,
+        0.0009029847703873197,
+        0.23369017502918177,
+        0.15280421954437928,
+        0.005069131028255791
+      ],
+      "bragg_exact_probabilities": [
+        0.051890332462706835,
+        0.5346588916419559,
+        0.0008523012622247797,
+        0.0021401275493204176,
+        0.017991708257208132,
+        0.0009029884042421564,
+        0.23368903523068188,
+        0.1528054441388228,
+        0.005069171052837203
+      ],
+      "empirical_probabilities": [
+        0.052405,
+        0.53169,
+        0.000875,
+        0.002365,
+        0.01865,
+        0.000915,
+        0.23442,
+        0.153625,
+        0.005055
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.5346574053036399,
+      "dominant_empirical_prob": 0.53169,
+      "max_interpolation_scheme_diff": 1.4863383159813282e-06,
+      "max_abs_probability_diff": 0.002967405303639925,
+      "allowed_probability_diff": 0.00501905220196841,
+      "max_abs_z_score": 2.660526993750464,
+      "chi2_stat": 15.34702881500655,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.05273872483391412,
+      "holm_threshold": 1.6666666666666667e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.1405,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.05041489117318625,
+        0.5408430544389605,
+        0.0008083738243672308,
+        0.0021258889692996313,
+        0.017579879942547255,
+        0.0008938122805344773,
+        0.22928016565214346,
+        0.15296720049988427,
+        0.005086733219076933
+      ],
+      "bragg_exact_probabilities": [
+        0.050413449147897346,
+        0.5408450769359961,
+        0.0008082847481707957,
+        0.0021259053557192427,
+        0.017579608563667724,
+        0.0008938166904098076,
+        0.22927839518620963,
+        0.1529686845069023,
+        0.00508677886502697
+      ],
+      "empirical_probabilities": [
+        0.05047,
+        0.541495,
+        0.00077,
+        0.00209,
+        0.01807,
+        0.000925,
+        0.22924,
+        0.1518,
+        0.00514
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.5408430544389605,
+      "dominant_empirical_prob": 0.541495,
+      "max_interpolation_scheme_diff": 2.0224970356252925e-06,
+      "max_abs_probability_diff": 0.00116720049988428,
+      "allowed_probability_diff": 0.005014339367906776,
+      "max_abs_z_score": 1.6678650071956536,
+      "chi2_stat": 5.4994441899092745,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.7031015728045705,
+      "holm_threshold": 5.882352941176471e-05,
+      "passed": true
+    },
+    {
+      "material_label": "Bone",
+      "process_name": "CoherentScattering",
+      "process_col_idx": 2,
+      "photon_energy": 0.511,
+      "num_samples": 200000,
+      "element_symbols": [
+        "C",
+        "Ca",
+        "H",
+        "Mg",
+        "N",
+        "Na",
+        "O",
+        "P",
+        "S"
+      ],
+      "element_atomic_numbers": [
+        6,
+        20,
+        1,
+        12,
+        7,
+        11,
+        8,
+        15,
+        16
+      ],
+      "theoretical_probabilities": [
+        0.0485475449605323,
+        0.5500887152487648,
+        0.0007646257517185117,
+        0.002096759461336673,
+        0.017001882692221634,
+        0.0008780509411539343,
+        0.22274490566759844,
+        0.15277722679575415,
+        0.005100288480919701
+      ],
+      "bragg_exact_probabilities": [
+        0.04854754138932062,
+        0.550088723103135,
+        0.0007646257180409269,
+        0.0020967594564160843,
+        0.017001882160287713,
+        0.0008780509559122029,
+        0.22274489595968194,
+        0.15277723259386888,
+        0.005100288663336559
+      ],
+      "empirical_probabilities": [
+        0.048135,
+        0.54885,
+        0.000705,
+        0.00221,
+        0.017485,
+        0.001005,
+        0.22221,
+        0.154225,
+        0.005175
+      ],
+      "dominant_element_symbol": "Ca",
+      "dominant_theoretical_prob": 0.5500887152487648,
+      "dominant_empirical_prob": 0.54885,
+      "max_interpolation_scheme_diff": 9.707916498458147e-09,
+      "max_abs_probability_diff": 0.0014477732042458558,
+      "allowed_probability_diff": 0.005005844180678093,
+      "max_abs_z_score": 1.9167937166816138,
+      "chi2_stat": 13.048306313353828,
+      "chi2_ndf": 8,
+      "chi2_pvalue": 0.11019831708694862,
+      "holm_threshold": 1.8181818181818182e-05,
+      "passed": true
+    }
+  ],
+  "json_path": "verification\\reports\\physics\\exp01_cross_sections.json",
+  "plot_path": "verification\\reports\\physics\\exp01_cross_sections.png",
+  "provenance": {
+    "git_sha": "436a5ba72ce473fc6636bc9806addb5d7e2e3454",
+    "timestamp_utc": "2026-10-28T19:04:21.972812+00:00",
+    "quick_mode": false,
+    "python_version": "3.14.3",
+    "numpy_version": "2.5.3",
+    "numba_version": "0.67.0",
+    "data_hashes_sha256": {
+      "tables/NIST Materials.h5": "1ac4ec9a9e861177b7733f0c6f46420efe2040b1fcec0720effa1a6432538f98",
+      "tables/NIST XCOM Elements MAC.h5": "400770cdb99e004db0dfc76c2dd9cbf9d3015fe0f424a4bee467c942110a834e",
+      "core/physics/scat_func_fit_param_array.py": "b9de5d438f0be8a2b3e496f774a84320baf414dc4dc65bc151fb204d83e96047",
+      "core/physics/g4coherent_arrays.py": "bef7f2440f9d30bb4eeaff73ffd953019979513f062ee5e8c82944b5b5ab78c0",
+      "core/materials/atomic_properties.py": "22f4061cfac56ae0f93b7b242111a957aa38ef326571bcf15b3cd4d09c972600"
+    },
+    "elapsed_seconds": 3.6643
+  }
+}

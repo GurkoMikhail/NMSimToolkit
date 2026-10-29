@@ -1,0 +1,142 @@
+{
+  "quick": false,
+  "reference_standard_types": {
+    "vose_alias_table": "analytical_exact_algebraic_probability_reconstruction",
+    "discrete_ba133_spectrum": "evaluator_tabulated_nuclear_decay_lines",
+    "continuous_trapezoid_spectrum": "analytical_piecewise_linear_cdf_and_moments",
+    "spatial_angular_transform": "independent_analytical_euler_matrix_and_uniform_pdfs",
+    "poisson_stream_lewis_shedler": "analytical_nhpp_intensity_integral_and_exponential_interarrival",
+    "batch_and_resume_invariance": "deterministic_bitwise_and_coupled_transport_invariance"
+  },
+  "vose_and_discrete": {
+    "num_samples": 500000,
+    "skewed_weight_ratio": 10000.0,
+    "max_algebraic_reconstruction_error": 1.1102230246251565e-16,
+    "skewed_reduced_chi2": 1.1177375934530063,
+    "skewed_max_abs_z_score": 1.794262014766128,
+    "radionuclide_name": "Ba-133",
+    "radionuclide_reduced_chi2": 0.9402098885887307,
+    "radionuclide_max_abs_z_score": 2.2999804686066825,
+    "passed": true
+  },
+  "continuous_spectrum": {
+    "num_samples": 500000,
+    "num_histogram_bins": 60,
+    "reduced_chi2": 0.9098352390091872,
+    "l1_density_error": 0.0073056114890407,
+    "max_abs_z_score": 3.3962164796400716,
+    "empirical_mean_energy": 0.22956716756553638,
+    "theoretical_mean_energy": 0.22931519274376422,
+    "mean_energy_z_score": 1.41108918694146,
+    "passed": true
+  },
+  "spatial_and_angular": {
+    "num_samples": 500000,
+    "active_voxels_count": 16,
+    "zero_weight_voxels_count": 48,
+    "zero_weight_voxel_leakage": 0,
+    "out_of_bounds_count": 0,
+    "voxel_weights_reduced_chi2": 0.803758830245305,
+    "intra_voxel_jitter_reduced_chi2": 1.28072,
+    "intra_voxel_jitter_chi2_xyz": [
+      0.9943536842105265,
+      0.7573599999999999,
+      0.6826568421052631
+    ],
+    "max_abs_inter_axis_jitter_corr": 0.002034690419856627,
+    "max_independent_transform_diff": 1.1546319456101628e-14,
+    "cone_violation_count": 0,
+    "max_direction_norm_error": 3.3306690738754696e-16,
+    "cos_theta_reduced_chi2": 1.1484583333333334,
+    "azimuth_phi_reduced_chi2": 0.9772208333333334,
+    "passed": true
+  },
+  "poisson_stream": {
+    "num_realizations": 400,
+    "theoretical_expected_count": 526.7005627902346,
+    "empirical_mean_count": 528.925,
+    "mean_count_z_score": 1.9385109372657052,
+    "fano_dispersion_index": 0.968180009507628,
+    "fano_standard_error": 0.07079923254047887,
+    "fano_z_score": 0.44943976580790246,
+    "rate_curve_reduced_chi2": 1.1582644996484255,
+    "component_ratio_empirical": 0.7777647068709089,
+    "component_ratio_theoretical": 0.7811059824300558,
+    "component_ratio_z_score": 0.9781603955547395,
+    "non_monotonic_time_violations": 0,
+    "stationary_interarrival_count": 187381,
+    "interarrival_exp_reduced_chi2": 0.856858234277003,
+    "interarrival_autocorr_lag1": -0.0012170642926183058,
+    "interarrival_autocorr_z_score": 0.5268356293566658,
+    "passed": true
+  },
+  "invariance_cases": [
+    {
+      "scenario_label": "batch=128 vs 4096",
+      "total_particles": 1223,
+      "id_mismatch_count": 0,
+      "max_position_diff": 0.0,
+      "max_direction_diff": 0.0,
+      "max_energy_diff": 0.0,
+      "max_time_diff": 0.0,
+      "passed": true
+    },
+    {
+      "scenario_label": "batch=512 vs 4096",
+      "total_particles": 1223,
+      "id_mismatch_count": 0,
+      "max_position_diff": 0.0,
+      "max_direction_diff": 0.0,
+      "max_energy_diff": 0.0,
+      "max_time_diff": 0.0,
+      "passed": true
+    },
+    {
+      "scenario_label": "Primary [0,T/2]+[T/2,T]",
+      "total_particles": 1223,
+      "id_mismatch_count": 0,
+      "max_position_diff": 0.0,
+      "max_direction_diff": 0.0,
+      "max_energy_diff": 0.0,
+      "max_time_diff": 0.0,
+      "passed": true
+    },
+    {
+      "scenario_label": "Coupled Transport batch=64 vs 4096",
+      "total_particles": 1200,
+      "id_mismatch_count": 0,
+      "max_position_diff": 0.0,
+      "max_direction_diff": 0.0,
+      "max_energy_diff": 0.0,
+      "max_time_diff": 0.0,
+      "passed": true
+    },
+    {
+      "scenario_label": "SimMgr [0,T/2]+[T/2,T]",
+      "total_particles": 437,
+      "id_mismatch_count": 0,
+      "max_position_diff": 0.0,
+      "max_direction_diff": 0.0,
+      "max_energy_diff": 0.0,
+      "max_time_diff": 0.0,
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "provenance": {
+    "git_sha": "436a5ba72ce473fc6636bc9806addb5d7e2e3454",
+    "timestamp_utc": "2026-10-28T19:05:22.985165+00:00",
+    "quick_mode": false,
+    "python_version": "3.14.3",
+    "numpy_version": "2.5.3",
+    "numba_version": "0.67.0",
+    "data_hashes_sha256": {
+      "tables/NIST Materials.h5": "1ac4ec9a9e861177b7733f0c6f46420efe2040b1fcec0720effa1a6432538f98",
+      "tables/NIST XCOM Elements MAC.h5": "400770cdb99e004db0dfc76c2dd9cbf9d3015fe0f424a4bee467c942110a834e",
+      "core/physics/scat_func_fit_param_array.py": "b9de5d438f0be8a2b3e496f774a84320baf414dc4dc65bc151fb204d83e96047",
+      "core/physics/g4coherent_arrays.py": "bef7f2440f9d30bb4eeaff73ffd953019979513f062ee5e8c82944b5b5ab78c0",
+      "core/materials/atomic_properties.py": "22f4061cfac56ae0f93b7b242111a957aa38ef326571bcf15b3cd4d09c972600"
+    },
+    "elapsed_seconds": 15.4539
+  }
+}

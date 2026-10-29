@@ -1,3 +1,4 @@
+import gc
 import tracemalloc
 import unittest
 
@@ -1271,6 +1272,46 @@ class TestProcessesSoA(unittest.TestCase):
         self.assertGreater(len(sec_energies_below), 150)
         self.assertEqual(int(np.sum(sec_energies_below > Float(70.0 * units.keV))), 0)
         self.assertTrue(np.all(sec_energies_below < Float(16.0 * units.keV)))
+
+    def test_rng_context_retains_temporary_generator_against_gc(self) -> None:
+        """
+        Регрессионный тест Приложения A.3:
+        Создание RNGContext из временного генератора np.random.default_rng(seed) без сохранения
+        генератора в локальную переменную должно удерживать сильную ссылку внутри RNGContext,
+        предотвращая уничтожение C-состояния при gc.collect() и гарантируя детерминизм Numba-ядра.
+        """
+        ctx = RNGContext.from_numpy_rng(np.random.default_rng(12345))
+        gc.collect()
+
+        self.assertIsNotNone(ctx._rng_reference)
+        self.assertIsNotNone(ctx._bit_generator_reference)
+
+        @njit(cache=True)
+        def _sample_compton_thetas_with_ctx(
+            num_samples: int,
+            photon_energy: Float,
+            target_z: Charge,
+            rng_context: RNGContext,
+        ) -> np.ndarray:
+            samples = np.empty(num_samples, dtype=np.float64)
+            for sample_idx in range(num_samples):
+                samples[sample_idx] = _generate_compton_theta_scalar(
+                    photon_energy, target_z, rng_context
+                )
+            return samples
+
+        sampled_from_temp = _sample_compton_thetas_with_ctx(
+            2048, Float(0.1405 * units.MeV), Charge(82), ctx
+        )
+
+        held_rng = np.random.default_rng(12345)
+        held_ctx = RNGContext.from_numpy_rng(held_rng)
+        sampled_from_held = _sample_compton_thetas_with_ctx(
+            2048, Float(0.1405 * units.MeV), Charge(82), held_ctx
+        )
+
+        self.assertTrue(np.all(np.isfinite(sampled_from_temp)))
+        np.testing.assert_array_equal(sampled_from_temp, sampled_from_held)
 
 
 if __name__ == "__main__":

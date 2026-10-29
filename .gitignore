@@ -160,3 +160,6 @@ output data/
 
 # log files
 /logs/*.log
+
+# Legacy verification temporary outputs
+verification/physics/output/

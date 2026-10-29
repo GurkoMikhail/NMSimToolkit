@@ -1,0 +1,227 @@
+{
+  "experiment_id": "exp07_macroscopic_transport_and_dosimetry",
+  "title": "Эксперимент 7: Макроскопический транспорт, факторы накопления, альбедо и 3D-дозиметрия",
+  "quick_mode": false,
+  "reference_standard_types": {
+    "water_energy_absorption_buildup": "external_standard_ANSI_ANS_6_4_3_1991_and_GP_formula",
+    "single_scatter_backscatter_albedo": "analytical_first_principles_single_scatter_quadrature",
+    "lead_k_fluorescence_albedo": "analytical_first_principles_isotropic_slab_escape_integral",
+    "compton_180_backscatter_peak": "analytical_exact_relativistic_compton_kinematics",
+    "rotated_dose_grid_parity": "independent_analytical_euler_matrix_and_SI_gray_conversion"
+  },
+  "buildup_metrics": {
+    "source_energy": 0.5,
+    "water_linear_attenuation": 0.009686213094521681,
+    "mean_compton_recoil_energy": 0.170764782272576,
+    "phantom_half_width": 900.0,
+    "num_histories": 350000,
+    "ansi_reference_standard": "ANSI/ANS-6.4.3-1991",
+    "optical_depth_grid": [
+      0.5,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0,
+      3.5,
+      4.0
+    ],
+    "buildup_mc": [
+      1.5898227052092395,
+      2.4213790184845267,
+      3.4987723836201265,
+      4.7692104792844034,
+      6.3891895024847765,
+      8.283761985371813,
+      10.27471178156207,
+      12.49609821214451
+    ],
+    "buildup_mc_se": [
+      0.0046267727021639515,
+      0.00695226231029806,
+      0.010243219645432048,
+      0.01476883497869583,
+      0.021568620587127486,
+      0.031239615848477238,
+      0.04432262467704279,
+      0.06207147397490754
+    ],
+    "buildup_ansi_reference": [
+      1.6,
+      2.46,
+      3.57,
+      4.93,
+      6.53,
+      8.35,
+      10.45,
+      12.8
+    ],
+    "buildup_shell_averaged_reference": [
+      1.5825452482314744,
+      2.4461408144234533,
+      3.5482961805120783,
+      4.891890134376135,
+      6.479801463894415,
+      8.314908956945704,
+      10.40009140140879,
+      12.738227585162463
+    ],
+    "shell_attenuation_sinh_factor": 1.0066800127054698,
+    "is_strictly_above_unity": true,
+    "is_monotonic_increasing": true,
+    "max_rel_diff_ansi": 0.03261450724454285,
+    "max_rel_diff_shell_corrected": 0.025078170547952652,
+    "energy_balance": {
+      "total_initial_energy": 175000.0,
+      "total_deposited_energy": 174766.0688394537,
+      "total_escaped_energy": 233.93116054619236,
+      "total_cutoff_energy": 0.0,
+      "total_secondary_emitted_count": 0,
+      "total_activations_recorded": 0,
+      "absolute_energy_balance_error": 8.731149137020111e-11,
+      "relative_energy_balance_error": 4.989228078297206e-16,
+      "passed": true
+    },
+    "passed": true
+  },
+  "albedo_metrics": {
+    "beam_energy": 0.1405,
+    "num_histories_per_material": 200000,
+    "materials": [
+      "Water",
+      "Pyrex",
+      "Lead"
+    ],
+    "number_albedo": [
+      0.411705,
+      0.303305,
+      0.11871
+    ],
+    "energy_albedo": [
+      0.2363408117980111,
+      0.18797527984164994,
+      0.06533237264671939
+    ],
+    "single_scatter_number_albedo_mc": [
+      0.11725,
+      0.10841,
+      0.003555
+    ],
+    "single_scatter_number_albedo_theory": [
+      0.11632570816518703,
+      0.10856409164671997,
+      0.0033856976443050898
+    ],
+    "single_scatter_albedo_z_scores": [
+      1.28925893980741,
+      0.2215164233623367,
+      1.303437931890865
+    ],
+    "max_single_albedo_z_score": 1.303437931890865,
+    "fluorescence_escaped_fractions": [
+      0.0,
+      0.0,
+      0.11495
+    ],
+    "lead_first_order_fluorescence_albedo_theory": 0.09715670539482872,
+    "hierarchy_valid": true,
+    "total_albedo_invariants_valid": true,
+    "theoretical_backscatter_peak": 0.09065081775045283,
+    "measured_backscatter_peak": 0.0915,
+    "peak_abs_error": 0.0008491822495471646,
+    "energy_balances": [
+      {
+        "total_initial_energy": 28100.000000000004,
+        "total_deposited_energy": 19477.52541907977,
+        "total_escaped_energy": 8622.47458092023,
+        "total_cutoff_energy": 0.0,
+        "total_secondary_emitted_count": 0,
+        "total_activations_recorded": 0,
+        "absolute_energy_balance_error": 3.637978807091713e-12,
+        "relative_energy_balance_error": 1.2946543797479405e-16,
+        "passed": true
+      },
+      {
+        "total_initial_energy": 28100.000000000004,
+        "total_deposited_energy": 22789.368829833667,
+        "total_escaped_energy": 5310.631170166328,
+        "total_cutoff_energy": 0.0,
+        "total_secondary_emitted_count": 5330,
+        "total_activations_recorded": 5330,
+        "absolute_energy_balance_error": 7.275957614183426e-12,
+        "relative_energy_balance_error": 2.589308759495881e-16,
+        "passed": true
+      },
+      {
+        "total_initial_energy": 28100.000000000004,
+        "total_deposited_energy": 26264.160328627182,
+        "total_escaped_energy": 1835.8396713728148,
+        "total_cutoff_energy": 0.0,
+        "total_secondary_emitted_count": 195181,
+        "total_activations_recorded": 195181,
+        "absolute_energy_balance_error": 7.275957614183426e-12,
+        "relative_energy_balance_error": 2.589308759495881e-16,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  "dose_parity_metrics": {
+    "num_histories": 150000,
+    "grid_shape": [
+      20,
+      20,
+      20
+    ],
+    "voxel_step": 8.0,
+    "euler_rotation_angles": [
+      0.18,
+      -0.14,
+      0.22
+    ],
+    "translation_offset": [
+      5.0,
+      -3.0,
+      80.0
+    ],
+    "total_energy_handler": 7689.132345865028,
+    "total_energy_manual": 7689.132345865028,
+    "total_energy_rel_diff": 0.0,
+    "deposited_energy_conservation_rel_diff": 1.1828313792284066e-16,
+    "max_layer_rel_diff": 0.0,
+    "max_voxel_abs_diff": 0.0,
+    "voxel_mass": 0.000512000005926708,
+    "mean_phantom_absorbed_dose": 3.0076533295104223e-10,
+    "max_voxel_absorbed_dose": 4.528603750839162e-09,
+    "dose_conversion_rel_diff": 0.0,
+    "energy_balance": {
+      "total_initial_energy": 21075.000000000004,
+      "total_deposited_energy": 7689.132345865027,
+      "total_escaped_energy": 13385.867654134974,
+      "total_cutoff_energy": 0.0,
+      "total_secondary_emitted_count": 0,
+      "total_activations_recorded": 0,
+      "absolute_energy_balance_error": 3.637978807091713e-12,
+      "relative_energy_balance_error": 1.7262058396639204e-16,
+      "passed": true
+    },
+    "passed": true
+  },
+  "passed": true,
+  "provenance": {
+    "git_sha": "436a5ba72ce473fc6636bc9806addb5d7e2e3454",
+    "timestamp_utc": "2026-10-28T19:05:43.742855+00:00",
+    "quick_mode": false,
+    "python_version": "3.14.3",
+    "numpy_version": "2.5.3",
+    "numba_version": "0.67.0",
+    "data_hashes_sha256": {
+      "tables/NIST Materials.h5": "1ac4ec9a9e861177b7733f0c6f46420efe2040b1fcec0720effa1a6432538f98",
+      "tables/NIST XCOM Elements MAC.h5": "400770cdb99e004db0dfc76c2dd9cbf9d3015fe0f424a4bee467c942110a834e",
+      "core/physics/scat_func_fit_param_array.py": "b9de5d438f0be8a2b3e496f774a84320baf414dc4dc65bc151fb204d83e96047",
+      "core/physics/g4coherent_arrays.py": "bef7f2440f9d30bb4eeaff73ffd953019979513f062ee5e8c82944b5b5ab78c0",
+      "core/materials/atomic_properties.py": "22f4061cfac56ae0f93b7b242111a957aa38ef326571bcf15b3cd4d09c972600"
+    },
+    "elapsed_seconds": 20.7357
+  }
+}

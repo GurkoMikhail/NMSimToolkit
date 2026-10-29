@@ -1,0 +1,289 @@
+{
+  "experiment_id": "exp03_woodcock_and_delta_tracking",
+  "title": "Эксперимент 3: Верификация дельта-трекинга и трекинга Вудкока",
+  "quick_mode": false,
+  "reference_standard_types": {
+    "free_path_moments_and_boundary": "Type B (аналитическое распределение Бугера–Ламберта exp(-mu*s) + детерминированные границы)",
+    "majorant_k_edge_validity": "Type B (анализ K-краев поглощения W и Pb из базы сечений NIST XCOM)",
+    "delta_majorant_scaling_production": "Type B (аналитическая кусочно-экспоненциальная плотность и теорема Кэмпбелла для шагов Вудкока на продакшен-ядре)",
+    "phantom_uncollided_transmission": "Type B (аналитический интеграл Бугера–Ламберта–Бера exp(-sum(mu_i * L_i)))",
+    "phantom_history_energy_balance": "Type C (точное алгебраическое тождество закона сохранения энергии E_0 = E_dep + E_esc + E_cut)",
+    "phantom_triple_equivalence_and_3d_voxel": "Type D (кросс-верификация Direct Slabs vs 3D WoodcockVoxelVolume vs WoodcockParametricVolume)"
+  },
+  "free_path_boundary_audit": {
+    "zero_lac_returns_inf": true,
+    "negative_lac_returns_inf": true,
+    "small_lac_value": 1e-12,
+    "large_lac_value": 1000000.0,
+    "scaling_invariance_max_rel_error": 2.3083891467487287e-16,
+    "zero_uniform_guard_finite": true,
+    "zero_uniform_free_path": 690.7755278982137,
+    "near_unit_uniform_free_path": 8.881784197001256e-16,
+    "unit_uniform_returns_zero": true,
+    "passed": true
+  },
+  "majorant_validity_audit": {
+    "tungsten_k_edge_energy": 0.06953,
+    "lead_k_edge_energy": 0.088,
+    "probe_energy": 0.08,
+    "tungsten_lac_at_probe": 15.070983576066462,
+    "lead_lac_at_probe": 2.745599110546356,
+    "tungsten_to_lead_lac_ratio": 5.4891420667263535,
+    "lead_valid_majorant_for_tungsten": false,
+    "pointwise_envelope_valid_on_full_grid": true,
+    "passed": true
+  },
+  "free_path_metrics": [
+    {
+      "material_name": "Water, Liquid",
+      "linear_attenuation": 0.015336301948783814,
+      "num_histories": 500000,
+      "mean_free_path_mc": 65.2336024787695,
+      "mean_free_path_theory": 65.20476731219426,
+      "mean_rel_error": 0.0004422248213412738,
+      "mean_z_score": 0.3127001699794242,
+      "variance_mc": 4250.899645497136,
+      "variance_theory": 4251.661680237397,
+      "variance_rel_error": 0.00017923221497227594,
+      "variance_z_score": 0.04480805374306899,
+      "survival_chi2_ndf": 0.7532980296354405,
+      "passed": true
+    },
+    {
+      "material_name": "Sodium Iodide",
+      "linear_attenuation": 0.2613798137184959,
+      "num_histories": 500000,
+      "mean_free_path_mc": 3.8238742416306866,
+      "mean_free_path_theory": 3.825850151829217,
+      "mean_rel_error": 0.0005164630396164061,
+      "mean_z_score": 0.3651945175449773,
+      "variance_mc": 14.647974460628548,
+      "variance_theory": 14.637129384251644,
+      "variance_rel_error": 0.0007409291871514772,
+      "variance_z_score": 0.18523229678786932,
+      "survival_chi2_ndf": 1.0582354507659206,
+      "passed": true
+    },
+    {
+      "material_name": "Pb",
+      "linear_attenuation": 2.6860203063192545,
+      "num_histories": 500000,
+      "mean_free_path_mc": 0.37225331903256753,
+      "mean_free_path_theory": 0.3722980044668144,
+      "mean_rel_error": 0.00012002598378373148,
+      "mean_z_score": 0.08487118705206312,
+      "variance_mc": 0.13902246159738704,
+      "variance_theory": 0.13860580412997217,
+      "variance_rel_error": 0.0030060607492610287,
+      "variance_z_score": 0.751515187315257,
+      "survival_chi2_ndf": 0.7446422970919266,
+      "passed": true
+    }
+  ],
+  "delta_scaling_metrics": [
+    {
+      "kappa_factor": 1.0,
+      "num_histories": 200000,
+      "collided_fraction_mc": 0.887955,
+      "collided_fraction_theory": 0.8883092979151009,
+      "collided_fraction_z_score": 0.5030289501341692,
+      "mean_depth_mc": 29.660665170237788,
+      "mean_depth_theory": 29.65157517676695,
+      "mean_depth_z_score": 0.36015164262973404,
+      "profile_chi2_ndf": 0.9524030531290901,
+      "mean_steps_per_collision": 2.900529869193822,
+      "mean_steps_per_collision_theory": 2.8969426522608455,
+      "mean_steps_rel_error": 0.0012382768192449117,
+      "passed": true
+    },
+    {
+      "kappa_factor": 2.5,
+      "num_histories": 200000,
+      "collided_fraction_mc": 0.889005,
+      "collided_fraction_theory": 0.8883092979151009,
+      "collided_fraction_z_score": 0.9877514782250392,
+      "mean_depth_mc": 29.684062974823625,
+      "mean_depth_theory": 29.65157517676695,
+      "mean_depth_z_score": 1.2879491855658411,
+      "profile_chi2_ndf": 1.250606056603611,
+      "mean_steps_per_collision": 7.2386769478236905,
+      "mean_steps_per_collision_theory": 7.2423566306521145,
+      "mean_steps_rel_error": 0.0005080781044184355,
+      "passed": true
+    },
+    {
+      "kappa_factor": 10.0,
+      "num_histories": 200000,
+      "collided_fraction_mc": 0.88781,
+      "collided_fraction_theory": 0.8883092979151009,
+      "collided_fraction_z_score": 0.7088986283362436,
+      "mean_depth_mc": 29.607579342474637,
+      "mean_depth_theory": 29.65157517676695,
+      "mean_depth_z_score": -1.7430021546425167,
+      "profile_chi2_ndf": 1.3800365003250246,
+      "mean_steps_per_collision": 28.966394836733084,
+      "mean_steps_per_collision_theory": 28.969426522608458,
+      "mean_steps_rel_error": 0.00010465122162526333,
+      "passed": true
+    },
+    {
+      "kappa_factor": 50.0,
+      "num_histories": 200000,
+      "collided_fraction_mc": 0.88933,
+      "collided_fraction_theory": 0.8883092979151009,
+      "collided_fraction_z_score": 1.4491835155741903,
+      "mean_depth_mc": 29.648926435808633,
+      "mean_depth_theory": 29.65157517676695,
+      "mean_depth_z_score": -0.10502611688903046,
+      "profile_chi2_ndf": 0.7559476174814054,
+      "mean_steps_per_collision": 144.57891896146538,
+      "mean_steps_per_collision_theory": 144.8471326130423,
+      "mean_steps_rel_error": 0.001851701492037532,
+      "passed": true
+    }
+  ],
+  "phantom_parity_metrics": {
+    "num_histories": 300000,
+    "beam_energy": 0.1405,
+    "layer_names": [
+      "Water",
+      "Bone",
+      "Air",
+      "NaI",
+      "Lead"
+    ],
+    "layer_thicknesses": [
+      20.0,
+      10.0,
+      15.0,
+      6.0,
+      0.8
+    ],
+    "voxel_grid_shape": [
+      16,
+      16,
+      259
+    ],
+    "edep_direct_slabs": [
+      2821.128977313464,
+      3384.947573884342,
+      1.7314917020469367,
+      24272.924038331348,
+      5073.513188531798
+    ],
+    "edep_woodcock_voxel": [
+      2833.0728438042997,
+      3426.176569736852,
+      2.090971016682468,
+      24131.00690045318,
+      5107.973723024159
+    ],
+    "edep_woodcock_parametric": [
+      2837.244174259007,
+      3438.1974584400564,
+      1.5483953952656786,
+      24104.62645554633,
+      5168.9508184067545
+    ],
+    "total_edep_direct": 35554.24526976635,
+    "total_edep_voxel": 35500.32100803846,
+    "total_edep_parametric": 35550.56730205071,
+    "max_total_edep_rel_diff": 0.0015174952626693195,
+    "total_edep_rel_diff_se": 0.0009030290519051739,
+    "total_edep_rel_diff_tolerance": 0.0031606016816681085,
+    "max_layer_edep_z_score": 3.3349710115891003,
+    "process_counts_direct": {
+      "PhotoelectricEffect": 418654,
+      "ComptonScattering": 263579,
+      "CoherentScattering": 43253
+    },
+    "process_counts_voxel": {
+      "PhotoelectricEffect": 417792,
+      "ComptonScattering": 264882,
+      "CoherentScattering": 43021
+    },
+    "process_counts_parametric": {
+      "PhotoelectricEffect": 418436,
+      "ComptonScattering": 263791,
+      "CoherentScattering": 43169
+    },
+    "max_process_count_z_score": 1.7924124200991696,
+    "transmitted_fraction_direct": 0.018193333333333332,
+    "transmitted_fraction_voxel": 0.01861,
+    "transmitted_fraction_parametric": 0.017983333333333334,
+    "max_transmitted_z_score": 1.7943048707031273,
+    "uncollided_transmitted_theory": 0.013333062499798555,
+    "uncollided_transmitted_direct": 0.01323,
+    "uncollided_transmitted_voxel": 0.013736666666666666,
+    "uncollided_transmitted_parametric": 0.013083333333333334,
+    "max_uncollided_vs_theory_z_score": 1.9273741212557995,
+    "absorbed_layer_fractions_direct": [
+      0.00581,
+      0.04137,
+      6.666666666666667e-06,
+      0.59779,
+      0.13411
+    ],
+    "absorbed_layer_fractions_voxel": [
+      0.00591,
+      0.0416,
+      3.3333333333333333e-06,
+      0.59479,
+      0.13485
+    ],
+    "absorbed_layer_fractions_parametric": [
+      0.00585,
+      0.04238666666666667,
+      6.666666666666667e-06,
+      0.59394,
+      0.13654666666666668
+    ],
+    "reflected_fraction_direct": 0.17143333333333333,
+    "reflected_fraction_voxel": 0.17281666666666667,
+    "reflected_fraction_parametric": 0.17225,
+    "lateral_escape_fraction_direct": 0.031286666666666664,
+    "lateral_escape_fraction_voxel": 0.03142,
+    "lateral_escape_fraction_parametric": 0.031036666666666667,
+    "outcome_partition_complete": true,
+    "max_history_energy_imbalance": 5.551115123125783e-17,
+    "energy_balance_violations": 0,
+    "voxel_3d_oblique_metrics": {
+      "grid_shape": [
+        16,
+        16,
+        16
+      ],
+      "num_histories": 100000,
+      "beam_direction": [
+        0.28,
+        -0.21,
+        0.9367496997597597
+      ],
+      "total_edep_voxel_3d": 13367.55889340305,
+      "total_edep_parametric_3d": 13375.14914199249,
+      "edep_z_score": 0.6255156036628033,
+      "uncollided_fraction_voxel_3d": 0.00692,
+      "uncollided_fraction_parametric_3d": 0.00673,
+      "uncollided_z_score": 0.5142653638627284,
+      "passed": true
+    },
+    "passed": true
+  },
+  "passed": true,
+  "provenance": {
+    "git_sha": "436a5ba72ce473fc6636bc9806addb5d7e2e3454",
+    "timestamp_utc": "2026-10-28T19:04:56.579855+00:00",
+    "quick_mode": false,
+    "python_version": "3.14.3",
+    "numpy_version": "2.5.3",
+    "numba_version": "0.67.0",
+    "data_hashes_sha256": {
+      "tables/NIST Materials.h5": "1ac4ec9a9e861177b7733f0c6f46420efe2040b1fcec0720effa1a6432538f98",
+      "tables/NIST XCOM Elements MAC.h5": "400770cdb99e004db0dfc76c2dd9cbf9d3015fe0f424a4bee467c942110a834e",
+      "core/physics/scat_func_fit_param_array.py": "b9de5d438f0be8a2b3e496f774a84320baf414dc4dc65bc151fb204d83e96047",
+      "core/physics/g4coherent_arrays.py": "bef7f2440f9d30bb4eeaff73ffd953019979513f062ee5e8c82944b5b5ab78c0",
+      "core/materials/atomic_properties.py": "22f4061cfac56ae0f93b7b242111a957aa38ef326571bcf15b3cd4d09c972600"
+    },
+    "elapsed_seconds": 32.4303
+  }
+}
