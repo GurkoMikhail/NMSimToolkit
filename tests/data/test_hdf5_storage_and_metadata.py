@@ -33,6 +33,7 @@ from core.config.models import (
     SimulationConfig,
     SimulationManagerConfig,
     SourceConfig,
+    SourceMetadataConfig,
     StepAndShootProtocolConfig,
     VolumeConfig,
     VoxelSpatialConfig,
@@ -343,15 +344,13 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             rotation_direction="CCW",
             time_per_step=15.0 * units.s,
             radius=250.0 * units.mm,
+            metadata=SourceMetadataConfig(
+                radionuclide="161Tb",
+                phantom_type="NEMA IEC Body Phantom",
+            ),
         )
         sim_mgr_cfg = SimulationManagerConfig(
             particles_number=50_000,
-            physics_list="StandardEM_SPECT",
-        )
-        source_pydantic_cfg = SourceConfig(
-            spatial=VoxelSpatialConfig(distribution=NumpyDistributionConfig(path="source.npy")),
-            radionuclide="161Tb",
-            phantom_type="NEMA IEC Body Phantom",
         )
 
         collector = ProcedureMetadataCollector()
@@ -361,7 +360,6 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             context={"view_index": 5, "gantry_angle": np.pi / 3.0},
             task_id=5,
             sim_config=sim_mgr_cfg,
-            scene_config=source_pydantic_cfg,
             random_seed=12345,
             precision_mode="single",
         )
@@ -436,7 +434,7 @@ class TestHdf5StorageAndMetadata(unittest.TestCase):
             sim_grp = meta["simulation"]
             self.assertEqual(sim_grp.attrs["code_name"], "NMSimToolkit")
             self.assertEqual(sim_grp.attrs["code_version"], "0.2.0")
-            self.assertEqual(sim_grp.attrs["physics_list"], "StandardEM_SPECT")
+            self.assertEqual(sim_grp.attrs["physics_list"], ", ".join(get_process_mapping().values()))
             self.assertEqual(int(sim_grp["simulated_histories"][()]), 50_000)
             self.assertEqual(int(sim_grp["random_seed"][()]), 12345)
             self.assertEqual(sim_grp.attrs["precision_mode"], "single")

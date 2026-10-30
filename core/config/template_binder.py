@@ -435,7 +435,6 @@ class ConfigTemplateBinder:
         protocol: Optional[AnyProtocolConfig] = None,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
-        source_metadata_registry: Optional[Dict[SpatialNode, Any]] = None,
         logging_cfg: Optional[LoggingConfig] = None,
     ) -> None:
         """
@@ -459,7 +458,6 @@ class ConfigTemplateBinder:
             protocol=protocol,
             distribution_registry=adjusted_distribution_registry,
             slots_registry=slots_registry,
-            source_metadata_registry=source_metadata_registry,
             logging_cfg=logging_cfg,
         )
 

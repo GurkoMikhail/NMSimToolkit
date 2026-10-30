@@ -44,23 +44,27 @@ class TestLoggingConfigModel(unittest.TestCase):
         """Проверка дефолтных значений конфигурации логирования."""
         config = LoggingConfig()
         self.assertEqual(config.output_dir, "logs")
-        self.assertEqual(config.level, "INFO")
-        self.assertFalse(config.console)
+        self.assertEqual(config.file_level, "INFO")
+        self.assertEqual(config.console_level, "OFF")
         self.assertTrue(config.per_task_files)
         self.assertEqual(config.filename_pattern, "task_{task_id}.log")
 
     def test_level_normalization(self) -> None:
-        """Проверка нормализации регистра уровня логирования (нижний регистр в верхний)."""
-        config_lower = LoggingConfig(level="debug")  # type: ignore[arg-type]
-        self.assertEqual(config_lower.level, "DEBUG")
+        """Проверка нормализации регистра уровней логирования и значений отключения (None/False -> OFF)."""
+        config_lower = LoggingConfig(file_level="debug", console_level="warning")  # type: ignore[arg-type]
+        self.assertEqual(config_lower.file_level, "DEBUG")
+        self.assertEqual(config_lower.console_level, "WARNING")
 
-        config_mixed = LoggingConfig(level="Warning")  # type: ignore[arg-type]
-        self.assertEqual(config_mixed.level, "WARNING")
+        config_off = LoggingConfig(file_level=None, console_level=False)  # type: ignore[arg-type]
+        self.assertEqual(config_off.file_level, "OFF")
+        self.assertEqual(config_off.console_level, "OFF")
 
     def test_invalid_level_rejected(self) -> None:
         """Проверка отклонения некорректного уровня логирования."""
         with self.assertRaises(ValidationError):
-            LoggingConfig(level="NOT_A_LEVEL")  # type: ignore[arg-type]
+            LoggingConfig(file_level="NOT_A_LEVEL")  # type: ignore[arg-type]
+        with self.assertRaises(ValidationError):
+            LoggingConfig(console_level="NOT_A_LEVEL")  # type: ignore[arg-type]
 
     def test_output_dir_path_normalization(self) -> None:
         """Проверка корректной нормализации pathlib.Path в строку."""
@@ -68,13 +72,14 @@ class TestLoggingConfigModel(unittest.TestCase):
         config = LoggingConfig(output_dir=custom_path)  # type: ignore[arg-type]
         self.assertEqual(config.output_dir, str(custom_path))
 
-    def test_output_dir_empty_normalized_to_none(self) -> None:
-        """Проверка нормализации пустой строки output_dir в None."""
-        config_empty = LoggingConfig(output_dir="")
-        self.assertIsNone(config_empty.output_dir)
-
-        config_spaces = LoggingConfig(output_dir="   ")
-        self.assertIsNone(config_spaces.output_dir)
+    def test_output_dir_empty_rejected(self) -> None:
+        """Проверка отклонения пустой строки или None для output_dir."""
+        with self.assertRaises(ValidationError):
+            LoggingConfig(output_dir="")
+        with self.assertRaises(ValidationError):
+            LoggingConfig(output_dir="   ")
+        with self.assertRaises(ValidationError):
+            LoggingConfig(output_dir=None)  # type: ignore[arg-type]
 
     def test_filename_pattern_validation(self) -> None:
         """Проверка валидации шаблона имени файла лога."""
@@ -156,8 +161,8 @@ class TestLoggingConfigModel(unittest.TestCase):
         raw_config_dict = {
             "logging": {
                 "output_dir": "output_run_logs",
-                "level": "DEBUG",
-                "console": True,
+                "file_level": "DEBUG",
+                "console_level": "WARNING",
                 "per_task_files": True,
             },
             "simulation_manager": {
@@ -185,8 +190,8 @@ class TestLoggingConfigModel(unittest.TestCase):
         self.assertIsNotNone(sim_config.logging)
         assert sim_config.logging is not None
         self.assertEqual(sim_config.logging.output_dir, "output_run_logs")
-        self.assertEqual(sim_config.logging.level, "DEBUG")
-        self.assertTrue(sim_config.logging.console)
+        self.assertEqual(sim_config.logging.file_level, "DEBUG")
+        self.assertEqual(sim_config.logging.console_level, "WARNING")
         self.assertTrue(sim_config.logging.per_task_files)
 
 
@@ -207,7 +212,8 @@ class TestLoggingFileOperations(unittest.TestCase):
         """Проверка создания файла лога задачи и корректного закрытия хэндлеров на Windows."""
         log_config = LoggingConfig(
             output_dir=str(self.logs_path),
-            level="INFO",
+            file_level="INFO",
+            console_level="OFF",
             per_task_files=True,
         )
 
@@ -237,7 +243,8 @@ class TestLoggingFileOperations(unittest.TestCase):
         """Проверка создания отдельного orchestrator.log при per_task_files=True."""
         log_config = LoggingConfig(
             output_dir=str(self.logs_path),
-            level="INFO",
+            file_level="INFO",
+            console_level="OFF",
             per_task_files=True,
         )
 
@@ -260,14 +267,53 @@ class TestLoggingFileOperations(unittest.TestCase):
         self.assertIn("Оркестратор запустил пул процессов", content)
         self.assertNotIn("Воркер выполняет перенос частиц", content)
 
+    def test_independent_file_and_console_levels(self) -> None:
+        """Проверка независимой фильтрации логов в файл (DEBUG) и в консоль (WARNING)."""
+        import io
+
+        log_config = LoggingConfig(
+            output_dir=str(self.logs_path),
+            file_level="DEBUG",
+            console_level="WARNING",
+            per_task_files=True,
+        )
+        handlers = setup_task_logging(log_config, task_id=7)
+        self.assertEqual(len(handlers), 2)
+
+        stream_buf = io.StringIO()
+        for handler in handlers:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+                handler.setStream(stream_buf)
+
+        task_logger = logging.getLogger("core.transport.simulation_managers")
+        task_logger.debug("Отладочное сообщение для файла")
+        task_logger.info("Информационное сообщение для файла")
+        task_logger.warning("Предупреждение для файла и консоли")
+
+        close_logging_handlers(handlers)
+
+        expected_file = self.logs_path / "task_7.log"
+        file_content = expected_file.read_text(encoding="utf-8")
+        console_content = stream_buf.getvalue()
+
+        self.assertIn("Отладочное сообщение для файла", file_content)
+        self.assertIn("Информационное сообщение для файла", file_content)
+        self.assertIn("Предупреждение для файла и консоли", file_content)
+
+        self.assertNotIn("Отладочное сообщение для файла", console_content)
+        self.assertNotIn("Информационное сообщение для файла", console_content)
+        self.assertIn("Предупреждение для файла и консоли", console_content)
+
+        expected_file.unlink()
+
     def test_yaml_roundtrip_with_logging(self) -> None:
         """Проверка сериализации и десериализации конфигурации с секцией logging в YAML."""
         yaml_file = Path(self.temp_directory) / "config_with_logging.yaml"
         raw_config_dict = {
             "logging": {
                 "output_dir": "yaml_output_logs",
-                "level": "WARNING",
-                "console": False,
+                "file_level": "OFF",
+                "console_level": "WARNING",
                 "per_task_files": True,
             },
             "simulation_manager": {
@@ -301,7 +347,8 @@ class TestLoggingFileOperations(unittest.TestCase):
         self.assertIsNotNone(loaded_config.logging)
         assert loaded_config.logging is not None
         self.assertEqual(loaded_config.logging.output_dir, "yaml_output_logs")
-        self.assertEqual(loaded_config.logging.level, "WARNING")
+        self.assertEqual(loaded_config.logging.file_level, "OFF")
+        self.assertEqual(loaded_config.logging.console_level, "WARNING")
 
 
 class TestSimulationWorkerAndOrchestratorLogging(unittest.TestCase):
@@ -323,8 +370,8 @@ class TestSimulationWorkerAndOrchestratorLogging(unittest.TestCase):
         return {
             "logging": {
                 "output_dir": str(self.output_logs),
-                "level": "INFO",
-                "console": False,
+                "file_level": "INFO",
+                "console_level": "OFF",
                 "per_task_files": True,
             },
             "simulation_manager": {

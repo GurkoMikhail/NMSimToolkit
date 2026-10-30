@@ -92,6 +92,7 @@ class SimulationManager(threading.Thread):
     sources: Tuple[ParticleSource, ...]
     geometry_buffer: NDArray[Any]
     physics_buffer: PhysicsBuffer
+    seed: Optional[int]
     rng: np.random.Generator
     rng_ctx: RNGContext
     invalidators: List[Callable[[NDArray[Index]], NDArray[np.bool_]]]
@@ -191,11 +192,12 @@ class SimulationManager(threading.Thread):
             stop_time=self.stop_time,
         )
         self.sources = (self.secondary_source, self.primary_source)
+        self.seed = None if seed is None else int(seed)
 
         if rng is not None:
             self.rng = rng
-        elif seed is not None:
-            self.rng = np.random.default_rng(int(seed))
+        elif self.seed is not None:
+            self.rng = np.random.default_rng(self.seed)
         else:
             self.rng = self.propagator.rng
 

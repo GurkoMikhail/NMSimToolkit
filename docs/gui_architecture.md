@@ -95,7 +95,7 @@ flowchart LR
         M1["HDF5 filename"]
         M2["buffer_size (объём выходного буфера записи, строка с единицей: 3 MiB)"]
         M3["Активные обработчики (Handlers)"]
-        M4["show_escaped_tracks (в DirectStreamHandler)"]
+        M4["show_escaped_tracks (в DirectStreamHandlerViewModel)"]
     end
 
     subgraph D4 ["4. Домен вычислительных ресурсов (ExecutionSettings)"]
@@ -250,8 +250,8 @@ sequenceDiagram
 
 1. **Строгая обобщенная типизация (`NodeViewModel[TCoreNode]`):**
    * Базовый класс `NodeViewModel` параметризован типом узла ядра (`TCoreNode = TypeVar("TCoreNode", bound=SpatialNode)`), что обеспечивает 100% статическую проверку типов `mypy` (Python 3.12+) во всех специализированных ViewModel (`VolumeViewModel`, `VoxelVolumeViewModel`, `SourceViewModel`, `GammaCameraViewModel`, `GantryViewModel`, `DoseGridViewModel`).
-2. **Сохранение паспортных метаданных источников (`SourceMetadataConfig` / `source_metadata_registry`):**
-   * При загрузке и сохранении YAML-конфигураций в `MainWindow` паспортные атрибуты источников (`radionuclide`, `phantom_type`) синхронизируются через `source_metadata_registry` между `SceneBuilder`, `SourceViewModel`, `SceneExporter` и `ConfigTemplateBinder`, сохраняя чистоту физического класса `Source` в `core/`.
+2. **Сохранение паспортных метаданных протокола исследования (`SourceMetadataConfig` в `protocol.metadata`):**
+   * При загрузке и сохранении YAML-конфигураций в `MainWindow` паспортные атрибуты исследования (`radionuclide`, `phantom_type`) хранятся в `BaseProcedureViewModel.metadata` (`protocol.metadata`) и сериализуются напрямую через `procedure_from_config` и `procedure_vm.to_config()`, сохраняя чистоту физического класса `Source` и `SourceConfig` в `core/`.
 3. **Реактивность без утечек:**
    * Редактирование в `PropertyInspector` или перетаскивание через `TransformGizmo` модифицирует `NodeViewModel.local_matrix`.
    * `SceneViewportController` перехватывает сигнал и вызывает `update_actor_transform`, меняя матрицу актора напрямую в VTK. Полигональная сетка не пересоздается.

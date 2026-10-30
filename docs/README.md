@@ -13,7 +13,7 @@
    * Разделение горячих (`ParticleState`) и холодных данных (`InitialStateBuffer`);
    * Трассировка Вудкока (Woodcock Tracking) по мажорантному материалу объема (`majorant_material_map`, определяемому максимумом $Z_{\text{eff}} \cdot \rho$) и аналитический RayCasting периодических коллиматоров (`PeriodicHexPrism` в `DirectParallelCollimator`);
    * Компиляция плоской геометрии (`GeometryCompiler`), источников (`SourceCompiler`, `Source`, `PointSource`) и физических таблиц (`PhysicsCompiler`, включая CSR-состав элементов `ElementCSR` с нормированными парциальными долями сечений элементов `element_partial_fractions` на сетке `MaterialBank` для физически точного выбора атомного номера $Z$);
-   * Реестр метаданных источников (`SourceMetadataConfig` / `source_metadata_registry`) и строгий `Roundtrip`-инвариант конфигурации;
+   * Паспортные метаданные протокола исследования (`SourceMetadataConfig` в `BaseProtocolConfig.metadata`), независимые уровни логирования (`file_level`, `console_level` в `LoggingConfig`) и строгий `Roundtrip`-инвариант конфигурации;
    * Асинхронный конвейер записи взаимодействий (`DataManager`) в HDF5.
 
 2. **[Архитектура графического интерфейса (`gui_architecture.md`)](gui_architecture.md)**

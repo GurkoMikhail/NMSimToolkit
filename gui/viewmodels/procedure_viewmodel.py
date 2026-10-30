@@ -6,6 +6,7 @@ from PySide6.QtCore import QObject, Signal
 
 from core.config.models import (
     AnyProtocolConfig,
+    SourceMetadataConfig,
     StepAndShootProtocolConfig,
     CustomSweepProtocolConfig,
 )
@@ -58,6 +59,7 @@ class BaseProcedureViewModel(QObject):
         self.bindings_registry: Dict[Any, Dict[str, str]] = {}
         # Скалярные привязки параметров самой процедуры (например, radius -> cam_radius, start_time -> t_start)
         self.bindings: Dict[str, str] = {}
+        self.metadata: Optional[SourceMetadataConfig] = None
         self._is_syncing_with_scene: bool = False
 
     def get_variables(self) -> Dict[str, List[float]]:
@@ -333,8 +335,9 @@ class CustomSweepProcedureViewModel(BaseProcedureViewModel):
     def to_config(self) -> Union[CustomSweepProtocolConfig, StepAndShootProtocolConfig]:
         return CustomSweepProtocolConfig(
             type="CustomSweep",
+            metadata=self.metadata,
             grid_variables=self._grid_variables,
-            zipped_variables=self._zipped_variables
+            zipped_variables=self._zipped_variables,
         )
 
 
@@ -389,6 +392,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         sequential_time: bool = True,
         start_angle: float = 0.0,
         end_angle: float = 360.0,
+        rotation_direction: str = "CW",
         head_mode: str = "Симметричный (360°/N)",
         head_angles: Optional[List[float]] = None,
         endpoint: bool = False,
@@ -420,6 +424,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
         self._sequential_time: bool = bool(sequential_time)
         self._start_angle: float = float(start_angle)
         self._end_angle: float = float(end_angle)
+        self._rotation_direction: str = "CCW" if str(rotation_direction).strip().upper() == "CCW" else "CW"
         self._head_mode: str = head_mode
         self._head_angles: List[float] = list(head_angles) if head_angles is not None else []
         self._endpoint: bool = bool(endpoint)
@@ -983,10 +988,12 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
 
         return StepAndShootProtocolConfig(
             type="StepAndShoot",
+            metadata=self.metadata,
             steps=self._steps,
             start_angle=float(np.radians(self._start_angle)) * units.rad,
             end_angle=float(np.radians(self._end_angle)) * units.rad,
             endpoint=self._endpoint,
+            rotation_direction="CCW" if self._rotation_direction == "CCW" else "CW",
             time_per_step=float(self._time_per_step) * units.s,
             initial_time=float(self._initial_time) * units.s,
             sequential_time=self._sequential_time,
@@ -1005,7 +1012,7 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
             else:
                 radius_val = float(config.radius) / float(units.mm)
 
-        return cls(
+        proc_vm = cls(
             steps=config.steps,
             radius=radius_val if radius_val is not None else 250.0,
             time_per_step=float(config.time_per_step) / float(units.s),
@@ -1013,11 +1020,14 @@ class StepAndShootProcedureViewModel(CustomSweepProcedureViewModel):
             sequential_time=bool(config.sequential_time),
             start_angle=float(np.degrees(config.start_angle)),
             end_angle=float(np.degrees(config.end_angle)),
+            rotation_direction=config.rotation_direction,
             endpoint=config.endpoint,
             grid_variables=dict(config.grid_variables or {}),
             zipped_variables=dict(config.zipped_variables or {}),
             parent=parent,
         )
+        proc_vm.metadata = config.metadata
+        return proc_vm
 
     def sync_with_scene(self, scene_view_model: Any) -> None:
         """
@@ -1240,6 +1250,7 @@ class PetProcedureViewModel(BaseProcedureViewModel):
         return CustomSweepProtocolConfig(
             type="CustomSweep",
             grid_variables={},
+            metadata=self.metadata,
             zipped_variables={"frame_time": [float(self._time_per_frame)]}
         )
 
@@ -1271,11 +1282,13 @@ def procedure_from_config(config: AnyProtocolConfig, parent: Optional[QObject] =
     if isinstance(config, StepAndShootProtocolConfig):
         return SpectProcedureViewModel.from_config(config, parent=parent)
     elif isinstance(config, CustomSweepProtocolConfig):
-        return CustomSweepProcedureViewModel(
+        proc_vm = CustomSweepProcedureViewModel(
             grid_variables=config.grid_variables,
             zipped_variables=config.zipped_variables,
             parent=parent,
         )
+        proc_vm.metadata = config.metadata
+        return proc_vm
     raise ValueError(f"Неподдерживаемый тип конфигурации протокола: {type(config)}")
 
 

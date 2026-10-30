@@ -8,18 +8,14 @@
 metadata/gantry, metadata/geometry, metadata/source, metadata/simulation.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 import numpy as np
 import hepunits as units
 
-from core.config.exporter import SceneExporter
 from core.config.models import (
-    AnyNodeConfig,
     BaseProtocolConfig,
-    CompositeNodeConfig,
     CustomSweepProtocolConfig,
     SimulationManagerConfig,
-    SourceConfig,
     StepAndShootProtocolConfig,
 )
 from core.geometry.direct_collimators import DirectParallelCollimator
@@ -68,21 +64,6 @@ def _resolve_camera_slot(
     if slot_name is None:
         return None
     return _find_node_by_name(camera_node, slot_name) or _find_node_by_name(root_scene, slot_name)
-
-
-def _find_source_config(current_config: Any) -> Optional[SourceConfig]:
-    """
-    Рекурсивно выполняет поиск SourceConfig в дереве конфигурации сцены
-    со строгой статической типизацией без утиной типизации.
-    """
-    if isinstance(current_config, SourceConfig):
-        return current_config
-    if isinstance(current_config, CompositeNodeConfig):
-        for child_config in current_config.children:
-            found_source = _find_source_config(child_config)
-            if found_source is not None:
-                return found_source
-    return None
 
 
 def _are_head_specs_equal(first_spec: Dict[str, Any], second_spec: Dict[str, Any]) -> bool:
@@ -395,7 +376,7 @@ class SourceMetadataProvider:
     def collect(
         self,
         root_scene: SpatialNode,
-        scene_config: Optional[Union[AnyNodeConfig, CompositeNodeConfig]] = None,
+        protocol: Optional[BaseProtocolConfig] = None,
     ) -> Dict[str, Any]:
         sources: List[Source] = _find_nodes_recursive(root_scene, Source)
         if not sources:
@@ -408,20 +389,11 @@ class SourceMetadataProvider:
         radionuclide_name: Optional[str] = None
         phantom_model_name: Optional[str] = None
 
-        registered_meta = SceneExporter.get_source_metadata(primary_source)
-        if registered_meta is not None:
-            if registered_meta.radionuclide:
-                radionuclide_name = registered_meta.radionuclide
-            if registered_meta.phantom_type:
-                phantom_model_name = registered_meta.phantom_type
-
-        if scene_config is not None:
-            source_cfg = _find_source_config(scene_config)
-            if source_cfg is not None:
-                if source_cfg.radionuclide:
-                    radionuclide_name = source_cfg.radionuclide
-                if source_cfg.phantom_type:
-                    phantom_model_name = source_cfg.phantom_type
+        if protocol is not None and protocol.metadata is not None:
+            if protocol.metadata.radionuclide:
+                radionuclide_name = protocol.metadata.radionuclide
+            if protocol.metadata.phantom_type:
+                phantom_model_name = protocol.metadata.phantom_type
 
         source_data: Dict[str, Any] = {
             "half_life": half_life_val,
@@ -447,9 +419,7 @@ class SimulationMetadataProvider:
         precision_mode: str = "single",
         active_processes: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
-        if sim_config is not None and sim_config.physics_list is not None:
-            physics_list_str = sim_config.physics_list
-        elif active_processes:
+        if active_processes:
             process_names = [proc.name for proc in active_processes]
             physics_list_str = ", ".join(process_names)
         else:
@@ -489,7 +459,6 @@ class ProcedureMetadataCollector:
         context: Optional[Dict[str, Any]] = None,
         task_id: int = 0,
         sim_config: Optional[SimulationManagerConfig] = None,
-        scene_config: Optional[Union[AnyNodeConfig, CompositeNodeConfig]] = None,
         random_seed: Optional[int] = None,
         precision_mode: str = "single",
         active_processes: Optional[List[Any]] = None,
@@ -507,7 +476,7 @@ class ProcedureMetadataCollector:
                 sim_config=sim_config,
             ),
             "geometry": self.geometry_provider.collect(root_scene=root_scene),
-            "source": self.source_provider.collect(root_scene=root_scene, scene_config=scene_config),
+            "source": self.source_provider.collect(root_scene=root_scene, protocol=protocol),
             "simulation": self.simulation_provider.collect(
                 sim_config=sim_config,
                 random_seed=random_seed,

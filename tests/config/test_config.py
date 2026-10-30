@@ -7,11 +7,13 @@ import hepunits as units
 
 from core.config.models import (
     BoxConfig,
+    CustomSweepProtocolConfig,
     DataManagerConfig,
     SimulationConfig,
     SimulationManagerConfig,
     SourceConfig,
     SourceMetadataConfig,
+    StepAndShootProtocolConfig,
     VolumeConfig,
 )
 from core.config.yaml_loader import load_simulation_config
@@ -27,6 +29,13 @@ class TestConfig(unittest.TestCase):
     def setUp(self):
         self.test_yaml = "test_config.yaml"
         self.config_dict = {
+            "protocol": {
+                "type": "CustomSweep",
+                "metadata": {
+                    "radionuclide": "99mTc",
+                    "phantom_type": "NEMA IEC"
+                }
+            },
             "simulation_manager": {
                 "stop_time": "2.0 s",
                 "particles_number": 5000,
@@ -79,8 +88,6 @@ class TestConfig(unittest.TestCase):
                         "type": "Source",
                         "name": "Source",
                         "activity": "300.0 MBq",
-                        "radionuclide": "99mTc",
-                        "phantom_type": "NEMA IEC",
                         "spatial": {
                             "type": "voxel",
                             "voxel_size": "10.0 mm",
@@ -210,12 +217,13 @@ class TestConfig(unittest.TestCase):
         self.assertTrue(np.isclose(child2.spatial.distribution[0, 0, 1], 100.0 / 300.0))
         self.assertTrue(np.isclose(child2.initial_activity, 300e6 * units.Bq))
 
-    def test_source_metadata_registry_roundtrip_and_no_dynamic_attrs(self) -> None:
+    def test_protocol_metadata_and_no_dynamic_source_attrs(self) -> None:
         """
-        Регрессионный тест Roundtrip для SourceMetadataConfig (radionuclide, phantom_type):
-        1. SceneBuilder сохраняет метаданные во внешнем реестре source_metadata_registry и в SceneExporter.
-        2. Экземпляр Source в ядре не загрязняется динамическими атрибутами radionuclide и phantom_type.
-        3. SceneExporter.export_node восстанавливает radionuclide и phantom_type в SourceConfig.
+        Регрессионный тест для SourceMetadataConfig (radionuclide, phantom_type) в protocol.metadata
+        и наследования StepAndShootProtocolConfig от CustomSweepProtocolConfig:
+        1. Метаданные хранятся в protocol.metadata, а экземпляр Source в ядре не загрязняется динамическими атрибутами.
+        2. StepAndShootProtocolConfig является подклассом CustomSweepProtocolConfig.
+        3. SceneExporter.export_to_config сохраняет protocol.metadata без побочных реестров.
         """
         config = load_simulation_config(self.test_yaml)
         builder = SceneBuilder()
@@ -229,29 +237,30 @@ class TestConfig(unittest.TestCase):
         self.assertNotIn("radionuclide", source_node.__dict__)
         self.assertNotIn("phantom_type", source_node.__dict__)
 
-        # Проверка регистрации в SceneBuilder.source_metadata_registry и SceneExporter
-        self.assertIn(source_node, builder.source_metadata_registry)
-        meta_cfg = builder.source_metadata_registry[source_node]
-        self.assertIsInstance(meta_cfg, SourceMetadataConfig)
-        self.assertEqual(meta_cfg.radionuclide, "99mTc")
-        self.assertEqual(meta_cfg.phantom_type, "NEMA IEC")
+        self.assertIsNotNone(config.protocol)
+        assert config.protocol is not None
+        self.assertIsNotNone(config.protocol.metadata)
+        assert config.protocol.metadata is not None
+        self.assertEqual(config.protocol.metadata.radionuclide, "99mTc")
+        self.assertEqual(config.protocol.metadata.phantom_type, "NEMA IEC")
 
-        exporter_meta = SceneExporter.get_source_metadata(source_node)
-        assert exporter_meta is not None
-        self.assertEqual(exporter_meta.radionuclide, "99mTc")
-        self.assertEqual(exporter_meta.phantom_type, "NEMA IEC")
-
-        # Проверка обратного экспорта через реестр метаданных
-        exported_root = SceneExporter.export_node(
-            root_node,
-            distribution_registry=builder.distribution_registry,
-            source_metadata_registry=builder.source_metadata_registry,
+        # Проверка иерархии наследования StepAndShootProtocolConfig -> CustomSweepProtocolConfig
+        sas_cfg = StepAndShootProtocolConfig(
+            steps=10,
+            metadata=SourceMetadataConfig(radionuclide="161Tb", phantom_type="NEMA"),
         )
-        assert isinstance(exported_root, VolumeConfig)
-        exported_source_cfg = exported_root.children[1]
-        assert isinstance(exported_source_cfg, SourceConfig)
-        self.assertEqual(exported_source_cfg.radionuclide, "99mTc")
-        self.assertEqual(exported_source_cfg.phantom_type, "NEMA IEC")
+        self.assertIsInstance(sas_cfg, CustomSweepProtocolConfig)
+        self.assertEqual(sas_cfg.metadata.radionuclide, "161Tb")
+
+        exported_cfg = SceneExporter.export_to_config(
+            root_node,
+            protocol=config.protocol,
+            distribution_registry=builder.distribution_registry,
+        )
+        assert exported_cfg.protocol is not None
+        assert exported_cfg.protocol.metadata is not None
+        self.assertEqual(exported_cfg.protocol.metadata.radionuclide, "99mTc")
+        self.assertEqual(exported_cfg.protocol.metadata.phantom_type, "NEMA IEC")
 
     def test_load_nema_1_cam_yaml(self):
         config = load_simulation_config("examples/nema_1_cam.yaml")
@@ -310,7 +319,6 @@ class TestConfig(unittest.TestCase):
         exported_cfg = SceneExporter.export_node(
             built_source,
             distribution_registry=builder.distribution_registry,
-            source_metadata_registry=builder.source_metadata_registry,
         )
         self.assertIsInstance(exported_cfg, SourceConfig)
         self.assertEqual(exported_cfg.name, orig_cfg.name)
@@ -422,14 +430,11 @@ class TestConfig(unittest.TestCase):
                 places=12,
             )
 
-            exported_mgr_cfg = SceneExporter.export_simulation_manager(
-                built_mgr,
-                seed=orig_sim_cfg.simulation_manager.seed,
-            )
+            self.assertEqual(built_mgr.seed, 202644)
+            exported_mgr_cfg = SceneExporter.export_simulation_manager(built_mgr)
             exported_scene_cfg = SceneExporter.export_node(
                 built_scene,
                 distribution_registry=builder.distribution_registry,
-                source_metadata_registry=builder.source_metadata_registry,
             )
             exported_sim_cfg = SimulationConfig(
                 simulation_manager=exported_mgr_cfg,

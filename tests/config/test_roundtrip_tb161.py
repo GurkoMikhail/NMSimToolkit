@@ -213,6 +213,7 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
                 custom_sweep_raw = deepcopy(step_and_shoot_raw)
                 custom_sweep_raw["protocol"] = {
                     "type": "CustomSweep",
+                    "metadata": step_and_shoot_raw["protocol"].get("metadata"),
                     "zipped_variables": {
                         "gantry_angle": legacy_angles,
                         "start_time": legacy_start_times,
@@ -334,7 +335,6 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
                             root_scene=sas_root,
                             protocol=step_and_shoot_cfg.protocol,
                             sim_config=sas_step_cfg.simulation_manager,
-                            scene_config=sas_step_cfg.scene,
                             context=sas_jobs[step_index],
                             task_id=step_index,
                         )
@@ -342,7 +342,6 @@ class TestRoundtripTB161Protocol(unittest.TestCase):
                             root_scene=cs_root,
                             protocol=custom_sweep_cfg.protocol,
                             sim_config=cs_step_cfg.simulation_manager,
-                            scene_config=cs_step_cfg.scene,
                             context=cs_jobs[step_index],
                             task_id=step_index,
                         )

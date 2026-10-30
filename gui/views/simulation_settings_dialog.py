@@ -134,6 +134,10 @@ class SimulationSettingsDialog(QDialog):
         self.chk_render_lines.setChecked(bool(self._settings.render_as_lines))
         form_tracks.addRow(self.chk_render_lines)
 
+        self.chk_show_escaped = QCheckBox("Отображать вылетевшие за пределы геометрии треки", grp_tracks)
+        self.chk_show_escaped.setChecked(bool(self._settings.show_escaped_tracks))
+        form_tracks.addRow(self.chk_show_escaped)
+
         self.spin_grid_snap = QDoubleSpinBox(grp_tracks)
         self.spin_grid_snap.setRange(0.1, 1000.0)
         self.spin_grid_snap.setSingleStep(5.0)
@@ -210,6 +214,7 @@ class SimulationSettingsDialog(QDialog):
             "max_tracks_per_batch": self.spin_max_batch.value(),
             "max_tracks_points": self.spin_max_points.value(),
             "render_as_lines": self.chk_render_lines.isChecked(),
+            "show_escaped_tracks": self.chk_show_escaped.isChecked(),
             "grid_snap_step": self.spin_grid_snap.value(),
             "angle_snap_step": self.spin_angle_snap.value(),
             "scale_snap_step": self.spin_scale_snap.value(),

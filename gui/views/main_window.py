@@ -38,6 +38,7 @@ from gui.viewmodels.procedure_viewmodel import (
 )
 from gui.viewmodels.data_handler_viewmodel import (
     DataManagerViewModel,
+    DirectStreamHandlerViewModel,
     SensitiveVolumeHandlerViewModel,
 )
 from gui.viewport_3d.vtk_viewport import VTKViewport
@@ -56,7 +57,6 @@ from core.config.models import (
     CustomSweepProtocolConfig,
     DataManagerConfig,
     SimulationManagerConfig,
-    SourceMetadataConfig,
     StepAndShootProtocolConfig,
 )
 import settings.database_setting as database_setting
@@ -80,7 +80,6 @@ class MainWindow(QMainWindow):
 
         self.viewport_controller: Optional[SceneViewportController] = None
         self._connected_procedure_vm: Optional[BaseProcedureViewModel] = None
-        self.source_metadata_registry: Dict[SpatialNode, SourceMetadataConfig] = {}
 
         # Модель представления сцены
         if scene_vm is None:
@@ -586,6 +585,8 @@ class MainWindow(QMainWindow):
         det_names: List[str] = []
         if self.data_manager_vm is not None:
             for handler_vm in self.data_manager_vm.handlers:
+                if isinstance(handler_vm, DirectStreamHandlerViewModel):
+                    self.sim_settings.show_escaped_tracks = bool(handler_vm.show_escaped_tracks)
                 if isinstance(handler_vm, SensitiveVolumeHandlerViewModel) and handler_vm.enabled:
                     for vol_name in handler_vm.sensitive_volumes:
                         clean_name = str(vol_name).strip()
@@ -926,6 +927,18 @@ class MainWindow(QMainWindow):
             raw_min_energy = cfg_mgr.min_energy
             if isinstance(raw_min_energy, (int, float)) and not isinstance(raw_min_energy, bool):
                 self.orchestrator_session.min_energy = float(raw_min_energy) / float(units.keV)
+            raw_batch_capacity = cfg_mgr.batch_capacity
+            self.orchestrator_session.batch_capacity = (
+                int(raw_batch_capacity)
+                if isinstance(raw_batch_capacity, (int, float)) and not isinstance(raw_batch_capacity, bool)
+                else None
+            )
+            self.orchestrator_session.enable_atomic_relaxation = bool(cfg_mgr.enable_atomic_relaxation)
+            if isinstance(cfg_mgr.photon_production_cut, (int, float)) and not isinstance(cfg_mgr.photon_production_cut, bool):
+                self.orchestrator_session.photon_production_cut = float(cfg_mgr.photon_production_cut)
+            if isinstance(cfg_mgr.electron_production_cut, (int, float)) and not isinstance(cfg_mgr.electron_production_cut, bool):
+                self.orchestrator_session.electron_production_cut = float(cfg_mgr.electron_production_cut)
+            self.orchestrator_session.seed = cfg_mgr.seed
         else:
             self.orchestrator_session.particles_number = int(self.sim_settings.particles_number)
             self.orchestrator_session.buffer_capacity = self.sim_settings.buffer_capacity
@@ -1045,7 +1058,6 @@ class MainWindow(QMainWindow):
             self.viewport_controller.disconnect_all_nodes()
             self.viewport_controller.clear_dose_volume()
             self.viewport_controller.clear_tracks()
-        self.source_metadata_registry.clear()
         self.scene_vm.load_scene(root)
         if self.data_manager_vm is not None:
             for handler in list(self.data_manager_vm.handlers):
@@ -1073,7 +1085,6 @@ class MainWindow(QMainWindow):
                 cfg = load_simulation_config(filepath, resolve_protocol=True)
                 builder = SceneBuilder(base_dir=filepath.parent)
                 root_node = builder.build_scene(cfg.scene)
-                self.source_metadata_registry = dict(builder.source_metadata_registry)
                 if self.viewport_controller is not None:
                     self.viewport_controller.disconnect_all_nodes()
                     self.viewport_controller.clear_dose_volume()
@@ -1196,10 +1207,19 @@ class MainWindow(QMainWindow):
                 sim_mgr = SimulationManagerConfig(
                     start_time=start_time_cfg,
                     particles_number=int(self.sim_settings.particles_number),
+                    batch_capacity=prev_sim_mgr.batch_capacity if prev_sim_mgr is not None else None,
                     buffer_capacity=self.sim_settings.buffer_capacity,
                     min_energy=float(self.sim_settings.min_energy) * units.keV,
                     stop_time=stop_time_cfg,
-                    physics_list=prev_sim_mgr.physics_list if prev_sim_mgr is not None else None,
+                    enable_atomic_relaxation=(
+                        prev_sim_mgr.enable_atomic_relaxation if prev_sim_mgr is not None else False
+                    ),
+                    photon_production_cut=(
+                        prev_sim_mgr.photon_production_cut if prev_sim_mgr is not None else 1.0 * units.keV
+                    ),
+                    electron_production_cut=(
+                        prev_sim_mgr.electron_production_cut if prev_sim_mgr is not None else float("inf")
+                    ),
                     seed=prev_sim_mgr.seed if prev_sim_mgr is not None else None,
                 )
                 logging_cfg = self.current_config.logging if self.current_config is not None else None
@@ -1220,7 +1240,6 @@ class MainWindow(QMainWindow):
                         pool_size=int(self.sim_settings.pool_size),
                         distribution_registry=self.scene_vm.distribution_registry,
                         slots_registry=self.scene_vm.slots_registry,
-                        source_metadata_registry=self.source_metadata_registry,
                         logging_cfg=logging_cfg,
                     )
                 else:
@@ -1233,7 +1252,6 @@ class MainWindow(QMainWindow):
                         pool_size=int(self.sim_settings.pool_size),
                         distribution_registry=self.scene_vm.distribution_registry,
                         slots_registry=self.scene_vm.slots_registry,
-                        source_metadata_registry=self.source_metadata_registry,
                         logging_cfg=logging_cfg,
                     )
                 QMessageBox.information(self, "Успех", f"Конфигурация сохранена в:\n{filename}")
@@ -1255,6 +1273,11 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             new_settings = dialog.get_settings()
             self.sim_settings.update(new_settings)
+            if self.data_manager_vm is not None:
+                for handler_vm in self.data_manager_vm.handlers:
+                    if isinstance(handler_vm, DirectStreamHandlerViewModel):
+                        handler_vm.show_escaped_tracks = bool(new_settings.show_escaped_tracks)
+                self.property_inspector.data_handler_section.update_ui_from_vm()
             # Применение параметров к вычислительной сессии
             self.orchestrator_session.particles_number = new_settings.particles_number
             self.orchestrator_session.buffer_capacity = new_settings.buffer_capacity

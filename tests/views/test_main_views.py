@@ -563,8 +563,9 @@ class TestStage4Views(unittest.TestCase):
 
     def test_main_window_save_preserves_manager_fields_and_created_nodes(self) -> None:
         """
-        Проверка сохранения seed, physics_list, start_time, logging и созданных с нуля
-        узлов (PointSource, Source, WoodcockVoxelVolume) с последующей сборкой через SceneBuilder.
+        Проверка сохранения seed, batch_capacity, enable_atomic_relaxation, photon_production_cut,
+        start_time, logging и созданных с нуля узлов (PointSource, Source, WoodcockVoxelVolume)
+        с последующей сборкой через SceneBuilder.
         """
         main_win = MainWindow()
         root = CompositeNode(name="World")
@@ -575,19 +576,21 @@ class TestStage4Views(unittest.TestCase):
         main_win.scene_tree._add_voxel_source(main_win.scene_vm.root_vm)
         main_win.scene_tree._add_voxel_volume(main_win.scene_vm.root_vm)
 
-        # Задаем начальную конфигурацию с seed, physics_list, start_time и logging
+        # Задаем начальную конфигурацию с seed, batch_capacity, релаксацией, start_time и logging
         main_win.current_config = SimulationConfig(
             simulation_manager=SimulationManagerConfig(
                 start_time=5.0,
                 stop_time=1e9,
                 particles_number=1000,
+                batch_capacity=250,
                 min_energy=0.01,
-                physics_list="em_standard",
+                enable_atomic_relaxation=True,
+                photon_production_cut=2.5 * units.keV,
                 seed=42,
             ),
             data_manager=main_win.data_manager_vm.to_config(),
             scene=BaseCompositeNodeConfig(name="World"),
-            logging=LoggingConfig(output_dir="custom_logs", level="DEBUG", console=True),
+            logging=LoggingConfig(output_dir="custom_logs", file_level="DEBUG", console_level="INFO"),
         )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -604,12 +607,15 @@ class TestStage4Views(unittest.TestCase):
 
             loaded_cfg = load_simulation_config(str(save_path))
             self.assertEqual(loaded_cfg.simulation_manager.seed, 42)
-            self.assertEqual(loaded_cfg.simulation_manager.physics_list, "em_standard")
+            self.assertEqual(loaded_cfg.simulation_manager.batch_capacity, 250)
+            self.assertTrue(loaded_cfg.simulation_manager.enable_atomic_relaxation)
+            self.assertAlmostEqual(float(loaded_cfg.simulation_manager.photon_production_cut), float(2.5 * units.keV))
             self.assertAlmostEqual(float(loaded_cfg.simulation_manager.start_time), 5.0)
             self.assertIsNotNone(loaded_cfg.logging)
             assert loaded_cfg.logging is not None
             self.assertEqual(loaded_cfg.logging.output_dir, "custom_logs")
-            self.assertEqual(loaded_cfg.logging.level, "DEBUG")
+            self.assertEqual(loaded_cfg.logging.file_level, "DEBUG")
+            self.assertEqual(loaded_cfg.logging.console_level, "INFO")
 
             # Проверяем, что SceneBuilder успешно собирает сцену без FileNotFoundError
             builder = SceneBuilder(base_dir=Path(tmp_dir))

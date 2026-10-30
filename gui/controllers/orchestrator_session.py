@@ -35,6 +35,7 @@ from gui.controllers.stream_handlers import (
 )
 from gui.viewmodels.data_handler_viewmodel import (
     DataManagerViewModel,
+    DirectStreamHandlerViewModel,
     DoseMapHandlerViewModel,
     SensitiveVolumeHandlerViewModel,
 )
@@ -74,6 +75,7 @@ class _OrchestratorWorkerThread(QThread):
         ctrl_shm_name: Optional[str] = DEFAULT_CTRL_SHM_NAME,
         max_energy: float = 0.3,
         energy_bins: int = 256,
+        show_escaped_tracks: bool = False,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -89,6 +91,7 @@ class _OrchestratorWorkerThread(QThread):
         self.ctrl_shm_name = ctrl_shm_name
         self.max_energy = float(max_energy)
         self.energy_bins = int(energy_bins)
+        self.show_escaped_tracks = bool(show_escaped_tracks)
 
     def run(self) -> None:
         try:
@@ -108,6 +111,7 @@ class _OrchestratorWorkerThread(QThread):
                         "ctrl_shm_name": self.ctrl_shm_name,
                         "max_energy": self.max_energy,
                         "energy_bins": self.energy_bins,
+                        "show_escaped_tracks": self.show_escaped_tracks,
                     },
                 ),
             )
@@ -174,8 +178,13 @@ class OrchestratorSession(QObject):
         self.data_manager_vm = data_manager_vm or DataManagerViewModel()
         self.pool_size = max(1, int(pool_size))
         self.particles_number = int(particles_number)
+        self.batch_capacity: Optional[int] = None
         self.min_energy = float(min_energy)
         self.buffer_capacity: Optional[int] = None if buffer_capacity is None else int(buffer_capacity)
+        self.enable_atomic_relaxation: bool = False
+        self.photon_production_cut: float = float(1.0 * units.keV)
+        self.electron_production_cut: float = float("inf")
+        self.seed: Optional[int] = None
         self.shm_name = shm_name
         self.projection_shape = projection_shape
         self.energy_bins: int = max(1, int(energy_bins))
@@ -818,10 +827,15 @@ class OrchestratorSession(QObject):
 
         sim_mgr_cfg = SimulationManagerConfig(
             particles_number=self.particles_number,
+            batch_capacity=self.batch_capacity,
             buffer_capacity=self.buffer_capacity,
             start_time=start_time_cfg,
             stop_time=stop_time_cfg,
             min_energy=self.min_energy * units.keV,
+            enable_atomic_relaxation=self.enable_atomic_relaxation,
+            photon_production_cut=self.photon_production_cut,
+            electron_production_cut=self.electron_production_cut,
+            seed=self.seed,
         )
         data_mgr_cfg = self.data_manager_vm.to_config()
         dist_registry = self.scene_vm.distribution_registry if self.scene_vm else None
@@ -1008,6 +1022,13 @@ class OrchestratorSession(QObject):
             self._ipc_receiver.start()
 
             # 4. Запуск Orchestrator в фоновом потоке
+            show_escaped = False
+            if self.data_manager_vm is not None:
+                for handler_vm in self.data_manager_vm.handlers:
+                    if isinstance(handler_vm, DirectStreamHandlerViewModel) and handler_vm.enabled:
+                        if handler_vm.show_escaped_tracks:
+                            show_escaped = True
+                            break
             orchestrator = Orchestrator(sim_config)
             self._worker_thread = _OrchestratorWorkerThread(
                 orchestrator=orchestrator,
@@ -1022,6 +1043,7 @@ class OrchestratorSession(QObject):
                 ctrl_shm_name=active_ctrl_shm_name,
                 max_energy=self.max_energy,
                 energy_bins=self.energy_bins,
+                show_escaped_tracks=show_escaped,
                 parent=self,
             )
             self._worker_thread.completed.connect(self._on_worker_completed)

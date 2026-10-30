@@ -114,7 +114,6 @@ def _prepare_benchmark_protocol_dict(
     cfg["simulation_manager"] = {
         "particles_number": particles_number,
         "min_energy": "1.0 keV",
-        "physics_list": "emstandard_opt4",
         "seed": 424242,
     }
     return cfg

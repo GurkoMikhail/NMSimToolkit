@@ -121,7 +121,9 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                 )
 
         requested_start_time = float(sim_config.start_time)
-        requested_stop_time = float(sim_config.stop_time)
+        requested_stop_time: Optional[float] = (
+            None if sim_config.stop_time is None else float(sim_config.stop_time)
+        )
         requested_batch_capacity: Optional[int] = (
             None if sim_config.batch_capacity is None else int(sim_config.batch_capacity)
         )
@@ -145,7 +147,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
         if resume_state is not None:
             initial_particle_id = int(resume_state["next_particle_id"])
             effective_task_id = int(resume_state["next_task_id"])
-            if resume_state.get("actual_stop_time") is not None:
+            if resume_state.get("actual_stop_time") is not None and requested_stop_time is not None:
                 saved_stop_time = float(resume_state["actual_stop_time"])
                 if saved_stop_time >= requested_stop_time:
                     _logger.info(
@@ -172,13 +174,16 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
 
         # 4. Построение конвейера обработчиков данных
         dm_cfg = final_config.data_manager
+        effective_compression_opts = (
+            4 if dm_cfg.compression_opts is None else int(dm_cfg.compression_opts)
+        )
         for handler_config in dm_cfg.handlers:
             if handler_config.type == "DirectStreamHandler":
                 handlers.append(
                     DirectStreamHandler(
                         floating_point_precision=dm_cfg.floating_point_precision,
                         compression=dm_cfg.compression,
-                        compression_opts=dm_cfg.compression_opts,
+                        compression_opts=effective_compression_opts,
                         buffer_size=dm_cfg.buffer_size,
                     )
                 )
@@ -189,7 +194,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                         sensitive_volumes=volumes,
                         floating_point_precision=dm_cfg.floating_point_precision,
                         compression=dm_cfg.compression,
-                        compression_opts=dm_cfg.compression_opts,
+                        compression_opts=effective_compression_opts,
                         buffer_size=dm_cfg.buffer_size,
                     )
                 )
@@ -201,7 +206,7 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
                         save_initial_states=handler_config.save_initial_states,
                         floating_point_precision=dm_cfg.floating_point_precision,
                         compression=dm_cfg.compression,
-                        compression_opts=dm_cfg.compression_opts,
+                        compression_opts=effective_compression_opts,
                         buffer_size=dm_cfg.buffer_size,
                     )
                 )
@@ -298,7 +303,6 @@ def simulation_worker_task(payload: Tuple[Any, ...]) -> Tuple[Dict[str, float], 
             context=context_data,
             task_id=effective_task_id,
             sim_config=sim_config,
-            scene_config=final_config.scene,
             random_seed=effective_seed,
             precision_mode=precision_mode_val,
             active_processes=propagator.processes,

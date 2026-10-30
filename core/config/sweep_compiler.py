@@ -30,9 +30,6 @@ class SweepCompiler:
         if protocol is None:
             return CustomSweepProtocolConfig(grid_variables={}, zipped_variables={})
 
-        if isinstance(protocol, CustomSweepProtocolConfig):
-            return protocol
-
         if isinstance(protocol, StepAndShootProtocolConfig):
             steps = max(1, int(protocol.steps))
             endpoint = bool(protocol.endpoint)
@@ -86,9 +83,13 @@ class SweepCompiler:
                         zipped_variables[var_key] = [float(val) for val in var_vals]
 
             return CustomSweepProtocolConfig(
+                metadata=protocol.metadata,
                 grid_variables=dict(protocol.grid_variables),
                 zipped_variables=zipped_variables,
             )
+
+        if isinstance(protocol, CustomSweepProtocolConfig):
+            return protocol
 
         raise ValueError(f"Неизвестный тип протокола исследования: {type(protocol)}")
 

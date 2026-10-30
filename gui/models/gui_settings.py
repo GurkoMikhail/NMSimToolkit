@@ -22,6 +22,7 @@ class GuiSimulationSettings(BaseModel):
     max_tracks_per_batch: int = Field(default=2000, ge=1, description="Максимум треков в пачке")
     max_tracks_points: int = Field(default=50000, ge=1, description="Максимум точек треков")
     render_as_lines: bool = Field(default=True, description="Отрисовка треков линиями")
+    show_escaped_tracks: bool = Field(default=False, description="Отображение вылетевших за пределы геометрии треков")
     grid_snap_step: float = Field(default=10.0, gt=0.0, description="Шаг сетки перемещения Gizmo (мм)")
     angle_snap_step: float = Field(default=15.0, gt=0.0, description="Шаг угловой привязки Gizmo (град)")
     scale_snap_step: float = Field(default=1.0, gt=0.0, description="Шаг привязки масштаба Gizmo (мм)")
@@ -50,6 +51,8 @@ class GuiSimulationSettings(BaseModel):
                 self.max_tracks_points = int(param_value)
             elif param_key == 'render_as_lines':
                 self.render_as_lines = bool(param_value)
+            elif param_key == 'show_escaped_tracks':
+                self.show_escaped_tracks = bool(param_value)
             elif param_key == 'grid_snap_step':
                 self.grid_snap_step = float(param_value)
             elif param_key == 'angle_snap_step':

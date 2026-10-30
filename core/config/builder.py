@@ -13,13 +13,12 @@ from core.config.models import (
     DiscreteSpectrumConfig, ContinuousSpectrumConfig,
     IsotropicAngularConfig, ConeAngularConfig,
     RadiationChannelConfig,
-    SourceMetadataConfig, SourceConfig, BoxConfig, GeometryConfig, TranslateConfig, RotateConfig,
+    SourceConfig, BoxConfig, GeometryConfig, TranslateConfig, RotateConfig,
     MatrixTransformConfig,
     NumpyDistributionConfig, RawDistributionConfig, AnyDistributionConfig,
     DoseGridNodeConfig, GantryConfig, CompositeNodeConfig, BaseSpatialNodeConfig, BaseCompositeNodeConfig,
     SimulationManagerConfig,
 )
-from core.config.exporter import SceneExporter
 from core.geometry.geometries import Box, Geometry
 from core.geometry.volumes import Volume
 from core.scene.gamma_camera_node import GammaCameraNode
@@ -52,7 +51,6 @@ class SceneBuilder:
         self.base_dir = Path(base_dir) if base_dir else None
         self.distribution_registry: Dict[SpatialNode, AnyDistributionConfig] = {}
         self.slots_registry: Dict[SpatialNode, GammaCameraSlotsConfig] = {}
-        self.source_metadata_registry: Dict[SpatialNode, SourceMetadataConfig] = {}
         self.factory_map: Dict[str, Callable[[Any], SpatialNode]] = {
             'SpatialNode': self._build_spatial_node,
             'CompositeNode': self._build_composite_node,
@@ -222,19 +220,15 @@ class SceneBuilder:
             mat = self._get_material(str(dist_config.fill_value))
             mat_arr[:] = mat
 
-        if dist_config.mapping is not None:
-            if not dist_config.mapping:
-                raise ValueError("Словарь сопоставления материалов (mapping) в WoodcockVoxelVolumeConfig не может быть пустым.")
-            for map_val, mat_name in dist_config.mapping.items():
-                mask = np.isclose(raw_distribution, map_val)
-                mat = self._get_material(str(mat_name))
-                indices = np.nonzero(mask)
-                mat_arr[indices] = mat
-        else:
-            raise ValueError("Для WoodcockVoxelVolumeConfig необходимо явно задать словарь сопоставления материалов (mapping).")
+        if not dist_config.mapping:
+            raise ValueError("Для WoodcockVoxelVolumeConfig необходимо явно задать непустой словарь сопоставления материалов (mapping).")
+        for map_val, mat_name in dist_config.mapping.items():
+            mask = np.isclose(raw_distribution, map_val)
+            mat = self._get_material(str(mat_name))
+            indices = np.nonzero(mask)
+            mat_arr[indices] = mat
 
-        v_size_raw = config.voxel_size if config.voxel_size is not None else 1.0
-        voxel_size = Float(self._to_float(v_size_raw, check_positive=True))
+        voxel_size = Float(self._to_float(config.voxel_size, check_positive=True))
         node = WoodcockVoxelVolume(voxel_size=voxel_size, material_distribution=mat_arr, name=config.name)
         self.distribution_registry[node] = dist_config
         return node
@@ -369,13 +363,6 @@ class SceneBuilder:
         )
         if dist_config is not None:
             self.distribution_registry[node] = dist_config
-        if config.radionuclide is not None or config.phantom_type is not None:
-            source_meta = SourceMetadataConfig(
-                radionuclide=config.radionuclide,
-                phantom_type=config.phantom_type,
-            )
-            self.source_metadata_registry[node] = source_meta
-            SceneExporter.register_source_metadata(node, source_meta)
         return node
 
     def get_distribution_path(self, node: SpatialNode) -> Optional[str]:
@@ -418,7 +405,7 @@ class SceneBuilder:
         return SimulationManager(
             scene=scene,
             start_time=self._to_float(config.start_time),
-            stop_time=self._to_float(config.stop_time),
+            stop_time=None if config.stop_time is None else self._to_float(config.stop_time),
             particles_number=int(config.particles_number),
             batch_capacity=None if config.batch_capacity is None else int(config.batch_capacity),
             buffer_capacity=None if config.buffer_capacity is None else int(config.buffer_capacity),

@@ -1,8 +1,8 @@
 pool_size: 24
 logging:
   output_dir: "logs/tb161_nema"
-  level: "INFO"
-  console: false
+  file_level: "INFO"
+  console_level: "OFF"
   per_task_files: true
   filename_pattern: "task_{task_id}.log"
 protocol:
@@ -17,6 +17,9 @@ protocol:
   time_per_step: 30.0 s
   initial_time: 0.0 s
   sequential_time: true
+  metadata:
+    radionuclide: '161Tb'
+    phantom_type: 'NEMA IEC Body Phantom'
 
 scene:
   type: Volume
@@ -45,8 +48,6 @@ scene:
       children:
         - type: Source
           name: Source
-          radionuclide: '161Tb'
-          phantom_type: 'NEMA IEC Body Phantom'
           activity: 100 MBq
           half_life: 6.953 day
           spatial:
@@ -256,4 +257,3 @@ simulation_manager:
   particles_number: 10000
   buffer_capacity: 100000
   min_energy: 1.0 keV
-  physics_list: "emstandard_opt4"

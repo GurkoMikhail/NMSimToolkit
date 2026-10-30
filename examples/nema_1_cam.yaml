@@ -1,8 +1,8 @@
 pool_size: 24
 logging:
   output_dir: "logs/nema_1_cam"
-  level: "INFO"
-  console: false
+  file_level: "INFO"
+  console_level: "OFF"
   per_task_files: true
   filename_pattern: "task_{task_id}.log"
 protocol:

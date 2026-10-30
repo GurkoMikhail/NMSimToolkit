@@ -135,6 +135,10 @@ class ProcedureSelectorWidget(QDockWidget):
     def _on_type_changed(self, index: int) -> None:
         key = str(self.combo_type.itemData(index))
         if key in self._procedures:
+            prev_vm = self._procedures.get(self._active_key)
+            next_vm = self._procedures[key]
+            if prev_vm is not None and prev_vm.metadata is not None and next_vm.metadata is None:
+                next_vm.metadata = prev_vm.metadata
             self._active_key = key
             self._connected_vm = self.active_procedure
             self._update_summary()

@@ -1,6 +1,6 @@
 # Архитектура расчетного ядра NMSimToolkit (Core Architecture)
 
-Данный документ описывает фундаментальную архитектуру расчетного ядра (**Core Engine**, Python 3.12+) программного комплекса **NMSimToolkit**, включая физико-математическую модель, высокопроизводительный Data-Oriented Design (DoD) транспорт частиц, структуру плоских буферов SoA, компилятор геометрии, реестр метаданных источников и принципы абсолютной физической точности.
+Данный документ описывает фундаментальную архитектуру расчетного ядра (**Core Engine**, Python 3.12+) программного комплекса **NMSimToolkit**, включая физико-математическую модель, высокопроизводительный Data-Oriented Design (DoD) транспорт частиц, структуру плоских буферов SoA, компилятор геометрии, паспортные метаданные протокола исследования и принципы абсолютной физической точности.
 
 ---
 
@@ -89,10 +89,11 @@ flowchart LR
 
 ## 4. Конфигурация, `SourceMetadataConfig` и инвариант Roundtrip (`core/config/`)
 
-Для соблюдения абсолютной физической чистоты `Source` (отсутствие строковых UI/паспортных атрибутов в физическом узле) и одновременной поддержки 100% симметрии сохранения/загрузки (`export(build(config)) == config`) в `core/config/` реализован внешний реестр метаданных источников:
+Для соблюдения абсолютной физической чистоты `Source` (отсутствие строковых UI/паспортных атрибутов в физическом узле и в `SourceConfig`) и одновременной поддержки 100% симметрии сохранения/загрузки (`export(build(config)) == config`) паспортные метаданные исследования закреплены на уровне протокола сканирования (`BaseProtocolConfig.metadata`):
 * В `core/config/models.py` определена иммутабельная схема `SourceMetadataConfig(radionuclide, phantom_type)`.
-* `SceneBuilder` при построении узла `Source` из `SourceConfig` сохраняет пару `(radionuclide, phantom_type)` в словаре `source_metadata_registry: Dict[str, SourceMetadataConfig]`.
-* `SceneExporter` и `ConfigTemplateBinder` принимают `source_metadata_registry` и при экспорте восстанавливают паспортные поля `radionuclide` и `phantom_type` в `SourceConfig` без загрязнения класса `core.source.sources.Source`.
+* `BaseProtocolConfig` содержит опциональное поле `metadata: Optional[SourceMetadataConfig] = None`, наследуемое `CustomSweepProtocolConfig` и `StepAndShootProtocolConfig(CustomSweepProtocolConfig)`. При компиляции `StepAndShootProtocolConfig` в `CustomSweepProtocolConfig` через `SweepCompiler.compile_protocol` метаданные `protocol.metadata` сохраняются без потерь.
+* `SourceMetadataProvider` в `core/data/metadata_collector.py` извлекает `radionuclide` и `phantom_type` непосредственно из `protocol.metadata`, а `SceneExporter` и `ConfigTemplateBinder` сериализуют сцену и протокол без побочных реестров и без загрязнения класса `core.source.sources.Source`.
+* `LoggingConfig` поддерживает два независимых канала логирования с уровнями `file_level: LogLevelLiteral = "INFO"` и `console_level: LogLevelLiteral = "OFF"` (`output_dir: str = "logs"`), настраиваемых в `core/config/logging_setup.py`.
 
 ---
 

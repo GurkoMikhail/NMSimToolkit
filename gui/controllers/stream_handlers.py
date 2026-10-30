@@ -1595,8 +1595,6 @@ def create_gui_stream_handler(
         if isinstance(raw_handlers, Sequence):
             for handler_cfg in raw_handlers:
                 if isinstance(handler_cfg, Mapping):
-                    if bool(handler_cfg.get('show_escaped_tracks', False)):
-                        show_escaped = True
                     raw_sv = handler_cfg.get('sensitive_volumes')
                     if isinstance(raw_sv, Sequence) and not isinstance(raw_sv, (str, bytes)):
                         for sv_name in raw_sv:

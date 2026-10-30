@@ -110,10 +110,7 @@ class DirectStreamHandlerViewModel(BaseDataHandlerViewModel):
     def to_config(self) -> Optional[DirectStreamHandlerConfig]:
         if not self._enabled:
             return None
-        return DirectStreamHandlerConfig(
-            type="DirectStreamHandler",
-            show_escaped_tracks=self._show_escaped_tracks
-        )
+        return DirectStreamHandlerConfig(type="DirectStreamHandler")
 
 
 class SensitiveVolumeHandlerViewModel(BaseDataHandlerViewModel):
@@ -277,7 +274,7 @@ class DoseMapHandlerViewModel(BaseDataHandlerViewModel):
     def __init__(
         self,
         grid_names: Optional[List[str]] = None,
-        shm_name: str = "nmsim_dose_shm",
+        shm_name: Optional[str] = "nmsim_dose_shm",
         enabled: bool = True,
         parent: Optional[QObject] = None,
     ) -> None:
@@ -288,7 +285,7 @@ class DoseMapHandlerViewModel(BaseDataHandlerViewModel):
             parent=parent,
         )
         self._grid_names: List[str] = list(grid_names) if grid_names else []
-        self._shm_name: str = str(shm_name)
+        self._shm_name: str = str(shm_name) if shm_name else ""
 
     @property
     def grid_names(self) -> List[str]:
@@ -304,9 +301,10 @@ class DoseMapHandlerViewModel(BaseDataHandlerViewModel):
         return self._shm_name
 
     @shm_name.setter
-    def shm_name(self, name: str) -> None:
-        if self._shm_name != name:
-            self._shm_name = str(name)
+    def shm_name(self, name: Optional[str]) -> None:
+        normalized_name = str(name) if name else ""
+        if self._shm_name != normalized_name:
+            self._shm_name = normalized_name
             self.changed.emit()
 
     def to_config(self) -> Optional[DoseMapHandlerConfig]:
@@ -315,7 +313,7 @@ class DoseMapHandlerViewModel(BaseDataHandlerViewModel):
         return DoseMapHandlerConfig(
             type="DoseMapHandler",
             grid_names=self._grid_names,
-            shm_name=self._shm_name,
+            shm_name=self._shm_name if self._shm_name else None,
         )
 
 
@@ -420,7 +418,7 @@ class DataManagerViewModel(QObject):
             buffer_size=self._buffer_size,
             floating_point_precision=self._floating_point_precision,
             compression=self._compression,
-            compression_opts=self._compression_opts,
+            compression_opts=self._compression_opts if self._compression == "gzip" else None,
             handlers=configs,
         )
 
@@ -443,13 +441,18 @@ class DataManagerViewModel(QObject):
         self._floating_point_precision = config.floating_point_precision
         self._compression = config.compression
         self._compression_opts = int(config.compression_opts) if config.compression_opts is not None else 4
+        prev_show_escaped = False
+        for existing_handler in self._handlers:
+            if isinstance(existing_handler, DirectStreamHandlerViewModel):
+                prev_show_escaped = existing_handler.show_escaped_tracks
+                break
         for handler in list(self._handlers):
             self.remove_handler(handler)
 
         for handler_config in config.handlers:
             if isinstance(handler_config, DirectStreamHandlerConfig):
                 self.add_handler(DirectStreamHandlerViewModel(
-                    show_escaped_tracks=handler_config.show_escaped_tracks,
+                    show_escaped_tracks=prev_show_escaped,
                     enabled=True,
                 ))
             elif isinstance(handler_config, SensitiveVolumeHandlerConfig):

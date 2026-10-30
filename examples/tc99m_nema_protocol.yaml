@@ -1,8 +1,8 @@
 pool_size: 24
 logging:
   output_dir: "logs/tc99m_nema"
-  level: "INFO"
-  console: false
+  file_level: "INFO"
+  console_level: "OFF"
   per_task_files: true
   filename_pattern: "task_{task_id}.log"
 protocol:
@@ -19,6 +19,9 @@ protocol:
   initial_time: 0.0 s
   sequential_time: true
   radius: 270.0 mm
+  metadata:
+    radionuclide: '99mTc'
+    phantom_type: 'NEMA IEC Body Phantom'
 
 scene:
   type: Volume
@@ -47,8 +50,6 @@ scene:
       children:
         - type: Source
           name: Source
-          radionuclide: '99mTc'
-          phantom_type: 'NEMA IEC Body Phantom'
           activity: 100 MBq
           half_life: 6.0067 hour
           spatial:
@@ -231,4 +232,3 @@ simulation_manager:
   particles_number: 10000
   buffer_capacity: 100000
   min_energy: 1.0 keV
-  physics_list: "emstandard_opt4"

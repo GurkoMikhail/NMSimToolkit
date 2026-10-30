@@ -42,11 +42,11 @@ def setup_task_logging(
         return []
 
     handlers_list: List[logging.Handler] = []
-    log_level = _resolve_log_level(logging_config.level)
     log_formatter = logging.Formatter(logging_config.format)
 
     # 1. Файловый хэндлер
-    if logging_config.output_dir:
+    if logging_config.file_level != "OFF":
+        file_log_level = _resolve_log_level(logging_config.file_level)
         output_directory = Path(logging_config.output_dir)
         output_directory.mkdir(parents=True, exist_ok=True)
 
@@ -61,20 +61,21 @@ def setup_task_logging(
             mode="a",
             encoding="utf-8",
         )
-        file_handler.setLevel(log_level)
+        file_handler.setLevel(file_log_level)
         file_handler.setFormatter(log_formatter)
         handlers_list.append(file_handler)
 
     # 2. Консольный хэндлер
-    if logging_config.console:
+    if logging_config.console_level != "OFF":
+        console_log_level = _resolve_log_level(logging_config.console_level)
         stream_handler = logging.StreamHandler()
-        stream_handler.setLevel(log_level)
+        stream_handler.setLevel(console_log_level)
         stream_handler.setFormatter(log_formatter)
         handlers_list.append(stream_handler)
 
     if handlers_list:
         core_logger = logging.getLogger("core")
-        core_logger.setLevel(log_level)
+        core_logger.setLevel(min(handler.level for handler in handlers_list))
         for handler in handlers_list:
             core_logger.addHandler(handler)
 
@@ -94,7 +95,6 @@ def setup_orchestrator_logging(
         return []
 
     handlers_list: List[logging.Handler] = []
-    log_level = _resolve_log_level(logging_config.level)
     log_formatter = logging.Formatter(logging_config.format)
 
     # Выбор целевого логгера: при per_task_files изолируем лог оркестратора
@@ -104,7 +104,8 @@ def setup_orchestrator_logging(
     target_logger = logging.getLogger(target_logger_name)
 
     # 1. Файловый хэндлер
-    if logging_config.output_dir:
+    if logging_config.file_level != "OFF":
+        file_log_level = _resolve_log_level(logging_config.file_level)
         output_directory = Path(logging_config.output_dir)
         output_directory.mkdir(parents=True, exist_ok=True)
 
@@ -117,19 +118,20 @@ def setup_orchestrator_logging(
             mode="a",
             encoding="utf-8",
         )
-        file_handler.setLevel(log_level)
+        file_handler.setLevel(file_log_level)
         file_handler.setFormatter(log_formatter)
         handlers_list.append(file_handler)
 
     # 2. Консольный хэндлер
-    if logging_config.console:
+    if logging_config.console_level != "OFF":
+        console_log_level = _resolve_log_level(logging_config.console_level)
         stream_handler = logging.StreamHandler()
-        stream_handler.setLevel(log_level)
+        stream_handler.setLevel(console_log_level)
         stream_handler.setFormatter(log_formatter)
         handlers_list.append(stream_handler)
 
     if handlers_list:
-        target_logger.setLevel(log_level)
+        target_logger.setLevel(min(handler.level for handler in handlers_list))
         if logging_config.per_task_files:
             target_logger.propagate = False
         for handler in handlers_list:

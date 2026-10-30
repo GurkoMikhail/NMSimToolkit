@@ -1,3 +1,8 @@
+"""
+Декларативные Pydantic-модели конфигурации сцены, источников, детекторов,
+протоколов сканирования, обработчиков данных и логирования симуляции.
+"""
+
 from typing import Any, List, Literal, Optional, Union, Annotated, Tuple
 from pydantic import BaseModel, Field, model_validator, field_serializer, field_validator
 from core.config.units import (
@@ -96,10 +101,21 @@ AnyDistributionConfig = Annotated[
     Field(discriminator='format')
 ]
 
+CollimatorHoleShapeLiteral = Literal['hexagonal', 'square', 'round']
+
+
 class WoodcockVoxelVolumeConfig(CompositeNodeConfig):
     type: Literal['WoodcockVoxelVolume'] = 'WoodcockVoxelVolume'
     voxel_size: LengthConfig
     distribution: AnyDistributionConfig
+
+    @model_validator(mode='after')
+    def validate_mapping_required(self) -> 'WoodcockVoxelVolumeConfig':
+        if not self.distribution.mapping:
+            raise ValueError(
+                "Для WoodcockVoxelVolumeConfig необходимо явно задать непустой словарь сопоставления материалов (mapping)."
+            )
+        return self
 
 class GammaCameraSlotsConfig(BaseModel):
     casing: Optional[str] = None
@@ -117,8 +133,13 @@ class ParametricParallelCollimatorConfig(CompositeNodeConfig):
     size: Tuple[LengthConfig, LengthConfig, LengthConfig]
     hole_diameter: LengthConfig
     septa: LengthConfig
-    material: str
-    hole_shape: str = 'hexagonal'
+    material: str = 'Pb'
+    hole_shape: CollimatorHoleShapeLiteral = 'hexagonal'
+
+    @field_validator('hole_shape', mode='before')
+    @classmethod
+    def normalize_hole_shape(cls, value: Any) -> str:
+        return str(value).strip().lower()
 
 class DirectParallelCollimatorConfig(CompositeNodeConfig):
     type: Literal['DirectParallelCollimator'] = 'DirectParallelCollimator'
@@ -127,7 +148,12 @@ class DirectParallelCollimatorConfig(CompositeNodeConfig):
     septa: LengthConfig
     material: str = 'Pb'
     hole_material: Optional[str] = None
-    hole_shape: str = 'hexagonal'
+    hole_shape: CollimatorHoleShapeLiteral = 'hexagonal'
+
+    @field_validator('hole_shape', mode='before')
+    @classmethod
+    def normalize_hole_shape(cls, value: Any) -> str:
+        return str(value).strip().lower()
 
 class PointSpatialConfig(BaseModel):
     type: Literal['point'] = 'point'
@@ -275,8 +301,6 @@ class SourceConfig(CompositeNodeConfig):
     channels: List[RadiationChannelConfig] = Field(
         default_factory=lambda: [RadiationChannelConfig()]
     )
-    radionuclide: Optional[str] = None
-    phantom_type: Optional[str] = None
 
     @model_validator(mode='after')
     def validate_channels_not_empty(self) -> 'SourceConfig':
@@ -335,7 +359,6 @@ GantryConfig.model_rebuild()
 
 class DirectStreamHandlerConfig(BaseModel):
     type: Literal['DirectStreamHandler'] = 'DirectStreamHandler'
-    show_escaped_tracks: bool = False
 
 class SensitiveVolumeHandlerConfig(BaseModel):
     type: Literal['SensitiveVolumeHandler'] = 'SensitiveVolumeHandler'
@@ -349,7 +372,7 @@ class HistoryAssemblerHandlerConfig(BaseModel):
 class DoseMapHandlerConfig(BaseModel):
     type: Literal['DoseMapHandler'] = 'DoseMapHandler'
     grid_names: List[str] = Field(default_factory=list)
-    shm_name: str = 'nmsim_dose_shm'
+    shm_name: Optional[str] = None
 
 AnyDataHandlerConfig = Annotated[
     Union[
@@ -367,7 +390,7 @@ class DataManagerConfig(BaseModel):
     buffer_size: DataSizeConfig = Field(default="3 MiB", validate_default=True)
     floating_point_precision: Literal['float32', 'float64'] = 'float32'
     compression: Optional[Literal['gzip', 'lzf']] = None
-    compression_opts: int = Field(default=4, ge=0, le=9)
+    compression_opts: Optional[int] = Field(default=None, ge=0, le=9)
 
     @field_serializer('buffer_size')
     def serialize_buffer_size(self, value: Any) -> Any:
@@ -381,7 +404,7 @@ class DataManagerConfig(BaseModel):
 
 class SimulationManagerConfig(BaseModel):
     start_time: TimeConfig = 0.0 * units.ns
-    stop_time: TimeConfig = 1.0 * units.s
+    stop_time: Optional[TimeConfig] = 1.0 * units.s
     particles_number: CountConfig = 10_000
     batch_capacity: Optional[CountConfig] = None
     buffer_capacity: Optional[CountConfig] = None
@@ -389,11 +412,10 @@ class SimulationManagerConfig(BaseModel):
     enable_atomic_relaxation: bool = False
     photon_production_cut: EnergyConfig = 1.0 * units.keV
     electron_production_cut: EnergyConfig = float("inf")
-    physics_list: Optional[str] = None
     seed: Optional[int] = None
 
 class BaseProtocolConfig(BaseModel):
-    pass
+    metadata: Optional[SourceMetadataConfig] = None
 
 class CustomSweepProtocolConfig(BaseProtocolConfig):
     type: Literal['CustomSweep'] = 'CustomSweep'
@@ -405,11 +427,11 @@ class CustomSweepProtocolConfig(BaseProtocolConfig):
         if self.zipped_variables:
             lengths = {len(var_values) for var_values in self.zipped_variables.values()}
             if len(lengths) > 1:
-                raise ValueError("All arrays in 'zipped_variables' must have the exact same length.")
+                raise ValueError("Все массивы в 'zipped_variables' должны иметь строго одинаковую длину.")
         return self
 
-class StepAndShootProtocolConfig(BaseProtocolConfig):
-    type: Literal['StepAndShoot'] = 'StepAndShoot'
+class StepAndShootProtocolConfig(CustomSweepProtocolConfig):
+    type: Literal['StepAndShoot'] = 'StepAndShoot'  # type: ignore[assignment]
     steps: int = Field(ge=1, description="Количество физических угловых положений (шагов) гантри")
     start_angle: AngleConfig = 0.0 * units.deg
     end_angle: AngleConfig = 360.0 * units.deg
@@ -419,8 +441,6 @@ class StepAndShootProtocolConfig(BaseProtocolConfig):
     initial_time: TimeConfig = 0.0 * units.s
     sequential_time: bool = True
     radius: Optional[Union[LengthConfig, List[LengthConfig]]] = None
-    grid_variables: dict[str, List[float]] = Field(default_factory=dict)
-    zipped_variables: dict[str, List[float]] = Field(default_factory=dict)
 
     @model_validator(mode='after')
     def validate_variables_consistency(self) -> 'StepAndShootProtocolConfig':
@@ -446,32 +466,39 @@ AnyProtocolConfig = Annotated[
     Field(discriminator='type')
 ]
 
+LogLevelLiteral = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "OFF"]
+
+
 class LoggingConfig(BaseModel):
     """
     Конфигурация файлового и консольного логирования процесса моделирования.
+    Поддерживает два независимых уровня: file_level и console_level (значение "OFF" отключает канал).
     """
-    output_dir: Optional[str] = "logs"
-    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    console: bool = False
+    output_dir: str = "logs"
+    file_level: LogLevelLiteral = "INFO"
+    console_level: LogLevelLiteral = "OFF"
     per_task_files: bool = True
     format: str = "[%(asctime)s: %(levelname)s] [%(name)s] %(message)s"
     filename_pattern: str = "task_{task_id}.log"
 
-    @field_validator("level", mode="before")
+    @field_validator("file_level", "console_level", mode="before")
     @classmethod
     def normalize_level(cls, value: Any) -> Any:
+        if value is None or value is False:
+            return "OFF"
         if isinstance(value, str):
-            return value.upper()
+            stripped_level = value.strip().upper()
+            return stripped_level if stripped_level else "OFF"
         return value
 
     @field_validator("output_dir", mode="before")
     @classmethod
-    def normalize_output_dir(cls, value: Any) -> Any:
+    def normalize_output_dir(cls, value: Any) -> str:
         if value is None:
-            return None
+            raise ValueError("Путь к каталогу логов output_dir не может быть None (используйте file_level='OFF').")
         string_value = str(value).strip()
         if not string_value:
-            return None
+            raise ValueError("Путь к каталогу логов output_dir не может быть пустой строкой.")
         return string_value
 
     @field_validator("filename_pattern")
@@ -501,7 +528,12 @@ class SimulationConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_logging_concurrency(self) -> "SimulationConfig":
-        if self.pool_size > 1 and self.logging is not None and not self.logging.per_task_files:
+        if (
+            self.pool_size > 1
+            and self.logging is not None
+            and self.logging.file_level != "OFF"
+            and not self.logging.per_task_files
+        ):
             raise ValueError(
                 "При многопроцессном моделировании (pool_size > 1) параметр "
                 "logging.per_task_files обязан быть True во избежание конфликтов "
@@ -533,6 +565,7 @@ __all__ = [
     "NumpyDistributionConfig",
     "RawDistributionConfig",
     "AnyDistributionConfig",
+    "CollimatorHoleShapeLiteral",
     "WoodcockVoxelVolumeConfig",
     "GammaCameraSlotsConfig",
     "GammaCameraConfig",
@@ -566,6 +599,7 @@ __all__ = [
     "CustomSweepProtocolConfig",
     "StepAndShootProtocolConfig",
     "AnyProtocolConfig",
+    "LogLevelLiteral",
     "LoggingConfig",
     "SimulationConfig",
 ]

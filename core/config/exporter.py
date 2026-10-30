@@ -3,8 +3,7 @@ import math
 import logging
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
-from weakref import WeakKeyDictionary
+from typing import Any, Dict, List, Literal, Optional, Sequence, Union, cast
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -20,6 +19,7 @@ from core.config.models import (
     BaseCompositeNodeConfig,
     BaseSpatialNodeConfig,
     BoxConfig,
+    CollimatorHoleShapeLiteral,
     ConeAngularConfig,
     ContinuousSpectrumConfig,
     DataManagerConfig,
@@ -37,7 +37,6 @@ from core.config.models import (
     RotateConfig,
     SimulationConfig,
     SimulationManagerConfig,
-    SourceMetadataConfig,
     SourceConfig,
     TransformConfig,
     TranslateConfig,
@@ -83,18 +82,6 @@ class SceneExporter:
     Класс для обратной сериализации чистого графа сцены (SpatialNode, Volume)
     в Pydantic-конфигурации SimulationConfig и сохранения в формат YAML.
     """
-
-    _source_metadata_registry: WeakKeyDictionary[SpatialNode, SourceMetadataConfig] = WeakKeyDictionary()
-
-    @classmethod
-    def register_source_metadata(cls, node: SpatialNode, metadata: SourceMetadataConfig) -> None:
-        """Регистрирует декларативные метаданные источника во внешнем реестре без модификации узла ядра."""
-        cls._source_metadata_registry[node] = metadata
-
-    @classmethod
-    def get_source_metadata(cls, node: SpatialNode) -> Optional[SourceMetadataConfig]:
-        """Возвращает зарегистрированные декларативные метаданные источника из внешнего реестра."""
-        return cls._source_metadata_registry.get(node)
 
     @classmethod
     def decompose_matrix(cls, matrix: np.ndarray, as_matrix: bool = True) -> List[TransformConfig]:
@@ -158,7 +145,6 @@ class SceneExporter:
         node: SpatialNode,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
-        source_metadata_registry: Optional[Dict[SpatialNode, SourceMetadataConfig]] = None,
     ) -> AnyNodeConfig:
         """
         Рекурсивно экспортирует узел сцены в Pydantic-модель конфигурации.
@@ -176,7 +162,6 @@ class SceneExporter:
                 child_node,
                 distribution_registry=distribution_registry,
                 slots_registry=slots_registry,
-                source_metadata_registry=source_metadata_registry,
             )
             for child_node in child_nodes
         ]
@@ -206,7 +191,10 @@ class SceneExporter:
         if isinstance(node, ParametricParallelCollimator):
             size_tuple = (float(node.size[0]), float(node.size[1]), float(node.size[2]))
             mat_name = node.material.name
-            hole_shape_val = node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape)
+            hole_shape_val = cast(
+                CollimatorHoleShapeLiteral,
+                node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape),
+            )
             return ParametricParallelCollimatorConfig(
                 name=node_name,
                 tags=node_tags,
@@ -224,7 +212,10 @@ class SceneExporter:
             size_tuple = (float(node.size[0]), float(node.size[1]), float(node.size[2]))
             mat_name = node.material.name
             hole_mat_name = node.explicit_hole_material.name if node.explicit_hole_material is not None else None
-            hole_shape_val = node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape)
+            hole_shape_val = cast(
+                CollimatorHoleShapeLiteral,
+                node.hole_shape.value if isinstance(node.hole_shape, CollimatorHoleShape) else str(node.hole_shape),
+            )
             return DirectParallelCollimatorConfig(
                 name=node_name,
                 tags=node_tags,
@@ -308,7 +299,7 @@ class SceneExporter:
 
             exported_channels: List[RadiationChannelConfig] = []
             for ch in node.channels:
-                species_str = ch.species.name.lower()
+                species_str = cast(Literal['photon', 'electron', 'positron', 'alpha'], ch.species.name.lower())
 
                 if isinstance(ch.spectrum, DiscreteSpectrum):
                     spec_cfg: AnySpectrumConfig = DiscreteSpectrumConfig(
@@ -344,14 +335,6 @@ class SceneExporter:
                     )
                 )
 
-            source_meta: Optional[SourceMetadataConfig] = None
-            if source_metadata_registry is not None:
-                source_meta = source_metadata_registry.get(node)
-            if source_meta is None:
-                source_meta = cls._source_metadata_registry.get(node)
-            radionuclide_val = source_meta.radionuclide if source_meta is not None else None
-            phantom_type_val = source_meta.phantom_type if source_meta is not None else None
-
             return SourceConfig(
                 name=node_name,
                 tags=node_tags,
@@ -360,8 +343,6 @@ class SceneExporter:
                 half_life=half_life,
                 spatial=spatial_cfg,
                 channels=exported_channels,
-                radionuclide=radionuclide_val,
-                phantom_type=phantom_type_val,
                 children=children_cfgs,
             )
 
@@ -427,7 +408,6 @@ class SceneExporter:
         root_node: SpatialNode,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
-        source_metadata_registry: Optional[Dict[SpatialNode, SourceMetadataConfig]] = None,
     ) -> AnyNodeConfig:
         """
         Экспортирует корневой узел графа сцены.
@@ -436,14 +416,12 @@ class SceneExporter:
             root_node,
             distribution_registry=distribution_registry,
             slots_registry=slots_registry,
-            source_metadata_registry=source_metadata_registry,
         )
 
     @classmethod
     def export_simulation_manager(
         cls,
         manager: SimulationManager,
-        physics_list: Optional[str] = None,
         seed: Optional[int] = None,
     ) -> SimulationManagerConfig:
         """Экспортирует экземпляр SimulationManager в декларативную конфигурацию SimulationManagerConfig."""
@@ -463,8 +441,7 @@ class SceneExporter:
             enable_atomic_relaxation=bool(manager.enable_atomic_relaxation),
             photon_production_cut=float(manager.photon_production_cut),
             electron_production_cut=float(manager.electron_production_cut),
-            physics_list=physics_list,
-            seed=seed,
+            seed=manager.seed if seed is None else int(seed),
         )
 
     @classmethod
@@ -477,7 +454,6 @@ class SceneExporter:
         protocol: Optional[AnyProtocolConfig] = None,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
-        source_metadata_registry: Optional[Dict[SpatialNode, SourceMetadataConfig]] = None,
         logging_cfg: Optional[LoggingConfig] = None,
     ) -> SimulationConfig:
         """
@@ -487,7 +463,6 @@ class SceneExporter:
             root_node,
             distribution_registry=distribution_registry,
             slots_registry=slots_registry,
-            source_metadata_registry=source_metadata_registry,
         )
         if isinstance(simulation_manager_cfg, SimulationManager):
             sim_mgr = cls.export_simulation_manager(simulation_manager_cfg)
@@ -601,7 +576,6 @@ class SceneExporter:
         protocol: Optional[AnyProtocolConfig] = None,
         distribution_registry: Optional[Dict[SpatialNode, AnyDistributionConfig]] = None,
         slots_registry: Optional[Dict[SpatialNode, GammaCameraSlotsConfig]] = None,
-        source_metadata_registry: Optional[Dict[SpatialNode, SourceMetadataConfig]] = None,
         logging_cfg: Optional[LoggingConfig] = None,
     ) -> None:
         """
@@ -624,7 +598,6 @@ class SceneExporter:
             protocol=protocol,
             distribution_registry=adjusted_distribution_registry,
             slots_registry=slots_registry,
-            source_metadata_registry=source_metadata_registry,
             logging_cfg=logging_cfg,
         )
         dump_simulation_config(config, target_path)
